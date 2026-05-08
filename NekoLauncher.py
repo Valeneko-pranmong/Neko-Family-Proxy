@@ -443,7 +443,7 @@ class NekoLauncher:
         main_content = ctk.CTkFrame(self.root, fg_color=BG_MAIN, corner_radius=0)
         main_content.pack(side="top", fill="both", expand=True) 
         
-        wrapper = ctk.CTkFrame(main_content, fg_color=BG_MAIN)
+        wrapper = ctk.CTkScrollableFrame(main_content, fg_color=BG_MAIN)
         wrapper.pack(expand=True, fill="both", padx=10, pady=10) 
 
         header_frame = ctk.CTkFrame(wrapper, fg_color=BG_MAIN)
