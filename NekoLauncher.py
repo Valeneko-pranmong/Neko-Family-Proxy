@@ -325,8 +325,7 @@ class NekoLauncher:
         screen_height = self.root.winfo_screenheight()
 
         window_width = 540
-        calculated_height = int(screen_height * 0.85)
-        window_height = min(730, calculated_height) 
+        window_height = int(screen_height * 0.80)
 
         center_x = int((screen_width - window_width) / 2)
         center_y = int((screen_height - window_height) / 2)
@@ -443,14 +442,14 @@ class NekoLauncher:
         main_content = ctk.CTkFrame(self.root, fg_color=BG_MAIN, corner_radius=0)
         main_content.pack(side="top", fill="both", expand=True) 
         
-        wrapper = ctk.CTkScrollableFrame(main_content, fg_color=BG_MAIN)
-        wrapper.pack(expand=True, fill="both", padx=10, pady=10) 
+        wrapper = ctk.CTkFrame(main_content, fg_color=BG_MAIN)
+        wrapper.pack(expand=True, fill="both", padx=5, pady=5) 
 
         header_frame = ctk.CTkFrame(wrapper, fg_color=BG_MAIN)
-        header_frame.pack(pady=(10, 10))
+        header_frame.pack(pady=(5, 5))
         
         if self.logo_img:
-            ctk.CTkLabel(header_frame, image=self.logo_img, text="").pack(pady=(0, 5))
+            ctk.CTkLabel(header_frame, image=self.logo_img, text="").pack(pady=(0, 2))
         else:
             ctk.CTkLabel(header_frame, text="NEKO FAMILY", font=ctk.CTkFont(family="Arial", size=24, weight="bold"), text_color=TEXT_HEADER).pack()
             
@@ -466,40 +465,40 @@ class NekoLauncher:
         except: pass
         
         info_frame = ctk.CTkFrame(wrapper, fg_color=BG_BOX, corner_radius=10, border_color=BTN_COLOR, border_width=1)
-        info_frame.pack(pady=5, padx=20, fill="x")
+        info_frame.pack(pady=2, padx=15, fill="x")
         info_text = f"ผู้ใช้งาน: {self.username}  |  เหลือ: {days_str} วัน (หมด: {self.expiry_date})"
-        ctk.CTkLabel(info_frame, text=info_text, font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color=TEXT_GOLD).pack(pady=10, padx=10)
+        ctk.CTkLabel(info_frame, text=info_text, font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color=TEXT_GOLD).pack(pady=5, padx=10)
         
         settings_box = ctk.CTkFrame(wrapper, fg_color=BG_BOX, corner_radius=15)
-        settings_box.pack(fill="x", padx=20, pady=10)
+        settings_box.pack(fill="x", padx=15, pady=5)
         
-        ctk.CTkLabel(settings_box, text="ตั้งค่าการเชื่อมต่อ (Connection Mode)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=TEXT_HEADER).pack(anchor="w", padx=15, pady=(15, 5))
+        ctk.CTkLabel(settings_box, text="ตั้งค่าการเชื่อมต่อ (Connection Mode)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=TEXT_HEADER).pack(anchor="w", padx=15, pady=(10, 2))
         self.chk_auto = ctk.CTkCheckBox(settings_box, text="เชื่อมต่อโดยอัตโนมัติ เมื่อเริ่มเกม (Auto Connect)", 
                        variable=self.is_auto, font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN, 
                        fg_color=BTN_COLOR, hover_color=TEXT_HIGHLIGHT, border_color=BTN_COLOR,
                        command=self.update_button_state, cursor="hand2")
-        self.chk_auto.pack(anchor="w", padx=20, pady=10)
+        self.chk_auto.pack(anchor="w", padx=20, pady=5)
         
         divider = ctk.CTkFrame(settings_box, height=1, fg_color=BTN_COLOR)
-        divider.pack(fill="x", padx=15, pady=5)
+        divider.pack(fill="x", padx=15, pady=2)
         
-        ctk.CTkLabel(settings_box, text="ควบคุมด้วยตนเอง (Manual Control)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=TEXT_HEADER).pack(anchor="w", padx=15, pady=(5, 5))
+        ctk.CTkLabel(settings_box, text="ควบคุมด้วยตนเอง (Manual Control)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=TEXT_HEADER).pack(anchor="w", padx=15, pady=(2, 2))
         
         self.btn_manual = ctk.CTkButton(settings_box, text="START PROXY", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), 
                                     fg_color=BTN_DISABLED, text_color=BTN_TEXT, state="disabled", 
                                     command=self.toggle_manual, corner_radius=8, cursor="hand2")
-        self.btn_manual.pack(fill="x", padx=15, pady=(5, 15), ipady=3)
+        self.btn_manual.pack(fill="x", padx=15, pady=(5, 10), ipady=3)
         
         tweaker_box = ctk.CTkFrame(wrapper, fg_color=BG_BOX, corner_radius=15)
-        tweaker_box.pack(fill="x", padx=20, pady=10)
+        tweaker_box.pack(fill="x", padx=15, pady=5)
         
-        ctk.CTkLabel(tweaker_box, text="ตั้งค่าเข้าเกม (PSO2 Tweaker)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=TEXT_HEADER).pack(anchor="w", padx=15, pady=(15, 5))
+        ctk.CTkLabel(tweaker_box, text="ตั้งค่าเข้าเกม (PSO2 Tweaker)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=TEXT_HEADER).pack(anchor="w", padx=15, pady=(10, 2))
         
         self.tweaker_path_var = tk.StringVar(value=self.config_data.get("tweaker_path", ""))
         self.auto_tweaker_var = tk.BooleanVar(value=self.config_data.get("auto_tweaker", False))
         
         path_frame = ctk.CTkFrame(tweaker_box, fg_color="transparent")
-        path_frame.pack(fill="x", padx=15, pady=5)
+        path_frame.pack(fill="x", padx=15, pady=2)
         
         self.lbl_tpath = ctk.CTkLabel(path_frame, textvariable=self.tweaker_path_var, font=ctk.CTkFont(family="Arial", size=11), fg_color=BG_STATUS, text_color=TEXT_MAIN, anchor="w", corner_radius=5)
         self.lbl_tpath.pack(side="left", fill="x", expand=True, ipady=3, padx=(0, 10))
@@ -511,10 +510,10 @@ class NekoLauncher:
                        variable=self.auto_tweaker_var, font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN, 
                        fg_color=BTN_COLOR, hover_color=TEXT_HIGHLIGHT, border_color=BTN_COLOR,
                        command=self.save_tweaker_settings, cursor="hand2")
-        self.chk_auto_tweaker.pack(anchor="w", padx=20, pady=10)
+        self.chk_auto_tweaker.pack(anchor="w", padx=20, pady=5)
                        
         btn_launch = ctk.CTkButton(tweaker_box, text="เปิดโปรแกรม PSO2 Tweaker", font=ctk.CTkFont(family="Arial", size=13, weight="bold"), fg_color=BTN_COLOR, hover_color=BTN_HOVER, text_color=BTN_TEXT, command=self.launch_tweaker, corner_radius=8, cursor="hand2")
-        btn_launch.pack(fill="x", padx=15, pady=(5, 15), ipady=3)
+        btn_launch.pack(fill="x", padx=15, pady=(5, 10), ipady=3)
 
     def browse_tweaker(self):
         path = filedialog.askopenfilename(title="เลือกไฟล์ PSO2 Tweaker.exe", filetypes=[("Executable Files", "*.exe")])
@@ -633,5 +632,8 @@ if __name__ == "__main__":
         except: messagebox.showerror("Error", "Need Admin Rights")
         sys.exit()
     root = ctk.CTk()
+    app = LoginApp(root)
+    root.mainloop()
+
     app = LoginApp(root)
     root.mainloop()
