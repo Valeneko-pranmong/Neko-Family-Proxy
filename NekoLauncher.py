@@ -36,7 +36,7 @@ def resource_path(relative_path):
 # ==========================================
 # Config
 # ==========================================
-APP_VERSION = "4.0.2 Release" # ปรับเป็น 4.0.2 (CTk UI Update)
+APP_VERSION = "4.1.0 Release"
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzBCPV1kfJ54HJnK03MAgr09dkEg2mipaAYRQhrue68q5gpF0u_8S-ioh7p74umAUo6/exec"
 DISCORD_LINK = "https://discord.gg/fkjXW9AJ6a"
 
