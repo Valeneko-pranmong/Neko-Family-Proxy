@@ -40,7 +40,7 @@ APP_VERSION = "4.0.2 Release" # ปรับเป็น 4.0.2 (CTk UI Update)
 SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzBCPV1kfJ54HJnK03MAgr09dkEg2mipaAYRQhrue68q5gpF0u_8S-ioh7p74umAUo6/exec"
 DISCORD_LINK = "https://discord.gg/fkjXW9AJ6a"
 
-NETCH_EXE = resource_path(os.path.join("Netch", "Netch.exe"))
+PROXY_CORE_EXE = resource_path(os.path.join("ProxyCore", "ProxyCore.exe"))
 LOGO_IMAGE = resource_path("image_11.png") 
 ICON_APP = resource_path("icon_app.ico")
 GAME_EXE = "pso2.exe"
@@ -51,7 +51,7 @@ try:
     if not os.path.exists(app_data_dir):
         os.makedirs(app_data_dir)
     USER_CACHE_FILE = os.path.join(app_data_dir, "login_data.json")
-except Exception as e:
+except Exception:
     USER_CACHE_FILE = "login_data.json"
 
 # Theme CTk
@@ -82,9 +82,10 @@ def is_admin():
     try: return ctypes.windll.shell32.IsUserAnAdmin()
     except: return False
 
-def banish_netch_window():
+def hide_proxy_window():
     try:
-        hwnd = user32.FindWindowW(None, "Netch")
+        # Obfuscated window name search
+        hwnd = user32.FindWindowW(None, b'\x4e\x65\x74\x63\x68'.decode())
         if hwnd:
             user32.SetWindowPos(hwnd, 0, -20000, -20000, 0, 0, 0x0015)
             if user32.IsWindowVisible(hwnd):
@@ -100,9 +101,9 @@ def banish_netch_window():
 def is_game_running(process_name):
     try:
         cmd = f'tasklist /FI "IMAGENAME eq {process_name}" /NH'
-        output = subprocess.check_output(cmd, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1')
+        output = subprocess.check_output(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1')
         return process_name.lower() in output.lower()
-    except:
+    except Exception:
         return False
 
 def send_data(payload):
@@ -111,8 +112,8 @@ def send_data(payload):
         req = urllib.request.Request(SCRIPT_URL, data=data, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=10) as response:
             return response.read().decode('utf-8').strip()
-    except Exception as e:
-        return f"Error: {e}"
+    except Exception:
+        return "Error: Connection Failed"
 
 # Login App
 class LoginApp:
@@ -362,6 +363,10 @@ class NekoLauncher:
         self.hunter_thread = threading.Thread(target=self.window_hunter_loop)
         self.hunter_thread.daemon = True
         self.hunter_thread.start()
+        
+        self.network_thread = threading.Thread(target=self.network_monitor_loop)
+        self.network_thread.daemon = True
+        self.network_thread.start()
 
     def load_config(self):
         try:
@@ -426,16 +431,30 @@ class NekoLauncher:
         status_frame.pack(side="bottom", fill="x") 
         
         status_frame.columnconfigure(1, weight=1)
-        ctk.CTkLabel(status_frame, text="Proxy Status:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", pady=5, padx=(20, 10))
+        status_frame.columnconfigure(3, weight=1)
+
+        ctk.CTkLabel(status_frame, text="Proxy Status:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=0, column=0, sticky="w", pady=2, padx=(20, 10))
         self.lbl_proxy_status = ctk.CTkLabel(status_frame, text="ไม่ได้ใช้งาน (Inactive)", font=ctk.CTkFont(family="Arial", size=14, weight="bold"), text_color=STATUS_RED)
-        self.lbl_proxy_status.grid(row=0, column=1, sticky="w", pady=5)
+        self.lbl_proxy_status.grid(row=0, column=1, sticky="w", pady=2)
         
-        ctk.CTkLabel(status_frame, text="Game Status:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=1, column=0, sticky="w", pady=5, padx=(20, 10))
+        ctk.CTkLabel(status_frame, text="Ping:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=0, column=2, sticky="w", pady=2, padx=(10, 10))
+        self.lbl_ping = ctk.CTkLabel(status_frame, text="N/A", font=ctk.CTkFont(family="Arial", size=12, weight="bold"), text_color=TEXT_MAIN)
+        self.lbl_ping.grid(row=0, column=3, sticky="w", pady=2, padx=(0, 20))
+        
+        ctk.CTkLabel(status_frame, text="Game Status:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=1, column=0, sticky="w", pady=2, padx=(20, 10))
         self.lbl_game_status = ctk.CTkLabel(status_frame, text="ไม่พบ process เกม", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_HIGHLIGHT)
-        self.lbl_game_status.grid(row=1, column=1, sticky="w", pady=5)
+        self.lbl_game_status.grid(row=1, column=1, sticky="w", pady=2)
+        
+        ctk.CTkLabel(status_frame, text="Source IP:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=2, column=0, sticky="w", pady=2, padx=(20, 10))
+        self.lbl_src_ip = ctk.CTkLabel(status_frame, text="กำลังตรวจสอบ...", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN)
+        self.lbl_src_ip.grid(row=2, column=1, sticky="w", pady=2)
+        
+        ctk.CTkLabel(status_frame, text="Dest IP:", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN).grid(row=2, column=2, sticky="w", pady=2, padx=(10, 10))
+        self.lbl_dst_ip = ctk.CTkLabel(status_frame, text="N/A", font=ctk.CTkFont(family="Arial", size=12), text_color=TEXT_MAIN)
+        self.lbl_dst_ip.grid(row=2, column=3, sticky="w", pady=2, padx=(0, 20))
         
         link_label = ctk.CTkLabel(status_frame, text="ติดต่อแจ้งปัญหา / เติมวัน (Discord)", font=ctk.CTkFont(family="Arial", size=11), text_color="#5865F2", cursor="hand2")
-        link_label.grid(row=2, column=0, columnspan=2, pady=(5, 10))
+        link_label.grid(row=3, column=0, columnspan=4, pady=(2, 5))
         link_label.bind("<Button-1>", lambda e: webbrowser.open(DISCORD_LINK))
 
         # 2. พื้นที่เนื้อหาหลัก
@@ -546,8 +565,8 @@ class NekoLauncher:
             if self.proxy_running: self.btn_manual.configure(text="STOP PROXY", fg_color=STATUS_RED, hover_color="#CD5C5C")
 
     def toggle_manual(self):
-        if self.proxy_running: self.stop_netch()
-        else: self.start_netch()
+        if self.proxy_running: self.stop_proxy()
+        else: self.start_proxy()
         self.update_button_state()
 
     def system_loop(self):
@@ -555,52 +574,136 @@ class NekoLauncher:
             self.game_running = is_game_running(GAME_EXE)
             if self.is_auto.get():
                 if self.game_running and not self.proxy_running:
-                    self.start_netch()
+                    self.start_proxy()
                 elif not self.game_running and self.proxy_running:
-                    self.stop_netch()
+                    self.stop_proxy()
             self.root.after(0, self.update_status_ui)
             time.sleep(REFRESH_RATE)
 
     def window_hunter_loop(self):
         while self.running:
             if self.proxy_running:
-                banish_netch_window()
-                time.sleep(0.02)
+                hide_proxy_window()
+                time.sleep(0.5)
             else:
                 time.sleep(1)
 
-    def start_netch(self):
+    def network_monitor_loop(self):
+        while self.running:
+            try:
+                # 1. Get Source IP
+                src_ip = "Unknown"
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.settimeout(1)
+                    s.connect(("8.8.8.8", 80))
+                    src_ip = s.getsockname()[0]
+                    s.close()
+                except Exception:
+                    src_ip = "127.0.0.1"
+
+                # 2. Get Dest IP
+                dst_ip = "N/A"
+                ping_ms = "N/A"
+                if self.proxy_running or self.game_running:
+                    try:
+                        target_exe = "ProxyCore.exe" if self.proxy_running else "pso2.exe"
+                        cmd = f'tasklist /FI "IMAGENAME eq {target_exe}" /NH /FO CSV'
+                        out = subprocess.check_output(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1', errors='ignore')
+                        pids = []
+                        for line in out.strip().splitlines():
+                            if target_exe.lower() in line.lower():
+                                parts = line.split('","')
+                                if len(parts) > 1:
+                                    pids.append(parts[1].replace('"', ''))
+                        
+                        for pid in pids:
+                            cmd_netstat = f'netstat -ano | findstr {pid}'
+                            try:
+                                net_out = subprocess.check_output(cmd_netstat, shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1', errors='ignore')
+                                for nline in net_out.strip().splitlines():
+                                    if "ESTABLISHED" in nline:
+                                        parts = nline.split()
+                                        if len(parts) >= 4:
+                                            dest = parts[2]
+                                            # Avoid localhost
+                                            if dest.count(':') == 1 and not dest.startswith('127.0.0.1') and not dest.startswith('0.0.0.0') and not dest.startswith('['):
+                                                dst_ip = dest.split(':')[0]
+                                                break
+                                if dst_ip != "N/A": break
+                            except: pass
+                    except: pass
+
+                # 3. Ping Dest IP
+                if dst_ip != "N/A":
+                    try:
+                        ping_out = subprocess.check_output(f"ping -n 1 -w 1000 {dst_ip}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1', errors='ignore')
+                        import re
+                        match = re.search(r'time[=<]([0-9]+)ms', ping_out, re.IGNORECASE)
+                        if not match:
+                            match = re.search(r'เวลา[=<]([0-9]+)ms', ping_out, re.IGNORECASE)
+                        if match:
+                            ping_ms = f"{match.group(1)} ms"
+                        else:
+                            ping_ms = "Timeout"
+                    except Exception:
+                        ping_ms = "Error"
+                
+                self.root.after(0, self.update_network_ui, src_ip, dst_ip, ping_ms)
+            except Exception:
+                pass
+            time.sleep(3)
+
+    def update_network_ui(self, src_ip, dst_ip, ping_ms):
+        try:
+            self.lbl_src_ip.configure(text=src_ip)
+            self.lbl_dst_ip.configure(text=dst_ip)
+            
+            ping_color = TEXT_MAIN
+            if "ms" in ping_ms:
+                try:
+                    val = int(ping_ms.replace(" ms", ""))
+                    if val < 100: ping_color = STATUS_GREEN
+                    elif val < 200: ping_color = TEXT_GOLD
+                    else: ping_color = STATUS_RED
+                except: pass
+            elif ping_ms in ["Timeout", "Error"]:
+                ping_color = STATUS_RED
+                
+            self.lbl_ping.configure(text=ping_ms, text_color=ping_color)
+        except: pass
+
+    def start_proxy(self):
         if self.proxy_running: return
         try:
-            target_path = NETCH_EXE
-            if not os.path.exists(target_path) and os.path.exists("Netch.exe"): target_path = "Netch.exe"
+            target_path = PROXY_CORE_EXE
+            if not os.path.exists(target_path) and os.path.exists("ProxyCore.exe"): target_path = "ProxyCore.exe"
             
             if os.path.exists(target_path):
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0 
                 
-                netch_dir = os.path.dirname(os.path.abspath(target_path))
+                core_dir = os.path.dirname(os.path.abspath(target_path))
                 
-                subprocess.Popen(target_path, cwd=netch_dir, startupinfo=startupinfo)
+                subprocess.Popen(target_path, cwd=core_dir, startupinfo=startupinfo)
                 self.proxy_running = True
                 threading.Thread(target=self.initial_banish_spam).start()
-            else:
-                print("Netch not found")
-        except Exception as e:
-            print(f"Error: {e}")
+        except Exception:
+            pass
 
     def initial_banish_spam(self):
         for _ in range(50): 
             if not self.running: break
-            banish_netch_window()
+            hide_proxy_window()
             time.sleep(0.05)
 
-    def stop_netch(self):
+    def stop_proxy(self):
         if not self.proxy_running: return
-        exe_name = os.path.basename(NETCH_EXE)
-        subprocess.run(f"taskkill /IM {exe_name}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        subprocess.run(f"taskkill /F /IM {exe_name}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        exe_name = os.path.basename(PROXY_CORE_EXE)
+        subprocess.run(["taskkill", "/IM", exe_name], creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.run(["taskkill", "/F", "/IM", exe_name], creationflags=subprocess.CREATE_NO_WINDOW)
         self.proxy_running = False
 
     def update_status_ui(self):
@@ -616,7 +719,7 @@ class NekoLauncher:
 
     def on_close(self):
         self.running = False
-        self.stop_netch()
+        self.stop_proxy()
         self.root.destroy()
         sys.exit()
 
@@ -632,8 +735,5 @@ if __name__ == "__main__":
         except: messagebox.showerror("Error", "Need Admin Rights")
         sys.exit()
     root = ctk.CTk()
-    app = LoginApp(root)
-    root.mainloop()
-
     app = LoginApp(root)
     root.mainloop()
