@@ -326,7 +326,7 @@ class NekoLauncher:
         screen_height = self.root.winfo_screenheight()
 
         window_width = 540
-        window_height = int(screen_height * 0.80)
+        window_height = 620
 
         center_x = int((screen_width - window_width) / 2)
         center_y = int((screen_height - window_height) / 2)
@@ -610,39 +610,38 @@ class NekoLauncher:
                     try:
                         target_exe = "ProxyCore.exe" if self.proxy_running else "pso2.exe"
                         cmd = f'tasklist /FI "IMAGENAME eq {target_exe}" /NH /FO CSV'
-                        out = subprocess.check_output(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1', errors='ignore')
+                        # Use mbcs for native Windows encoding
+                        out = subprocess.check_output(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('mbcs', errors='ignore')
                         pids = []
                         for line in out.strip().splitlines():
                             if target_exe.lower() in line.lower():
                                 parts = line.split('","')
                                 if len(parts) > 1:
-                                    pids.append(parts[1].replace('"', ''))
+                                    pids.append(parts[1].replace('"', '').strip())
                         
-                        for pid in pids:
-                            cmd_netstat = f'netstat -ano | findstr {pid}'
-                            try:
-                                net_out = subprocess.check_output(cmd_netstat, shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1', errors='ignore')
-                                for nline in net_out.strip().splitlines():
-                                    if "ESTABLISHED" in nline:
-                                        parts = nline.split()
-                                        if len(parts) >= 4:
+                        if pids:
+                            # Get all network connections once to avoid findstr exit code issues
+                            net_out = subprocess.check_output('netstat -ano', shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('mbcs', errors='ignore')
+                            for nline in net_out.strip().splitlines():
+                                if "ESTABLISHED" in nline:
+                                    parts = nline.split()
+                                    if len(parts) >= 5:
+                                        conn_pid = parts[-1]
+                                        if conn_pid in pids:
                                             dest = parts[2]
                                             # Avoid localhost
                                             if dest.count(':') == 1 and not dest.startswith('127.0.0.1') and not dest.startswith('0.0.0.0') and not dest.startswith('['):
                                                 dst_ip = dest.split(':')[0]
                                                 break
-                                if dst_ip != "N/A": break
-                            except: pass
                     except: pass
 
                 # 3. Ping Dest IP
                 if dst_ip != "N/A":
                     try:
-                        ping_out = subprocess.check_output(f"ping -n 1 -w 1000 {dst_ip}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('latin-1', errors='ignore')
+                        ping_out = subprocess.check_output(f"ping -n 1 -w 1000 {dst_ip}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW).decode('mbcs', errors='ignore')
                         import re
-                        match = re.search(r'time[=<]([0-9]+)ms', ping_out, re.IGNORECASE)
-                        if not match:
-                            match = re.search(r'เวลา[=<]([0-9]+)ms', ping_out, re.IGNORECASE)
+                        # Language-agnostic regex to match time=13ms or time<1ms or เวลา=13ms
+                        match = re.search(r'[=<]\s*([0-9]+)\s*ms', ping_out, re.IGNORECASE)
                         if match:
                             ping_ms = f"{match.group(1)} ms"
                         else:
