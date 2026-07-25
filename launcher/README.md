@@ -1,7 +1,7 @@
 # Launcher V2
 
-This directory is the rebuilt desktop launcher. The legacy implementation is
-preserved under `../original-code/v1/` for reference and rollback.
+This directory is the rebuilt desktop launcher. The sanitized legacy
+implementation is preserved on the separate `v1` branch for reference only.
 
 ## Run from source
 

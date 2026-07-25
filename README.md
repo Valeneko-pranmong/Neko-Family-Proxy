@@ -14,7 +14,7 @@ when the launcher is run.
 - `launcher/` - Modular desktop launcher (Python) and tests.
 - `admin-web/` - Admin dashboard, included as a normal folder in this repository.
 - `supabase/` - Supabase migrations and coupon/session documentation.
-- `original-code/v1/` - Read-only archive of the first launcher release.
+- `v1` branch - Sanitized, read-only archive of the first launcher release.
 - `icon_app.ico`, `image_11.png` - Shared application icon and pink-theme logo.
 
 ## Local development
@@ -52,5 +52,5 @@ validation gates, and the list of files intentionally excluded from GitHub.
 For the current implementation status and ordered handoff plan, see
 [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-Before the first public push, review the archived V1 code for any legacy
-endpoints or deployment-specific values and rotate or remove them as needed.
+The legacy V1 source is kept on the separate `v1` branch for reference only.
+New development belongs under `launcher/`.

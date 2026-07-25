@@ -14,7 +14,7 @@
 - ตัด Easy Donate ออกทั้งหมด ใช้ Admin ออก Coupon ให้ลูกค้าเอง
 - ตัด Game Monitor และ Network Monitor ออกจาก Launcher V2
 - คงธีมสีชมพู โลโก้ และไอคอนเดิมของ Neko Family
-- เก็บ Launcher รุ่นแรกไว้ที่ `original-code/v1/`
+- แยก Launcher รุ่นแรกไว้ใน branch `v1` แบบ sanitized archive
 - รวม `admin-web/` เป็นโฟลเดอร์ปกติของ repository หลัก
 - ไม่ใส่ `ProxyCore/` หรือ `ProxyCore.rar` ใน GitHub โดยเด็ดขาด
 
@@ -22,9 +22,10 @@
 
 ### โครงสร้าง Source Control
 
-- ย้าย `NekoLauncher.py` และ `NekoLauncher.spec` รุ่นเดิมไปไว้ใน
-  `original-code/v1/`
-- ตรวจสอบแล้วว่าไฟล์ V1 ที่ archive มี hash ตรงกับไฟล์เดิม
+- ย้าย `NekoLauncher.py` และ `NekoLauncher.spec` รุ่นเดิมไปไว้ใน branch
+  `v1` และลบออกจาก `main`
+- ลบ legacy endpoint, private invite และ plaintext password persistence
+  ออกจาก archive ก่อนเก็บใน branch `v1`
 - ลบ build artifact รุ่นเก่า (`build/`, `dist/`, `__pycache__/`) โดยส่งไป
   Recycle Bin เพื่อให้กู้คืนได้
 - รวม source ของ `admin-web/` เข้า repository หลักแล้ว
@@ -97,8 +98,8 @@
    allowlist, production URL และทดสอบสิทธิ์ Admin ให้ครบ
 6. `ProxyCore` ไม่อยู่ใน repository จึงต้องมีวิธีแจก runtime แยกต่างหากก่อน
    ทดสอบการเชื่อมต่อจริงหรือทำ installer
-7. `original-code/v1/` ยังมีค่า endpoint รุ่นเก่า ควรตรวจสอบ/rotate/redact
-   ก่อน push repository เป็น public
+7. branch `v1` เก็บเฉพาะ sanitized legacy archive และไม่ควรนำกลับมาใช้เป็น
+   implementation หลัก
 8. ยังไม่มี CI pipeline สำหรับ launcher และ admin-web
 9. `npm install` รายงาน dependency vulnerabilities 18 รายการ ต้องแยกตรวจ
    และอัปเดตก่อนใช้งาน production โดยเฉพาะรายการระดับ high
@@ -107,8 +108,7 @@
 
 ### P0 - ความปลอดภัยและฐานข้อมูล
 
-1. ตรวจสอบไฟล์ที่จะเผยแพร่ด้วย secret scan และ review
-   `original-code/v1/NekoLauncher.py`
+1. ตรวจสอบไฟล์ที่จะเผยแพร่ด้วย secret scan และ review branch `v1`
 2. ยืนยัน migration ที่อยู่บน Supabase project จริง
 3. Apply migration Coupon ที่ยัง pending ผ่าน Supabase CLI/MCP/SQL editor
    ที่ทีมอนุมัติ
@@ -168,7 +168,7 @@ npm run build
 - ห้าม commit `.env`, service-role key, private key, customer data หรือ
   `ProxyCore` ทุกกรณี
 - อย่าใช้ `git add -f` กับไฟล์ที่ถูก ignore
-- อย่า push จนกว่าจะ review legacy endpoint ใน V1 และตรวจ migration จริง
+- อย่า merge legacy code จาก branch `v1` กลับเข้า `main` และตรวจ migration จริง
 - ก่อนแก้ schema ให้สร้าง migration ใหม่ ห้ามแก้ migration ที่เคย apply แล้ว
 
 ## Definition of Done สำหรับ Rebuild รุ่นแรก

@@ -5,7 +5,7 @@
 - `launcher/` - Launcher V2 source and tests.
 - `admin-web/` - Admin dashboard source, tracked as a normal folder in this repository.
 - `supabase/` - Database migrations and coupon/session documentation.
-- `original-code/v1/` - Read-only archive of the first launcher release.
+- `v1` branch - Sanitized, read-only archive of the first launcher release.
 - `ProxyCore/` - Local runtime binary bundle. It is intentionally excluded from this repository.
 
 ## Local setup
