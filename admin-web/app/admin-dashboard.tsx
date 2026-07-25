@@ -184,7 +184,14 @@ export default function AdminDashboard() {
       setConfigured(Boolean(payload.configured));
       const data = payload.data;
       if (section === "overview" && data) {
-        setOverview(data as typeof demoOverview);
+        const incoming = data as Partial<typeof demoOverview>;
+        setOverview({
+          ...demoOverview,
+          ...incoming,
+          stats: { ...demoOverview.stats, ...(incoming.stats ?? {}) },
+          trend: Array.isArray(incoming.trend) ? incoming.trend : [],
+          recent: Array.isArray(incoming.recent) ? incoming.recent : [],
+        });
       } else if (section === "users" && Array.isArray(data)) {
         setUsers(data as Row[]);
       } else if (section === "licenses" && Array.isArray(data)) {

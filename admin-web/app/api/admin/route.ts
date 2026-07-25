@@ -221,6 +221,7 @@ async function getOverview() {
   return {
     configured: true,
     stats: { users, activeLicenses, activeSessions, unusedCoupons },
+    trend: [],
     recent: audit.map((event) => ({
       id: String(event.id),
       type: event.event_type,
