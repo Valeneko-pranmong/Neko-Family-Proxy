@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neko-family-launcher"
+version = "5.0.0a1"
+description = "Neko Family Proxy desktop launcher"
+requires-python = ">=3.11"
+dependencies = [
+  "customtkinter==5.2.2",
+  "Pillow==12.2.0",
+  "pystray==0.19.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.5",
+  "ruff==0.11.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.setuptools.packages.find]
+where = ["src"]

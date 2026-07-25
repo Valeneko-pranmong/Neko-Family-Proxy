@@ -9,6 +9,9 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+node_modules/
+.next/
+outputs/
 develop-eggs/
 dist/
 downloads/
@@ -25,13 +28,19 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-ProxyCore
+# Proprietary/runtime bundle: keep it local and out of the public repository.
+/ProxyCore/
+/ProxyCore.rar
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+
+# Keep archived original release definitions
+!original-code/
+!original-code/**
 
 # Installer logs
 pip-log.txt
@@ -130,6 +139,13 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.bundle
 .venv
 env/
 venv/
