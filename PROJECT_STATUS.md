@@ -14,7 +14,7 @@
 - ตัด Easy Donate ออกทั้งหมด ใช้ Admin ออก Coupon ให้ลูกค้าเอง
 - ตัด Game Monitor และ Network Monitor ออกจาก Launcher V2
 - คงธีมสีชมพู โลโก้ และไอคอนเดิมของ Neko Family
-- แยก Launcher รุ่นแรกไว้ใน branch `v1` แบบ sanitized archive
+- เก็บ Launcher รุ่นแรกไว้ที่ `original-code/v1/` เพื่ออ้างอิงเท่านั้น
 - รวม `admin-web/` เป็นโฟลเดอร์ปกติของ repository หลัก
 - ไม่ใส่ `ProxyCore/` หรือ `ProxyCore.rar` ใน GitHub โดยเด็ดขาด
 
@@ -22,10 +22,10 @@
 
 ### โครงสร้าง Source Control
 
-- ย้าย `NekoLauncher.py` และ `NekoLauncher.spec` รุ่นเดิมไปไว้ใน branch
-  `v1` และลบออกจาก `main`
-- ลบ legacy endpoint, private invite และ plaintext password persistence
-  ออกจาก archive ก่อนเก็บใน branch `v1`
+- ย้าย `NekoLauncher.py` และ `NekoLauncher.spec` รุ่นเดิมไปไว้ใน
+  `original-code/v1/`
+- Legacy archive ยังมี endpoint และวิธีเก็บรหัสผ่านรุ่นเก่า จึงห้ามนำกลับมาใช้
+  และต้องตรวจ/ลบก่อนเปิด repository เป็น public
 - ลบ build artifact รุ่นเก่า (`build/`, `dist/`, `__pycache__/`) โดยส่งไป
   Recycle Bin เพื่อให้กู้คืนได้
 - รวม source ของ `admin-web/` เข้า repository หลักแล้ว
@@ -49,10 +49,14 @@
 - guard เมื่อไม่พบ executable
 - UI shell ที่ใช้ธีมสีชมพูและโหลดโลโก้/ไอคอนเดิม
 - ตัด model/event ของ Game Monitor และ Network Monitor ออกแล้ว
-- มี unit tests สำหรับ controller และ event bus
-
-ขณะนี้ Launcher V2 เป็น shell ที่พร้อมต่อ adapter จริง แต่ยังไม่ใช่
-ระบบ Login/Coupon แบบ end-to-end
+- มี unit tests สำหรับ controller, event bus, workflow, Supabase adapter,
+  secure storage และ installation identity
+- ต่อ Supabase Auth สำหรับสมัครสมาชิก/Login/Logout/restore session แล้ว
+- ต่อ Coupon, entitlement, session claim/heartbeat/release และ guard ก่อนเปิด
+  ProxyCore แล้ว
+- มี UI ภาษาไทยสำหรับ Login/Register/Redeem Coupon และสถานะสิทธิ์ใช้งาน
+- มี PyInstaller spec และ Windows installer/release workflow โดยไม่รวม
+  `ProxyCore`
 
 ### Admin Web
 
@@ -61,6 +65,8 @@
 - เพิ่มหน้า `/guide` เป็นคู่มือการใช้งานภาษาไทย
 - เพิ่มคู่มือแบบไฟล์ Markdown ที่ `admin-web/USER_GUIDE_TH.md`
 - ทดสอบด้วย `npm run build`, `npm run lint` และ `npm test` ผ่านทั้งหมด
+- อัปเดต Next.js เป็น 16.2.11 และ pin patched PostCSS/Sharp; production audit
+  ไม่มี vulnerability
 - เผยแพร่เวอร์ชันล่าสุดแบบ private สำหรับทีมแล้วที่
   `https://neko-control-room.sachems-flyby2za1.chatgpt.site`
 
@@ -82,36 +88,44 @@
 - Coupon ใช้ได้ครั้งเดียวและรองรับการต่ออายุสิทธิ์
 - จำกัดความพยายาม redeem และล็อก concurrent redemption
 
+ตรวจสอบกับ project จริงแล้วเมื่อ 25 กรกฎาคม 2026:
+
+- ประวัติ migration ฝั่ง local ตรงกับ project จริง
+- Apply migration hardening สำหรับ concurrent license update, สิทธิ์เขียนตาราง
+  และ foreign-key index แล้ว
+- เปิด `launcher` schema ผ่าน Data API แล้ว
+- Security advisor ไม่มีรายการระดับ WARN/ERROR
+- ยังไม่มี test account หรือข้อมูลทดสอบ จึงยังต้องรัน
+  `supabase/SECURITY_TEST_PLAN.md` ก่อนเปิด UI ให้ผู้ใช้
+
 ## สถานะที่ยังไม่เสร็จ / ข้อจำกัดปัจจุบัน
 
-1. Launcher ยังไม่ได้ต่อ Supabase Auth จริง ต้องทำ adapter สำหรับ register,
-   login, logout, refresh session และ `getUser`.
-2. Launcher ยังไม่ได้เรียก RPC สำหรับ entitlement และ session control จริง
-   จึงยังไม่สามารถกัน Login ซ้ำแบบใช้งานจริงได้
-3. หน้าสมัครสมาชิก, หน้า Login และหน้า Redeem Coupon ของฝั่ง Launcher ยังต้อง
-   เชื่อมกับ state/controller ใหม่
-4. Migration Coupon (`20260725091805_create_coupon_redemption.sql`) เป็นไฟล์
-   local ที่เตรียมไว้ แต่ยังต้องตรวจสอบและ apply ไปยัง Supabase project ผ่าน
-   workflow ที่มีสิทธิ์ เนื่องจาก Supabase MCP ปัจจุบันตอบ HTTP 451
-   (`no_biscuit_no_service`)
-5. `admin-web/` มี source พร้อมใช้งาน แต่ต้องตั้งค่า secret ฝั่ง server,
+1. Launcher flow ถูกต่อครบใน source และ unit tests แล้ว แต่ live integration
+   test ยังไม่ได้รัน เนื่องจาก repository ไม่มี disposable test credentials
+   หรือคูปองทดสอบ
+2. Migration Coupon (`20260725110225_create_coupon_redemption.sql`) ถูก apply
+   ไปยัง Supabase project และเปิด Data API แล้ว แต่ยังต้องทดสอบ RLS และ
+   concurrency ด้วย test account ให้ครบก่อนเปิดใช้ Coupon UI
+3. `admin-web/` มี source พร้อมใช้งานและ build ผ่าน แต่ต้องตั้งค่า secret ฝั่ง server,
    allowlist, production URL และทดสอบสิทธิ์ Admin ให้ครบ
-6. `ProxyCore` ไม่อยู่ใน repository จึงต้องมีวิธีแจก runtime แยกต่างหากก่อน
-   ทดสอบการเชื่อมต่อจริงหรือทำ installer
-7. branch `v1` เก็บเฉพาะ sanitized legacy archive และไม่ควรนำกลับมาใช้เป็น
-   implementation หลัก
-8. ยังไม่มี CI pipeline สำหรับ launcher และ admin-web
-9. `npm install` รายงาน dependency vulnerabilities 18 รายการ ต้องแยกตรวจ
-   และอัปเดตก่อนใช้งาน production โดยเฉพาะรายการระดับ high
+4. `ProxyCore` ไม่อยู่ใน repository ตามการออกแบบ ต้องจัดส่งผ่าน controlled
+   channel ตาม `RUNTIME_DISTRIBUTION.md` และทดสอบ runtime จริงแยกต่างหาก
+5. Windows executable build และ smoke test ผ่านในเครื่อง local แล้ว แต่
+   installer workflow ยังต้องรันบน GitHub Actions ครั้งแรก และ artifact
+   รุ่นแรกยังไม่ได้ code-sign
+6. `original-code/v1/` ยังมี legacy endpoint และ plaintext password
+   persistence ห้ามเผยแพร่เป็น public ก่อน sanitize/rotate
+7. Full npm audit ยังมีรายการจากเครื่องมือ dev แต่
+   `npm audit --omit=dev --audit-level=high` สำหรับ production ผ่านแล้ว
 
 ## ลำดับงานถัดไปที่แนะนำ
 
 ### P0 - ความปลอดภัยและฐานข้อมูล
 
-1. ตรวจสอบไฟล์ที่จะเผยแพร่ด้วย secret scan และ review branch `v1`
-2. ยืนยัน migration ที่อยู่บน Supabase project จริง
-3. Apply migration Coupon ที่ยัง pending ผ่าน Supabase CLI/MCP/SQL editor
-   ที่ทีมอนุมัติ
+1. ตรวจสอบไฟล์ที่จะเผยแพร่ด้วย repository safety check และ sanitize/rotate
+   legacy endpoint ใน `original-code/v1/`
+2. ยืนยัน migration ที่อยู่บน Supabase project จริงและให้ประวัติ local ตรงกัน
+3. ทดสอบ migration Coupon ที่ apply แล้วด้วย test account
 4. เปิด `launcher` schema ใน Supabase Data API ตามเอกสาร
    `supabase/README.md`
 5. ทดสอบ RLS, role escalation, coupon replay, concurrent redeem และ
@@ -119,22 +133,22 @@
 
 ### P1 - ต่อระบบใช้งานจริง
 
-1. เพิ่ม Supabase client ฝั่ง Launcher โดยใช้ publishable/anon key เท่านั้น
-2. ทำ flow สมัครสมาชิก, Login, Logout และ session refresh
-3. ทำ `claim_session` เมื่อ Login และ heartbeat ตามช่วงเวลา
-4. เมื่อมี session ใหม่ ให้ session เก่าถูก revoke/ปิดการใช้งานอย่างชัดเจน
-5. ต่อ `get entitlement` และบังคับตรวจสิทธิ์ก่อนเริ่ม proxy
-6. เพิ่มหน้า Redeem Coupon และข้อความ error ที่ไม่เปิดเผยข้อมูลภายใน
-7. ต่อ Admin web กับ Supabase server client และตรวจสิทธิ์ Admin ทุก route
+1. ใส่ publishable key ในเครื่องทดสอบและรัน Launcher กับ Auth project จริง
+2. ยืนยัน email confirmation, session restore และ sign-out บน Windows
+3. ยืนยัน heartbeat/revoke เมื่อ Login ซ้ำจาก client ที่สอง
+4. ยืนยัน Launcher ไม่เริ่ม ProxyCore เมื่อ license หมดอายุหรือ session ถูก revoke
+5. ตั้งค่า Admin server secret, allowlist และ production URL ผ่านระบบ hosting
+6. ทดสอบ Admin role, mutation RPC และ audit trail ด้วย disposable admin
 
 ### P2 - ทดสอบและเตรียมส่งมอบ
 
-1. เพิ่ม integration test สำหรับ Auth, Coupon และ single-session behavior
-2. เพิ่ม lint/build/test ใน GitHub Actions
-3. กำหนดวิธีจัดเก็บและแจก `ProxyCore` แยกจาก source repository
-4. สร้าง installer/release pipeline โดยไม่ฝัง secret ใน artifact
-5. ตรวจสอบโลโก้ ธีมชมพู และข้อความทุกหน้าก่อน release
-6. Commit เป็นชุดเล็ก ๆ ตาม feature แล้วเปิด Pull Request ให้ทีม review
+1. รัน manual `Supabase integration` workflow ด้วย disposable account และ
+   fresh coupon เพื่อยืนยัน Auth, Coupon replay และ single-session บน project จริง
+2. รัน `CI` workflow บน Pull Request แรกและแก้ความต่างของ GitHub runner หากมี
+3. รัน `Windows release` แบบ manual เพื่อตรวจ installer artifact และ checksum
+4. กำหนด code-signing certificate ก่อน release ให้ลูกค้าจริง
+5. ตรวจสอบโลโก้ ธีมชมพู ข้อความ และ runtime จริงบน Windows ก่อน tag release
+6. เปิด Pull Request ให้ทีม review แล้วจึงสร้าง tag `v*`
 
 ## คำสั่งสำหรับผู้รับช่วงงาน
 
@@ -149,18 +163,20 @@ git add --dry-run .
 
 ```powershell
 Set-Location launcher
-$env:PYTHONDONTWRITEBYTECODE = "1"
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m ruff check src tests
+.\.venv\Scripts\python.exe -m pytest -q -m "not integration"
 ```
 
 รัน Admin web:
 
 ```powershell
 Set-Location admin-web
-npm install
+npm ci
 npm run lint
-npm run build
+npm test
+npm audit --omit=dev --audit-level=high
 ```
 
 ข้อควรระวัง:
@@ -168,7 +184,7 @@ npm run build
 - ห้าม commit `.env`, service-role key, private key, customer data หรือ
   `ProxyCore` ทุกกรณี
 - อย่าใช้ `git add -f` กับไฟล์ที่ถูก ignore
-- อย่า merge legacy code จาก branch `v1` กลับเข้า `main` และตรวจ migration จริง
+- อย่านำ legacy code จาก `original-code/v1/` กลับมาใช้ และตรวจ migration จริง
 - ก่อนแก้ schema ให้สร้าง migration ใหม่ ห้ามแก้ migration ที่เคย apply แล้ว
 
 ## Definition of Done สำหรับ Rebuild รุ่นแรก

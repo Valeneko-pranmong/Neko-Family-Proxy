@@ -147,7 +147,7 @@ function SectionHeading({
   );
 }
 
-export default function AdminDashboard() {
+export default function AdminDashboard({ viewerName }: { viewerName: string }) {
   const [active, setActive] = useState<Section>("overview");
   const [search, setSearch] = useState("");
   const [configured, setConfigured] = useState(false);
@@ -637,7 +637,7 @@ export default function AdminDashboard() {
                   <td>{stringValue(coupon.used_by)}</td>
                   <td>{formatDateTime(coupon.created_at)}</td>
                   <td>
-                    {coupon.status === "available" && (
+                    {(coupon.status === "available" || coupon.status === "active") && (
                       <button
                         className="icon-button"
                         title="ยกเลิกชุดคูปอง"
@@ -828,7 +828,7 @@ export default function AdminDashboard() {
             </button>
             <div className="admin-chip">
               <span className="avatar">NF</span>
-              <span>ผู้ดูแล</span>
+              <span>{viewerName}</span>
             </div>
           </div>
         </header>

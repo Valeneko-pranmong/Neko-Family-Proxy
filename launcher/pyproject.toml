@@ -9,8 +9,11 @@ description = "Neko Family Proxy desktop launcher"
 requires-python = ">=3.11"
 dependencies = [
   "customtkinter==5.2.2",
+  "keyring==25.7.0",
   "Pillow==12.2.0",
+  "python-dotenv==1.2.2",
   "pystray==0.19.5",
+  "supabase==2.31.0",
 ]
 
 [project.optional-dependencies]
@@ -18,10 +21,16 @@ dev = [
   "pytest==8.3.5",
   "ruff==0.11.2",
 ]
+release = [
+  "pyinstaller==6.21.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+  "integration: requires disposable Supabase credentials and changes remote test data",
+]
 
 [tool.ruff]
 line-length = 100

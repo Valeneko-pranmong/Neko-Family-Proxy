@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Protocol
 
 from neko_launcher.domain.events import Event
+from neko_launcher.domain.models import (
+    AuthenticatedUser,
+    CouponRedemption,
+    RegistrationResult,
+    SessionClaim,
+)
 
 
 class EventPublisher(Protocol):
@@ -23,13 +28,35 @@ class ProxyGateway(Protocol):
 
 
 class AuthGateway(Protocol):
-    def sign_in(self, email: str, password: str) -> tuple[str, str]:
-        """Return user_id and normalized email after successful authentication."""
+    def sign_up(self, email: str, password: str) -> RegistrationResult:
+        ...
+
+    def sign_in(self, email: str, password: str) -> AuthenticatedUser:
+        ...
+
+    def restore_session(self) -> AuthenticatedUser | None:
+        ...
+
+    def sign_out(self) -> None:
         ...
 
 
 class EntitlementGateway(Protocol):
-    def claim_session(self, product_code: str, installation_key: str) -> str:
+    def claim_session(
+        self,
+        product_code: str,
+        installation_key_hash: str,
+        display_name: str,
+    ) -> SessionClaim:
+        ...
+
+    def heartbeat_session(self, session_id: str) -> bool:
+        ...
+
+    def release_session(self, session_id: str) -> bool:
+        ...
+
+    def redeem_coupon(self, code: str) -> CouponRedemption:
         ...
 
 
@@ -41,4 +68,14 @@ class SecureStore(Protocol):
         ...
 
     def delete(self, key: str) -> None:
+        ...
+
+
+class InstallationIdentity(Protocol):
+    @property
+    def key_hash(self) -> str:
+        ...
+
+    @property
+    def display_name(self) -> str:
         ...

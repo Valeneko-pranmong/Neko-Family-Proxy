@@ -265,6 +265,43 @@ button {
   font-weight: 800;
 }
 
+.access-denied {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.access-denied section {
+  width: min(540px, 100%);
+  padding: 40px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgba(73, 38, 59, 0.18);
+  text-align: center;
+}
+
+.access-denied span {
+  color: var(--cyan-deep);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.access-denied h1 {
+  margin: 14px 0 8px;
+  font-size: clamp(24px, 5vw, 36px);
+}
+
+.access-denied p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .demo-banner {
   display: flex;
   align-items: center;
