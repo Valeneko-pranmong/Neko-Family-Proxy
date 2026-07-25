@@ -170,7 +170,7 @@ begin
       v_normalized := 'NEKO' || v_secret;
       begin
         insert into public.coupons (batch_id, code_hash)
-        values (v_batch_id, digest(v_normalized, 'sha256'));
+        values (v_batch_id, encode(digest(v_normalized, 'sha256'), 'hex'));
         exit;
       exception when unique_violation then
         null;
