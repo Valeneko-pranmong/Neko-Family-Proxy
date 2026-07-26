@@ -14,9 +14,11 @@
 
 ```powershell
 Set-Location launcher
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env.local
-$env:PYTHONPATH = "src"
-python -m neko_launcher.main
+.\.venv\Scripts\python.exe -m ruff check src tests
+.\.venv\Scripts\python.exe -m pytest -q -m "not integration"
 ```
 
 Do not put service-role keys, private keys, or customer data in `.env.local`.
@@ -30,6 +32,7 @@ Use the package manager and scripts documented in `admin-web/README.md`. Keep
 
 - Run the launcher syntax and unit checks.
 - Run the admin-web test/lint scripts.
+- Run `python scripts/check_repository_safety.py` from the repository root.
 - Check `git diff --check`.
 - Confirm no `.env`, token, private key, build output, `node_modules`, or customer data is included.
 - Do not commit `ProxyCore` binaries or archives. Distribute them separately
@@ -38,3 +41,7 @@ Use the package manager and scripts documented in `admin-web/README.md`. Keep
 The former `admin-web` repository history is preserved locally in an ignored
 Git bundle under `original-code/admin-web-history.bundle`; the working source
 is now part of this repository.
+
+Live Supabase integration tests run only with disposable accounts through the
+manual `Supabase integration` workflow. Do not use customer accounts or reuse a
+production coupon for this gate.

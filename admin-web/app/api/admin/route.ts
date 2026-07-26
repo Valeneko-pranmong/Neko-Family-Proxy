@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAdminViewer } from "../../lib/admin-auth";
 import {
+  adminRpc,
   authAdminGet,
   isSupabaseConfigured,
   tableCount,
   tableGet,
-  tablePatch,
-  tablePost,
 } from "../../lib/supabase-admin";
 import {
   demoCoupons,
@@ -34,6 +33,19 @@ type Profile = {
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ ok: false, error: message }, { status });
+}
+
+function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  const host =
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (!host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 async function guard() {
@@ -249,86 +261,6 @@ async function getAudit() {
   });
 }
 
-function randomHex(bytes = 16): string {
-  const values = new Uint8Array(bytes);
-  crypto.getRandomValues(values);
-  return Array.from(values, (value) => value.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
-}
-
-async function hashCode(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(digest), (value) =>
-    value.toString(16).padStart(2, "0"),
-  ).join("");
-}
-
-async function generateCoupons(body: {
-  productCode: string;
-  durationDays: number;
-  quantity: number;
-  expiresAt?: string | null;
-  note?: string | null;
-  createdBy?: string;
-}) {
-  const products = await tableGet<Array<{ id: string; code: string }>>(
-    "products",
-    { select: "id,code", code: `eq.${body.productCode}` },
-  );
-  const product = products[0];
-  if (!product) throw new Error("Product not found");
-
-  const codes = await Promise.all(
-    Array.from({ length: body.quantity }, async () => {
-      const secret = randomHex(16);
-      const normalized = `NEKO${secret}`;
-      return {
-        code: `NEKO-${secret.slice(0, 8)}-${secret.slice(8, 16)}-${secret.slice(
-          16,
-          24,
-        )}-${secret.slice(24, 32)}`,
-        code_hash: await hashCode(normalized),
-      };
-    }),
-  );
-
-  const batches = await tablePost<
-    Array<{ id: string; duration_days: number; quantity: number }>
-  >("coupon_batches", {
-    product_id: product.id,
-    duration_days: body.durationDays,
-    quantity: body.quantity,
-    expires_at: body.expiresAt || null,
-    note: body.note || null,
-    created_by: body.createdBy || null,
-  });
-  const batch = batches[0];
-  if (!batch) throw new Error("Could not create coupon batch");
-
-  try {
-    await tablePost(
-      "coupons",
-      codes.map((coupon) => ({ ...coupon, batch_id: batch.id })),
-    );
-  } catch (error) {
-    await tablePatch(
-      "coupon_batches",
-      { id: `eq.${batch.id}` },
-      { revoked_at: new Date().toISOString() },
-    );
-    throw error;
-  }
-
-  return {
-    batch,
-    codes: codes.map((coupon) => coupon.code),
-  };
-}
-
 export async function GET(request: Request) {
   const viewer = await guard();
   if (!viewer) return jsonError("Admin access required", 403);
@@ -376,90 +308,99 @@ export async function POST(request: Request) {
   if (!isSupabaseConfigured()) {
     return jsonError("Supabase admin connection is not configured", 503);
   }
+  if (!viewer.actorId) return jsonError("Admin profile required", 403);
+  if (!isSameOrigin(request)) return jsonError("Cross-origin request rejected", 403);
+  if (!request.headers.get("content-type")?.startsWith("application/json")) {
+    return jsonError("JSON request required", 415);
+  }
 
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? "");
+    const actorId = viewer.actorId;
 
     if (action === "set_user_status") {
-      await tablePatch(
-        "profiles",
-        { id: `eq.${String(body.userId)}` },
-        { status: String(body.status) },
-      );
+      const status = String(body.status);
+      if (!["active", "suspended", "banned"].includes(status)) {
+        return jsonError("Invalid user status");
+      }
+      await adminRpc<boolean>("admin_set_user_status", {
+        p_actor_id: actorId,
+        p_user_id: String(body.userId),
+        p_status: status,
+      });
       return NextResponse.json({ ok: true });
     }
 
     if (action === "revoke_license") {
-      await tablePatch(
-        "licenses",
-        { id: `eq.${String(body.licenseId)}` },
-        { status: "revoked" },
-      );
+      await adminRpc<boolean>("admin_revoke_license", {
+        p_actor_id: actorId,
+        p_license_id: String(body.licenseId),
+      });
       return NextResponse.json({ ok: true });
     }
 
     if (action === "extend_license") {
-      const licenses = await tableGet<
-        Array<{ id: string; valid_until: string }>
-      >("licenses", {
-        select: "id,valid_until",
-        id: `eq.${String(body.licenseId)}`,
-        limit: "1",
-      });
-      const current = licenses[0];
-      if (!current) return jsonError("License not found", 404);
-      const base = Math.max(Date.now(), Date.parse(current.valid_until));
       const days = Number(body.days);
-      if (!Number.isFinite(days) || days < 1 || days > 3650) {
+      if (!Number.isInteger(days) || days < 1 || days > 3650) {
         return jsonError("Invalid extension days");
       }
-      const validUntil = new Date(base + days * 86400000).toISOString();
-      await tablePatch(
-        "licenses",
-        { id: `eq.${String(body.licenseId)}` },
-        { valid_until: validUntil, status: "active" },
-      );
+      const validUntil = await adminRpc<string>("admin_extend_license", {
+        p_actor_id: actorId,
+        p_license_id: String(body.licenseId),
+        p_days: days,
+      });
       return NextResponse.json({ ok: true, valid_until: validUntil });
     }
 
     if (action === "revoke_session") {
-      await tablePatch(
-        "launcher_sessions",
-        { id: `eq.${String(body.sessionId)}` },
-        { revoked_at: new Date().toISOString() },
-      );
+      await adminRpc<boolean>("admin_revoke_session", {
+        p_actor_id: actorId,
+        p_session_id: String(body.sessionId),
+      });
       return NextResponse.json({ ok: true });
     }
 
     if (action === "revoke_batch") {
-      await tablePatch(
-        "coupon_batches",
-        { id: `eq.${String(body.batchId)}` },
-        { revoked_at: new Date().toISOString() },
-      );
-      await tablePatch(
-        "coupons",
-        { batch_id: `eq.${String(body.batchId)}`, status: "eq.active" },
-        { status: "revoked" },
-      );
+      await adminRpc<boolean>("admin_revoke_coupon_batch", {
+        p_actor_id: actorId,
+        p_batch_id: String(body.batchId),
+      });
       return NextResponse.json({ ok: true });
     }
 
     if (action === "generate_coupons") {
-      const users = await listAuthUsers();
-      const creator = users.find(
-        (user) => user.email?.toLowerCase() === viewer.email.toLowerCase(),
+      const durationDays = Number(body.durationDays);
+      const quantity = Number(body.quantity);
+      const note = body.note ? String(body.note).trim() : null;
+      if (
+        !Number.isInteger(durationDays) ||
+        durationDays < 1 ||
+        durationDays > 3650 ||
+        !Number.isInteger(quantity) ||
+        quantity < 1 ||
+        quantity > 500 ||
+        (note?.length ?? 0) > 500
+      ) {
+        return jsonError("Invalid coupon batch");
+      }
+      const rows = await adminRpc<Array<{ batch_id: string; code: string }>>(
+        "admin_generate_coupon_batch",
+        {
+          p_actor_id: actorId,
+          p_product_code: String(body.productCode),
+          p_duration_days: durationDays,
+          p_quantity: quantity,
+          p_expires_at: body.expiresAt ? String(body.expiresAt) : null,
+          p_note: note,
+        },
       );
-      const result = await generateCoupons({
-        productCode: String(body.productCode),
-        durationDays: Number(body.durationDays),
-        quantity: Number(body.quantity),
-        expiresAt: body.expiresAt ? String(body.expiresAt) : null,
-        note: body.note ? String(body.note) : null,
-        createdBy: creator?.id,
+      if (!rows.length) throw new Error("Coupon generation returned no rows");
+      return NextResponse.json({
+        ok: true,
+        batch: { id: rows[0].batch_id },
+        codes: rows.map((row) => row.code),
       });
-      return NextResponse.json({ ok: true, ...result });
     }
 
     return jsonError("Unknown admin action");

@@ -8,7 +8,7 @@ dependencies, or unapproved third-party binaries.
 
 - `launcher/`
 - `supabase/`
-- `original-code/v1/`
+- `original-code/v1/` (legacy archive; endpoint review required before public release)
 - `admin-web/` (merged as a normal folder in this repository)
 - `README.md`, `CONTRIBUTING.md`, assets, and configuration templates
 

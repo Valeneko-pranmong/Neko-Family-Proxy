@@ -3,15 +3,19 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
+process.env.ADMIN_EMAIL_ALLOWLIST ??= "admin@example.com";
 
-async function render(pathname = "/") {
+async function render(pathname = "/", email = "admin@example.com") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
     new Request(`http://localhost${pathname}`, {
-      headers: { accept: "text/html" },
+      headers: {
+        accept: "text/html",
+        "oai-authenticated-user-email": email,
+      },
     }),
     {
       ASSETS: {
@@ -67,4 +71,34 @@ test("keeps the Thai white theme and guide route in source", async () => {
   await assert.rejects(
     readFile(new URL("app/_sites-preview/SkeletonPreview.tsx", templateRoot)),
   );
+});
+
+test("denies a workspace user who is not on the admin allowlist", async () => {
+  const response = await render("/", "intruder@example.com");
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ/);
+});
+
+test("keeps admin mutations behind allowlist, role checks, and RPCs", async () => {
+  const [route, adminAuth, migration] = await Promise.all([
+    readFile(new URL("../app/api/admin/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/admin-auth.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL(
+        "../../supabase/migrations/20260725134935_secure_admin_operations.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(route, /adminRpc/);
+  assert.doesNotMatch(route, /tablePatch|tablePost|crypto\.subtle/);
+  assert.match(adminAuth, /ADMIN_EMAIL_ALLOWLIST/);
+  assert.match(adminAuth, /resolveAdminActor/);
+  assert.match(migration, /admin_generate_coupon_batch/);
+  assert.match(migration, /admin_revoke_coupon_batch/);
+  assert.match(migration, /grant execute[\s\S]+to service_role/);
+  assert.match(migration, /from public, anon, authenticated/);
 });

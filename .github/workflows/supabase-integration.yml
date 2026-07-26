@@ -1,0 +1,47 @@
+name: Supabase integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-integration
+  cancel-in-progress: false
+
+jobs:
+  launcher-live-flow:
+    runs-on: ubuntu-latest
+    environment: supabase-integration
+    defaults:
+      run:
+        working-directory: launcher
+    env:
+      NEKO_INTEGRATION_SUPABASE_URL: ${{ secrets.NEKO_INTEGRATION_SUPABASE_URL }}
+      NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY }}
+      NEKO_INTEGRATION_EMAIL: ${{ secrets.NEKO_INTEGRATION_EMAIL }}
+      NEKO_INTEGRATION_PASSWORD: ${{ secrets.NEKO_INTEGRATION_PASSWORD }}
+      NEKO_INTEGRATION_COUPON: ${{ secrets.NEKO_INTEGRATION_COUPON }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: launcher/pyproject.toml
+      - name: Require disposable test credentials
+        shell: python
+        run: |
+          import os
+          required = (
+              "NEKO_INTEGRATION_SUPABASE_URL",
+              "NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY",
+              "NEKO_INTEGRATION_EMAIL",
+              "NEKO_INTEGRATION_PASSWORD",
+          )
+          missing = [name for name in required if not os.getenv(name)]
+          if missing:
+              raise SystemExit("Missing integration secrets: " + ", ".join(missing))
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q -m integration

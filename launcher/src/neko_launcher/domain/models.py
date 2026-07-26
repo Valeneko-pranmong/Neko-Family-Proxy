@@ -37,6 +37,32 @@ class Entitlement:
 
 
 @dataclass(frozen=True)
+class AuthenticatedUser:
+    user_id: str
+    email: str
+
+
+@dataclass(frozen=True)
+class RegistrationResult:
+    email: str
+    requires_email_confirmation: bool
+    user: AuthenticatedUser | None = None
+
+
+@dataclass(frozen=True)
+class SessionClaim:
+    session_id: str
+    entitlement: Entitlement
+
+
+@dataclass(frozen=True)
+class CouponRedemption:
+    product_code: str
+    days_added: int
+    valid_until: datetime
+
+
+@dataclass(frozen=True)
 class AppState:
     auth_status: AuthStatus = AuthStatus.SIGNED_OUT
     user_id: str | None = None

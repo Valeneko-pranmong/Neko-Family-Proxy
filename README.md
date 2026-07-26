@@ -23,10 +23,10 @@ when the launcher is run.
 
 ```powershell
 Set-Location launcher
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env.local
-$env:PYTHONDONTWRITEBYTECODE = "1"
-$env:PYTHONPATH = "src"
-python -m neko_launcher.main
+.\.venv\Scripts\python.exe -m neko_launcher.main
 ```
 
 Set `NEKO_PROXY_CORE_PATH` in `launcher/.env.local` to the separately supplied
@@ -52,5 +52,17 @@ validation gates, and the list of files intentionally excluded from GitHub.
 For the current implementation status and ordered handoff plan, see
 [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-Before the first public push, review the archived V1 code for any legacy
-endpoints or deployment-specific values and rotate or remove them as needed.
+The legacy V1 source is archived for reference only. It still requires endpoint
+review before any public release. New development belongs under `launcher/`.
+
+## Validation and releases
+
+GitHub Actions validates repository safety, Launcher lint/tests, Admin
+lint/build/tests, and the production dependency audit. A separate manual
+workflow runs destructive Supabase integration tests with disposable
+credentials. Version tags build the Windows executable and installer with
+SHA-256 checksums.
+
+`ProxyCore` is never included in repository or release artifacts. See
+[RUNTIME_DISTRIBUTION.md](RUNTIME_DISTRIBUTION.md) for the controlled delivery
+contract.

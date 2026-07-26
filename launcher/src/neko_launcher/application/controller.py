@@ -79,7 +79,16 @@ class ApplicationController:
         elif isinstance(event, SessionClaimed):
             self._update(session_id=event.session_id, last_error=None)
         elif isinstance(event, SessionRevoked):
-            self._update(session_id=None, last_error=event.reason)
+            if self.state.proxy_status in {
+                ProxyStatus.STARTING,
+                ProxyStatus.RUNNING,
+            }:
+                self._stop_proxy()
+            self._update(
+                session_id=None,
+                entitlement=None,
+                last_error=event.reason,
+            )
         elif isinstance(event, StartProxyRequested):
             self._start_proxy()
         elif isinstance(event, StopProxyRequested):
@@ -103,6 +112,23 @@ class ApplicationController:
         )
 
     def _start_proxy(self) -> None:
+        state = self.state
+        if state.auth_status is not AuthStatus.AUTHENTICATED:
+            self._update(
+                proxy_status=ProxyStatus.FAILED,
+                last_error="กรุณาเข้าสู่ระบบก่อนเริ่ม Proxy",
+            )
+            return
+        if (
+            state.entitlement is None
+            or state.entitlement.status is not EntitlementStatus.ACTIVE
+            or state.session_id is None
+        ):
+            self._update(
+                proxy_status=ProxyStatus.FAILED,
+                last_error="บัญชียังไม่มีสิทธิ์ใช้งานหรือเซสชันหมดอายุ",
+            )
+            return
         if self._proxy_gateway is None:
             self._update(proxy_status=ProxyStatus.FAILED, last_error="Proxy service unavailable")
             return

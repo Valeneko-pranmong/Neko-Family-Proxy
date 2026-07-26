@@ -3,6 +3,7 @@ from neko_launcher.domain.events import (
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
+    SessionClaimed,
     StartProxyRequested,
     StateChanged,
 )
@@ -46,6 +47,13 @@ def test_proxy_commands_use_gateway_and_update_state() -> None:
     bus = EventBus()
     proxy = FakeProxy()
     controller = ApplicationController(bus, proxy)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
 
     controller.dispatch(StartProxyRequested())
 
@@ -53,3 +61,16 @@ def test_proxy_commands_use_gateway_and_update_state() -> None:
     assert controller.state.proxy_status is ProxyStatus.RUNNING
     states = [event.state for event in bus.drain() if isinstance(event, StateChanged)]
     assert states[-1].proxy_status is ProxyStatus.RUNNING
+
+
+def test_proxy_refuses_to_start_without_entitlement_and_session() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    controller = ApplicationController(bus, proxy)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+
+    controller.dispatch(StartProxyRequested())
+
+    assert proxy.running is False
+    assert controller.state.proxy_status is ProxyStatus.FAILED
+    assert controller.state.last_error is not None

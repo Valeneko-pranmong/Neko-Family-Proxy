@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 @dataclass(frozen=True)
 class LauncherConfig:
@@ -16,11 +18,25 @@ class LauncherConfig:
 
     @classmethod
     def from_environment(cls, workspace_root: Path) -> LauncherConfig:
+        local_app_data = Path(
+            os.getenv("LOCALAPPDATA", workspace_root / ".local")
+        )
+        load_dotenv(
+            local_app_data / "NEKO FAMILY" / "launcher.env",
+            override=False,
+        )
+        load_dotenv(
+            workspace_root / "launcher" / ".env.local",
+            override=False,
+        )
         proxy_override = os.getenv("NEKO_PROXY_CORE_PATH")
         proxy_path = (
             Path(proxy_override)
             if proxy_override
-            else workspace_root / "ProxyCore" / "ProxyCore.exe"
+            else local_app_data
+            / "NEKO FAMILY"
+            / "ProxyCore"
+            / "ProxyCore.exe"
         )
         return cls(
             workspace_root=workspace_root,
