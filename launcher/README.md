@@ -1,16 +1,16 @@
 # Neko Family Launcher
 
-Desktop launcher for Supabase membership, entitlement checks, ProxyCore, and
-user-selected PSO2 Tweaker startup.
+Desktop launcher for Supabase username/password membership, entitlement checks,
+ProxyCore, and user-selected PSO2 Tweaker startup.
 
 ## Set up
 
 ```powershell
 python -m pip install -e ".[dev,release]"
-Copy-Item .env.example .env.local
 ```
 
-Set the Supabase URL and publishable key in `.env.local`. Never place a
+The launcher contains the Supabase project URL and publishable client key.
+Publishable keys are safe for desktop clients; never place a
 secret/service-role key in the launcher.
 
 Run from source:
@@ -21,7 +21,7 @@ python -m neko_launcher.main
 
 ## Customer flow
 
-1. Sign in or register.
+1. Sign in or register with a username and password.
 2. Check remaining entitlement time or redeem a coupon.
 3. Start the embedded ProxyCore runtime.
 4. Select `Tweaker.exe`; the launcher remembers the path.
@@ -43,8 +43,7 @@ python -m pytest -q -m integration
 
 ## One-file build
 
-An approved `../ProxyCore/` directory and `.env.local` must exist during the
-build:
+An approved `../ProxyCore/` directory must exist during the build:
 
 ```powershell
 python -m PyInstaller --clean --noconfirm NekoLauncher.spec

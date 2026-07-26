@@ -11,21 +11,20 @@ from neko_launcher.domain.models import (
 
 
 class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
-    """Keeps the UI usable while clearly reporting missing configuration."""
+    """Fallback for a temporary API outage."""
 
-    _MESSAGE = (
-        "ยังไม่ได้ตั้งค่า Supabase publishable key ใน "
-        "launcher/.env.local, %LOCALAPPDATA%\\NEKO FAMILY\\launcher.env "
-        "หรือไฟล์ launcher.env ที่อยู่โฟลเดอร์เดียวกับ NekoLauncher.exe"
-    )
+    _MESSAGE = "เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
 
-    def sign_up(self, email: str, password: str) -> RegistrationResult:
+    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
         raise LauncherServiceError(self._MESSAGE)
 
-    def sign_in(self, email: str, password: str) -> AuthenticatedUser:
+    def sign_in(self, username: str, password: str) -> AuthenticatedUser:
         raise LauncherServiceError(self._MESSAGE)
 
     def change_password(self, password: str) -> None:
+        raise LauncherServiceError(self._MESSAGE)
+
+    def request_password_reset(self, email: str) -> None:
         raise LauncherServiceError(self._MESSAGE)
 
     def restore_session(self) -> AuthenticatedUser | None:

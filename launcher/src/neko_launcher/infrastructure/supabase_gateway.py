@@ -45,31 +45,78 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             ),
         )
 
-    def sign_up(self, email: str, password: str) -> RegistrationResult:
+    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+        username = username.strip().lower()
+        email = email.strip().lower()
         try:
             response = self._client.auth.sign_up(
-                {"email": email, "password": password}
+                {
+                    "email": email,
+                    "password": password,
+                    "options": {
+                        "data": {
+                            "username": username,
+                            "display_name": username,
+                            "recovery_email": email,
+                        }
+                    },
+                }
             )
         except Exception as exc:
             raise self._auth_error(exc, "สมัครสมาชิกไม่สำเร็จ")
 
         user = self._to_user(response.user) if response.user else None
         return RegistrationResult(
-            email=email,
-            requires_email_confirmation=response.session is None,
+            email=username,
+            requires_email_confirmation=False,
             user=user if response.session is not None else None,
         )
 
-    def sign_in(self, email: str, password: str) -> AuthenticatedUser:
+    def sign_in(self, username: str, password: str) -> AuthenticatedUser:
+        username = username.strip().lower()
+        if not self.user_exists(username):
+            raise LauncherServiceError(
+                "ไม่พบบัญชีนี้ กรุณาตรวจสอบชื่อผู้ใช้หรือสมัครสมาชิกก่อน"
+            )
+        email = self._auth_email_for_username(username)
         try:
             response = self._client.auth.sign_in_with_password(
                 {"email": email, "password": password}
             )
         except Exception as exc:
-            raise self._auth_error(exc, "อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+            raise self._auth_error(exc, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
         if response.user is None or response.session is None:
-            raise LauncherServiceError("ไม่พบเซสชันหลังเข้าสู่ระบบ")
+            raise LauncherServiceError("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
         return self._to_user(response.user)
+
+    def request_password_reset(self, email: str) -> None:
+        try:
+            self._client.auth.reset_password_for_email(email.strip().lower())
+        except Exception as exc:
+            raise self._auth_error(
+                exc,
+                "ส่งลิงก์ไม่สำเร็จ กรุณาตรวจสอบอีเมลและลองใหม่",
+            ) from exc
+
+    def user_exists(self, username: str) -> bool:
+        """Ask the launcher API/database whether a username is registered.
+
+        The RPC returns only a boolean.  Password verification remains in
+        Supabase Auth, so this lookup never reads credentials or user rows.
+        """
+        username = username.strip().lower()
+        try:
+            response = (
+                self._client.schema("launcher")
+                .rpc("user_exists", {"p_username": username})
+                .execute()
+            )
+        except Exception as exc:
+            raise self._rpc_error(
+                exc,
+                "ตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองใหม่",
+            ) from exc
+        return response.data is True
 
     def change_password(self, password: str) -> None:
         try:
@@ -80,7 +127,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 "เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
             )
         if getattr(response, "user", None) is None:
-            raise LauncherServiceError("ไม่พบเซสชันสำหรับเปลี่ยนรหัสผ่าน")
+            raise LauncherServiceError("กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง")
 
     def restore_session(self) -> AuthenticatedUser | None:
         try:
@@ -120,9 +167,9 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         except Exception as exc:
             if self._contains_error(exc, "license_invalid"):
                 raise EntitlementUnavailable(
-                    "บัญชียังไม่มีสิทธิ์ใช้งาน กรุณาเติมคูปอง"
+                    "บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน"
                 ) from exc
-            raise self._rpc_error(exc, "ตรวจสอบสิทธิ์ใช้งานไม่สำเร็จ")
+            raise self._rpc_error(exc, "ตรวจสอบวันใช้งานไม่ได้ กรุณาลองใหม่")
 
         data = self._as_dict(response.data)
         valid_until = self._parse_datetime(data.get("valid_until"))
@@ -144,7 +191,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 .execute()
             )
         except Exception as exc:
-            raise self._rpc_error(exc, "ตรวจสอบสถานะเซสชันไม่สำเร็จ")
+            raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
         return response.data is True
 
     def release_session(self, session_id: str) -> bool:
@@ -175,7 +222,9 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                     "invalid_coupon": "คูปองไม่ถูกต้องหรือใช้งานไม่ได้",
                     "already_redeemed": "คูปองนี้ถูกใช้กับบัญชีนี้แล้ว",
                     "rate_limited": "ลองใช้คูปองบ่อยเกินไป กรุณารอ 10 นาที",
-                    "account_restricted": "บัญชีนี้ถูกจำกัดการใช้งาน",
+                    "account_restricted": (
+                        "บัญชีนี้ยังไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ"
+                    ),
                 }.get(str(data.get("error")), "ใช้คูปองไม่สำเร็จ")
             )
         return CouponRedemption(
@@ -187,22 +236,44 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     @staticmethod
     def _to_user(user: Any) -> AuthenticatedUser:
         user_id = str(getattr(user, "id", "") or "")
-        email = str(getattr(user, "email", "") or "").strip().lower()
-        if not user_id or not email:
-            raise LauncherServiceError("ข้อมูลบัญชีที่ได้รับไม่สมบูรณ์")
-        return AuthenticatedUser(user_id=user_id, email=email)
+        metadata = getattr(user, "user_metadata", None) or {}
+        username = str(metadata.get("username") or "").strip().lower()
+        if not username:
+            auth_email = str(getattr(user, "email", "") or "").strip().lower()
+            username = auth_email.split("@", 1)[0]
+        if not user_id or not username:
+            raise LauncherServiceError("เปิดบัญชีนี้ไม่ได้ กรุณาเข้าสู่ระบบใหม่")
+        return AuthenticatedUser(user_id=user_id, email=username)
+
+    def _auth_email_for_username(self, username: str) -> str:
+        username = username.strip().lower()
+        try:
+            response = (
+                self._client.schema("launcher")
+                .rpc("auth_email_for_username", {"p_username": username})
+                .execute()
+            )
+        except Exception as exc:
+            raise self._rpc_error(
+                exc,
+                "ตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองใหม่",
+            ) from exc
+        email = str(response.data or "").strip().lower()
+        if not email:
+            raise LauncherServiceError("บัญชีนี้ยังไม่มีอีเมลสำหรับเข้าสู่ระบบ")
+        return email
 
     @staticmethod
     def _as_dict(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict):
-            raise LauncherServiceError("ข้อมูลตอบกลับจากเซิร์ฟเวอร์ไม่ถูกต้อง")
+            raise LauncherServiceError("ระบบขัดข้องชั่วคราว กรุณาลองใหม่")
         return value
 
     @staticmethod
     def _required_text(data: dict[str, Any], key: str) -> str:
         value = str(data.get(key) or "")
         if not value:
-            raise LauncherServiceError("ข้อมูลตอบกลับจากเซิร์ฟเวอร์ไม่สมบูรณ์")
+            raise LauncherServiceError("ระบบขัดข้องชั่วคราว กรุณาลองใหม่")
         return value
 
     @staticmethod
@@ -211,7 +282,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         except (TypeError, ValueError) as exc:
             raise LauncherServiceError(
-                "ข้อมูลวันหมดอายุจากเซิร์ฟเวอร์ไม่ถูกต้อง"
+                "แสดงวันคงเหลือไม่ได้ชั่วคราว กรุณาลองใหม่"
             ) from exc
 
     @staticmethod
@@ -222,11 +293,13 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     def _auth_error(cls, exc: Exception, fallback: str) -> LauncherServiceError:
         text = str(exc).lower()
         if "email not confirmed" in text:
-            return LauncherServiceError("กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ")
+            return LauncherServiceError("บัญชียังไม่พร้อมใช้งาน กรุณาลองใหม่")
         if "invalid login credentials" in text:
-            return LauncherServiceError("อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+            return LauncherServiceError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
         if "user already registered" in text:
-            return LauncherServiceError("อีเมลนี้ถูกสมัครสมาชิกแล้ว")
+            return LauncherServiceError(
+                "ชื่อผู้ใช้นี้มีบัญชีอยู่แล้ว กรุณาไปที่แท็บเข้าสู่ระบบ"
+            )
         return LauncherServiceError(fallback)
 
     @classmethod
@@ -234,9 +307,13 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         text = str(exc).lower()
         mapping = {
             "device_limit_reached": "บัญชีนี้ใช้งานครบจำนวนอุปกรณ์แล้ว",
-            "installation_revoked": "อุปกรณ์นี้ถูกระงับการใช้งาน",
-            "not_authenticated": "เซสชันเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่",
-            "account_restricted": "บัญชีนี้ถูกจำกัดการใช้งาน",
+            "installation_revoked": (
+                "เครื่องนี้ไม่สามารถใช้งานบัญชีนี้ได้ กรุณาติดต่อฝ่ายบริการ"
+            ),
+            "not_authenticated": "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่",
+            "account_restricted": (
+                "บัญชีนี้ยังไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ"
+            ),
         }
         for code, message in mapping.items():
             if code in text:

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from .defaults import PRODUCT_CODE, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL
 
 
 @dataclass(frozen=True)
@@ -20,22 +19,15 @@ class LauncherConfig:
 
     @classmethod
     def from_environment(cls, workspace_root: Path) -> LauncherConfig:
+        """Build runtime settings without a launcher-specific env file.
+
+        The API endpoint and publishable key are public client configuration and
+        live in :mod:`defaults`.  Only the operating system's local-data
+        location is used to remember per-machine paths.
+        """
         local_app_data = Path(
             os.getenv("LOCALAPPDATA", workspace_root / ".local")
         )
-        env_files = [
-            local_app_data / "NEKO FAMILY" / "launcher.env",
-        ]
-        if getattr(sys, "frozen", False):
-            env_files.append(Path(sys.executable).resolve().parent / "launcher.env")
-        env_files.extend(
-            (
-                workspace_root / "launcher" / ".env.local",
-                workspace_root / ".env.local",
-            )
-        )
-        for env_file in env_files:
-            load_dotenv(env_file, override=False)
         game_path_store = local_app_data / "NEKO FAMILY" / "tweaker.path"
         stored_game_exe = ""
         if game_path_store.is_file():
@@ -45,26 +37,18 @@ class LauncherConfig:
                 ).strip()
             except OSError:
                 stored_game_exe = ""
-        proxy_override = os.getenv("NEKO_PROXY_CORE_PATH")
+        bundled_proxy = workspace_root / "ProxyCore" / "ProxyCore.exe"
         proxy_path = (
-            Path(proxy_override)
-            if proxy_override
-            else (
-                workspace_root / "ProxyCore" / "ProxyCore.exe"
-                if getattr(sys, "frozen", False)
-                and (workspace_root / "ProxyCore" / "ProxyCore.exe").is_file()
-                else local_app_data
-                / "NEKO FAMILY"
-                / "ProxyCore"
-                / "ProxyCore.exe"
-            )
+            bundled_proxy
+            if bundled_proxy.is_file()
+            else local_app_data / "NEKO FAMILY" / "ProxyCore" / "ProxyCore.exe"
         )
         return cls(
             workspace_root=workspace_root,
-            product_code=os.getenv("NEKO_PRODUCT_CODE", "neko-family-proxy"),
-            game_exe=os.getenv("NEKO_GAME_EXE") or stored_game_exe or "Tweaker.exe",
+            product_code=PRODUCT_CODE,
+            game_exe=stored_game_exe or "Tweaker.exe",
             game_path_store=game_path_store,
             proxy_core_path=proxy_path,
-            supabase_url=os.getenv("NEKO_SUPABASE_URL", ""),
-            supabase_publishable_key=os.getenv("NEKO_SUPABASE_PUBLISHABLE_KEY", ""),
+            supabase_url=SUPABASE_URL,
+            supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
         )

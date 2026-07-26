@@ -69,17 +69,18 @@ class AppWindow:
             except Exception:
                 pass
 
-        self._status = tk.StringVar(value="กำลังตรวจสอบเซสชัน…")
+        self._status = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._account = tk.StringVar(value="")
-        self._entitlement = tk.StringVar(value="ยังไม่มีสิทธิ์ใช้งาน")
+        self._entitlement = tk.StringVar(value="ยังไม่มีวันใช้งาน")
         self._error = tk.StringVar(value="")
         self._notice = tk.StringVar(value="")
         self._login_email = tk.StringVar()
         self._login_password = tk.StringVar()
-        self._register_email = tk.StringVar()
+        self._register_username = tk.StringVar()
+        self._register_recovery_email = tk.StringVar()
         self._register_password = tk.StringVar()
-        self._change_password_value = tk.StringVar()
-        self._change_password_confirm = tk.StringVar()
+        self._register_password_confirm = tk.StringVar()
+        self._reset_email = tk.StringVar()
         self._coupon_code = tk.StringVar()
         self._game_path = tk.StringVar(value=game_default_path)
         self._game_path_store = game_path_store
@@ -131,7 +132,7 @@ class AppWindow:
         ).pack(anchor="w")
         ctk.CTkLabel(
             title,
-            text="ศูนย์จัดการสมาชิกและการใช้งาน",
+            text="บัญชีและการใช้งาน",
             font=ctk.CTkFont(size=12),
             text_color=PALETTE.text_muted,
         ).pack(anchor="w", pady=(2, 0))
@@ -173,13 +174,13 @@ class AppWindow:
         intro = self._card(self._auth_view)
         ctk.CTkLabel(
             intro,
-            text="จัดการบัญชีสมาชิก",
+            text="เข้าสู่ระบบและสมัครสมาชิก",
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color=PALETTE.text,
         ).pack(anchor="w", padx=24, pady=(22, 2))
         ctk.CTkLabel(
             intro,
-            text="เข้าสู่ระบบหรือสมัครสมาชิกเพื่อใช้งาน Proxy และตรวจสอบวันคงเหลือ",
+            text="เข้าสู่ระบบหรือสมัครสมาชิกเพื่อเริ่มใช้งานและดูวันคงเหลือ",
             text_color=PALETTE.text_muted,
             wraplength=680,
         ).pack(anchor="w", padx=24, pady=(0, 16))
@@ -200,12 +201,17 @@ class AppWindow:
             text="ใช้บัญชี Neko Family เพื่อเข้าสู่โปรแกรม",
             text_color=PALETTE.text_muted,
         ).pack(anchor="w", padx=18, pady=(16, 0))
+        self._field_label(login, "ชื่อผู้ใช้สำหรับเข้าสู่ระบบ")
         self._login_email_entry = self._entry(
-            login, "อีเมล", self._login_email
+            login, "ชื่อผู้ใช้", self._login_email
         )
+        self._field_label(login, "รหัสผ่าน")
         self._login_password_entry = self._entry(
             login, "รหัสผ่าน", self._login_password, show="●"
         )
+        self._login_email_entry.configure(placeholder_text="ชื่อผู้ใช้")
+        self._login_email_entry.bind("<Return>", lambda _event: self._login())
+        self._login_password_entry.bind("<Return>", lambda _event: self._login())
         self._login_button = self._primary_button(
             login, "เข้าสู่ระบบ", self._login
         )
@@ -214,49 +220,70 @@ class AppWindow:
         register = self._auth_panel.add("สมัครสมาชิก")
         ctk.CTkLabel(
             register,
-            text="สร้างบัญชีใหม่ ใช้อีเมลที่เข้าถึงได้เพื่อยืนยันบัญชี",
+            text="สร้างบัญชีใหม่ โดยไม่ต้องยืนยันอีเมล",
             text_color=PALETTE.text_muted,
         ).pack(anchor="w", padx=18, pady=(16, 0))
+        self._field_label(register, "ชื่อผู้ใช้")
         self._register_email_entry = self._entry(
-            register, "อีเมล", self._register_email
+            register, "เช่น tester_01", self._register_username
         )
+        self._field_label(register, "รหัสผ่าน (อย่างน้อย 8 ตัวอักษร)")
         self._register_password_entry = self._entry(
             register,
             "รหัสผ่านอย่างน้อย 8 ตัวอักษร",
             self._register_password,
             show="●",
         )
+        self._field_label(register, "ยืนยันรหัสผ่าน")
+        self._register_password_confirm_entry = self._entry(
+            register,
+            "ยืนยันรหัสผ่าน",
+            self._register_password_confirm,
+            show="●",
+        )
+        self._field_label(register, "อีเมลสำหรับกู้คืนรหัสผ่าน")
+        self._register_recovery_email_entry = self._entry(
+            register,
+            "เช่น yourname@example.com",
+            self._register_recovery_email,
+        )
+        self._register_email_entry.configure(placeholder_text="เช่น tester_01")
+        self._register_email_entry.bind("<Return>", lambda _event: self._register())
+        self._register_password_entry.bind("<Return>", lambda _event: self._register())
+        self._register_password_confirm_entry.bind(
+            "<Return>", lambda _event: self._register()
+        )
+        self._register_recovery_email_entry.bind(
+            "<Return>", lambda _event: self._register()
+        )
         self._register_button = self._primary_button(
             register, "สร้างบัญชี", self._register
         )
         self._register_button.pack(fill="x", padx=18, pady=(14, 20))
 
-        change = self._auth_panel.add("เปลี่ยนรหัสผ่าน")
+        change = self._auth_panel.add("ลืมรหัสผ่าน")
         ctk.CTkLabel(
             change,
-            text="ต้องเข้าสู่ระบบอยู่ก่อน จึงจะเปลี่ยนรหัสผ่านได้",
+            text="กรอกอีเมลที่ใช้สมัคร เราจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ให้",
             text_color=PALETTE.text_muted,
         ).pack(anchor="w", padx=18, pady=(16, 0))
-        self._change_password_entry = self._entry(
+        self._field_label(change, "อีเมลที่ใช้สมัคร")
+        self._reset_email_entry = self._entry(
             change,
-            "รหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร",
-            self._change_password_value,
-            show="●",
+            "เช่น yourname@example.com",
+            self._reset_email,
         )
-        self._change_password_confirm_entry = self._entry(
-            change,
-            "ยืนยันรหัสผ่านใหม่",
-            self._change_password_confirm,
-            show="●",
+        self._reset_email_entry.bind(
+            "<Return>", lambda _event: self._request_password_reset()
         )
         self._change_password_button = self._primary_button(
-            change, "บันทึกรหัสผ่านใหม่", self._change_password
+            change, "ส่งลิงก์ตั้งรหัสผ่านใหม่", self._request_password_reset
         )
         self._change_password_button.pack(fill="x", padx=18, pady=(14, 20))
 
         self._auth_hint = ctk.CTkLabel(
             self._auth_view,
-            text="เข้าสู่ระบบเพื่อปลดล็อกพื้นที่ใช้งาน",
+            text="เข้าสู่ระบบเพื่อเริ่มใช้งาน",
             text_color=PALETTE.primary_dark,
             font=ctk.CTkFont(size=13, weight="bold"),
         )
@@ -312,7 +339,7 @@ class AppWindow:
         entitlement = self._card(self._program_view)
         ctk.CTkLabel(
             entitlement,
-            text="สิทธิ์การใช้งานและวันคงเหลือ",
+            text="วันใช้งานคงเหลือ",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=22, pady=(18, 4))
@@ -351,25 +378,25 @@ class AppWindow:
         proxy = self._card(self._program_view)
         ctk.CTkLabel(
             proxy,
-            text="เปิดใช้งาน Proxy สำหรับเกม",
+            text="เริ่มใช้งาน",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=22, pady=(18, 2))
         ctk.CTkLabel(
             proxy,
-            text="ระบบจะตรวจสอบวันคงเหลือและเซสชันก่อนเริ่ม Proxy ทุกครั้ง",
+            text="กดเริ่มใช้งานเพื่อเชื่อมต่อและเปิดเกมตามไฟล์ที่เลือก",
             text_color=PALETTE.text_muted,
             wraplength=680,
         ).pack(anchor="w", padx=22, pady=(0, 10))
         controls = ctk.CTkFrame(proxy, fg_color="transparent")
         controls.pack(fill="x", padx=16, pady=(0, 18))
         self._start_button = self._primary_button(
-            controls, "เริ่ม Proxy", self._service.start_proxy
+            controls, "เริ่มใช้งาน", self._start_usage
         )
         self._start_button.pack(side="left", fill="x", expand=True, padx=6)
         self._stop_button = self._secondary_button(
             controls,
-            "หยุด Proxy",
+            "หยุดการเชื่อมต่อ",
             lambda: self._controller.dispatch(StopProxyRequested()),
         )
         self._stop_button.pack(side="left", fill="x", expand=True, padx=6)
@@ -379,13 +406,13 @@ class AppWindow:
         game = self._card(self._program_view)
         ctk.CTkLabel(
             game,
-            text="เปิดเกมผ่าน Tweaker",
+            text="ตั้งค่าไฟล์เปิดเกม",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=22, pady=(18, 2))
         ctk.CTkLabel(
             game,
-            text="เลือกไฟล์ Tweaker.exe ของคุณ ระบบจะจำตำแหน่งไว้สำหรับครั้งถัดไป",
+            text="เลือกไฟล์เปิดเกม ระบบจะจำตำแหน่งไว้สำหรับครั้งถัดไป",
             text_color=PALETTE.text_muted,
             wraplength=680,
         ).pack(anchor="w", padx=22, pady=(0, 8))
@@ -406,13 +433,13 @@ class AppWindow:
         game_controls.pack(fill="x", padx=16, pady=(0, 18))
         self._launch_game_button = self._primary_button(
             game_controls,
-            "เปิด Tweaker",
+            "เปิดเกม",
             self._launch_game,
         )
         self._launch_game_button.pack(side="left", fill="x", expand=True, padx=6)
         self._stop_game_button = self._secondary_button(
             game_controls,
-            "ปิด Tweaker",
+            "ปิดเกม",
             lambda: self._controller.dispatch(StopGameRequested()),
         )
         self._stop_game_button.pack(side="left", fill="x", expand=True, padx=6)
@@ -465,6 +492,15 @@ class AppWindow:
         )
         entry.pack(fill="x", padx=18, pady=(10, 0))
         return entry
+
+    @staticmethod
+    def _field_label(parent: ctk.CTkBaseClass, text: str) -> None:
+        ctk.CTkLabel(
+            parent,
+            text=text,
+            text_color=PALETTE.text,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(anchor="w", padx=18, pady=(10, 0))
 
     @staticmethod
     def _primary_button(
@@ -531,48 +567,40 @@ class AppWindow:
         self._notice.set("เข้าสู่ระบบสำเร็จ")
 
     def _register(self) -> None:
+        password = self._register_password.get()
+        if not password or password != self._register_password_confirm.get():
+            self._error.set("รหัสผ่านและการยืนยันไม่ตรงกัน")
+            return
         self._submit(
             lambda: self._service.sign_up(
-                self._register_email.get(),
-                self._register_password.get(),
+                self._register_username.get(),
+                password,
+                self._register_recovery_email.get(),
             ),
             self._register_succeeded,
         )
 
-    def _register_succeeded(self, result: RegistrationResult) -> None:
+    def _register_succeeded(self, _: RegistrationResult) -> None:
         self._register_password.set("")
-        if result.requires_email_confirmation:
-            self._notice.set(
-                "สมัครสมาชิกแล้ว กรุณาตรวจสอบอีเมลเพื่อยืนยันบัญชีก่อนเข้าสู่ระบบ"
-            )
-        else:
-            self._notice.set("สมัครสมาชิกและเข้าสู่ระบบสำเร็จ")
-
-    def _change_password(self) -> None:
-        if (
-            not self._change_password_value.get()
-            or self._change_password_value.get()
-            != self._change_password_confirm.get()
-        ):
-            self._error.set("รหัสผ่านใหม่และการยืนยันไม่ตรงกัน")
-            return
-        self._submit(
-            lambda: self._service.change_password(
-                self._change_password_value.get()
-            ),
-            self._password_changed,
+        self._register_password_confirm.set("")
+        self._register_recovery_email.set("")
+        self._notice.set(
+            "สมัครสมาชิกสำเร็จ ใช้ชื่อผู้ใช้และรหัสผ่านเข้าสู่ระบบได้เลย"
         )
 
-    def _password_changed(self, _: Any) -> None:
-        self._change_password_value.set("")
-        self._change_password_confirm.set("")
-        self._notice.set("เปลี่ยนรหัสผ่านสำเร็จ")
-        if self._controller.state.auth_status is AuthStatus.AUTHENTICATED:
-            self._show_program_view()
+    def _request_password_reset(self) -> None:
+        self._submit(
+            lambda: self._service.request_password_reset(self._reset_email.get()),
+            self._password_reset_requested,
+        )
+
+    def _password_reset_requested(self, _: Any) -> None:
+        self._reset_email.set("")
+        self._notice.set("ส่งลิงก์ตั้งรหัสผ่านใหม่แล้ว กรุณาตรวจสอบอีเมล")
 
     def _open_password_tab(self) -> None:
         self._show_auth_view()
-        self._auth_panel.set("เปลี่ยนรหัสผ่าน")
+        self._auth_panel.set("ลืมรหัสผ่าน")
         self._notice.set("")
         self._error.set("")
 
@@ -591,11 +619,11 @@ class AppWindow:
 
     def _choose_game(self) -> None:
         selected = filedialog.askopenfilename(
-            title="เลือกไฟล์ Tweaker.exe",
+            title="เลือกไฟล์เปิดเกม",
             filetypes=[
-                ("PSO2 NGS Tweaker", "Tweaker.exe"),
-                ("Executable", "*.exe"),
-                ("All files", "*.*"),
+                ("ไฟล์เปิดเกม", "Tweaker.exe"),
+                ("โปรแกรม Windows", "*.exe"),
+                ("ไฟล์ทั้งหมด", "*.*"),
             ],
         )
         if not selected:
@@ -607,14 +635,21 @@ class AppWindow:
                 self._game_path_store.write_text(selected, encoding="utf-8")
             except OSError:
                 pass
-        self._notice.set("บันทึกตำแหน่ง Tweaker แล้ว")
+        self._notice.set("บันทึกไฟล์เปิดเกมแล้ว")
 
     def _launch_game(self) -> None:
         executable = self._game_path.get().strip()
         if not executable:
-            self._error.set("กรุณาเลือกไฟล์ Tweaker.exe ก่อน")
+            self._error.set("กรุณาเลือกไฟล์เปิดเกมก่อน")
             return
         self._controller.dispatch(LaunchGameRequested(executable))
+
+    def _start_usage(self) -> None:
+        executable = self._game_path.get().strip()
+        if not executable:
+            self._error.set("กรุณาเลือกไฟล์เปิดเกมก่อนเริ่มใช้งาน")
+            return
+        self._service.start_usage(executable)
 
     def _coupon_redeemed(self, result: Any) -> None:
         self._coupon_code.set("")
@@ -688,7 +723,16 @@ class AppWindow:
             and state.session_id is not None
             and state.entitlement is not None
             and state.entitlement.status is EntitlementStatus.ACTIVE
-            and state.proxy_status is not ProxyStatus.RUNNING
+            and bool(self._game_path.get().strip())
+            and state.proxy_status not in {
+                ProxyStatus.STARTING,
+                ProxyStatus.STOPPING,
+            }
+            and state.game_status is not GameStatus.STARTING
+            and not (
+                state.proxy_status is ProxyStatus.RUNNING
+                and state.game_status is GameStatus.RUNNING
+            )
         )
         can_stop = state.proxy_status in {
             ProxyStatus.STARTING,
@@ -718,17 +762,21 @@ class AppWindow:
     def _render_entitlement(self, state: AppState) -> None:
         entitlement = state.entitlement
         if entitlement is None:
-            self._entitlement.set("ยังไม่มีสิทธิ์ใช้งาน • เติมวันด้วยคูปองเพื่อเริ่มต้น")
+            self._entitlement.set(
+                "เหลือ 0 วัน • เติมวันด้วยคูปองเพื่อเริ่มต้น"
+            )
             self._entitlement_label.configure(text_color=PALETTE.warning)
             return
         if entitlement.valid_until is None:
-            self._entitlement.set("มีสิทธิ์ใช้งาน • ไม่จำกัดวันหมดอายุ")
+            self._entitlement.set("ใช้งานได้ • ไม่จำกัดวัน")
             self._entitlement_label.configure(text_color=PALETTE.success)
             return
         now = datetime.now(entitlement.valid_until.tzinfo)
         remaining = entitlement.valid_until - now
         if entitlement.status is EntitlementStatus.ACTIVE and remaining.total_seconds() > 0:
-            days = max(1, (remaining.days + (1 if remaining.seconds else 0)))
+            # Always show an integer day count.  A newly expired entitlement
+            # must read 0 days instead of being rounded up to 1.
+            days = max(0, int((remaining.total_seconds() + 86399) // 86400))
             self._entitlement.set(
                 f"ใช้งานได้ • เหลือประมาณ {days} วัน • "
                 f"หมดอายุ {entitlement.valid_until:%d/%m/%Y %H:%M}"
@@ -736,7 +784,8 @@ class AppWindow:
             self._entitlement_label.configure(text_color=PALETTE.success)
         else:
             self._entitlement.set(
-                f"หมดอายุแล้ว • {entitlement.valid_until:%d/%m/%Y %H:%M}"
+                f"หมดอายุแล้ว • เหลือ 0 วัน • "
+                f"{entitlement.valid_until:%d/%m/%Y %H:%M}"
             )
             self._entitlement_label.configure(text_color=PALETTE.danger)
 
@@ -748,7 +797,7 @@ class AppWindow:
             state="normal" if not signed_in and not authenticating else "disabled"
         )
         self._change_password_button.configure(
-            state="normal" if signed_in and not authenticating else "disabled"
+            state="normal" if not signed_in and not authenticating else "disabled"
         )
 
     def _heartbeat(self) -> None:

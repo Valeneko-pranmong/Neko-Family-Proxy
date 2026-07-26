@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from neko_launcher.domain.events import (
     AuthFailed,
     AuthStarted,
@@ -9,11 +11,14 @@ from neko_launcher.domain.events import (
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
+    StartUsageRequested,
     StopProxyRequested,
 )
 from neko_launcher.domain.models import (
     AuthStatus,
     CouponRedemption,
+    Entitlement,
+    EntitlementStatus,
     ProxyStatus,
     RegistrationResult,
 )
@@ -41,19 +46,25 @@ class LauncherService:
         self._product_code = product_code
         self._heartbeat_failures = 0
 
-    def sign_up(self, email: str, password: str) -> RegistrationResult:
+    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+        username = username.strip().lower()
         email = email.strip().lower()
-        self._validate_credentials(email, password)
+        self._validate_username(username, password)
+        self._validate_email(email)
+        self._controller.dispatch(AuthStarted(username))
         try:
-            result = self._auth_gateway.sign_up(email, password)
-        except LauncherServiceError:
+            result = self._auth_gateway.sign_up(username, password, email)
+        except LauncherServiceError as exc:
+            self._controller.dispatch(AuthFailed(str(exc)))
             raise
         except Exception as exc:
-            raise LauncherServiceError("สมัครสมาชิกไม่สำเร็จ กรุณาลองใหม่") from exc
+            message = "สมัครสมาชิกไม่สำเร็จ กรุณาลองใหม่"
+            self._controller.dispatch(AuthFailed(message))
+            raise LauncherServiceError(message) from exc
 
         if result.user is not None:
             self._controller.dispatch(
-                AuthSucceeded(result.user.user_id, result.user.email)
+                AuthSucceeded(result.user.user_id, result.user.username)
             )
             try:
                 self._claim_session(allow_missing=True)
@@ -61,12 +72,24 @@ class LauncherService:
                 self._controller.dispatch(ErrorOccurred(str(exc)))
         return result
 
-    def sign_in(self, email: str, password: str) -> None:
+    def request_password_reset(self, email: str) -> None:
         email = email.strip().lower()
-        self._validate_credentials(email, password)
-        self._controller.dispatch(AuthStarted(email))
+        self._validate_email(email)
         try:
-            user = self._auth_gateway.sign_in(email, password)
+            self._auth_gateway.request_password_reset(email)
+        except LauncherServiceError:
+            raise
+        except Exception as exc:
+            raise LauncherServiceError(
+                "ส่งลิงก์ตั้งรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่"
+            ) from exc
+
+    def sign_in(self, username: str, password: str) -> None:
+        username = username.strip().lower()
+        self._validate_login_identifier(username, password)
+        self._controller.dispatch(AuthStarted(username))
+        try:
+            user = self._auth_gateway.sign_in(username, password)
         except LauncherServiceError as exc:
             self._controller.dispatch(AuthFailed(str(exc)))
             raise
@@ -74,7 +97,7 @@ class LauncherService:
             message = "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่"
             self._controller.dispatch(AuthFailed(message))
             raise LauncherServiceError(message) from exc
-        self._controller.dispatch(AuthSucceeded(user.user_id, user.email))
+        self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
         self._claim_session(allow_missing=True)
 
     def change_password(self, password: str) -> None:
@@ -98,7 +121,7 @@ class LauncherService:
             return False
         if user is None:
             return False
-        self._controller.dispatch(AuthSucceeded(user.user_id, user.email))
+        self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
         try:
             self._claim_session(allow_missing=True)
         except LauncherServiceError as exc:
@@ -131,13 +154,38 @@ class LauncherService:
             raise
         except Exception as exc:
             raise LauncherServiceError("ใช้คูปองไม่สำเร็จ กรุณาลองใหม่") from exc
+        # Update the home screen immediately from the server's redemption
+        # result.  The session claim below may still fail (for example when
+        # another device is active), but the newly added days are real and
+        # should not remain displayed as 0.
+        self._controller.dispatch(
+            EntitlementLoaded(
+                Entitlement(
+                    product_code=result.product_code,
+                    status=EntitlementStatus.ACTIVE,
+                    valid_until=result.valid_until,
+                )
+            )
+        )
         try:
             self._claim_session(allow_missing=False)
         except LauncherServiceError:
+            # _claim_session clears the session when it cannot claim one.
+            # Keep the redeemed entitlement visible even when launching is
+            # temporarily blocked by a device/session constraint.
+            self._controller.dispatch(
+                EntitlementLoaded(
+                    Entitlement(
+                        product_code=result.product_code,
+                        status=EntitlementStatus.ACTIVE,
+                        valid_until=result.valid_until,
+                    )
+                )
+            )
             self._controller.dispatch(
                 ErrorOccurred(
-                    "เติมคูปองสำเร็จ แต่ยังเปิดเซสชันไม่ได้ "
-                    "กรุณาลองเข้าสู่ระบบใหม่"
+                    "เติมคูปองสำเร็จแล้ว แต่ยังเริ่มใช้งานไม่ได้ "
+                    "กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่"
                 )
             )
         return result
@@ -157,12 +205,18 @@ class LauncherService:
             self._heartbeat_failures = 0
         if not alive:
             self._controller.dispatch(
-                SessionRevoked("เซสชันหมดอายุหรือถูกแทนที่จากอุปกรณ์อื่น")
+                SessionRevoked(
+                    "บัญชีนี้กำลังถูกใช้งานจากเครื่องอื่น กรุณาเข้าสู่ระบบใหม่"
+                )
             )
         return alive
 
     def start_proxy(self) -> None:
         self._controller.dispatch(StartProxyRequested())
+
+    def start_usage(self, executable: str) -> None:
+        """Start ProxyCore and the configured Tweaker as one user action."""
+        self._controller.dispatch(StartUsageRequested(executable))
 
     def shutdown(self) -> None:
         session_id = self._controller.state.session_id
@@ -189,12 +243,29 @@ class LauncherService:
             self._controller.dispatch(SessionClaimed(claim.session_id))
 
     @staticmethod
-    def _validate_credentials(email: str, password: str) -> None:
-        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
-            raise LauncherServiceError("กรุณากรอกอีเมลให้ถูกต้อง")
+    def _validate_username(username: str, password: str) -> None:
+        if "@" in username or (
+            not 3 <= len(username) <= 32
+            or any(
+                not (char.isascii() and (char.isalnum() or char == "_"))
+                for char in username
+            )
+        ):
+            raise LauncherServiceError(
+                "ชื่อผู้ใช้ต้องมี 3-32 ตัวอักษร (a-z, 0-9 หรือ _)"
+            )
         LauncherService._validate_password(password)
+
+    @staticmethod
+    def _validate_login_identifier(identifier: str, password: str) -> None:
+        LauncherService._validate_username(identifier, password)
 
     @staticmethod
     def _validate_password(password: str) -> None:
         if len(password) < 8:
             raise LauncherServiceError("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
+
+    @staticmethod
+    def _validate_email(email: str) -> None:
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise LauncherServiceError("กรุณากรอกอีเมลให้ถูกต้อง")

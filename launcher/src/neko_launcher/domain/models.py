@@ -48,12 +48,22 @@ class AuthenticatedUser:
     user_id: str
     email: str
 
+    @property
+    def username(self) -> str:
+        """User-facing identifier (kept in the legacy email slot)."""
+        return self.email
+
 
 @dataclass(frozen=True)
 class RegistrationResult:
     email: str
-    requires_email_confirmation: bool
+    requires_email_confirmation: bool = False
     user: AuthenticatedUser | None = None
+
+    @property
+    def username(self) -> str:
+        """User-facing identifier (kept in the legacy email slot)."""
+        return self.email
 
 
 @dataclass(frozen=True)

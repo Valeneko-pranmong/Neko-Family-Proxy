@@ -18,12 +18,12 @@ launching.
 ```powershell
 Set-Location launcher
 python -m pip install -e ".[dev,release]"
-Copy-Item .env.example .env.local
 python -m neko_launcher.main
 ```
 
-Use only the Supabase publishable key in `.env.local`. Never use a secret or
-service-role key in the desktop application.
+The launcher contains only the Supabase URL and publishable client key needed
+to call the API. Never use a secret or service-role key in the desktop
+application.
 
 ## Validation
 
@@ -36,8 +36,7 @@ python -m pytest -q -m "not integration"
 
 ## One-file build
 
-Place the approved `ProxyCore/` directory at the repository root and configure
-`launcher/.env.local`, then run:
+Place the approved `ProxyCore/` directory at the repository root, then run:
 
 ```powershell
 Set-Location launcher
@@ -47,3 +46,5 @@ python -m PyInstaller --clean --noconfirm NekoLauncher.spec
 The deliverable is `launcher/dist/NekoLauncher.exe`. The build embeds
 ProxyCore and the publishable client configuration. Users select their own
 `Tweaker.exe` location after signing in.
+
+ดูขั้นตอนแบบละเอียดได้ที่ [BUILD_EXE.md](BUILD_EXE.md)

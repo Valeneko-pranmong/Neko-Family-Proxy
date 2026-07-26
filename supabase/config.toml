@@ -1,0 +1,8 @@
+# Local Supabase Auth configuration for username/password registration.
+# Hosted projects must use the Auth Providers page to turn off "Confirm email".
+
+[auth]
+enable_signup = true
+
+[auth.email]
+enable_confirmations = false

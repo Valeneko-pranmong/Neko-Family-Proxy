@@ -14,6 +14,7 @@ from neko_launcher.domain.events import (
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
+    StartUsageRequested,
     StateChanged,
     StopGameRequested,
     StopProxyRequested,
@@ -96,6 +97,8 @@ class ApplicationController:
             )
         elif isinstance(event, StartProxyRequested):
             self._start_proxy()
+        elif isinstance(event, StartUsageRequested):
+            self._start_usage(event.executable)
         elif isinstance(event, StopProxyRequested):
             self._stop_proxy()
         elif isinstance(event, LaunchGameRequested):
@@ -123,7 +126,7 @@ class ApplicationController:
         if state.auth_status is not AuthStatus.AUTHENTICATED:
             self._update(
                 proxy_status=ProxyStatus.FAILED,
-                last_error="กรุณาเข้าสู่ระบบก่อนเริ่ม Proxy",
+                last_error="กรุณาเข้าสู่ระบบก่อนเริ่มใช้งาน",
             )
             return
         if (
@@ -133,19 +136,41 @@ class ApplicationController:
         ):
             self._update(
                 proxy_status=ProxyStatus.FAILED,
-                last_error="บัญชียังไม่มีสิทธิ์ใช้งานหรือเซสชันหมดอายุ",
+                last_error="บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน",
             )
             return
         if self._proxy_gateway is None:
-            self._update(proxy_status=ProxyStatus.FAILED, last_error="Proxy service unavailable")
+            self._update(
+                proxy_status=ProxyStatus.FAILED,
+                last_error="เริ่มการเชื่อมต่อไม่ได้ กรุณาลองใหม่",
+            )
             return
         self._update(proxy_status=ProxyStatus.STARTING, last_error=None)
         try:
             self._proxy_gateway.start()
-        except Exception as exc:
-            self._update(proxy_status=ProxyStatus.FAILED, last_error=str(exc))
+        except Exception:
+            self._update(
+                proxy_status=ProxyStatus.FAILED,
+                last_error="เริ่มการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
+            )
         else:
             self._update(proxy_status=ProxyStatus.RUNNING)
+
+    def _start_usage(self, executable: str) -> None:
+        """Start ProxyCore first, then launch the configured Tweaker."""
+        if not executable.strip():
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="กรุณาเลือกไฟล์เปิดเกมก่อนเริ่มใช้งาน",
+            )
+            return
+
+        # _start_proxy performs all authentication, entitlement, and session
+        # checks.  Do not attempt to launch Tweaker when ProxyCore failed.
+        if self.state.proxy_status is not ProxyStatus.RUNNING:
+            self._start_proxy()
+        if self.state.proxy_status is ProxyStatus.RUNNING:
+            self._launch_game(executable)
 
     def _stop_proxy(self) -> None:
         self._stop_game()
@@ -155,8 +180,11 @@ class ApplicationController:
         self._update(proxy_status=ProxyStatus.STOPPING)
         try:
             self._proxy_gateway.stop()
-        except Exception as exc:
-            self._update(proxy_status=ProxyStatus.FAILED, last_error=str(exc))
+        except Exception:
+            self._update(
+                proxy_status=ProxyStatus.FAILED,
+                last_error="หยุดการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
+            )
         else:
             self._update(proxy_status=ProxyStatus.STOPPED)
 
@@ -175,19 +203,19 @@ class ApplicationController:
         ):
             self._update(
                 game_status=GameStatus.FAILED,
-                last_error="บัญชียังไม่มีสิทธิ์ใช้งานหรือเซสชันหมดอายุ",
+                last_error="บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน",
             )
             return
         if state.proxy_status is not ProxyStatus.RUNNING:
             self._update(
                 game_status=GameStatus.FAILED,
-                last_error="กรุณาเริ่ม Proxy ก่อนเปิด Tweaker",
+                last_error="กรุณากดเริ่มใช้งานก่อนเปิดเกม",
             )
             return
         if self._game_gateway is None:
             self._update(
                 game_status=GameStatus.FAILED,
-                last_error="Game launcher service unavailable",
+                last_error="เปิดเกมไม่ได้ กรุณาลองใหม่",
             )
             return
         self._update(game_status=GameStatus.STARTING, last_error=None)
@@ -195,8 +223,11 @@ class ApplicationController:
             from pathlib import Path
 
             self._game_gateway.start(Path(executable))
-        except Exception as exc:
-            self._update(game_status=GameStatus.FAILED, last_error=str(exc))
+        except Exception:
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="เปิดเกมไม่สำเร็จ กรุณาตรวจสอบไฟล์ที่เลือก",
+            )
         else:
             self._update(game_status=GameStatus.RUNNING)
 
@@ -208,8 +239,11 @@ class ApplicationController:
             return
         try:
             self._game_gateway.stop()
-        except Exception as exc:
-            self._update(game_status=GameStatus.FAILED, last_error=str(exc))
+        except Exception:
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="ปิดเกมไม่สำเร็จ กรุณาลองใหม่",
+            )
         else:
             self._update(game_status=GameStatus.STOPPED)
 

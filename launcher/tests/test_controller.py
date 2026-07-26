@@ -6,6 +6,7 @@ from neko_launcher.domain.events import (
     LaunchGameRequested,
     SessionClaimed,
     StartProxyRequested,
+    StartUsageRequested,
     StateChanged,
 )
 from neko_launcher.domain.models import (
@@ -113,3 +114,45 @@ def test_game_requires_active_proxy_and_launches_selected_tweaker() -> None:
     assert game.running is True
     assert game.executable.endswith("Tweaker.exe")
     assert controller.state.game_status is GameStatus.RUNNING
+
+
+def test_start_usage_starts_proxy_then_configured_tweaker() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+
+    controller.dispatch(StartUsageRequested("C:/Games/My Tweaker.exe"))
+
+    assert proxy.running is True
+    assert game.running is True
+    assert game.executable.endswith("My Tweaker.exe")
+    assert controller.state.proxy_status is ProxyStatus.RUNNING
+    assert controller.state.game_status is GameStatus.RUNNING
+
+
+def test_start_usage_does_not_start_proxy_without_tweaker_path() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+
+    controller.dispatch(StartUsageRequested("  "))
+
+    assert proxy.running is False
+    assert game.running is False
+    assert controller.state.game_status is GameStatus.FAILED

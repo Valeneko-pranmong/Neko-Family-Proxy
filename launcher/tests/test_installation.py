@@ -1,4 +1,5 @@
 import hashlib
+import random
 
 from neko_launcher.infrastructure.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.secure_store import SupabaseAuthStorage
@@ -41,3 +42,26 @@ def test_supabase_storage_delegates_to_secure_store() -> None:
 
     storage.remove_item("auth-session")
     assert storage.get_item("auth-session") is None
+
+
+def test_supabase_storage_compresses_large_auth_sessions() -> None:
+    store = MemoryStore()
+    storage = SupabaseAuthStorage(store)
+    value = '{"access_token":"' + ("token-" * 600) + '"}'
+
+    storage.set_item("auth-session", value)
+
+    assert store.values["auth-session"].startswith("zlib1:")
+    assert storage.get_item("auth-session") == value
+
+
+def test_supabase_storage_chunks_values_beyond_credential_limit() -> None:
+    store = MemoryStore()
+    storage = SupabaseAuthStorage(store)
+    generator = random.Random(42)
+    value = "".join(generator.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(3000))
+
+    storage.set_item("auth-session", value)
+
+    assert store.values["auth-session"].startswith("chunked1:")
+    assert storage.get_item("auth-session") == value

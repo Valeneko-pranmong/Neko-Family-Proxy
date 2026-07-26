@@ -51,6 +51,13 @@ class StartProxyRequested(Event):
 
 
 @dataclass(frozen=True)
+class StartUsageRequested(Event):
+    """Start ProxyCore and the user's configured Tweaker together."""
+
+    executable: str
+
+
+@dataclass(frozen=True)
 class StopProxyRequested(Event):
     pass
 

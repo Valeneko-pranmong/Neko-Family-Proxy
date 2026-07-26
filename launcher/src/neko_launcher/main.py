@@ -12,9 +12,6 @@ from neko_launcher.infrastructure.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.process_manager import ProxyProcessManager
 from neko_launcher.infrastructure.secure_store import KeyringSecureStore
 from neko_launcher.infrastructure.supabase_gateway import SupabaseGateway
-from neko_launcher.infrastructure.unavailable_gateway import (
-    UnavailableSupabaseGateway,
-)
 from neko_launcher.ui.app_window import AppWindow
 
 
@@ -37,14 +34,11 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     controller = ApplicationController(event_bus, proxy_manager, game_manager)
     secure_store = KeyringSecureStore()
     installation = LocalInstallationIdentity(secure_store)
-    if config.supabase_url and config.supabase_publishable_key:
-        gateway = SupabaseGateway(
-            config.supabase_url,
-            config.supabase_publishable_key,
-            secure_store,
-        )
-    else:
-        gateway = UnavailableSupabaseGateway()
+    gateway = SupabaseGateway(
+        config.supabase_url,
+        config.supabase_publishable_key,
+        secure_store,
+    )
     service = LauncherService(
         controller,
         gateway,

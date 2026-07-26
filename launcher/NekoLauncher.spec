@@ -12,10 +12,6 @@ datas = [
 ]
 datas += collect_data_files("customtkinter")
 
-embedded_env = launcher_root / ".env.local"
-if embedded_env.is_file():
-    datas.append((str(embedded_env), "."))
-
 proxy_root = repository_root / "ProxyCore"
 if proxy_root.is_dir():
     for proxy_file in proxy_root.rglob("*"):
