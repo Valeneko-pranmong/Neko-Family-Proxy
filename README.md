@@ -1,68 +1,49 @@
 # Neko Family Proxy
 
-Neko Family Proxy is being rebuilt as a shareable product for the Neko Family
-team. The repository contains the launcher application, admin dashboard, and
-Supabase database migrations for account, session, entitlement, and coupon
-management.
-
-The runtime proxy bundle is intentionally not part of this repository. It is
-distributed through a separate, controlled channel and is supplied locally
-when the launcher is run.
+Windows launcher for PSO2 NGS JP with Supabase membership, coupon-based
+entitlements, an embedded ProxyCore runtime, and user-selected `Tweaker.exe`
+launching.
 
 ## Repository structure
 
-- `launcher/` - Modular desktop launcher (Python) and tests.
-- `admin-web/` - Admin dashboard, included as a normal folder in this repository.
-- `supabase/` - Supabase migrations and coupon/session documentation.
-- `original-code/v1/` - Read-only archive of the first launcher release.
-- `icon_app.ico`, `image_11.png` - Shared application icon and pink-theme logo.
+- `launcher/` — Python desktop launcher, tests, and PyInstaller specification.
+- `supabase/` — Database migrations and security documentation.
+- `ProxyCore/` — Local approved runtime used only for self-contained builds;
+  excluded from Git.
+- `icon_app.ico` and `image_11.png` — Launcher assets.
+- `scripts/` — Repository safety validation.
 
-## Local development
-
-### Launcher
+## Development
 
 ```powershell
 Set-Location launcher
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,release]"
 Copy-Item .env.example .env.local
-.\.venv\Scripts\python.exe -m neko_launcher.main
+python -m neko_launcher.main
 ```
 
-Set `NEKO_PROXY_CORE_PATH` in `launcher/.env.local` to the separately supplied
-runtime executable when testing a real proxy connection. Never commit that
-runtime, local environment files, or service-role credentials.
+Use only the Supabase publishable key in `.env.local`. Never use a secret or
+service-role key in the desktop application.
 
-### Admin dashboard
+## Validation
 
-See `admin-web/README.md` for the web development commands. Keep admin secrets
-in local environment files; commit only the provided `.env.example` template.
+```powershell
+python scripts/check_repository_safety.py
+Set-Location launcher
+python -m ruff check src tests
+python -m pytest -q -m "not integration"
+```
 
-### Database
+## One-file build
 
-The `supabase/` directory contains versioned migrations and documentation for
-the Supabase project. Apply migrations through the team's approved Supabase
-workflow and never place a service-role key in source control.
+Place the approved `ProxyCore/` directory at the repository root and configure
+`launcher/.env.local`, then run:
 
-## Sharing with the team
+```powershell
+Set-Location launcher
+python -m PyInstaller --clean --noconfirm NekoLauncher.spec
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[REPOSITORY_LAYOUT.md](REPOSITORY_LAYOUT.md) for the source-control rules,
-validation gates, and the list of files intentionally excluded from GitHub.
-For the current implementation status and ordered handoff plan, see
-[PROJECT_STATUS.md](PROJECT_STATUS.md).
-
-The legacy V1 source is archived for reference only. It still requires endpoint
-review before any public release. New development belongs under `launcher/`.
-
-## Validation and releases
-
-GitHub Actions validates repository safety, Launcher lint/tests, Admin
-lint/build/tests, and the production dependency audit. A separate manual
-workflow runs destructive Supabase integration tests with disposable
-credentials. Version tags build the Windows executable and installer with
-SHA-256 checksums.
-
-`ProxyCore` is never included in repository or release artifacts. See
-[RUNTIME_DISTRIBUTION.md](RUNTIME_DISTRIBUTION.md) for the controlled delivery
-contract.
+The deliverable is `launcher/dist/NekoLauncher.exe`. The build embeds
+ProxyCore and the publishable client configuration. Users select their own
+`Tweaker.exe` location after signing in.

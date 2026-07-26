@@ -12,6 +12,21 @@ datas = [
 ]
 datas += collect_data_files("customtkinter")
 
+embedded_env = launcher_root / ".env.local"
+if embedded_env.is_file():
+    datas.append((str(embedded_env), "."))
+
+proxy_root = repository_root / "ProxyCore"
+if proxy_root.is_dir():
+    for proxy_file in proxy_root.rglob("*"):
+        if proxy_file.is_file():
+            datas.append(
+                (
+                    str(proxy_file),
+                    str(Path("ProxyCore") / proxy_file.relative_to(proxy_root).parent),
+                )
+            )
+
 a = Analysis(
     [str(launcher_root / "src" / "neko_launcher" / "main.py")],
     pathex=[str(launcher_root / "src")],

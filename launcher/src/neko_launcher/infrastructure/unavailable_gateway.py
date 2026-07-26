@@ -15,13 +15,17 @@ class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
 
     _MESSAGE = (
         "ยังไม่ได้ตั้งค่า Supabase publishable key ใน "
-        "launcher/.env.local หรือ %LOCALAPPDATA%\\NEKO FAMILY\\launcher.env"
+        "launcher/.env.local, %LOCALAPPDATA%\\NEKO FAMILY\\launcher.env "
+        "หรือไฟล์ launcher.env ที่อยู่โฟลเดอร์เดียวกับ NekoLauncher.exe"
     )
 
     def sign_up(self, email: str, password: str) -> RegistrationResult:
         raise LauncherServiceError(self._MESSAGE)
 
     def sign_in(self, email: str, password: str) -> AuthenticatedUser:
+        raise LauncherServiceError(self._MESSAGE)
+
+    def change_password(self, password: str) -> None:
         raise LauncherServiceError(self._MESSAGE)
 
     def restore_session(self) -> AuthenticatedUser | None:

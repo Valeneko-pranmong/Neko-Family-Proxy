@@ -28,6 +28,13 @@ class ProxyStatus(str, Enum):
     FAILED = "failed"
 
 
+class GameStatus(str, Enum):
+    STOPPED = "stopped"
+    STARTING = "starting"
+    RUNNING = "running"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class Entitlement:
     product_code: str
@@ -70,4 +77,5 @@ class AppState:
     entitlement: Entitlement | None = None
     session_id: str | None = None
     proxy_status: ProxyStatus = ProxyStatus.STOPPED
+    game_status: GameStatus = GameStatus.STOPPED
     last_error: str | None = None

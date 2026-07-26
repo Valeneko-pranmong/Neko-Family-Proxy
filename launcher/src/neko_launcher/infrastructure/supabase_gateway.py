@@ -71,6 +71,17 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise LauncherServiceError("ไม่พบเซสชันหลังเข้าสู่ระบบ")
         return self._to_user(response.user)
 
+    def change_password(self, password: str) -> None:
+        try:
+            response = self._client.auth.update_user({"password": password})
+        except Exception as exc:
+            raise self._auth_error(
+                exc,
+                "เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+            )
+        if getattr(response, "user", None) is None:
+            raise LauncherServiceError("ไม่พบเซสชันสำหรับเปลี่ยนรหัสผ่าน")
+
     def restore_session(self) -> AuthenticatedUser | None:
         try:
             session = self._client.auth.get_session()

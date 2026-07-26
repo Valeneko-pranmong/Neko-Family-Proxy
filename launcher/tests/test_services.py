@@ -22,6 +22,7 @@ class FakeGateway:
         self.heartbeat_alive = True
         self.heartbeat_error = False
         self.signed_out = False
+        self.changed_password: str | None = None
         self.released: list[str] = []
 
     def sign_up(self, email: str, password: str) -> RegistrationResult:
@@ -35,6 +36,9 @@ class FakeGateway:
 
     def sign_out(self) -> None:
         self.signed_out = True
+
+    def change_password(self, password: str) -> None:
+        self.changed_password = password
 
     def claim_session(
         self,
@@ -158,6 +162,21 @@ def test_sign_out_releases_launcher_session_and_auth_session(
     assert gateway.released == ["session-id"]
     assert gateway.signed_out is True
     assert controller.state.user_id is None
+
+
+def test_change_password_requires_login_and_updates_auth_gateway(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+
+    with pytest.raises(Exception, match="เข้าสู่ระบบก่อน"):
+        service.change_password("new-password")
+
+    service.sign_in("user@example.com", "password123")
+    service.change_password("new-password")
+
+    assert gateway.changed_password == "new-password"
+    assert controller.state.user_email == "user@example.com"
 
 
 @pytest.mark.parametrize(

@@ -7,6 +7,7 @@ from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.services import LauncherService
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.process_manager import ProxyProcessManager
 from neko_launcher.infrastructure.secure_store import KeyringSecureStore
@@ -32,7 +33,8 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     config = LauncherConfig.from_environment(root)
     event_bus = EventBus()
     proxy_manager = ProxyProcessManager(config.proxy_core_path)
-    controller = ApplicationController(event_bus, proxy_manager)
+    game_manager = GameProcessManager()
+    controller = ApplicationController(event_bus, proxy_manager, game_manager)
     secure_store = KeyringSecureStore()
     installation = LocalInstallationIdentity(secure_store)
     if config.supabase_url and config.supabase_publishable_key:
@@ -52,7 +54,15 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     )
     logo_path = root / "image_11.png"
     icon_path = root / "icon_app.ico"
-    return AppWindow(controller, service, event_bus, logo_path, icon_path)
+    return AppWindow(
+        controller,
+        service,
+        event_bus,
+        logo_path,
+        icon_path,
+        game_default_path=config.game_exe,
+        game_path_store=config.game_path_store,
+    )
 
 
 def main() -> None:

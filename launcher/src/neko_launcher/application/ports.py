@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from neko_launcher.domain.events import Event
@@ -23,7 +24,12 @@ class ProxyGateway(Protocol):
     def stop(self) -> None:
         ...
 
-    def is_running(self) -> bool:
+
+class GameGateway(Protocol):
+    def start(self, executable: Path) -> None:
+        ...
+
+    def stop(self) -> None:
         ...
 
 
@@ -32,6 +38,9 @@ class AuthGateway(Protocol):
         ...
 
     def sign_in(self, email: str, password: str) -> AuthenticatedUser:
+        ...
+
+    def change_password(self, password: str) -> None:
         ...
 
     def restore_session(self) -> AuthenticatedUser | None:

@@ -1,8 +1,9 @@
 # ProxyCore runtime distribution
 
-`ProxyCore` is a separately licensed runtime and is never included in this
-repository, the launcher executable, the installer, or GitHub release
-artifacts.
+`ProxyCore` is a separately licensed runtime and is never committed to this
+repository or published in GitHub release artifacts. An approved local
+distribution build may embed the runtime into a one-file launcher; the runtime
+must still be delivered through the team's access-controlled channel.
 
 ## Controlled delivery contract
 
@@ -10,7 +11,7 @@ artifacts.
    channel.
 2. Publish a SHA-256 checksum and runtime version alongside the archive.
 3. Verify the checksum before extraction.
-4. Extract the approved runtime to:
+4. For a separate-runtime installation, extract the approved runtime to:
 
    `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\ProxyCore.exe`
 

@@ -9,9 +9,12 @@ from neko_launcher.domain.events import (
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
+    StopProxyRequested,
 )
 from neko_launcher.domain.models import (
+    AuthStatus,
     CouponRedemption,
+    ProxyStatus,
     RegistrationResult,
 )
 
@@ -74,6 +77,20 @@ class LauncherService:
         self._controller.dispatch(AuthSucceeded(user.user_id, user.email))
         self._claim_session(allow_missing=True)
 
+    def change_password(self, password: str) -> None:
+        """Change the password for the currently authenticated user."""
+        if self._controller.state.auth_status is not AuthStatus.AUTHENTICATED:
+            raise LauncherServiceError("กรุณาเข้าสู่ระบบก่อนเปลี่ยนรหัสผ่าน")
+        self._validate_password(password)
+        try:
+            self._auth_gateway.change_password(password)
+        except LauncherServiceError:
+            raise
+        except Exception as exc:
+            raise LauncherServiceError(
+                "เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"
+            ) from exc
+
     def restore_session(self) -> bool:
         try:
             user = self._auth_gateway.restore_session()
@@ -89,6 +106,11 @@ class LauncherService:
         return True
 
     def sign_out(self) -> None:
+        if self._controller.state.proxy_status in {
+            ProxyStatus.STARTING,
+            ProxyStatus.RUNNING,
+        }:
+            self._controller.dispatch(StopProxyRequested())
         session_id = self._controller.state.session_id
         if session_id:
             try:
@@ -170,5 +192,9 @@ class LauncherService:
     def _validate_credentials(email: str, password: str) -> None:
         if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
             raise LauncherServiceError("กรุณากรอกอีเมลให้ถูกต้อง")
+        LauncherService._validate_password(password)
+
+    @staticmethod
+    def _validate_password(password: str) -> None:
         if len(password) < 8:
             raise LauncherServiceError("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")

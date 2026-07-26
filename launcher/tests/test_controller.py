@@ -3,11 +3,17 @@ from neko_launcher.domain.events import (
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
+    LaunchGameRequested,
     SessionClaimed,
     StartProxyRequested,
     StateChanged,
 )
-from neko_launcher.domain.models import Entitlement, EntitlementStatus, ProxyStatus
+from neko_launcher.domain.models import (
+    Entitlement,
+    EntitlementStatus,
+    GameStatus,
+    ProxyStatus,
+)
 from neko_launcher.infrastructure.event_bus import EventBus
 
 
@@ -21,9 +27,17 @@ class FakeProxy:
     def stop(self) -> None:
         self.running = False
 
-    def is_running(self) -> bool:
-        return self.running
+class FakeGame:
+    def __init__(self) -> None:
+        self.running = False
+        self.executable = ""
 
+    def start(self, executable) -> None:
+        self.executable = str(executable)
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
 
 def test_auth_and_entitlement_state_transitions() -> None:
     bus = EventBus()
@@ -74,3 +88,28 @@ def test_proxy_refuses_to_start_without_entitlement_and_session() -> None:
     assert proxy.running is False
     assert controller.state.proxy_status is ProxyStatus.FAILED
     assert controller.state.last_error is not None
+
+
+def test_game_requires_active_proxy_and_launches_selected_tweaker() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+
+    controller.dispatch(LaunchGameRequested("C:/Games/Tweaker.exe"))
+    assert game.running is False
+    assert controller.state.game_status is GameStatus.FAILED
+
+    controller.dispatch(StartProxyRequested())
+    controller.dispatch(LaunchGameRequested("C:/Games/Tweaker.exe"))
+
+    assert game.running is True
+    assert game.executable.endswith("Tweaker.exe")
+    assert controller.state.game_status is GameStatus.RUNNING

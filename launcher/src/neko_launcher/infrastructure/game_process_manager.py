@@ -6,43 +6,42 @@ from pathlib import Path
 from threading import RLock
 
 
-class ProxyProcessError(RuntimeError):
-    """Raised when ProxyCore cannot be started or stopped cleanly."""
+class GameProcessError(RuntimeError):
+    """Raised when the selected game/Tweaker executable cannot be started."""
 
 
-class ProxyProcessManager:
-    """Owns one ProxyCore process instead of killing all matching processes."""
+class GameProcessManager:
+    """Owns the selected Tweaker process without touching unrelated processes."""
 
-    def __init__(self, executable: Path) -> None:
-        self._executable = executable
+    def __init__(self) -> None:
         self._process: subprocess.Popen[bytes] | None = None
         self._lock = RLock()
 
-    def start(self) -> None:
+    def start(self, executable: Path) -> None:
         with self._lock:
             if self._process is not None and self._process.poll() is None:
                 return
-            if not self._executable.is_file():
-                raise ProxyProcessError(f"ProxyCore not found: {self._executable}")
+            if not executable.is_file():
+                raise GameProcessError(f"Tweaker.exe not found: {executable}")
 
             startupinfo = None
             creationflags = 0
             if os.name == "nt":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                startupinfo.wShowWindow = subprocess.SW_SHOWNORMAL
+                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
             try:
                 self._process = subprocess.Popen(
-                    [str(self._executable)],
-                    cwd=str(self._executable.parent),
+                    [str(executable)],
+                    cwd=str(executable.parent),
                     startupinfo=startupinfo,
                     creationflags=creationflags,
                 )
             except OSError as exc:
                 self._process = None
-                raise ProxyProcessError(str(exc)) from exc
+                raise GameProcessError(str(exc)) from exc
 
     def stop(self, timeout: float = 5.0) -> None:
         with self._lock:

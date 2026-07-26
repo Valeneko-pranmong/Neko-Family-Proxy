@@ -10,22 +10,23 @@ from neko_launcher.domain.events import (
     EntitlementLoaded,
     ErrorOccurred,
     Event,
-    ProxyStarted,
-    ProxyStopped,
+    LaunchGameRequested,
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
     StateChanged,
+    StopGameRequested,
     StopProxyRequested,
 )
 from neko_launcher.domain.models import (
     AppState,
     AuthStatus,
     EntitlementStatus,
+    GameStatus,
     ProxyStatus,
 )
 
-from .ports import EventPublisher, ProxyGateway
+from .ports import EventPublisher, GameGateway, ProxyGateway
 
 
 class ApplicationController:
@@ -35,9 +36,11 @@ class ApplicationController:
         self,
         event_bus: EventPublisher,
         proxy_gateway: ProxyGateway | None = None,
+        game_gateway: GameGateway | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._proxy_gateway = proxy_gateway
+        self._game_gateway = game_gateway
         self._state = AppState()
         self._lock = RLock()
 
@@ -84,6 +87,8 @@ class ApplicationController:
                 ProxyStatus.RUNNING,
             }:
                 self._stop_proxy()
+            else:
+                self._stop_game()
             self._update(
                 session_id=None,
                 entitlement=None,
@@ -93,14 +98,15 @@ class ApplicationController:
             self._start_proxy()
         elif isinstance(event, StopProxyRequested):
             self._stop_proxy()
-        elif isinstance(event, ProxyStarted):
-            self._update(proxy_status=ProxyStatus.RUNNING, last_error=None)
-        elif isinstance(event, ProxyStopped):
-            self._update(proxy_status=ProxyStatus.STOPPED)
+        elif isinstance(event, LaunchGameRequested):
+            self._launch_game(event.executable)
+        elif isinstance(event, StopGameRequested):
+            self._stop_game()
         elif isinstance(event, ErrorOccurred):
             self._update(last_error=event.message)
 
     def sign_out(self) -> None:
+        self._stop_game()
         self._update(
             auth_status=AuthStatus.SIGNED_OUT,
             user_id=None,
@@ -108,6 +114,7 @@ class ApplicationController:
             entitlement=None,
             session_id=None,
             proxy_status=ProxyStatus.STOPPED,
+            game_status=GameStatus.STOPPED,
             last_error=None,
         )
 
@@ -141,6 +148,7 @@ class ApplicationController:
             self._update(proxy_status=ProxyStatus.RUNNING)
 
     def _stop_proxy(self) -> None:
+        self._stop_game()
         if self._proxy_gateway is None:
             self._update(proxy_status=ProxyStatus.STOPPED)
             return
@@ -151,6 +159,59 @@ class ApplicationController:
             self._update(proxy_status=ProxyStatus.FAILED, last_error=str(exc))
         else:
             self._update(proxy_status=ProxyStatus.STOPPED)
+
+    def _launch_game(self, executable: str) -> None:
+        state = self.state
+        if state.auth_status is not AuthStatus.AUTHENTICATED:
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="กรุณาเข้าสู่ระบบก่อนเปิดเกม",
+            )
+            return
+        if (
+            state.entitlement is None
+            or state.entitlement.status is not EntitlementStatus.ACTIVE
+            or state.session_id is None
+        ):
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="บัญชียังไม่มีสิทธิ์ใช้งานหรือเซสชันหมดอายุ",
+            )
+            return
+        if state.proxy_status is not ProxyStatus.RUNNING:
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="กรุณาเริ่ม Proxy ก่อนเปิด Tweaker",
+            )
+            return
+        if self._game_gateway is None:
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="Game launcher service unavailable",
+            )
+            return
+        self._update(game_status=GameStatus.STARTING, last_error=None)
+        try:
+            from pathlib import Path
+
+            self._game_gateway.start(Path(executable))
+        except Exception as exc:
+            self._update(game_status=GameStatus.FAILED, last_error=str(exc))
+        else:
+            self._update(game_status=GameStatus.RUNNING)
+
+    def _stop_game(self) -> None:
+        if self._game_gateway is None:
+            self._update(game_status=GameStatus.STOPPED)
+            return
+        if self.state.game_status is not GameStatus.RUNNING:
+            return
+        try:
+            self._game_gateway.stop()
+        except Exception as exc:
+            self._update(game_status=GameStatus.FAILED, last_error=str(exc))
+        else:
+            self._update(game_status=GameStatus.STOPPED)
 
     def _update(self, **changes: object) -> None:
         with self._lock:

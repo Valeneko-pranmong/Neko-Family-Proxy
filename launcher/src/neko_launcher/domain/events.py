@@ -56,12 +56,12 @@ class StopProxyRequested(Event):
 
 
 @dataclass(frozen=True)
-class ProxyStarted(Event):
-    pass
+class LaunchGameRequested(Event):
+    executable: str
 
 
 @dataclass(frozen=True)
-class ProxyStopped(Event):
+class StopGameRequested(Event):
     pass
 
 
