@@ -1,37 +1,36 @@
 # Neko Control Room
 
-Private admin console for Neko Family Proxy. It manages users, licenses,
-coupon batches, live sessions, and the audit trail through the Supabase
-server API.
+ระบบหลังบ้านแบบรันเองบนเครื่อง แยกจากบัญชี ChatGPT และตรวจสิทธิ์ผู้ดูแลผ่าน Supabase
 
-## Runtime configuration
+## โครงสร้าง
 
-Copy `.env.example` to `.env.local` for local development. The
-`SUPABASE_SECRET_KEY` must stay server-side; never expose it in browser code
-or commit it to the repository. `ADMIN_EMAIL_ALLOWLIST` is required and must
-contain the workspace-authenticated email addresses allowed to open the
-console.
+- `standalone/src/` — หน้าเว็บ แยก HTML, CSS และ JavaScriptเพื่อดูแลโค้ดง่าย
+- `standalone/dist/neko-control.html` — ไฟล์ HTML เดียวที่ build พร้อมใช้งาน
+- `admin-api/src/` — Local API และระบบ session
+- `scripts/build-standalone.mjs` — รวม source เป็น HTML ไฟล์เดียว
+- `tests/admin-api.test.mjs` — ทดสอบ login และสิทธิ์ admin
 
-Every allowlisted email must also belong to an active Supabase Auth user whose
-`public.profiles` row has `role = 'admin'` and `status = 'active'`. The server
-checks both conditions before reading data or invoking an Admin command.
-Mutations go through the `launcher.admin_*` RPC functions so validation,
-session revocation, and audit logging happen in one database transaction.
+## เริ่มใช้งาน
 
-When the Supabase variables are not present, the local UI runs in a clearly
-marked demo mode for an allowlisted workspace user so the layout can be
-reviewed safely.
+1. กำหนด `SUPABASE_URL` และ `SUPABASE_SECRET_KEY` ในไฟล์ `.env`
+2. ตรวจว่าผู้ใช้มีบัญชี Email/Password ใน Supabase Auth
+3. ตรวจว่า `public.profiles` มีแถวที่ `id` ตรงกับผู้ใช้ และ `role` เป็น `admin`
+4. เปิด PowerShell ที่โฟลเดอร์ `admin-web` แล้วรัน:
 
-## Commands
-
-```bash
-npm ci
-npm run dev
-npm run build
-npm run lint
-npm test
-npm audit --omit=dev --audit-level=high
+```powershell
+.\start-admin.ps1
 ```
 
-Production dependency overrides are pinned in `package.json` and the lockfile
-so patched PostCSS and Sharp builds are used consistently.
+5. เปิด `http://127.0.0.1:8787`
+
+ระบบจะตรวจ Email/Password กับ Supabase Auth และอนุญาตเฉพาะผู้ใช้ที่มี `role = admin` เท่านั้น
+
+## คำสั่งสำคัญ
+
+```powershell
+npm run build
+npm test
+npm start
+```
+
+อ่านวิธีตั้งค่าเพิ่มเติมได้ที่ `LOCAL_ADMIN_GUIDE_TH.md`
