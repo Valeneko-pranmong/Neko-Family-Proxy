@@ -28,6 +28,7 @@ from neko_launcher.domain.models import (
     RegistrationResult,
 )
 from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.process_detector import is_any_process_running
 
 from .theme import PALETTE, apply_theme
 
@@ -83,6 +84,8 @@ class AppWindow:
         self._coupon_code = tk.StringVar()
         self._game_path = tk.StringVar(value=game_default_path)
         self._game_path_store = game_path_store
+        self._auto_connect = tk.BooleanVar(value=True)
+        self._auto_launch = tk.BooleanVar(value=True)
 
         self._build_layout(logo_path)
         self._fit_portrait_window()
@@ -90,22 +93,22 @@ class AppWindow:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(100, self._drain_events)
         self.root.after(30_000, self._heartbeat)
+        self.root.after(3_000, self._poll_game_process)
         self._submit(self._service.restore_session, self._restore_completed)
 
     def _fit_portrait_window(self) -> None:
-        """Centered One UI card: ~36% screen width × 80% screen height."""
+        """Centered One UI card."""
         self.root.update_idletasks()
         screen_w = int(self.root.winfo_screenwidth())
         screen_h = int(self.root.winfo_screenheight())
-        # Match the pink vertical guide (~1/3 width, ~4/5 height, centered).
-        width = max(420, int(screen_w * 0.36))
-        height = max(640, int(screen_h * 0.80))
+        width = 480
+        height = 850
         width = min(width, screen_w - 48)
         height = min(height, screen_h - 48)
         x = max(0, (screen_w - width) // 2)
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.minsize(min(420, width), min(640, height))
+        self.root.minsize(420, 640)
 
     def _build_layout(self, logo_path: Path | None) -> None:
         shell = ctk.CTkFrame(
@@ -362,29 +365,69 @@ class AppWindow:
         proxy = self._card(self._program_view)
         ctk.CTkLabel(
             proxy,
-            text="เริ่มใช้งาน",
+            text="ตั้งค่าการเชื่อมต่อ (Connection Mode)",
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=14, pady=(10, 4))
+
+        self._auto_connect_checkbox = ctk.CTkCheckBox(
+            proxy,
+            text="เชื่อมต่อโดยอัตโนมัติ เมื่อเริ่มเกม (Auto Connect)",
+            variable=self._auto_connect,
+            text_color=PALETTE.text,
+            font=ctk.CTkFont(size=12),
+        )
+        self._auto_connect_checkbox.pack(anchor="w", padx=14, pady=(0, 10))
+
+        ctk.CTkLabel(
+            proxy,
+            text="ควบคุมด้วยตนเอง (Manual Control)",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=PALETTE.primary_dark,
+        ).pack(anchor="w", padx=14, pady=(4, 4))
+
         controls = ctk.CTkFrame(proxy, fg_color="transparent")
         controls.pack(fill="x", padx=10, pady=(0, 10))
-        self._start_button = self._primary_button(
-            controls, "เริ่มใช้งาน", self._start_usage
+
+        self._auto_mode_btn = ctk.CTkButton(
+            controls,
+            text="Auto Mode Active...",
+            state="disabled",
+            fg_color=PALETTE.surface,
+            text_color=PALETTE.text_muted,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            corner_radius=8,
+            height=34,
         )
-        self._start_button.pack(side="left", fill="x", expand=True, padx=4)
+
+        self._start_button = self._primary_button(
+            controls, "เริ่มเชื่อมต่อ", self._start_usage
+        )
         self._stop_button = self._secondary_button(
             controls,
-            "หยุดการเชื่อมต่อ",
+            "หยุดเชื่อมต่อ",
             lambda: self._controller.dispatch(StopProxyRequested()),
         )
-        self._stop_button.pack(side="left", fill="x", expand=True, padx=4)
         self._start_button.configure(state="disabled")
         self._stop_button.configure(state="disabled")
+
+        def _toggle_auto_connect(*_args: Any) -> None:
+            if self._auto_connect.get():
+                self._start_button.pack_forget()
+                self._stop_button.pack_forget()
+                self._auto_mode_btn.pack(fill="x", expand=True, padx=4)
+            else:
+                self._auto_mode_btn.pack_forget()
+                self._start_button.pack(side="left", fill="x", expand=True, padx=4)
+                self._stop_button.pack(side="left", fill="x", expand=True, padx=4)
+
+        self._auto_connect.trace_add("write", _toggle_auto_connect)
+        _toggle_auto_connect()
 
         game = self._card(self._program_view)
         ctk.CTkLabel(
             game,
-            text="ตั้งค่าไฟล์เปิดเกม",
+            text="ตั้งค่าเข้าเกม (PSO2 Tweaker)",
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=14, pady=(10, 4))
@@ -398,23 +441,35 @@ class AppWindow:
         self._game_path_entry.pack(side="left", fill="x", expand=True, padx=4)
         self._secondary_button(
             game_path_row,
-            "เลือกไฟล์",
+            "เลือกไฟล์ (Browse)",
             self._choose_game,
         ).pack(side="left", padx=4)
+
+        self._auto_launch_checkbox = ctk.CTkCheckBox(
+            game,
+            text="เปิด Tweaker อัตโนมัติเมื่อล็อคอินสำเร็จ",
+            variable=self._auto_launch,
+            text_color=PALETTE.text,
+            font=ctk.CTkFont(size=12),
+        )
+        self._auto_launch_checkbox.pack(anchor="w", padx=14, pady=(10, 10))
+
         game_controls = ctk.CTkFrame(game, fg_color="transparent")
         game_controls.pack(fill="x", padx=10, pady=(0, 10))
         self._launch_game_button = self._primary_button(
             game_controls,
-            "เปิดเกม",
+            "เปิดโปรแกรม PSO2 Tweaker",
             self._launch_game,
         )
         self._launch_game_button.pack(side="left", fill="x", expand=True, padx=4)
+        
         self._stop_game_button = self._secondary_button(
             game_controls,
-            "ปิดเกม",
+            "ปิดโปรแกรม",
             lambda: self._controller.dispatch(StopGameRequested()),
         )
         self._stop_game_button.pack(side="left", fill="x", expand=True, padx=4)
+        
         self._launch_game_button.configure(state="disabled")
         self._stop_game_button.configure(state="disabled")
 
@@ -771,6 +826,52 @@ class AppWindow:
         self._change_password_button.configure(
             state="normal" if not signed_in and not authenticating else "disabled"
         )
+
+    # ------------------------------------------------------------------
+    # Auto-connect: poll for pso2.exe / pso2launcher.exe
+    # ------------------------------------------------------------------
+    def _poll_game_process(self) -> None:
+        """Every 3 seconds, check if a PSO2 process appeared.
+
+        When *Auto Connect* is enabled and a target process is detected,
+        automatically start ProxyCore (and the configured Tweaker) so the
+        user doesn't have to press the button manually.
+        """
+        if self._auto_connect.get():
+            state = self._controller.state
+            already_running = state.proxy_status in {
+                ProxyStatus.STARTING,
+                ProxyStatus.RUNNING,
+            }
+            ready = (
+                state.auth_status is AuthStatus.AUTHENTICATED
+                and state.session_id is not None
+                and state.entitlement is not None
+                and state.entitlement.status is EntitlementStatus.ACTIVE
+            )
+            if ready and not already_running:
+                # Run detection in background to avoid blocking the UI.
+                self._submit(
+                    is_any_process_running,
+                    self._on_game_detected,
+                )
+
+        if self.root.winfo_exists():
+            self.root.after(3_000, self._poll_game_process)
+
+    def _on_game_detected(self, detected: bool) -> None:
+        """Callback when process detection finishes."""
+        if not detected:
+            return
+        # Double-check conditions haven't changed while the check ran.
+        if not self._auto_connect.get():
+            return
+        state = self._controller.state
+        if state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RUNNING}:
+            return
+        # Auto-start ProxyCore (without launching Tweaker – the user
+        # already has the game running or is about to start it).
+        self._service.start_proxy()
 
     def _heartbeat(self) -> None:
         if self._controller.state.session_id:
