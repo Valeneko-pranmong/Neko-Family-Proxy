@@ -60,8 +60,7 @@ class AppWindow:
 
         self.root = ctk.CTk()
         self.root.title("Neko Family Proxy Launcher")
-        self.root.geometry("960x760")
-        self.root.minsize(820, 680)
+        self.root.minsize(420, 640)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
             try:
@@ -86,10 +85,27 @@ class AppWindow:
         self._game_path_store = game_path_store
 
         self._build_layout(logo_path)
+        self._fit_portrait_window()
+        self.root.after_idle(self._fit_portrait_window)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(100, self._drain_events)
         self.root.after(30_000, self._heartbeat)
         self._submit(self._service.restore_session, self._restore_completed)
+
+    def _fit_portrait_window(self) -> None:
+        """Centered One UI card: ~36% screen width × 80% screen height."""
+        self.root.update_idletasks()
+        screen_w = int(self.root.winfo_screenwidth())
+        screen_h = int(self.root.winfo_screenheight())
+        # Match the pink vertical guide (~1/3 width, ~4/5 height, centered).
+        width = max(420, int(screen_w * 0.36))
+        height = max(640, int(screen_h * 0.80))
+        width = min(width, screen_w - 48)
+        height = min(height, screen_h - 48)
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(min(420, width), min(640, height))
 
     def _build_layout(self, logo_path: Path | None) -> None:
         shell = ctk.CTkFrame(
@@ -97,63 +113,59 @@ class AppWindow:
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=24,
+            corner_radius=20,
         )
-        shell.pack(fill="both", expand=True, padx=28, pady=28)
+        shell.pack(fill="both", expand=True, padx=12, pady=12)
 
         header = ctk.CTkFrame(shell, fg_color="transparent")
-        header.pack(fill="x", padx=30, pady=(20, 4))
+        header.pack(fill="x", padx=12, pady=(8, 2))
+
+        brand = ctk.CTkFrame(header, fg_color="transparent")
+        brand.pack(side="left", fill="x", expand=True)
         if logo_path and logo_path.is_file():
             try:
                 from PIL import Image
 
                 self._logo_image = ctk.CTkImage(
                     Image.open(logo_path),
-                    size=(190, 66),
+                    size=(110, 38),
                 )
                 ctk.CTkLabel(
-                    header,
+                    brand,
                     image=self._logo_image,
                     text="",
                     fg_color="transparent",
-                ).pack(side="left")
+                ).pack(anchor="w")
             except Exception:
-                self._add_heading(header)
+                self._add_heading(brand)
         else:
-            self._add_heading(header)
+            self._add_heading(brand)
 
-        title = ctk.CTkFrame(header, fg_color="transparent")
-        title.pack(side="left", padx=(18, 0), pady=4)
         ctk.CTkLabel(
-            title,
+            brand,
             text="Neko Family Proxy",
-            font=ctk.CTkFont(size=22, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            title,
-            text="บัญชีและการใช้งาน",
-            font=ctk.CTkFont(size=12),
-            text_color=PALETTE.text_muted,
         ).pack(anchor="w", pady=(2, 0))
+        ctk.CTkLabel(
+            brand,
+            text="บัญชีและการใช้งาน",
+            font=ctk.CTkFont(size=10),
+            text_color=PALETTE.text_muted,
+        ).pack(anchor="w")
 
         self._status_badge = ctk.CTkLabel(
             header,
             textvariable=self._status,
             fg_color=PALETTE.surface,
-            corner_radius=12,
+            corner_radius=10,
             text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(size=10, weight="bold"),
         )
-        self._status_badge.pack(side="right", padx=14, pady=8, ipadx=10, ipady=5)
+        self._status_badge.pack(side="right", padx=(6, 0), pady=2, ipadx=6, ipady=3)
 
-        self._content = ctk.CTkScrollableFrame(
-            shell,
-            fg_color="transparent",
-            scrollbar_button_color=PALETTE.primary_soft,
-            scrollbar_button_hover_color=PALETTE.primary,
-        )
-        self._content.pack(fill="both", expand=True, padx=14, pady=(4, 16))
+        self._content = ctk.CTkFrame(shell, fg_color="transparent")
+        self._content.pack(fill="both", expand=True, padx=6, pady=(2, 4))
         self._build_auth_view()
         self._build_program_view()
         self._show_auth_view()
@@ -164,7 +176,7 @@ class AppWindow:
             font=ctk.CTkFont(size=10),
             text_color=PALETTE.text_muted,
         )
-        footer.pack(pady=(0, 12))
+        footer.pack(pady=(0, 6))
 
     def _build_auth_view(self) -> None:
         self._auth_view = ctk.CTkFrame(
@@ -172,18 +184,13 @@ class AppWindow:
             fg_color="transparent",
         )
         intro = self._card(self._auth_view)
+        intro.pack_configure(fill="both", expand=True)
         ctk.CTkLabel(
             intro,
             text="เข้าสู่ระบบและสมัครสมาชิก",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(anchor="w", padx=24, pady=(22, 2))
-        ctk.CTkLabel(
-            intro,
-            text="เข้าสู่ระบบหรือสมัครสมาชิกเพื่อเริ่มใช้งานและดูวันคงเหลือ",
-            text_color=PALETTE.text_muted,
-            wraplength=680,
-        ).pack(anchor="w", padx=24, pady=(0, 16))
+        ).pack(anchor="w", padx=14, pady=(10, 6))
 
         self._auth_panel = ctk.CTkTabview(
             intro,
@@ -191,16 +198,11 @@ class AppWindow:
             segmented_button_selected_color=PALETTE.primary,
             segmented_button_selected_hover_color=PALETTE.primary_hover,
             text_color=PALETTE.text,
-            corner_radius=14,
+            corner_radius=12,
         )
-        self._auth_panel.pack(fill="x", padx=18, pady=(0, 18))
+        self._auth_panel.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         login = self._auth_panel.add("เข้าสู่ระบบ")
-        ctk.CTkLabel(
-            login,
-            text="ใช้บัญชี Neko Family เพื่อเข้าสู่โปรแกรม",
-            text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=18, pady=(16, 0))
         self._field_label(login, "ชื่อผู้ใช้สำหรับเข้าสู่ระบบ")
         self._login_email_entry = self._entry(
             login, "ชื่อผู้ใช้", self._login_email
@@ -215,14 +217,9 @@ class AppWindow:
         self._login_button = self._primary_button(
             login, "เข้าสู่ระบบ", self._login
         )
-        self._login_button.pack(fill="x", padx=18, pady=(14, 20))
+        self._login_button.pack(fill="x", padx=14, pady=(10, 12))
 
         register = self._auth_panel.add("สมัครสมาชิก")
-        ctk.CTkLabel(
-            register,
-            text="สร้างบัญชีใหม่ โดยไม่ต้องยืนยันอีเมล",
-            text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=18, pady=(16, 0))
         self._field_label(register, "ชื่อผู้ใช้")
         self._register_email_entry = self._entry(
             register, "เช่น tester_01", self._register_username
@@ -259,14 +256,9 @@ class AppWindow:
         self._register_button = self._primary_button(
             register, "สร้างบัญชี", self._register
         )
-        self._register_button.pack(fill="x", padx=18, pady=(14, 20))
+        self._register_button.pack(fill="x", padx=14, pady=(10, 12))
 
         change = self._auth_panel.add("ลืมรหัสผ่าน")
-        ctk.CTkLabel(
-            change,
-            text="กรอกอีเมลที่ใช้สมัคร เราจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ให้",
-            text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=18, pady=(16, 0))
         self._field_label(change, "อีเมลที่ใช้สมัคร")
         self._reset_email_entry = self._entry(
             change,
@@ -279,27 +271,27 @@ class AppWindow:
         self._change_password_button = self._primary_button(
             change, "ส่งลิงก์ตั้งรหัสผ่านใหม่", self._request_password_reset
         )
-        self._change_password_button.pack(fill="x", padx=18, pady=(14, 20))
+        self._change_password_button.pack(fill="x", padx=14, pady=(10, 12))
 
         self._auth_hint = ctk.CTkLabel(
             self._auth_view,
             text="เข้าสู่ระบบเพื่อเริ่มใช้งาน",
             text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=11, weight="bold"),
         )
-        self._auth_hint.pack(pady=(10, 0))
+        self._auth_hint.pack(pady=(4, 0))
         ctk.CTkLabel(
             self._auth_view,
             textvariable=self._notice,
             text_color=PALETTE.success,
-            wraplength=700,
-        ).pack(pady=(8, 0))
+            wraplength=360,
+        ).pack(pady=(2, 0))
         ctk.CTkLabel(
             self._auth_view,
             textvariable=self._error,
             text_color=PALETTE.danger,
-            wraplength=700,
-        ).pack(pady=(4, 8))
+            wraplength=360,
+        ).pack(pady=(2, 2))
 
     def _build_program_view(self) -> None:
         self._program_view = ctk.CTkFrame(
@@ -309,11 +301,11 @@ class AppWindow:
 
         account = self._card(self._program_view)
         account_header = ctk.CTkFrame(account, fg_color="transparent")
-        account_header.pack(fill="x", padx=22, pady=(18, 4))
+        account_header.pack(fill="x", padx=14, pady=(10, 2))
         ctk.CTkLabel(
             account_header,
             text="พื้นที่ใช้งานของคุณ",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color=PALETTE.text,
         ).pack(side="left")
         self._account_label = ctk.CTkLabel(
@@ -321,85 +313,71 @@ class AppWindow:
             textvariable=self._account,
             text_color=PALETTE.text_muted,
         )
-        self._account_label.pack(side="right", pady=4)
+        self._account_label.pack(side="right", pady=2)
+
+        self._entitlement_label = ctk.CTkLabel(
+            account,
+            textvariable=self._entitlement,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=PALETTE.text,
+            wraplength=360,
+            justify="left",
+        )
+        self._entitlement_label.pack(anchor="w", padx=14, pady=(2, 4))
 
         actions = ctk.CTkFrame(account, fg_color="transparent")
-        actions.pack(fill="x", padx=16, pady=(8, 16))
+        actions.pack(fill="x", padx=10, pady=(2, 10))
         self._secondary_button(
             actions,
             "เปลี่ยนรหัสผ่าน",
             self._open_password_tab,
-        ).pack(side="left", padx=6)
+        ).pack(side="left", padx=4)
         self._secondary_button(
             actions,
             "ออกจากระบบ",
             self._sign_out,
-        ).pack(side="right", padx=6)
-
-        entitlement = self._card(self._program_view)
-        ctk.CTkLabel(
-            entitlement,
-            text="วันใช้งานคงเหลือ",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=22, pady=(18, 4))
-        self._entitlement_label = ctk.CTkLabel(
-            entitlement,
-            textvariable=self._entitlement,
-            font=ctk.CTkFont(size=15, weight="bold"),
-            text_color=PALETTE.text,
-        )
-        self._entitlement_label.pack(anchor="w", padx=22, pady=(0, 18))
+        ).pack(side="right", padx=4)
 
         usage = self._card(self._program_view)
         ctk.CTkLabel(
             usage,
             text="เติมวันใช้งาน",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=22, pady=(18, 2))
-        ctk.CTkLabel(
-            usage,
-            text="กรอกรหัสคูปองเพื่อเพิ่มวันให้บัญชีนี้",
-            text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=22, pady=(0, 6))
+        ).pack(anchor="w", padx=14, pady=(10, 4))
+        coupon_row = ctk.CTkFrame(usage, fg_color="transparent")
+        coupon_row.pack(fill="x", padx=10, pady=(0, 10))
         self._coupon_entry = ctk.CTkEntry(
-            usage,
+            coupon_row,
             textvariable=self._coupon_code,
-            placeholder_text="NEKO-XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX",
-            height=40,
+            placeholder_text="NEKO-XXXXXXXX-…",
+            height=34,
         )
-        self._coupon_entry.pack(fill="x", padx=22, pady=6)
+        self._coupon_entry.pack(fill="x", padx=4, pady=(0, 6))
         self._redeem_button = self._primary_button(
-            usage, "เติมวันจากคูปอง", self._redeem_coupon
+            coupon_row, "เติมวันจากคูปอง", self._redeem_coupon
         )
-        self._redeem_button.pack(fill="x", padx=22, pady=(6, 18))
+        self._redeem_button.pack(fill="x", padx=4)
 
         proxy = self._card(self._program_view)
         ctk.CTkLabel(
             proxy,
             text="เริ่มใช้งาน",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=22, pady=(18, 2))
-        ctk.CTkLabel(
-            proxy,
-            text="กดเริ่มใช้งานเพื่อเชื่อมต่อและเปิดเกมตามไฟล์ที่เลือก",
-            text_color=PALETTE.text_muted,
-            wraplength=680,
-        ).pack(anchor="w", padx=22, pady=(0, 10))
+        ).pack(anchor="w", padx=14, pady=(10, 4))
         controls = ctk.CTkFrame(proxy, fg_color="transparent")
-        controls.pack(fill="x", padx=16, pady=(0, 18))
+        controls.pack(fill="x", padx=10, pady=(0, 10))
         self._start_button = self._primary_button(
             controls, "เริ่มใช้งาน", self._start_usage
         )
-        self._start_button.pack(side="left", fill="x", expand=True, padx=6)
+        self._start_button.pack(side="left", fill="x", expand=True, padx=4)
         self._stop_button = self._secondary_button(
             controls,
             "หยุดการเชื่อมต่อ",
             lambda: self._controller.dispatch(StopProxyRequested()),
         )
-        self._stop_button.pack(side="left", fill="x", expand=True, padx=6)
+        self._stop_button.pack(side="left", fill="x", expand=True, padx=4)
         self._start_button.configure(state="disabled")
         self._stop_button.configure(state="disabled")
 
@@ -407,61 +385,55 @@ class AppWindow:
         ctk.CTkLabel(
             game,
             text="ตั้งค่าไฟล์เปิดเกม",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=22, pady=(18, 2))
-        ctk.CTkLabel(
-            game,
-            text="เลือกไฟล์เปิดเกม ระบบจะจำตำแหน่งไว้สำหรับครั้งถัดไป",
-            text_color=PALETTE.text_muted,
-            wraplength=680,
-        ).pack(anchor="w", padx=22, pady=(0, 8))
+        ).pack(anchor="w", padx=14, pady=(10, 4))
         game_path_row = ctk.CTkFrame(game, fg_color="transparent")
-        game_path_row.pack(fill="x", padx=16, pady=(0, 8))
+        game_path_row.pack(fill="x", padx=10, pady=(0, 4))
         self._game_path_entry = ctk.CTkEntry(
             game_path_row,
             textvariable=self._game_path,
-            height=38,
+            height=34,
         )
-        self._game_path_entry.pack(side="left", fill="x", expand=True, padx=6)
+        self._game_path_entry.pack(side="left", fill="x", expand=True, padx=4)
         self._secondary_button(
             game_path_row,
             "เลือกไฟล์",
             self._choose_game,
-        ).pack(side="left", padx=6)
+        ).pack(side="left", padx=4)
         game_controls = ctk.CTkFrame(game, fg_color="transparent")
-        game_controls.pack(fill="x", padx=16, pady=(0, 18))
+        game_controls.pack(fill="x", padx=10, pady=(0, 10))
         self._launch_game_button = self._primary_button(
             game_controls,
             "เปิดเกม",
             self._launch_game,
         )
-        self._launch_game_button.pack(side="left", fill="x", expand=True, padx=6)
+        self._launch_game_button.pack(side="left", fill="x", expand=True, padx=4)
         self._stop_game_button = self._secondary_button(
             game_controls,
             "ปิดเกม",
             lambda: self._controller.dispatch(StopGameRequested()),
         )
-        self._stop_game_button.pack(side="left", fill="x", expand=True, padx=6)
+        self._stop_game_button.pack(side="left", fill="x", expand=True, padx=4)
         self._launch_game_button.configure(state="disabled")
         self._stop_game_button.configure(state="disabled")
 
         self._message_frame = ctk.CTkFrame(
             self._program_view, fg_color="transparent"
         )
-        self._message_frame.pack(fill="x", padx=18, pady=(6, 0))
+        self._message_frame.pack(fill="x", padx=12, pady=(2, 0))
         ctk.CTkLabel(
             self._message_frame,
             textvariable=self._notice,
             text_color=PALETTE.success,
-            wraplength=700,
+            wraplength=360,
         ).pack(anchor="w")
         ctk.CTkLabel(
             self._message_frame,
             textvariable=self._error,
             text_color=PALETTE.danger,
-            wraplength=700,
-        ).pack(anchor="w", pady=(4, 10))
+            wraplength=360,
+        ).pack(anchor="w", pady=(2, 4))
 
     @staticmethod
     def _card(parent: ctk.CTkBaseClass) -> ctk.CTkFrame:
@@ -470,9 +442,9 @@ class AppWindow:
             fg_color=PALETTE.surface,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=16,
+            corner_radius=12,
         )
-        card.pack(fill="x", padx=12, pady=8)
+        card.pack(fill="x", padx=8, pady=4)
         return card
 
     def _entry(
@@ -488,9 +460,9 @@ class AppWindow:
             textvariable=variable,
             placeholder_text=placeholder,
             show=show,
-            height=40,
+            height=34,
         )
-        entry.pack(fill="x", padx=18, pady=(10, 0))
+        entry.pack(fill="x", padx=14, pady=(4, 0))
         return entry
 
     @staticmethod
@@ -499,8 +471,8 @@ class AppWindow:
             parent,
             text=text,
             text_color=PALETTE.text,
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).pack(anchor="w", padx=18, pady=(10, 0))
+            font=ctk.CTkFont(size=11, weight="bold"),
+        ).pack(anchor="w", padx=14, pady=(6, 0))
 
     @staticmethod
     def _primary_button(
@@ -514,9 +486,9 @@ class AppWindow:
             fg_color=PALETTE.primary,
             hover_color=PALETTE.primary_hover,
             text_color=PALETTE.on_primary,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            corner_radius=10,
-            height=40,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            corner_radius=8,
+            height=34,
             command=command,
         )
 
@@ -534,20 +506,20 @@ class AppWindow:
             border_color=PALETTE.primary_soft,
             border_width=2,
             text_color=PALETTE.primary_dark,
-            corner_radius=10,
-            height=36,
+            corner_radius=8,
+            height=32,
             command=command,
         )
 
     def _show_auth_view(self) -> None:
         self._program_view.pack_forget()
         if not self._auth_view.winfo_manager():
-            self._auth_view.pack(fill="x", padx=12, pady=(4, 12))
+            self._auth_view.pack(fill="both", expand=True, padx=8, pady=(2, 6))
 
     def _show_program_view(self) -> None:
         self._auth_view.pack_forget()
         if not self._program_view.winfo_manager():
-            self._program_view.pack(fill="x", padx=12, pady=(4, 12))
+            self._program_view.pack(fill="both", expand=True, padx=8, pady=(2, 6))
 
     def _login(self) -> None:
         self._submit(
@@ -811,9 +783,9 @@ class AppWindow:
         ctk.CTkLabel(
             frame,
             text="NEKO FAMILY",
-            font=ctk.CTkFont(size=25, weight="bold"),
+            font=ctk.CTkFont(size=16, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(side="left", pady=8)
+        ).pack(anchor="w", pady=2)
 
     def close(self) -> None:
         self._controller.dispatch(StopGameRequested())
