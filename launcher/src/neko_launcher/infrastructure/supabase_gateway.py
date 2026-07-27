@@ -45,19 +45,19 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             ),
         )
 
-    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+    def sign_up(self, username: str, password: str) -> RegistrationResult:
         username = username.strip().lower()
-        email = email.strip().lower()
+        
+        synthetic_email = f"{username}@neko-proxy.local"
         try:
             response = self._client.auth.sign_up(
                 {
-                    "email": email,
+                    "email": synthetic_email,
                     "password": password,
                     "options": {
                         "data": {
                             "username": username,
                             "display_name": username,
-                            "recovery_email": email,
                         }
                     },
                 }
@@ -78,25 +78,16 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise LauncherServiceError(
                 "ไม่พบบัญชีนี้ กรุณาตรวจสอบชื่อผู้ใช้หรือสมัครสมาชิกก่อน"
             )
-        email = self._auth_email_for_username(username)
+        synthetic_email = f"{username}@neko-proxy.local"
         try:
             response = self._client.auth.sign_in_with_password(
-                {"email": email, "password": password}
+                {"email": synthetic_email, "password": password}
             )
         except Exception as exc:
             raise self._auth_error(exc, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
         if response.user is None or response.session is None:
             raise LauncherServiceError("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
         return self._to_user(response.user)
-
-    def request_password_reset(self, email: str) -> None:
-        try:
-            self._client.auth.reset_password_for_email(email.strip().lower())
-        except Exception as exc:
-            raise self._auth_error(
-                exc,
-                "ส่งลิงก์ไม่สำเร็จ กรุณาตรวจสอบอีเมลและลองใหม่",
-            ) from exc
 
     def user_exists(self, username: str) -> bool:
         """Ask the launcher API/database whether a username is registered.
@@ -244,30 +235,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if not user_id or not username:
             raise LauncherServiceError("เปิดบัญชีนี้ไม่ได้ กรุณาเข้าสู่ระบบใหม่")
         return AuthenticatedUser(user_id=user_id, email=username)
-
-    def lookup_recovery_email(self, username: str) -> str | None:
-        """Return the recovery email for *username*, or ``None`` if not found."""
-        username = username.strip().lower()
-        try:
-            response = (
-                self._client.schema("launcher")
-                .rpc("auth_email_for_username", {"p_username": username})
-                .execute()
-            )
-        except Exception as exc:
-            raise self._rpc_error(
-                exc,
-                "ตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองใหม่",
-            ) from exc
-        email = str(response.data or "").strip().lower()
-        return email or None
-
-    def _auth_email_for_username(self, username: str) -> str:
-        """Internal helper that raises when no email is found (used by sign_in)."""
-        email = self.lookup_recovery_email(username)
-        if not email:
-            raise LauncherServiceError("บัญชีนี้ยังไม่มีอีเมลสำหรับเข้าสู่ระบบ")
-        return email
 
     @staticmethod
     def _as_dict(value: Any) -> dict[str, Any]:

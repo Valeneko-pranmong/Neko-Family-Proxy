@@ -46,14 +46,12 @@ class LauncherService:
         self._product_code = product_code
         self._heartbeat_failures = 0
 
-    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+    def sign_up(self, username: str, password: str) -> RegistrationResult:
         username = username.strip().lower()
-        email = email.strip().lower()
         self._validate_username(username, password)
-        self._validate_email(email)
         self._controller.dispatch(AuthStarted(username))
         try:
-            result = self._auth_gateway.sign_up(username, password, email)
+            result = self._auth_gateway.sign_up(username, password)
         except LauncherServiceError as exc:
             self._controller.dispatch(AuthFailed(str(exc)))
             raise
@@ -71,44 +69,6 @@ class LauncherService:
             except LauncherServiceError as exc:
                 self._controller.dispatch(ErrorOccurred(str(exc)))
         return result
-
-    def request_password_reset(self, username: str) -> None:
-        """Look up recovery email by username, then send a password-reset link.
-
-        If the username doesn't exist or has no recovery email, we still show
-        a generic success message to prevent user enumeration.  A warning hint
-        is returned via the notice text so the user knows to double-check.
-        """
-        username = username.strip().lower()
-        if not username:
-            raise LauncherServiceError("กรุณากรอกชื่อผู้ใช้")
-        # Validate username format (reuse the same 3-32 alphanum/underscore rule)
-        if not 3 <= len(username) <= 32 or any(
-            not (char.isascii() and (char.isalnum() or char == "_"))
-            for char in username
-        ):
-            raise LauncherServiceError(
-                "ชื่อผู้ใช้ต้องมี 3-32 ตัวอักษร (a-z, 0-9 หรือ _)"
-            )
-        try:
-            email = self._auth_gateway.lookup_recovery_email(username)
-        except LauncherServiceError:
-            # Username not found or no recovery email – don't reveal this
-            return
-        except Exception:
-            # Network / RPC error – also swallow to prevent enumeration
-            return
-        if not email:
-            # No recovery email on file – silently succeed
-            return
-        try:
-            self._auth_gateway.request_password_reset(email)
-        except LauncherServiceError:
-            raise
-        except Exception as exc:
-            raise LauncherServiceError(
-                "ส่งลิงก์ตั้งรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่"
-            ) from exc
 
     def sign_in(self, username: str, password: str) -> None:
         username = username.strip().lower()
@@ -291,7 +251,3 @@ class LauncherService:
         if len(password) < 8:
             raise LauncherServiceError("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
 
-    @staticmethod
-    def _validate_email(email: str) -> None:
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            raise LauncherServiceError("กรุณากรอกอีเมลให้ถูกต้อง")

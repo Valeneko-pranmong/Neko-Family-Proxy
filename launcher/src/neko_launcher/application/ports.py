@@ -34,19 +34,13 @@ class GameGateway(Protocol):
 
 
 class AuthGateway(Protocol):
-    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+    def sign_up(self, username: str, password: str) -> RegistrationResult:
         ...
 
     def sign_in(self, username: str, password: str) -> AuthenticatedUser:
         ...
 
     def change_password(self, password: str) -> None:
-        ...
-
-    def lookup_recovery_email(self, username: str) -> str | None:
-        ...
-
-    def request_password_reset(self, email: str) -> None:
         ...
 
     def restore_session(self) -> AuthenticatedUser | None:
