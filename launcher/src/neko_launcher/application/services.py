@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from neko_launcher.domain.events import (
     AuthFailed,
     AuthStarted,
