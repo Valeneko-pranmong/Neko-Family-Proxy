@@ -1,0 +1,71 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: launcher/pyproject.toml
+      - name: Validate repository inputs
+        run: python scripts/check_repository_safety.py
+      - name: Install launcher build tools
+        working-directory: launcher
+        run: python -m pip install -e ".[dev,release]"
+      - name: Test launcher
+        working-directory: launcher
+        run: |
+          python -m ruff check src tests
+          python -m pytest -q -m "not integration"
+      - name: Build launcher executable
+        working-directory: launcher
+        run: python -m PyInstaller --clean --noconfirm NekoLauncher.spec
+      - name: Install Inno Setup
+        run: choco install innosetup --version=6.7.1 --no-progress --yes
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $env:GITHUB_REF_NAME.TrimStart("v")
+          } else {
+            "5.0.0-alpha.1"
+          }
+          $compiler = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $compiler) {
+            throw "Inno Setup compiler is unavailable"
+          }
+          & $compiler "/DMyAppVersion=$version" "installer\NekoLauncher.iss"
+      - name: Assemble checksummed artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          Copy-Item launcher\dist\NekoLauncher.exe release\
+          Copy-Item installer\output\*-Setup.exe release\
+          Get-ChildItem release\*.exe |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object {
+              "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))"
+            } |
+            Set-Content release\SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v7
+        with:
+          name: neko-family-launcher-windows
+          path: release/*
+          if-no-files-found: error
+      - name: Publish tagged GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" release/* --generate-notes

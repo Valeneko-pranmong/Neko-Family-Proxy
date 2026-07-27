@@ -245,7 +245,8 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise LauncherServiceError("เปิดบัญชีนี้ไม่ได้ กรุณาเข้าสู่ระบบใหม่")
         return AuthenticatedUser(user_id=user_id, email=username)
 
-    def _auth_email_for_username(self, username: str) -> str:
+    def lookup_recovery_email(self, username: str) -> str | None:
+        """Return the recovery email for *username*, or ``None`` if not found."""
         username = username.strip().lower()
         try:
             response = (
@@ -259,6 +260,11 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 "ตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองใหม่",
             ) from exc
         email = str(response.data or "").strip().lower()
+        return email or None
+
+    def _auth_email_for_username(self, username: str) -> str:
+        """Internal helper that raises when no email is found (used by sign_in)."""
+        email = self.lookup_recovery_email(username)
         if not email:
             raise LauncherServiceError("บัญชีนี้ยังไม่มีอีเมลสำหรับเข้าสู่ระบบ")
         return email

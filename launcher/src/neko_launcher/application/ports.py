@@ -43,6 +43,9 @@ class AuthGateway(Protocol):
     def change_password(self, password: str) -> None:
         ...
 
+    def lookup_recovery_email(self, username: str) -> str | None:
+        ...
+
     def request_password_reset(self, email: str) -> None:
         ...
 

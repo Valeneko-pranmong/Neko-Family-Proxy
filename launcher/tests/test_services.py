@@ -40,8 +40,15 @@ class FakeGateway:
     def change_password(self, password: str) -> None:
         self.changed_password = password
 
+    def lookup_recovery_email(self, username: str) -> str | None:
+        if username == "norecovery":
+            return None
+        if username == "networkfail":
+            raise RuntimeError("network error")
+        return f"{username}@example.com"
+
     def request_password_reset(self, email: str) -> None:
-        return
+        self.last_reset_email = email
 
     def claim_session(
         self,
@@ -198,3 +205,64 @@ def test_credentials_are_validated_before_network_calls(
 
     with pytest.raises(Exception):
         service.sign_in(username, password)
+
+
+# ---------------------------------------------------------------------------
+# Password reset (Task 5 / Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_password_reset_looks_up_email_by_username_and_sends_link(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    """Happy path: username exists, has recovery email → reset link sent."""
+    service, _, gateway = workflow
+
+    service.request_password_reset("testuser")
+
+    assert gateway.last_reset_email == "testuser@example.com"
+
+
+def test_password_reset_silent_success_when_no_recovery_email(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    """Username exists but no recovery email → no error, no email sent."""
+    service, _, gateway = workflow
+
+    # Should NOT raise – silent success to avoid enumeration
+    service.request_password_reset("norecovery")
+
+    assert not hasattr(gateway, "last_reset_email") or gateway.last_reset_email is None
+
+
+def test_password_reset_silent_success_on_network_error(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    """Network / RPC failure during lookup → no error raised (anti-enumeration)."""
+    service, _, gateway = workflow
+
+    # Should NOT raise
+    service.request_password_reset("networkfail")
+
+    assert not hasattr(gateway, "last_reset_email") or gateway.last_reset_email is None
+
+
+def test_password_reset_rejects_empty_username(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, _, _ = workflow
+
+    with pytest.raises(Exception, match="กรุณากรอกชื่อผู้ใช้"):
+        service.request_password_reset("")
+
+
+def test_password_reset_rejects_invalid_username_format(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, _, _ = workflow
+
+    with pytest.raises(Exception, match="3-32"):
+        service.request_password_reset("ab")  # too short
+
+    with pytest.raises(Exception, match="3-32"):
+        service.request_password_reset("user@name")  # invalid char

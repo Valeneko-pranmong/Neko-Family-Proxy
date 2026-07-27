@@ -80,7 +80,7 @@ class AppWindow:
         self._register_recovery_email = tk.StringVar()
         self._register_password = tk.StringVar()
         self._register_password_confirm = tk.StringVar()
-        self._reset_email = tk.StringVar()
+        self._reset_username = tk.StringVar()
         self._coupon_code = tk.StringVar()
         self._game_path = tk.StringVar(value=game_default_path)
         self._game_path_store = game_path_store
@@ -262,13 +262,13 @@ class AppWindow:
         self._register_button.pack(fill="x", padx=14, pady=(10, 12))
 
         change = self._auth_panel.add("ลืมรหัสผ่าน")
-        self._field_label(change, "อีเมลที่ใช้สมัคร")
-        self._reset_email_entry = self._entry(
+        self._field_label(change, "ชื่อผู้ใช้")
+        self._reset_username_entry = self._entry(
             change,
-            "เช่น yourname@example.com",
-            self._reset_email,
+            "กรอกชื่อผู้ใช้ของคุณ",
+            self._reset_username,
         )
-        self._reset_email_entry.bind(
+        self._reset_username_entry.bind(
             "<Return>", lambda _event: self._request_password_reset()
         )
         self._change_password_button = self._primary_button(
@@ -617,13 +617,15 @@ class AppWindow:
 
     def _request_password_reset(self) -> None:
         self._submit(
-            lambda: self._service.request_password_reset(self._reset_email.get()),
+            lambda: self._service.request_password_reset(self._reset_username.get()),
             self._password_reset_requested,
         )
 
     def _password_reset_requested(self, _: Any) -> None:
-        self._reset_email.set("")
-        self._notice.set("ส่งลิงก์ตั้งรหัสผ่านใหม่แล้ว กรุณาตรวจสอบอีเมล")
+        self._reset_username.set("")
+        self._notice.set(
+            "หากชื่อผู้ใช้นี้มีอีเมลกู้คืน ระบบได้ส่งลิงก์ตั้งรหัสผ่านใหม่ไปแล้ว"
+        )
 
     def _open_password_tab(self) -> None:
         self._show_auth_view()

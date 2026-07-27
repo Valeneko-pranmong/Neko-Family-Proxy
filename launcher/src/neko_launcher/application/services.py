@@ -72,9 +72,35 @@ class LauncherService:
                 self._controller.dispatch(ErrorOccurred(str(exc)))
         return result
 
-    def request_password_reset(self, email: str) -> None:
-        email = email.strip().lower()
-        self._validate_email(email)
+    def request_password_reset(self, username: str) -> None:
+        """Look up recovery email by username, then send a password-reset link.
+
+        If the username doesn't exist or has no recovery email, we still show
+        a generic success message to prevent user enumeration.  A warning hint
+        is returned via the notice text so the user knows to double-check.
+        """
+        username = username.strip().lower()
+        if not username:
+            raise LauncherServiceError("กรุณากรอกชื่อผู้ใช้")
+        # Validate username format (reuse the same 3-32 alphanum/underscore rule)
+        if not 3 <= len(username) <= 32 or any(
+            not (char.isascii() and (char.isalnum() or char == "_"))
+            for char in username
+        ):
+            raise LauncherServiceError(
+                "ชื่อผู้ใช้ต้องมี 3-32 ตัวอักษร (a-z, 0-9 หรือ _)"
+            )
+        try:
+            email = self._auth_gateway.lookup_recovery_email(username)
+        except LauncherServiceError:
+            # Username not found or no recovery email – don't reveal this
+            return
+        except Exception:
+            # Network / RPC error – also swallow to prevent enumeration
+            return
+        if not email:
+            # No recovery email on file – silently succeed
+            return
         try:
             self._auth_gateway.request_password_reset(email)
         except LauncherServiceError:
