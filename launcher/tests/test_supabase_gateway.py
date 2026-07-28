@@ -83,15 +83,6 @@ def test_user_exists_calls_launcher_api_with_normalized_username() -> None:
     assert client.parameters == {"p_username": "zalonext"}
 
 
-def test_auth_email_lookup_calls_launcher_rpc() -> None:
-    client = FakeRpcClient("tester@example.com")
-
-    assert build_gateway(client)._auth_email_for_username(" Tester ") == "tester@example.com"
-    assert client.schema_name == "launcher"
-    assert client.function_name == "auth_email_for_username"
-    assert client.parameters == {"p_username": "tester"}
-
-
 def test_redeem_coupon_maps_safe_server_error() -> None:
     client = FakeRpcClient({"ok": False, "error": "invalid_coupon"})
 

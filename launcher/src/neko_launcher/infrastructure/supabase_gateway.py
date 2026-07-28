@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from supabase import Client, ClientOptions, create_client
 
@@ -34,6 +35,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     ) -> None:
         if not url or not publishable_key:
             raise ValueError("Supabase URL and publishable key are required")
+        self._synthetic_domain = urlparse(url).hostname or "localhost"
         self._client = client or create_client(
             url,
             publishable_key,
@@ -48,7 +50,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         username = username.strip().lower()
         
-        synthetic_email = f"{username}@neko-proxy.local"
+        synthetic_email = f"{username}@{self._synthetic_domain}"
         try:
             response = self._client.auth.sign_up(
                 {
@@ -78,7 +80,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise LauncherServiceError(
                 "ไม่พบบัญชีนี้ กรุณาตรวจสอบชื่อผู้ใช้หรือสมัครสมาชิกก่อน"
             )
-        synthetic_email = f"{username}@neko-proxy.local"
+        synthetic_email = f"{username}@{self._synthetic_domain}"
         try:
             response = self._client.auth.sign_in_with_password(
                 {"email": synthetic_email, "password": password}
