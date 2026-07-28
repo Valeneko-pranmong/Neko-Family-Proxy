@@ -16,6 +16,7 @@ Build บน Windows และใช้ Python `3.11` ขึ้นไป
 | package/dependencies | `launcher/pyproject.toml` | รายการ package ที่ต้องติดตั้ง |
 | ไอคอน | `icon_app.ico` | ไอคอนของ EXE |
 | โลโก้ | `image_11.png` | รูปที่แสดงในโปรแกรม |
+| ฟอนต์ภาษาไทย | `NotoSansThai-Regular.ttf` | ฟอนต์ Noto Sans Thai สำหรับแสดงผล UI |
 | ProxyCore ที่ได้รับอนุมัติ | `ProxyCore/` | runtime ที่จะถูกฝังเข้า EXE |
 | Supabase client configuration | `launcher/src/neko_launcher/infrastructure/defaults.py` | URL และ publishable key |
 

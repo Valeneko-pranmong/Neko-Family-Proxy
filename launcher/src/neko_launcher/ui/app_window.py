@@ -30,7 +30,7 @@ from neko_launcher.domain.models import (
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process_detector import is_any_process_running
 
-from .theme import PALETTE, apply_theme
+from .theme import FONT_FAMILY, PALETTE, apply_theme
 
 
 class AppWindow:
@@ -145,13 +145,13 @@ class AppWindow:
         ctk.CTkLabel(
             brand,
             text="Neko Family Proxy",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", pady=(2, 0))
         ctk.CTkLabel(
             brand,
             text="บัญชีและการใช้งาน",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=PALETTE.text_muted,
         ).pack(anchor="w")
 
@@ -161,7 +161,7 @@ class AppWindow:
             fg_color=PALETTE.surface,
             corner_radius=10,
             text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(size=10, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10, weight="bold"),
         )
         self._status_badge.pack(side="right", padx=(6, 0), pady=2, ipadx=6, ipady=3)
 
@@ -174,7 +174,7 @@ class AppWindow:
         footer = ctk.CTkLabel(
             shell,
             text=f"Version {__version__}",
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=PALETTE.text_muted,
         )
         footer.pack(pady=(0, 6))
@@ -189,7 +189,7 @@ class AppWindow:
         ctk.CTkLabel(
             intro,
             text="เข้าสู่ระบบและสมัครสมาชิก",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.text,
         ).pack(anchor="w", padx=14, pady=(10, 6))
 
@@ -254,7 +254,7 @@ class AppWindow:
             self._auth_view,
             text="เข้าสู่ระบบเพื่อเริ่มใช้งาน",
             text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
         )
         self._auth_hint.pack(pady=(4, 0))
         ctk.CTkLabel(
@@ -282,7 +282,7 @@ class AppWindow:
         ctk.CTkLabel(
             account_header,
             text="พื้นที่ใช้งานของคุณ",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.text,
         ).pack(side="left")
         self._account_label = ctk.CTkLabel(
@@ -295,7 +295,7 @@ class AppWindow:
         self._entitlement_label = ctk.CTkLabel(
             account,
             textvariable=self._entitlement,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.text,
             wraplength=360,
             justify="left",
@@ -314,7 +314,7 @@ class AppWindow:
         ctk.CTkLabel(
             usage,
             text="เติมวันใช้งาน",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=14, pady=(10, 4))
         coupon_row = ctk.CTkFrame(usage, fg_color="transparent")
@@ -335,7 +335,7 @@ class AppWindow:
         ctk.CTkLabel(
             proxy,
             text="ตั้งค่าการเชื่อมต่อ (Connection Mode)",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=14, pady=(10, 4))
 
@@ -344,14 +344,14 @@ class AppWindow:
             text="เชื่อมต่อโดยอัตโนมัติ เมื่อเริ่มเกม (Auto Connect)",
             variable=self._auto_connect,
             text_color=PALETTE.text,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
         )
         self._auto_connect_checkbox.pack(anchor="w", padx=14, pady=(0, 10))
 
         ctk.CTkLabel(
             proxy,
             text="ควบคุมด้วยตนเอง (Manual Control)",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=14, pady=(4, 4))
 
@@ -364,7 +364,7 @@ class AppWindow:
             state="disabled",
             fg_color=PALETTE.surface,
             text_color=PALETTE.text_muted,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             corner_radius=8,
             height=34,
         )
@@ -397,7 +397,7 @@ class AppWindow:
         ctk.CTkLabel(
             game,
             text="ตั้งค่าเข้าเกม (PSO2 Tweaker)",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", padx=14, pady=(10, 4))
         game_path_row = ctk.CTkFrame(game, fg_color="transparent")
@@ -419,7 +419,7 @@ class AppWindow:
             text="เปิด Tweaker อัตโนมัติเมื่อล็อคอินสำเร็จ",
             variable=self._auto_launch,
             text_color=PALETTE.text,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
         )
         self._auto_launch_checkbox.pack(anchor="w", padx=14, pady=(10, 10))
 
@@ -495,7 +495,7 @@ class AppWindow:
             parent,
             text=text,
             text_color=PALETTE.text,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
         ).pack(anchor="w", padx=14, pady=(6, 0))
 
     @staticmethod
@@ -510,7 +510,7 @@ class AppWindow:
             fg_color=PALETTE.primary,
             hover_color=PALETTE.primary_hover,
             text_color=PALETTE.on_primary,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             corner_radius=8,
             height=34,
             command=command,
@@ -832,7 +832,7 @@ class AppWindow:
         ctk.CTkLabel(
             frame,
             text="NEKO FAMILY",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", pady=2)
 
