@@ -1219,8 +1219,11 @@ class AppWindow:
         if self._closing:
             return
         self._closing = True
-        self._service.shutdown()
-        # Do not leave the Python worker thread alive after the window closes:
-        # a remaining thread keeps the EXE file locked on Windows.
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        try:
+            self._service.shutdown()
+        except Exception:
+            pass
+        # Do not block the UI thread waiting for background tasks to finish.
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        self.root.quit()
         self.root.destroy()

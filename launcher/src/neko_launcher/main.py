@@ -67,6 +67,11 @@ def main() -> None:
         build_window().root.mainloop()
     except Exception as exc:
         _report_startup_error(exc)
+    finally:
+        # Force terminate immediately after mainloop finishes to prevent
+        # lingering threads (such as network polling) from keeping the
+        # process alive in the background and leaving a zombie process.
+        os._exit(0)
 
 
 def _report_startup_error(exc: Exception) -> None:
