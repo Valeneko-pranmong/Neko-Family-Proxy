@@ -22,8 +22,8 @@ python -m neko_launcher.main
 ## Customer flow
 
 1. Register with a username, password, and real recovery email.
-2. Sign in with the username; the Launcher resolves the current Supabase Auth
-   email through the launcher RPC.
+2. Sign in with the username; the Launcher derives the deterministic,
+   non-PII Supabase Auth identifier locally.
 3. Request a password-reset link from the **ลืมรหัสผ่าน** tab without exposing
    whether an account exists.
 4. Check remaining entitlement time or redeem a coupon.

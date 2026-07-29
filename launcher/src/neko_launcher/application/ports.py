@@ -48,10 +48,10 @@ class AuthGateway(Protocol):
     def change_password(self, password: str) -> None:
         ...
 
-    def lookup_auth_email(self, username: str) -> str | None:
+    def auth_identifier_for_username(self, username: str) -> str:
         ...
 
-    def request_password_reset(self, auth_email: str) -> None:
+    def request_password_reset(self, username: str) -> None:
         ...
 
     def restore_session(self) -> AuthenticatedUser | None:

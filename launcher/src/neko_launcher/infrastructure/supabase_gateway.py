@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from supabase import Client, ClientOptions, create_client
 
@@ -35,6 +36,10 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     ) -> None:
         if not url or not publishable_key:
             raise ValueError("Supabase URL and publishable key are required")
+        hostname = urlparse(url).hostname
+        if not hostname:
+            raise ValueError("Supabase URL must include a hostname")
+        self._auth_identifier_domain = hostname.lower()
         self._password_reset_redirect_url = password_reset_redirect_url.strip()
         self._client = client or create_client(
             url,
@@ -55,10 +60,11 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     ) -> RegistrationResult:
         username = username.strip().lower()
         recovery_email = recovery_email.strip().lower()
+        auth_identifier = self.auth_identifier_for_username(username)
         try:
             response = self._client.auth.sign_up(
                 {
-                    "email": recovery_email,
+                    "email": auth_identifier,
                     "password": password,
                     "options": {
                         "data": {
@@ -83,12 +89,10 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
 
     def sign_in(self, username: str, password: str) -> AuthenticatedUser:
         username = username.strip().lower()
-        auth_email = self.lookup_auth_email(username)
-        if not auth_email:
-            raise LauncherServiceError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+        auth_identifier = self.auth_identifier_for_username(username)
         try:
             response = self._client.auth.sign_in_with_password(
-                {"email": auth_email, "password": password}
+                {"email": auth_identifier, "password": password}
             )
         except Exception as exc:
             raise self._auth_error(exc, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
@@ -96,31 +100,20 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise LauncherServiceError("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
         return self._to_user(response.user)
 
-    def lookup_auth_email(self, username: str) -> str | None:
-        """Resolve a username to the current Supabase Auth email."""
-        username = username.strip().lower()
-        try:
-            response = (
-                self._client.schema("launcher")
-                .rpc("auth_email_for_username", {"p_username": username})
-                .execute()
-            )
-        except Exception as exc:
-            raise self._rpc_error(
-                exc,
-                "ตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองใหม่",
-            ) from exc
-        auth_email = str(response.data or "").strip().lower()
-        return auth_email or None
+    def auth_identifier_for_username(self, username: str) -> str:
+        """Derive the non-PII Auth identifier without a database lookup."""
+        normalized = username.strip().lower()
+        return f"{normalized}@{self._auth_identifier_domain}"
 
-    def request_password_reset(self, auth_email: str) -> None:
+    def request_password_reset(self, username: str) -> None:
         if not self._password_reset_redirect_url:
             raise LauncherServiceError(
                 "ระบบกู้คืนรหัสผ่านยังไม่พร้อมใช้งาน"
             )
+        auth_identifier = self.auth_identifier_for_username(username)
         try:
             self._client.auth.reset_password_for_email(
-                auth_email.strip().lower(),
+                auth_identifier,
                 {"redirect_to": self._password_reset_redirect_url},
             )
         except Exception as exc:

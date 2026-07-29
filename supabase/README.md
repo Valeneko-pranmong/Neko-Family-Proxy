@@ -17,13 +17,15 @@ The `launcher` schema is included in the Supabase Data API exposed schemas by
 use only a publishable key. A secret/service-role key belongs only in a trusted
 admin service or Edge Function.
 
-The launcher resolves a username to the current `auth.users.email` through
-`launcher.auth_email_for_username(text)` before calling Supabase Auth. The
-lookup joins by the stable user UUID, so the Launcher keeps working before and
-after a trusted Auth Admin API email migration. The older boolean
-`launcher.user_exists(text)` preflight is intentionally revoked from public
-clients because it is redundant and creates an account-enumeration endpoint.
-Session, entitlement, and coupon RPCs remain authenticated-only.
+The launcher derives a deterministic, non-PII Auth identifier from the
+normalized username and the Supabase project hostname before calling Supabase
+Auth. It never queries a public RPC for `auth.users.email`, and the real
+recovery address is stored only in `public.profiles.recovery_email` for a
+trusted Send Email Hook. The legacy `auth_email_for_username(text)` and
+`user_exists(text)` functions must remain absent (or have no client execute
+privilege) because either endpoint would create an account-enumeration or PII
+disclosure risk. Session, entitlement, and coupon RPCs remain
+authenticated-only.
 
 The current database project is the dedicated `Neko-Family-Proxy` project.
 The core/auth/session migrations through
@@ -38,13 +40,14 @@ The legacy coupon RPC access revocation
 `20260725160000_revoke_legacy_coupon_rpc_access.sql` removes authenticated
 client access to the superseded Admin functions; the Admin console uses only
 the actor-checked `admin_*` RPCs.
-The recovery email column and username-to-email lookup
-`20260726112000_add_recovery_email_auth_lookup.sql` are applied in production.
-The local follow-up
-`20260729002946_restore_recovery_email_auth_flow.sql` restores the RPC after the
-later removal migration, pins function search paths, and narrows execution
-privileges. Inspect production migration history before applying it; do not
-replay older migrations blindly.
+The recovery email column from
+`20260726112000_add_recovery_email_auth_lookup.sql` exists in the historical
+schema. The local forward-fix
+`20260729120000_secure_option_a_recovery_flow.sql` removes the unsafe lookup
+functions and canonicalizes the trigger for internal Auth identifiers. The
+intermediate
+`20260729002946_restore_recovery_email_auth_flow.sql` is intentionally blocked
+and must not be applied or replayed against hosted production.
 Before enabling the coupon UI, run the security and concurrency test plan
 against test accounts and confirm that the `launcher` schema is exposed through
 the Data API.

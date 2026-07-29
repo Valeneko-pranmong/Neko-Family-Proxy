@@ -25,15 +25,15 @@ class FakeGateway:
         self.changed_password: str | None = None
         self.released: list[str] = []
         self.last_signup: tuple[str, str, str] | None = None
-        self.last_reset_email: str | None = None
+        self.last_reset_username: str | None = None
         self.reset_error = False
 
     def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
         self.last_signup = (username, password, email)
         return RegistrationResult(username, True)
 
-    def sign_in(self, email: str, password: str) -> AuthenticatedUser:
-        return AuthenticatedUser("user-id", email)
+    def sign_in(self, username: str, password: str) -> AuthenticatedUser:
+        return AuthenticatedUser("user-id", username)
 
     def restore_session(self) -> AuthenticatedUser | None:
         return AuthenticatedUser("user-id", "user@example.com")
@@ -44,17 +44,15 @@ class FakeGateway:
     def change_password(self, password: str) -> None:
         self.changed_password = password
 
-    def lookup_auth_email(self, username: str) -> str | None:
-        if username == "norecovery":
-            return None
-        if username == "networkfail":
-            raise RuntimeError("network error")
-        return f"{username}@example.com"
+    def auth_identifier_for_username(self, username: str) -> str:
+        return f"{username}@project.supabase.co"
 
-    def request_password_reset(self, email: str) -> None:
+    def request_password_reset(self, username: str) -> None:
+        if username in {"norecovery", "networkfail"}:
+            raise RuntimeError("provider unavailable")
         if self.reset_error:
             raise RuntimeError("provider unavailable")
-        self.last_reset_email = email
+        self.last_reset_username = username
 
     def claim_session(
         self,
@@ -240,14 +238,14 @@ def test_credentials_are_validated_before_network_calls(
         service.sign_in(username, password)
 
 
-def test_password_reset_looks_up_auth_email_and_sends_link(
+def test_password_reset_derives_identifier_and_sends_link(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, _, gateway = workflow
 
     service.request_password_reset(" TestUser ")
 
-    assert gateway.last_reset_email == "testuser@example.com"
+    assert gateway.last_reset_username == "testuser"
 
 
 @pytest.mark.parametrize("username", ["norecovery", "networkfail"])
@@ -259,7 +257,7 @@ def test_password_reset_silent_success_when_lookup_cannot_deliver(
 
     service.request_password_reset(username)
 
-    assert gateway.last_reset_email is None
+    assert gateway.last_reset_username is None
 
 
 def test_password_reset_silent_success_on_delivery_error(
@@ -270,7 +268,7 @@ def test_password_reset_silent_success_on_delivery_error(
 
     service.request_password_reset("testuser")
 
-    assert gateway.last_reset_email is None
+    assert gateway.last_reset_username is None
 
 
 @pytest.mark.parametrize("username", ["", "ab", "user@name"])
@@ -283,4 +281,4 @@ def test_password_reset_validates_username_before_lookup(
     with pytest.raises(Exception):
         service.request_password_reset(username)
 
-    assert gateway.last_reset_email is None
+    assert gateway.last_reset_username is None

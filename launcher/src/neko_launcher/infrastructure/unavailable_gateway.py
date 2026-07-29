@@ -29,10 +29,10 @@ class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
     def change_password(self, password: str) -> None:
         raise LauncherServiceError(self._MESSAGE)
 
-    def lookup_auth_email(self, username: str) -> str | None:
+    def auth_identifier_for_username(self, username: str) -> str:
         raise LauncherServiceError(self._MESSAGE)
 
-    def request_password_reset(self, auth_email: str) -> None:
+    def request_password_reset(self, username: str) -> None:
         raise LauncherServiceError(self._MESSAGE)
 
     def restore_session(self) -> AuthenticatedUser | None:

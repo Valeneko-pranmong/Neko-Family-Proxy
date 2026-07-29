@@ -118,19 +118,17 @@ def test_claim_session_calls_launcher_schema_and_parses_entitlement() -> None:
     assert result.entitlement.valid_until is not None
 
 
-def test_auth_email_lookup_calls_launcher_api_with_normalized_username() -> None:
-    client = FakeRpcClient("tester@example.com")
+def test_auth_identifier_is_derived_without_a_launcher_lookup() -> None:
+    client = FakeRpcClient("unexpected-rpc-result@example.com")
 
     assert (
-        build_gateway(client).lookup_auth_email("  Tester  ")
-        == "tester@example.com"
+        build_gateway(client).auth_identifier_for_username("  Tester  ")
+        == "tester@project.supabase.co"
     )
-    assert client.schema_name == "launcher"
-    assert client.function_name == "auth_email_for_username"
-    assert client.parameters == {"p_username": "tester"}
+    assert client.function_name == ""
 
 
-def test_sign_up_uses_real_email_and_recovery_metadata() -> None:
+def test_sign_up_uses_internal_identifier_and_recovery_metadata() -> None:
     client = FakeRpcClient(None)
 
     result = build_gateway(client).sign_up(
@@ -141,7 +139,7 @@ def test_sign_up_uses_real_email_and_recovery_metadata() -> None:
 
     assert result.username == "tester"
     assert client.auth.sign_up_payload == {
-        "email": "user@example.com",
+        "email": "tester@project.supabase.co",
         "password": "password123",
         "options": {
             "data": {
@@ -153,50 +151,29 @@ def test_sign_up_uses_real_email_and_recovery_metadata() -> None:
     }
 
 
-def test_sign_in_resolves_current_auth_email_before_password_auth() -> None:
-    client = FakeRpcClient("current@example.com")
+def test_sign_in_derives_internal_identifier_without_rpc() -> None:
+    client = FakeRpcClient("unexpected-rpc-result@example.com")
 
     user = build_gateway(client).sign_in(" Tester ", "password123")
 
     assert user.username == "tester"
-    assert client.function_name == "auth_email_for_username"
+    assert client.function_name == ""
     assert client.auth.sign_in_payload == {
-        "email": "current@example.com",
+        "email": "tester@project.supabase.co",
         "password": "password123",
     }
-
-
-def test_sign_in_missing_lookup_uses_generic_credentials_error() -> None:
-    client = FakeRpcClient(None)
-
-    with pytest.raises(
-        LauncherServiceError,
-        match="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง",
-    ):
-        build_gateway(client).sign_in("tester", "password123")
-
-    assert client.auth.sign_in_payload is None
-
-
-def test_lookup_rpc_failure_uses_temporary_failure_message() -> None:
-    client = FakeRpcClient(None, RuntimeError("rpc unavailable"))
-
-    with pytest.raises(LauncherServiceError, match="ชั่วคราว"):
-        build_gateway(client).lookup_auth_email("tester")
-
 
 def test_password_reset_uses_permanent_redirect_url() -> None:
     client = FakeRpcClient(None)
     redirect_url = "https://neko-reset.vercel.app/reset-password/"
 
-    build_gateway(client, redirect_url).request_password_reset(
-        " USER@Example.COM "
-    )
+    build_gateway(client, redirect_url).request_password_reset(" Tester ")
 
     assert client.auth.reset_call == (
-        "user@example.com",
+        "tester@project.supabase.co",
         {"redirect_to": redirect_url},
     )
+    assert client.function_name == ""
 
 
 def test_password_reset_refuses_stale_site_url_fallback() -> None:

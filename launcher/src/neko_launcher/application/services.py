@@ -84,18 +84,18 @@ class LauncherService:
     def request_password_reset(self, username: str) -> None:
         """Request a reset link without revealing account existence.
 
-        Lookup and delivery failures intentionally have the same caller-visible
-        result as an unknown username.  The UI always shows one generic notice.
+        Identifier derivation and delivery failures intentionally have the same
+        caller-visible result as an unknown username. The UI always shows one
+        generic notice.
         """
         username = username.strip().lower()
         self._validate_username_format(username)
         try:
-            auth_email = self._auth_gateway.lookup_auth_email(username)
-            if auth_email:
-                self._auth_gateway.request_password_reset(auth_email)
+            self._auth_gateway.request_password_reset(username)
         except Exception:
-            # Do not turn RPC/Auth error details into a username-enumeration
-            # oracle. Operational failures remain visible in provider logs.
+            # Do not turn Auth/provider error details into a username-
+            # enumeration oracle. Operational failures remain visible in
+            # provider logs.
             return
 
     def sign_in(self, username: str, password: str) -> None:
