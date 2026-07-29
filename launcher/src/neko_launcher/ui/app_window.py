@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ctypes
+import os
+import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +17,6 @@ from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.events import (
-    LaunchGameRequested,
     StateChanged,
     StopGameRequested,
     StopProxyRequested,
@@ -26,6 +28,7 @@ from neko_launcher.domain.models import (
     GameStatus,
     ProxyStatus,
     RegistrationResult,
+    entitlement_is_active,
 )
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process_detector import is_any_process_running
@@ -35,6 +38,15 @@ from .theme import FONT_FAMILY, PALETTE, apply_theme
 
 class AppWindow:
     """Two-stage customer UI: account access first, launcher tools after login."""
+
+    # The UI is authored at this size and scaled down as needed so that the
+    # whole launcher remains visible on short laptop displays.  The actual
+    # window is never resizable and is kept inside the red guide frame.
+    _DESIGN_WIDTH = 480
+    _DESIGN_HEIGHT = 760
+    # Keep a small breathing room from the physical top/bottom edges, matching
+    # the red guide frame used for the launcher layout.
+    _SCREEN_MARGIN_RATIO = 0.04
 
     def __init__(
         self,
@@ -58,16 +70,23 @@ class AppWindow:
             tuple[Future[Any], Callable[[Any], None] | None]
         ] = []
         self._logo_image = None
+        self._password_dialog: ctk.CTkToplevel | None = None
 
         self.root = ctk.CTk()
-        self.root.title("Neko Family Proxy Launcher")
-        self.root.minsize(420, 640)
+        # Keep the native window controls, but leave the title text blank so
+        # the launcher looks clean and unobtrusive in the desktop shell.
+        self.root.title("")
+        self.root.resizable(False, False)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
             try:
                 self.root.iconbitmap(icon_path)
             except Exception:
                 pass
+
+        # Configure the window/scaling before creating widgets.  This keeps
+        # the same compact layout on 1080p monitors and smaller notebooks.
+        self._fit_portrait_window()
 
         self._status = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._account = tk.StringVar(value="")
@@ -86,10 +105,14 @@ class AppWindow:
         self._game_path_store = game_path_store
         self._auto_connect = tk.BooleanVar(value=True)
         self._auto_launch = tk.BooleanVar(value=True)
+        self._process_detection_pending = False
 
         self._build_layout(logo_path)
         self._fit_portrait_window()
-        self.root.after_idle(self._fit_portrait_window)
+        # The first geometry call can be ignored before the native window is
+        # mapped; apply it once more after the window manager has created it.
+        self.root.after(250, self._center_window)
+        self.root.after(300, self._style_native_title_bar)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(100, self._drain_events)
         self.root.after(30_000, self._heartbeat)
@@ -97,18 +120,104 @@ class AppWindow:
         self._submit(self._service.restore_session, self._restore_completed)
 
     def _fit_portrait_window(self) -> None:
-        """Centered One UI card."""
+        """Center a fixed-size window inside the guide-frame safe area."""
         self.root.update_idletasks()
         screen_w = int(self.root.winfo_screenwidth())
         screen_h = int(self.root.winfo_screenheight())
-        width = 480
-        height = 850
-        width = min(width, screen_w - 48)
-        height = min(height, screen_h - 48)
+        safe_margin_y = int(screen_h * self._SCREEN_MARGIN_RATIO)
+        available_h = max(1, screen_h - (safe_margin_y * 2))
+        # Tk geometry uses logical pixels on a scaled Windows desktop.  Work
+        # in that coordinate space so the physical window still honors the
+        # screen margins on 100%, 125% and 150% DPI settings.
+        window_scale = max(
+            0.1,
+            float(ctk.ScalingTracker.get_window_scaling(self.root)),
+        )
+        width = min(
+            self._DESIGN_WIDTH / window_scale,
+            max(1.0, (screen_w - 32) / window_scale),
+        )
+        height = min(
+            self._DESIGN_HEIGHT / window_scale,
+            # Leave a few logical pixels for the native title-bar border.
+            max(1.0, (available_h / window_scale) - 4),
+        )
+
+        # CustomTkinter scales fonts, paddings and widget dimensions together.
+        # Scale against the authored height so no internal scrollbar is needed.
+        scale = min(
+            1.0,
+            (width * window_scale) / self._DESIGN_WIDTH,
+            (height * window_scale) / self._DESIGN_HEIGHT,
+        )
+        # The DPI tracker multiplies widget scaling by the window scale on
+        # Windows, so compensate here to keep the final visual scale stable.
+        ctk.set_widget_scaling(scale / window_scale)
+
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+        self._window_size = (int(width), int(height))
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _center_window(self) -> None:
+        """Apply the final centered position after the native window is mapped."""
+        if not self.root.winfo_exists():
+            return
+        width, height = getattr(self, "_window_size", (480, 760))
+        screen_w = int(self.root.winfo_screenwidth())
+        screen_h = int(self.root.winfo_screenheight())
         x = max(0, (screen_w - width) // 2)
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.minsize(420, 640)
+
+    def _style_native_title_bar(self) -> None:
+        """Blend the Windows title bar with the UI and remove maximize."""
+        if sys.platform != "win32" or not self.root.winfo_exists():
+            return
+
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+
+            # Keep minimize and close, but remove the maximize button and the
+            # resizable frame from the native Windows chrome.
+            gwl_style = -16
+            ws_maximizebox = 0x00010000
+            ws_thickframe = 0x00040000
+            style = user32.GetWindowLongW(hwnd, gwl_style)
+            style &= ~(ws_maximizebox | ws_thickframe)
+            user32.SetWindowLongW(hwnd, gwl_style, style)
+
+            # Ask Windows to redraw the non-client frame after changing style.
+            swp_flags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
+            user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, swp_flags)
+
+            def _colorref(hex_color: str) -> int:
+                value = hex_color.lstrip("#")
+                red = int(value[0:2], 16)
+                green = int(value[2:4], 16)
+                blue = int(value[4:6], 16)
+                return red | (green << 8) | (blue << 16)
+
+            dwmapi = ctypes.windll.dwmapi
+            # Windows 11 attributes: border, caption background and caption
+            # text. Unsupported versions simply ignore these calls.
+            for attribute, color in (
+                (34, PALETTE.border),
+                (35, PALETTE.background),
+                (36, PALETTE.text),
+            ):
+                color_value = ctypes.c_int(_colorref(color))
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    attribute,
+                    ctypes.byref(color_value),
+                    ctypes.sizeof(color_value),
+                )
+        except (AttributeError, OSError, ValueError):
+            # The launcher still works with the system-default title bar on
+            # older Windows builds or restricted desktop environments.
+            pass
 
     def _build_layout(self, logo_path: Path | None) -> None:
         shell = ctk.CTkFrame(
@@ -118,7 +227,7 @@ class AppWindow:
             border_width=1,
             corner_radius=20,
         )
-        shell.pack(fill="both", expand=True, padx=12, pady=12)
+        shell.pack(fill="both", expand=True, padx=10, pady=8)
 
         header = ctk.CTkFrame(shell, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(8, 2))
@@ -146,7 +255,7 @@ class AppWindow:
 
         ctk.CTkLabel(
             brand,
-            text="Neko Family Proxy",
+            text="NEKO FAMILY PROXY PSO2NGS",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", pady=(2, 0))
@@ -168,7 +277,7 @@ class AppWindow:
         self._status_badge.pack(side="right", padx=(6, 0), pady=2, ipadx=6, ipady=3)
 
         self._content = ctk.CTkFrame(shell, fg_color="transparent")
-        self._content.pack(fill="both", expand=True, padx=6, pady=(2, 4))
+        self._content.pack(fill="both", expand=True, padx=6, pady=(0, 2))
         self._build_auth_view()
         self._build_program_view()
         self._show_auth_view()
@@ -179,7 +288,7 @@ class AppWindow:
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=PALETTE.text_muted,
         )
-        footer.pack(pady=(0, 6))
+        footer.pack(pady=(0, 4))
 
     def _build_auth_view(self) -> None:
         self._auth_view = ctk.CTkFrame(
@@ -279,7 +388,9 @@ class AppWindow:
         ).pack(pady=(2, 2))
 
     def _build_program_view(self) -> None:
-        self._program_view = ctk.CTkScrollableFrame(
+        # The program view deliberately uses a regular frame.  Its dimensions
+        # are scaled with the window above, so the user never has to scroll.
+        self._program_view = ctk.CTkFrame(
             self._content,
             fg_color="transparent",
         )
@@ -314,41 +425,14 @@ class AppWindow:
         actions.pack(fill="x", padx=10, pady=(2, 10))
         self._secondary_button(
             actions,
+            "เปลี่ยนรหัสผ่าน",
+            self._open_password_dialog,
+        ).pack(side="left", padx=4)
+        self._secondary_button(
+            actions,
             "ออกจากระบบ",
             self._sign_out,
         ).pack(side="right", padx=4)
-
-        password_card = self._card(self._program_view)
-        ctk.CTkLabel(
-            password_card,
-            text="เปลี่ยนรหัสผ่าน",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=14, pady=(10, 4))
-        self._new_password_entry = self._entry(
-            password_card,
-            "รหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร",
-            self._new_password,
-            show="●",
-        )
-        self._new_password_confirm_entry = self._entry(
-            password_card,
-            "ยืนยันรหัสผ่านใหม่",
-            self._new_password_confirm,
-            show="●",
-        )
-        self._new_password_entry.bind(
-            "<Return>", lambda _event: self._change_password()
-        )
-        self._new_password_confirm_entry.bind(
-            "<Return>", lambda _event: self._change_password()
-        )
-        self._change_password_button = self._primary_button(
-            password_card,
-            "เปลี่ยนรหัสผ่าน",
-            self._change_password,
-        )
-        self._change_password_button.pack(fill="x", padx=14, pady=(10, 12))
 
         usage = self._card(self._program_view)
         ctk.CTkLabel(
@@ -462,6 +546,10 @@ class AppWindow:
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
         )
         self._auto_launch_checkbox.pack(anchor="w", padx=14, pady=(10, 10))
+        # Keep the visual state in sync with the default BooleanVar.  Calling
+        # select explicitly also avoids an unchecked first paint on Windows.
+        if self._auto_launch.get():
+            self._auto_launch_checkbox.select()
 
         game_controls = ctk.CTkFrame(game, fg_color="transparent")
         game_controls.pack(fill="x", padx=10, pady=(0, 10))
@@ -508,7 +596,7 @@ class AppWindow:
             border_width=1,
             corner_radius=12,
         )
-        card.pack(fill="x", padx=8, pady=4)
+        card.pack(fill="x", padx=8, pady=3)
         return card
 
     def _entry(
@@ -577,13 +665,127 @@ class AppWindow:
 
     def _show_auth_view(self) -> None:
         self._program_view.pack_forget()
-        if not self._auth_view.winfo_manager():
-            self._auth_view.pack(fill="both", expand=True, padx=8, pady=(2, 6))
+        self._auth_view.pack(fill="both", expand=True, padx=8, pady=(0, 3))
 
     def _show_program_view(self) -> None:
         self._auth_view.pack_forget()
-        if not self._program_view.winfo_manager():
-            self._program_view.pack(fill="both", expand=True, padx=8, pady=(2, 6))
+        self._program_view.pack(fill="both", expand=True, padx=8, pady=(2, 6))
+
+    def _open_password_dialog(self) -> None:
+        if (
+            self._password_dialog is not None
+            and self._password_dialog.winfo_exists()
+        ):
+            self._password_dialog.lift()
+            self._password_dialog.focus_force()
+            return
+
+        self._new_password.set("")
+        self._new_password_confirm.set("")
+        self._error.set("")
+
+        dialog = ctk.CTkToplevel(self.root)
+        self._password_dialog = dialog
+        dialog_width = 400
+        dialog_height = 380
+        dialog.title("เปลี่ยนรหัสผ่าน")
+        dialog.geometry(f"{dialog_width}x{dialog_height}")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color=PALETTE.background)
+        dialog.transient(self.root)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_password_dialog)
+
+        panel = ctk.CTkFrame(
+            dialog,
+            fg_color=PALETTE.card,
+            border_color=PALETTE.border,
+            border_width=1,
+            corner_radius=16,
+        )
+        panel.pack(fill="both", expand=True, padx=14, pady=14)
+
+        ctk.CTkLabel(
+            panel,
+            text="เปลี่ยนรหัสผ่าน",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=18, weight="bold"),
+            text_color=PALETTE.primary_dark,
+        ).pack(anchor="w", padx=18, pady=(16, 0))
+        ctk.CTkLabel(
+            panel,
+            text="ตั้งรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
+        ).pack(anchor="w", padx=18, pady=(0, 8))
+
+        self._field_label(panel, "รหัสผ่านใหม่")
+        self._new_password_entry = self._entry(
+            panel,
+            "รหัสผ่านใหม่",
+            self._new_password,
+            show="●",
+        )
+        self._field_label(panel, "ยืนยันรหัสผ่านใหม่")
+        self._new_password_confirm_entry = self._entry(
+            panel,
+            "ยืนยันรหัสผ่านใหม่",
+            self._new_password_confirm,
+            show="●",
+        )
+        self._new_password_entry.bind(
+            "<Return>", lambda _event: self._change_password()
+        )
+        self._new_password_confirm_entry.bind(
+            "<Return>", lambda _event: self._change_password()
+        )
+
+        ctk.CTkLabel(
+            panel,
+            textvariable=self._error,
+            text_color=PALETTE.danger,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            wraplength=330,
+        ).pack(padx=18, pady=(6, 0))
+
+        buttons = ctk.CTkFrame(panel, fg_color="transparent")
+        buttons.pack(fill="x", padx=14, pady=(8, 14))
+        self._secondary_button(
+            buttons,
+            "ยกเลิก",
+            self._close_password_dialog,
+        ).pack(side="left", fill="x", expand=True, padx=4)
+        self._change_password_button = self._primary_button(
+            buttons,
+            "ยืนยัน",
+            self._change_password,
+        )
+        self._change_password_button.pack(
+            side="left", fill="x", expand=True, padx=4
+        )
+
+        dialog.update_idletasks()
+        x = (
+            self.root.winfo_rootx()
+            + (self.root.winfo_width() - dialog_width) // 2
+        )
+        y = (
+            self.root.winfo_rooty()
+            + (self.root.winfo_height() - dialog_height) // 2
+        )
+        dialog.geometry(
+            f"{dialog_width}x{dialog_height}+{max(0, x)}+{max(0, y)}"
+        )
+        dialog.grab_set()
+        self._new_password_entry.focus_set()
+
+    def _close_password_dialog(self) -> None:
+        dialog = self._password_dialog
+        self._password_dialog = None
+        self._new_password.set("")
+        self._new_password_confirm.set("")
+        self._error.set("")
+        if dialog is not None and dialog.winfo_exists():
+            dialog.grab_release()
+            dialog.destroy()
 
     def _login(self) -> None:
         self._submit(
@@ -595,12 +797,16 @@ class AppWindow:
         )
 
     def _restore_completed(self, restored: bool) -> None:
-        if not restored and self._controller.state.auth_status is AuthStatus.SIGNED_OUT:
+        if restored:
+            self._notice.set("กู้คืนการเข้าสู่ระบบสำเร็จ")
+            self._auto_launch_tweaker()
+        elif self._controller.state.auth_status is AuthStatus.SIGNED_OUT:
             self._status.set("ยังไม่ได้เข้าสู่ระบบ")
 
     def _login_succeeded(self, _: Any) -> None:
         self._login_password.set("")
         self._notice.set("เข้าสู่ระบบสำเร็จ")
+        self._auto_launch_tweaker()
 
     def _register(self) -> None:
         password = self._register_password.get()
@@ -639,17 +845,15 @@ class AppWindow:
         )
 
     def _password_changed(self, _: Any) -> None:
-        self._new_password.set("")
-        self._new_password_confirm.set("")
+        self._close_password_dialog()
         self._notice.set("เปลี่ยนรหัสผ่านสำเร็จ")
 
     def _sign_out(self) -> None:
         self._submit(self._service.sign_out, self._signed_out)
 
     def _signed_out(self, _: Any) -> None:
+        self._close_password_dialog()
         self._coupon_code.set("")
-        self._new_password.set("")
-        self._new_password_confirm.set("")
         self._notice.set("ออกจากระบบแล้ว")
 
     def _redeem_coupon(self) -> None:
@@ -679,18 +883,71 @@ class AppWindow:
         self._notice.set("บันทึกไฟล์เปิดเกมแล้ว")
 
     def _launch_game(self) -> None:
-        executable = self._game_path.get().strip()
-        if not executable:
-            self._error.set("กรุณาเลือกไฟล์เปิดเกมก่อน")
-            return
-        self._controller.dispatch(LaunchGameRequested(executable))
+        # In Auto Connect mode ProxyCore is process-driven: launch Tweaker,
+        # then let the pso2.exe detector start ProxyCore.  Manual mode keeps
+        # the one-click ProxyCore + Tweaker workflow.
+        if self._auto_connect.get():
+            self._launch_tweaker_only()
+        else:
+            self._start_usage()
 
     def _start_usage(self) -> None:
-        executable = self._game_path.get().strip()
-        if not executable:
-            self._error.set("กรุณาเลือกไฟล์เปิดเกมก่อนเริ่มใช้งาน")
+        executable = self._selected_tweaker_executable()
+        if executable is None:
             return
+        self._error.set("")
+        self._persist_game_path(executable)
         self._service.start_usage(executable)
+        if self._controller.state.game_status is GameStatus.RUNNING:
+            self._notice.set("เปิดโปรแกรม PSO2 Tweaker แล้ว")
+
+    def _auto_launch_tweaker(self) -> None:
+        """Launch once after a successful sign-in/session restoration."""
+        if not self._auto_launch.get():
+            return
+        state = self._controller.state
+        ready = (
+            state.auth_status is AuthStatus.AUTHENTICATED
+            and state.session_id is not None
+            and entitlement_is_active(state.entitlement)
+        )
+        if ready:
+            self._launch_tweaker_only()
+
+    def _launch_tweaker_only(self) -> None:
+        """Open Tweaker without starting ProxyCore."""
+        executable = self._selected_tweaker_executable()
+        if executable is None:
+            return
+        self._error.set("")
+        self._persist_game_path(executable)
+        self._service.launch_tweaker(executable)
+        if self._controller.state.game_status is GameStatus.RUNNING:
+            self._notice.set("เปิดโปรแกรม PSO2 Tweaker แล้ว")
+
+    def _selected_tweaker_executable(self) -> str | None:
+        raw_path = self._game_path.get().strip().strip('"')
+        if not raw_path:
+            self._error.set("กรุณาเลือกไฟล์ Tweaker.exe ก่อน")
+            return None
+
+        executable = Path(os.path.expandvars(raw_path)).expanduser()
+        if not executable.is_file():
+            self._error.set(
+                "ไม่พบไฟล์ Tweaker.exe กรุณากด Browse แล้วเลือกไฟล์ใหม่"
+            )
+            return None
+        return str(executable.resolve())
+
+    def _persist_game_path(self, executable: str) -> None:
+        self._game_path.set(executable)
+        if self._game_path_store is None:
+            return
+        try:
+            self._game_path_store.parent.mkdir(parents=True, exist_ok=True)
+            self._game_path_store.write_text(executable, encoding="utf-8")
+        except OSError:
+            pass
 
     def _coupon_redeemed(self, result: Any) -> None:
         self._coupon_code.set("")
@@ -753,6 +1010,8 @@ class AppWindow:
         if signed_in:
             self._show_program_view()
         else:
+            if self._password_dialog is not None:
+                self._close_password_dialog()
             self._show_auth_view()
 
         self._set_auth_enabled(
@@ -762,8 +1021,7 @@ class AppWindow:
         can_start = (
             signed_in
             and state.session_id is not None
-            and state.entitlement is not None
-            and state.entitlement.status is EntitlementStatus.ACTIVE
+            and entitlement_is_active(state.entitlement)
             and bool(self._game_path.get().strip())
             and state.proxy_status not in {
                 ProxyStatus.STARTING,
@@ -785,10 +1043,16 @@ class AppWindow:
         can_launch_game = (
             signed_in
             and state.session_id is not None
-            and state.entitlement is not None
-            and state.entitlement.status is EntitlementStatus.ACTIVE
-            and state.proxy_status is ProxyStatus.RUNNING
-            and state.game_status is not GameStatus.RUNNING
+            and entitlement_is_active(state.entitlement)
+            and bool(self._game_path.get().strip())
+            and state.proxy_status not in {
+                ProxyStatus.STARTING,
+                ProxyStatus.STOPPING,
+            }
+            and state.game_status not in {
+                GameStatus.STARTING,
+                GameStatus.RUNNING,
+            }
         )
         can_stop_game = state.game_status is GameStatus.RUNNING
         self._launch_game_button.configure(
@@ -837,9 +1101,6 @@ class AppWindow:
         self._register_button.configure(
             state="normal" if not signed_in and not authenticating else "disabled"
         )
-        self._reset_password_button.configure(
-            state="normal" if not signed_in and not authenticating else "disabled"
-        )
 
     # ------------------------------------------------------------------
     # Auto-connect: poll for pso2.exe / pso2launcher.exe
@@ -860,11 +1121,15 @@ class AppWindow:
             ready = (
                 state.auth_status is AuthStatus.AUTHENTICATED
                 and state.session_id is not None
-                and state.entitlement is not None
-                and state.entitlement.status is EntitlementStatus.ACTIVE
+                and entitlement_is_active(state.entitlement)
             )
-            if ready and not already_running:
+            if (
+                ready
+                and not already_running
+                and not self._process_detection_pending
+            ):
                 # Run detection in background to avoid blocking the UI.
+                self._process_detection_pending = True
                 self._submit(
                     is_any_process_running,
                     self._on_game_detected,
@@ -875,16 +1140,22 @@ class AppWindow:
 
     def _on_game_detected(self, detected: bool) -> None:
         """Callback when process detection finishes."""
+        self._process_detection_pending = False
         if not detected:
             return
         # Double-check conditions haven't changed while the check ran.
         if not self._auto_connect.get():
             return
         state = self._controller.state
-        if state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RUNNING}:
+        if (
+            state.auth_status is not AuthStatus.AUTHENTICATED
+            or state.session_id is None
+            or not entitlement_is_active(state.entitlement)
+            or state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RUNNING}
+        ):
             return
-        # Auto-start ProxyCore (without launching Tweaker – the user
-        # already has the game running or is about to start it).
+        # Auto-start ProxyCore only after pso2.exe was detected.  Tweaker is
+        # launched separately by the login checkbox or the manual button.
         self._service.start_proxy()
 
     def _heartbeat(self) -> None:
@@ -897,7 +1168,7 @@ class AppWindow:
     def _add_heading(frame: ctk.CTkBaseClass) -> None:
         ctk.CTkLabel(
             frame,
-            text="NEKO FAMILY",
+            text="NEKO FAMILY PROXY PSO2NGS",
             font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", pady=2)

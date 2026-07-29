@@ -29,7 +29,13 @@ class GameProcessManager:
             if os.name == "nt":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_SHOWNORMAL
+                # SW_SHOWNORMAL is a Win32 value (1), but unlike SW_HIDE it
+                # is not exported by every supported Python subprocess build.
+                startupinfo.wShowWindow = getattr(
+                    subprocess,
+                    "SW_SHOWNORMAL",
+                    1,
+                )
                 creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
             try:

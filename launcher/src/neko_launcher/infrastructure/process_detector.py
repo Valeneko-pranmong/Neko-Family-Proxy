@@ -7,10 +7,7 @@ import subprocess
 from typing import FrozenSet, Sequence
 
 # Process names that trigger automatic ProxyCore activation.
-PSO2_PROCESS_NAMES: FrozenSet[str] = frozenset({
-    "pso2.exe",
-    "pso2launcher.exe",
-})
+PSO2_PROCESS_NAMES: FrozenSet[str] = frozenset({"pso2.exe"})
 
 
 def is_any_process_running(names: Sequence[str] | FrozenSet[str] = PSO2_PROCESS_NAMES) -> bool:

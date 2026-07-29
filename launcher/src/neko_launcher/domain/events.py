@@ -68,6 +68,13 @@ class LaunchGameRequested(Event):
 
 
 @dataclass(frozen=True)
+class LaunchTweakerRequested(Event):
+    """Launch Tweaker after auth/entitlement checks, without starting ProxyCore."""
+
+    executable: str
+
+
+@dataclass(frozen=True)
 class StopGameRequested(Event):
     pass
 

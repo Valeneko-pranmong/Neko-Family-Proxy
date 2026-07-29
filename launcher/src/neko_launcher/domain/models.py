@@ -89,3 +89,12 @@ class AppState:
     proxy_status: ProxyStatus = ProxyStatus.STOPPED
     game_status: GameStatus = GameStatus.STOPPED
     last_error: str | None = None
+
+
+def entitlement_is_active(entitlement: Entitlement | None) -> bool:
+    """Return whether an entitlement is active *and* has not expired."""
+    if entitlement is None or entitlement.status is not EntitlementStatus.ACTIVE:
+        return False
+    if entitlement.valid_until is None:
+        return True
+    return entitlement.valid_until > datetime.now(entitlement.valid_until.tzinfo)

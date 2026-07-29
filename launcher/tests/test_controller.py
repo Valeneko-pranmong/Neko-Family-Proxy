@@ -4,11 +4,13 @@ from neko_launcher.domain.events import (
     AuthSucceeded,
     EntitlementLoaded,
     LaunchGameRequested,
+    LaunchTweakerRequested,
     SessionClaimed,
     StartProxyRequested,
     StartUsageRequested,
     StateChanged,
 )
+from datetime import UTC, datetime, timedelta
 from neko_launcher.domain.models import (
     Entitlement,
     EntitlementStatus,
@@ -156,3 +158,47 @@ def test_start_usage_does_not_start_proxy_without_tweaker_path() -> None:
     assert proxy.running is False
     assert game.running is False
     assert controller.state.game_status is GameStatus.FAILED
+
+
+def test_auto_tweaker_launch_does_not_start_proxy_before_pso2_process() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+
+    controller.dispatch(LaunchTweakerRequested("C:/Games/Tweaker.exe"))
+
+    assert game.running is True
+    assert proxy.running is False
+    assert controller.state.game_status is GameStatus.RUNNING
+
+
+def test_expired_entitlement_cannot_start_proxy_or_tweaker() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement(
+                "neko-family-proxy",
+                EntitlementStatus.ACTIVE,
+                datetime.now(UTC) - timedelta(minutes=1),
+            )
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+
+    controller.dispatch(StartProxyRequested())
+
+    assert proxy.running is False
+    assert controller.state.proxy_status is ProxyStatus.FAILED
+    assert "เติมคูปอง" in (controller.state.last_error or "")

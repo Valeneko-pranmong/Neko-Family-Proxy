@@ -11,6 +11,7 @@ from neko_launcher.domain.events import (
     ErrorOccurred,
     Event,
     LaunchGameRequested,
+    LaunchTweakerRequested,
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
@@ -25,6 +26,7 @@ from neko_launcher.domain.models import (
     EntitlementStatus,
     GameStatus,
     ProxyStatus,
+    entitlement_is_active,
 )
 
 from .ports import EventPublisher, GameGateway, ProxyGateway
@@ -103,6 +105,8 @@ class ApplicationController:
             self._stop_proxy()
         elif isinstance(event, LaunchGameRequested):
             self._launch_game(event.executable)
+        elif isinstance(event, LaunchTweakerRequested):
+            self._launch_tweaker(event.executable)
         elif isinstance(event, StopGameRequested):
             self._stop_game()
         elif isinstance(event, ErrorOccurred):
@@ -130,8 +134,7 @@ class ApplicationController:
             )
             return
         if (
-            state.entitlement is None
-            or state.entitlement.status is not EntitlementStatus.ACTIVE
+            not entitlement_is_active(state.entitlement)
             or state.session_id is None
         ):
             self._update(
@@ -197,8 +200,7 @@ class ApplicationController:
             )
             return
         if (
-            state.entitlement is None
-            or state.entitlement.status is not EntitlementStatus.ACTIVE
+            not entitlement_is_active(state.entitlement)
             or state.session_id is None
         ):
             self._update(
@@ -212,10 +214,35 @@ class ApplicationController:
                 last_error="กรุณากดเริ่มใช้งานก่อนเปิดเกม",
             )
             return
+        self._launch_tweaker(executable)
+
+    def _launch_tweaker(self, executable: str) -> None:
+        state = self.state
+        if not executable.strip():
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="กรุณาเลือกไฟล์ Tweaker.exe ก่อนเริ่มใช้งาน",
+            )
+            return
+        if state.auth_status is not AuthStatus.AUTHENTICATED:
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="กรุณาเข้าสู่ระบบก่อนเปิด Tweaker",
+            )
+            return
+        if (
+            not entitlement_is_active(state.entitlement)
+            or state.session_id is None
+        ):
+            self._update(
+                game_status=GameStatus.FAILED,
+                last_error="บัญชีนี้หมดวันใช้งานแล้ว กรุณาเติมคูปองก่อน",
+            )
+            return
         if self._game_gateway is None:
             self._update(
                 game_status=GameStatus.FAILED,
-                last_error="เปิดเกมไม่ได้ กรุณาลองใหม่",
+                last_error="เปิด Tweaker ไม่ได้ กรุณาลองใหม่",
             )
             return
         self._update(game_status=GameStatus.STARTING, last_error=None)
@@ -226,7 +253,7 @@ class ApplicationController:
         except Exception:
             self._update(
                 game_status=GameStatus.FAILED,
-                last_error="เปิดเกมไม่สำเร็จ กรุณาตรวจสอบไฟล์ที่เลือก",
+                last_error="เปิด Tweaker ไม่สำเร็จ กรุณาตรวจสอบไฟล์ที่เลือก",
             )
         else:
             self._update(game_status=GameStatus.RUNNING)
