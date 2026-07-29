@@ -10,14 +10,12 @@ from neko_launcher.domain.events import (
     EntitlementLoaded,
     ErrorOccurred,
     Event,
-    LaunchGameRequested,
+    GameProcessStateChanged,
     LaunchTweakerRequested,
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
-    StartUsageRequested,
     StateChanged,
-    StopGameRequested,
     StopProxyRequested,
 )
 from neko_launcher.domain.models import (
@@ -85,35 +83,38 @@ class ApplicationController:
         elif isinstance(event, SessionClaimed):
             self._update(session_id=event.session_id, last_error=None)
         elif isinstance(event, SessionRevoked):
-            if self.state.proxy_status in {
+            self._revoke_session(event.reason)
+        elif isinstance(event, GameProcessStateChanged):
+            state = self.state
+            self._update(game_process_running=event.running)
+            deferred_reason = state.deferred_session_revocation_reason
+            if not event.running and deferred_reason is not None:
+                self._revoke_session(
+                    deferred_reason,
+                    allow_defer=False,
+                )
+            elif (
+                not event.running
+                and state.session_id is not None
+                and not entitlement_is_active(state.entitlement)
+            ):
+                self._revoke_session("สิทธิ์หมดอายุแล้ว", allow_defer=False)
+            elif not event.running and state.proxy_status in {
                 ProxyStatus.STARTING,
                 ProxyStatus.RUNNING,
             }:
                 self._stop_proxy()
-            else:
-                self._stop_game()
-            self._update(
-                session_id=None,
-                entitlement=None,
-                last_error=event.reason,
-            )
         elif isinstance(event, StartProxyRequested):
             self._start_proxy()
-        elif isinstance(event, StartUsageRequested):
-            self._start_usage(event.executable)
         elif isinstance(event, StopProxyRequested):
             self._stop_proxy()
-        elif isinstance(event, LaunchGameRequested):
-            self._launch_game(event.executable)
         elif isinstance(event, LaunchTweakerRequested):
             self._launch_tweaker(event.executable)
-        elif isinstance(event, StopGameRequested):
-            self._stop_game()
         elif isinstance(event, ErrorOccurred):
             self._update(last_error=event.message)
 
     def sign_out(self) -> None:
-        self._stop_game()
+        self._stop_proxy()
         self._update(
             auth_status=AuthStatus.SIGNED_OUT,
             user_id=None,
@@ -122,7 +123,35 @@ class ApplicationController:
             session_id=None,
             proxy_status=ProxyStatus.STOPPED,
             game_status=GameStatus.STOPPED,
+            game_process_running=False,
+            deferred_session_revocation_reason=None,
             last_error=None,
+        )
+
+    def shutdown(self) -> None:
+        """Stop only the child processes created by this launcher."""
+        self._stop_proxy()
+        self._stop_game()
+
+    def _revoke_session(self, reason: str, *, allow_defer: bool = True) -> None:
+        """End a session, delaying only an expiry while PSO2 is in progress."""
+        state = self.state
+        if (
+            allow_defer
+            and state.game_process_running
+            and not entitlement_is_active(state.entitlement)
+        ):
+            self._update(
+                deferred_session_revocation_reason=reason,
+                last_error=None,
+            )
+            return
+        self._stop_proxy()
+        self._update(
+            session_id=None,
+            entitlement=None,
+            deferred_session_revocation_reason=None,
+            last_error=reason,
         )
 
     def _start_proxy(self) -> None:
@@ -159,24 +188,7 @@ class ApplicationController:
         else:
             self._update(proxy_status=ProxyStatus.RUNNING)
 
-    def _start_usage(self, executable: str) -> None:
-        """Start ProxyCore first, then launch the configured Tweaker."""
-        if not executable.strip():
-            self._update(
-                game_status=GameStatus.FAILED,
-                last_error="กรุณาเลือกไฟล์เปิดเกมก่อนเริ่มใช้งาน",
-            )
-            return
-
-        # _start_proxy performs all authentication, entitlement, and session
-        # checks.  Do not attempt to launch Tweaker when ProxyCore failed.
-        if self.state.proxy_status is not ProxyStatus.RUNNING:
-            self._start_proxy()
-        if self.state.proxy_status is ProxyStatus.RUNNING:
-            self._launch_game(executable)
-
     def _stop_proxy(self) -> None:
-        self._stop_game()
         if self._proxy_gateway is None:
             self._update(proxy_status=ProxyStatus.STOPPED)
             return
@@ -190,31 +202,6 @@ class ApplicationController:
             )
         else:
             self._update(proxy_status=ProxyStatus.STOPPED)
-
-    def _launch_game(self, executable: str) -> None:
-        state = self.state
-        if state.auth_status is not AuthStatus.AUTHENTICATED:
-            self._update(
-                game_status=GameStatus.FAILED,
-                last_error="กรุณาเข้าสู่ระบบก่อนเปิดเกม",
-            )
-            return
-        if (
-            not entitlement_is_active(state.entitlement)
-            or state.session_id is None
-        ):
-            self._update(
-                game_status=GameStatus.FAILED,
-                last_error="บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน",
-            )
-            return
-        if state.proxy_status is not ProxyStatus.RUNNING:
-            self._update(
-                game_status=GameStatus.FAILED,
-                last_error="กรุณากดเริ่มใช้งานก่อนเปิดเกม",
-            )
-            return
-        self._launch_tweaker(executable)
 
     def _launch_tweaker(self, executable: str) -> None:
         state = self.state
@@ -269,7 +256,7 @@ class ApplicationController:
         except Exception:
             self._update(
                 game_status=GameStatus.FAILED,
-                last_error="ปิดเกมไม่สำเร็จ กรุณาลองใหม่",
+                last_error="ปิด Tweaker ไม่สำเร็จ กรุณาลองใหม่",
             )
         else:
             self._update(game_status=GameStatus.STOPPED)

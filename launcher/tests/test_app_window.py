@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ from neko_launcher.domain.models import (
     ProxyStatus,
 )
 from neko_launcher.ui.app_window import AppWindow
+from neko_launcher.domain.events import GameProcessStateChanged
+from neko_launcher.ui.theme import PALETTE
 
 
 class FakeVariable:
@@ -29,6 +32,38 @@ class FakeButton:
 
     def configure(self, *, state: str) -> None:
         self.state = state
+
+
+class FakeLabel:
+    def __init__(self) -> None:
+        self.options: dict[str, Any] = {}
+
+    def configure(self, **kwargs: Any) -> None:
+        self.options.update(kwargs)
+
+
+class FakeShutdownService:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def shutdown(self) -> None:
+        self.calls += 1
+
+
+class FakeExecutor:
+    def __init__(self) -> None:
+        self.options: dict[str, Any] = {}
+
+    def shutdown(self, **kwargs: Any) -> None:
+        self.options.update(kwargs)
+
+
+class FakeRoot:
+    def __init__(self) -> None:
+        self.destroyed = False
+
+    def destroy(self) -> None:
+        self.destroyed = True
 
 
 class FakeView:
@@ -67,12 +102,6 @@ class FakeService:
         self.started: list[str] = []
         self.proxy_started = 0
         self.tweaker_started = 0
-        self.usage_started = 0
-
-    def start_usage(self, executable: str) -> None:
-        self.started.append(executable)
-        self.usage_started += 1
-
     def launch_tweaker(self, executable: str) -> None:
         self.started.append(executable)
         self.tweaker_started += 1
@@ -84,6 +113,10 @@ class FakeService:
 class FakeController:
     def __init__(self, state: AppState) -> None:
         self.state = state
+
+    def dispatch(self, event: object) -> None:
+        if isinstance(event, GameProcessStateChanged):
+            self.state = replace(self.state, game_process_running=event.running)
 
 
 def build_password_window() -> AppWindow:
@@ -134,6 +167,37 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
     assert window._register_button.state == "disabled"
 
 
+def test_notification_reuses_header_subtitle_without_changing_layout() -> None:
+    window = object.__new__(AppWindow)
+    window._header_message = FakeLabel()  # type: ignore[assignment]
+    window._notice = FakeVariable("บันทึกไฟล์เปิดเกมแล้ว")  # type: ignore[assignment]
+    window._error = FakeVariable()  # type: ignore[assignment]
+
+    window._update_message_visibility()
+
+    assert window._header_message.options == {  # type: ignore[attr-defined]
+        "text": "บันทึกไฟล์เปิดเกมแล้ว",
+        "text_color": PALETTE.success,
+    }
+
+
+def test_close_waits_for_worker_and_destroys_the_window() -> None:
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._service = FakeShutdownService()  # type: ignore[assignment]
+    window._executor = FakeExecutor()  # type: ignore[assignment]
+    window.root = FakeRoot()  # type: ignore[assignment]
+
+    window.close()
+
+    assert window._service.calls == 1  # type: ignore[attr-defined]
+    assert window._executor.options == {  # type: ignore[attr-defined]
+        "wait": True,
+        "cancel_futures": True,
+    }
+    assert window.root.destroyed  # type: ignore[attr-defined]
+
+
 def test_show_program_view_packs_scrollable_frame_with_internal_manager() -> None:
     window = object.__new__(AppWindow)
     window._auth_view = FakeView()  # type: ignore[assignment]
@@ -160,7 +224,6 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._service = FakeService()  # type: ignore[assignment]
     window._game_path = FakeVariable(str(tweaker))  # type: ignore[assignment]
     window._game_path_store = None
-    window._auto_connect = FakeVariable(True)  # type: ignore[assignment]
     window._auto_launch = FakeVariable(auto_launch)  # type: ignore[assignment]
     window._error = FakeVariable()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
@@ -168,7 +231,7 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     return window
 
 
-def test_auto_connect_open_starts_tweaker_without_proxy(tmp_path: Path) -> None:
+def test_open_starts_tweaker_without_proxy(tmp_path: Path) -> None:
     tweaker = tmp_path / "Tweaker.exe"
     tweaker.touch()
     window = build_tweaker_window(tweaker)
@@ -180,19 +243,6 @@ def test_auto_connect_open_starts_tweaker_without_proxy(tmp_path: Path) -> None:
     assert window._service.proxy_started == 0  # type: ignore[attr-defined]
 
 
-def test_manual_mode_open_starts_proxy_and_tweaker_together(tmp_path: Path) -> None:
-    tweaker = tmp_path / "Tweaker.exe"
-    tweaker.touch()
-    window = build_tweaker_window(tweaker)
-    window._auto_connect.set(False)
-
-    window._launch_game()
-
-    assert window._service.started == [str(tweaker.resolve())]  # type: ignore[attr-defined]
-    assert window._service.usage_started == 1  # type: ignore[attr-defined]
-    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
-
-
 def test_detected_pso2_starts_proxy_only_when_entitlement_is_valid(
     tmp_path: Path,
 ) -> None:
@@ -202,6 +252,7 @@ def test_detected_pso2_starts_proxy_only_when_entitlement_is_valid(
     window._on_game_detected(True)
 
     assert window._service.proxy_started == 1  # type: ignore[attr-defined]
+    assert window._controller.state.game_process_running is True  # type: ignore[attr-defined]
 
 
 def test_detected_pso2_does_not_start_proxy_when_entitlement_is_missing(

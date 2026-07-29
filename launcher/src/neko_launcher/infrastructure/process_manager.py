@@ -50,10 +50,30 @@ class ProxyProcessManager:
             if process is None:
                 return
             if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=timeout)
+                self._terminate_owned_process_tree(process, timeout)
             self._process = None
+
+    @staticmethod
+    def _terminate_owned_process_tree(
+        process: subprocess.Popen[bytes], timeout: float
+    ) -> None:
+        """End ProxyCore's own process tree without touching other sessions."""
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                pass
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=timeout)

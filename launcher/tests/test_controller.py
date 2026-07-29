@@ -3,11 +3,11 @@ from neko_launcher.domain.events import (
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
-    LaunchGameRequested,
+    GameProcessStateChanged,
     LaunchTweakerRequested,
     SessionClaimed,
+    SessionRevoked,
     StartProxyRequested,
-    StartUsageRequested,
     StateChanged,
 )
 from datetime import UTC, datetime, timedelta
@@ -80,6 +80,29 @@ def test_proxy_commands_use_gateway_and_update_state() -> None:
     assert states[-1].proxy_status is ProxyStatus.RUNNING
 
 
+def test_shutdown_stops_only_launcher_owned_proxy_and_tweaker() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(StartProxyRequested())
+    controller.dispatch(LaunchTweakerRequested("C:/Games/Tweaker.exe"))
+
+    controller.shutdown()
+
+    assert proxy.running is False
+    assert game.running is False
+    assert controller.state.proxy_status is ProxyStatus.STOPPED
+    assert controller.state.game_status is GameStatus.STOPPED
+
+
 def test_proxy_refuses_to_start_without_entitlement_and_session() -> None:
     bus = EventBus()
     proxy = FakeProxy()
@@ -91,73 +114,6 @@ def test_proxy_refuses_to_start_without_entitlement_and_session() -> None:
     assert proxy.running is False
     assert controller.state.proxy_status is ProxyStatus.FAILED
     assert controller.state.last_error is not None
-
-
-def test_game_requires_active_proxy_and_launches_selected_tweaker() -> None:
-    bus = EventBus()
-    proxy = FakeProxy()
-    game = FakeGame()
-    controller = ApplicationController(bus, proxy, game)
-    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
-    controller.dispatch(
-        EntitlementLoaded(
-            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
-        )
-    )
-    controller.dispatch(SessionClaimed("session-id"))
-
-    controller.dispatch(LaunchGameRequested("C:/Games/Tweaker.exe"))
-    assert game.running is False
-    assert controller.state.game_status is GameStatus.FAILED
-
-    controller.dispatch(StartProxyRequested())
-    controller.dispatch(LaunchGameRequested("C:/Games/Tweaker.exe"))
-
-    assert game.running is True
-    assert game.executable.endswith("Tweaker.exe")
-    assert controller.state.game_status is GameStatus.RUNNING
-
-
-def test_start_usage_starts_proxy_then_configured_tweaker() -> None:
-    bus = EventBus()
-    proxy = FakeProxy()
-    game = FakeGame()
-    controller = ApplicationController(bus, proxy, game)
-    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
-    controller.dispatch(
-        EntitlementLoaded(
-            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
-        )
-    )
-    controller.dispatch(SessionClaimed("session-id"))
-
-    controller.dispatch(StartUsageRequested("C:/Games/My Tweaker.exe"))
-
-    assert proxy.running is True
-    assert game.running is True
-    assert game.executable.endswith("My Tweaker.exe")
-    assert controller.state.proxy_status is ProxyStatus.RUNNING
-    assert controller.state.game_status is GameStatus.RUNNING
-
-
-def test_start_usage_does_not_start_proxy_without_tweaker_path() -> None:
-    bus = EventBus()
-    proxy = FakeProxy()
-    game = FakeGame()
-    controller = ApplicationController(bus, proxy, game)
-    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
-    controller.dispatch(
-        EntitlementLoaded(
-            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
-        )
-    )
-    controller.dispatch(SessionClaimed("session-id"))
-
-    controller.dispatch(StartUsageRequested("  "))
-
-    assert proxy.running is False
-    assert game.running is False
-    assert controller.state.game_status is GameStatus.FAILED
 
 
 def test_auto_tweaker_launch_does_not_start_proxy_before_pso2_process() -> None:
@@ -202,3 +158,68 @@ def test_expired_entitlement_cannot_start_proxy_or_tweaker() -> None:
     assert proxy.running is False
     assert controller.state.proxy_status is ProxyStatus.FAILED
     assert "เติมคูปอง" in (controller.state.last_error or "")
+
+
+def test_expiry_waits_for_pso2_to_exit_before_stopping_proxy() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    game = FakeGame()
+    controller = ApplicationController(bus, proxy, game)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement(
+                "neko-family-proxy",
+                EntitlementStatus.ACTIVE,
+                datetime.now(UTC) + timedelta(minutes=1),
+            )
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(StartProxyRequested())
+    controller.dispatch(LaunchTweakerRequested("C:/Games/Tweaker.exe"))
+    controller.dispatch(GameProcessStateChanged(True))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement(
+                "neko-family-proxy",
+                EntitlementStatus.ACTIVE,
+                datetime.now(UTC) - timedelta(minutes=1),
+            )
+        )
+    )
+
+    controller.dispatch(SessionRevoked("สิทธิ์หมดอายุแล้ว"))
+
+    assert proxy.running is True
+    assert game.running is True
+    assert controller.state.session_id == "session-id"
+    assert controller.state.deferred_session_revocation_reason is not None
+
+    controller.dispatch(GameProcessStateChanged(False))
+
+    assert proxy.running is False
+    assert game.running is True
+    assert controller.state.session_id is None
+    assert controller.state.entitlement is None
+
+
+def test_proxy_stops_when_pso2_exits_while_entitlement_is_still_valid() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    controller = ApplicationController(bus, proxy)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(StartProxyRequested())
+    controller.dispatch(GameProcessStateChanged(True))
+
+    controller.dispatch(GameProcessStateChanged(False))
+
+    assert proxy.running is False
+    assert controller.state.proxy_status is ProxyStatus.STOPPED
+    assert controller.state.session_id == "session-id"

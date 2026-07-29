@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ctypes
+import os
 import sys
+import traceback
 from pathlib import Path
 
 from neko_launcher.application.controller import ApplicationController
@@ -60,7 +63,24 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
 
 
 def main() -> None:
-    build_window().root.mainloop()
+    try:
+        build_window().root.mainloop()
+    except Exception as exc:
+        _report_startup_error(exc)
+
+
+def _report_startup_error(exc: Exception) -> None:
+    """Show a visible error instead of a console flash for a failed startup."""
+    log_dir = Path(os.getenv("LOCALAPPDATA", ".")) / "NEKO FAMILY"
+    log_file = log_dir / "launcher-error.log"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file.write_text(traceback.format_exc(), encoding="utf-8")
+    except OSError:
+        pass
+    message = f"เปิด Neko Launcher ไม่สำเร็จ\n\n{exc}\n\nรายละเอียด: {log_file}"
+    if sys.platform == "win32":
+        ctypes.windll.user32.MessageBoxW(None, message, "Neko Launcher", 0x10)
 
 
 if __name__ == "__main__":

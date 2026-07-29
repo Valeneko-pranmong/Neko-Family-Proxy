@@ -46,15 +46,15 @@ class SessionRevoked(Event):
 
 
 @dataclass(frozen=True)
-class StartProxyRequested(Event):
-    pass
+class GameProcessStateChanged(Event):
+    """Reports whether the actual PSO2 client process is running."""
+
+    running: bool
 
 
 @dataclass(frozen=True)
-class StartUsageRequested(Event):
-    """Start ProxyCore and the user's configured Tweaker together."""
-
-    executable: str
+class StartProxyRequested(Event):
+    pass
 
 
 @dataclass(frozen=True)
@@ -63,22 +63,10 @@ class StopProxyRequested(Event):
 
 
 @dataclass(frozen=True)
-class LaunchGameRequested(Event):
-    executable: str
-
-
-@dataclass(frozen=True)
 class LaunchTweakerRequested(Event):
     """Launch Tweaker after auth/entitlement checks, without starting ProxyCore."""
 
     executable: str
-
-
-@dataclass(frozen=True)
-class StopGameRequested(Event):
-    pass
-
-
 @dataclass(frozen=True)
 class ErrorOccurred(Event):
     message: str

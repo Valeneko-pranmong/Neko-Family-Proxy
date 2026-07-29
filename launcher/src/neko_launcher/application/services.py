@@ -10,7 +10,6 @@ from neko_launcher.domain.events import (
     SessionClaimed,
     SessionRevoked,
     StartProxyRequested,
-    StartUsageRequested,
     StopProxyRequested,
 )
 from neko_launcher.domain.models import (
@@ -206,15 +205,14 @@ class LauncherService:
     def start_proxy(self) -> None:
         self._controller.dispatch(StartProxyRequested())
 
-    def start_usage(self, executable: str) -> None:
-        """Start ProxyCore and the configured Tweaker as one user action."""
-        self._controller.dispatch(StartUsageRequested(executable))
-
     def launch_tweaker(self, executable: str) -> None:
-        """Launch Tweaker; Auto Connect will start ProxyCore after pso2.exe appears."""
+        """Launch Tweaker; ProxyCore starts after pso2.exe appears."""
         self._controller.dispatch(LaunchTweakerRequested(executable))
 
     def shutdown(self) -> None:
+        # Closing the launcher is explicit: clean up only child processes
+        # that this launcher started, including Tweaker and ProxyCore.
+        self._controller.shutdown()
         session_id = self._controller.state.session_id
         if session_id:
             try:

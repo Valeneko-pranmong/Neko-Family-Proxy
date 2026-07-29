@@ -88,6 +88,8 @@ class AppState:
     session_id: str | None = None
     proxy_status: ProxyStatus = ProxyStatus.STOPPED
     game_status: GameStatus = GameStatus.STOPPED
+    game_process_running: bool = False
+    deferred_session_revocation_reason: str | None = None
     last_error: str | None = None
 
 

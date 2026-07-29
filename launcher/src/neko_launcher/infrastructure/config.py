@@ -50,7 +50,7 @@ class LauncherConfig:
         return cls(
             workspace_root=workspace_root,
             product_code=PRODUCT_CODE,
-            game_exe=stored_game_exe or "Tweaker.exe",
+            game_exe=stored_game_exe,
             game_path_store=game_path_store,
             proxy_core_path=proxy_path,
             supabase_url=SUPABASE_URL,
