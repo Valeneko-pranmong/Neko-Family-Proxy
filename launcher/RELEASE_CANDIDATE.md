@@ -18,7 +18,7 @@
 - Admin-assisted reset is deployed at
   `https://neko-control-room.vercel.app`.
 - Production Admin Tool deployment:
-  `dpl_6PYqSa89hYsdUeGw8eqpGeF5XGpz` (commit `0bf10c4`).
+  `dpl_Et3bAJzx4u3WiWEsRCghGFe9GZJg` (commit `89d13f3`).
 - Production Supabase migration:
   `add_admin_password_reset_audit_event`.
 

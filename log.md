@@ -74,8 +74,8 @@
   `add_admin_password_reset_audit_event` สำเร็จ และตรวจ constraint แล้ว
 - Admin Tool deploy production สำเร็จ:
   - URL: `https://neko-control-room.vercel.app`
-  - Deployment: `dpl_6PYqSa89hYsdUeGw8eqpGeF5XGpz`
-  - Git commit: `0bf10c4`
+  - Deployment: `dpl_Et3bAJzx4u3WiWEsRCghGFe9GZJg`
+  - Git commit: `89d13f3`
   - สถานะ: READY
   - หลัง deploy: health 200, unauthenticated API 401, runtime errors 0
 - Launcher ตัด Recovery Email, email reset method, reset redirect config และแท็บ
