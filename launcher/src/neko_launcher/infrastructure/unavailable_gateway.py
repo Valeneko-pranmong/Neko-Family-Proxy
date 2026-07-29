@@ -15,7 +15,12 @@ class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
 
     _MESSAGE = "เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
 
-    def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+    def sign_up(
+        self,
+        username: str,
+        password: str,
+        recovery_email: str,
+    ) -> RegistrationResult:
         raise LauncherServiceError(self._MESSAGE)
 
     def sign_in(self, username: str, password: str) -> AuthenticatedUser:
@@ -24,10 +29,10 @@ class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
     def change_password(self, password: str) -> None:
         raise LauncherServiceError(self._MESSAGE)
 
-    def lookup_recovery_email(self, username: str) -> str | None:
+    def lookup_auth_email(self, username: str) -> str | None:
         raise LauncherServiceError(self._MESSAGE)
 
-    def request_password_reset(self, email: str) -> None:
+    def request_password_reset(self, auth_email: str) -> None:
         raise LauncherServiceError(self._MESSAGE)
 
     def restore_session(self) -> AuthenticatedUser | None:

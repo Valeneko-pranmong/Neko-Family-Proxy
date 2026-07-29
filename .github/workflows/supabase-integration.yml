@@ -20,7 +20,7 @@ jobs:
     env:
       NEKO_INTEGRATION_SUPABASE_URL: ${{ secrets.NEKO_INTEGRATION_SUPABASE_URL }}
       NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY }}
-      NEKO_INTEGRATION_EMAIL: ${{ secrets.NEKO_INTEGRATION_EMAIL }}
+      NEKO_INTEGRATION_USERNAME: ${{ secrets.NEKO_INTEGRATION_USERNAME }}
       NEKO_INTEGRATION_PASSWORD: ${{ secrets.NEKO_INTEGRATION_PASSWORD }}
       NEKO_INTEGRATION_COUPON: ${{ secrets.NEKO_INTEGRATION_COUPON }}
     steps:
@@ -37,7 +37,7 @@ jobs:
           required = (
               "NEKO_INTEGRATION_SUPABASE_URL",
               "NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY",
-              "NEKO_INTEGRATION_EMAIL",
+              "NEKO_INTEGRATION_USERNAME",
               "NEKO_INTEGRATION_PASSWORD",
           )
           missing = [name for name in required if not os.getenv(name)]

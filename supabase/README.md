@@ -17,11 +17,13 @@ The `launcher` schema is included in the Supabase Data API exposed schemas by
 use only a publishable key. A secret/service-role key belongs only in a trusted
 admin service or Edge Function.
 
-The launcher calls `launcher.user_exists(text)` before password authentication.
-It then resolves the username to its stored recovery email through
-`launcher.auth_email_for_username(text)` before calling Supabase Auth. These
-two lookup RPCs are the only launcher RPCs exposed to the `anon` role; session,
-entitlement, and coupon RPCs remain authenticated-only.
+The launcher resolves a username to the current `auth.users.email` through
+`launcher.auth_email_for_username(text)` before calling Supabase Auth. The
+lookup joins by the stable user UUID, so the Launcher keeps working before and
+after a trusted Auth Admin API email migration. The older boolean
+`launcher.user_exists(text)` preflight is intentionally revoked from public
+clients because it is redundant and creates an account-enumeration endpoint.
+Session, entitlement, and coupon RPCs remain authenticated-only.
 
 The current database project is the dedicated `Neko-Family-Proxy` project.
 The core/auth/session migrations through
@@ -36,10 +38,13 @@ The legacy coupon RPC access revocation
 `20260725160000_revoke_legacy_coupon_rpc_access.sql` removes authenticated
 client access to the superseded Admin functions; the Admin console uses only
 the actor-checked `admin_*` RPCs.
-The username lookup RPC `20260726100000_add_username_lookup_rpc.sql` is also
-applied and is callable by the public client only as a boolean existence check.
 The recovery email column and username-to-email lookup
-`20260726112000_add_recovery_email_auth_lookup.sql` are also applied.
+`20260726112000_add_recovery_email_auth_lookup.sql` are applied in production.
+The local follow-up
+`20260729002946_restore_recovery_email_auth_flow.sql` restores the RPC after the
+later removal migration, pins function search paths, and narrows execution
+privileges. Inspect production migration history before applying it; do not
+replay older migrations blindly.
 Before enabling the coupon UI, run the security and concurrency test plan
 against test accounts and confirm that the `launcher` schema is exposed through
 the Data API.

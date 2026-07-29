@@ -1,0 +1,142 @@
+-- Restore the username-to-Auth-email flow removed by
+-- 20260727141009_remove_recovery_email.sql and harden its privileges.
+--
+-- This migration changes schema/functions only. Existing Auth emails must be
+-- migrated separately through the Supabase Auth Admin API so user UUIDs,
+-- licenses, sessions, and coupons remain attached to the same account.
+
+alter table public.profiles
+  add column if not exists recovery_email text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'profiles_recovery_email_format_check'
+      and conrelid = 'public.profiles'::regclass
+  ) then
+    alter table public.profiles
+      add constraint profiles_recovery_email_format_check
+      check (
+        recovery_email is null
+        or recovery_email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+      );
+  end if;
+end
+$$;
+
+create unique index if not exists profiles_recovery_email_lower_key
+  on public.profiles (lower(recovery_email))
+  where recovery_email is not null;
+
+create or replace function launcher.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_username text;
+  v_recovery_email text;
+begin
+  v_username := lower(
+    trim(
+      coalesce(
+        new.raw_user_meta_data ->> 'username',
+        new.raw_user_meta_data ->> 'display_name',
+        split_part(coalesce(new.email, ''), '@', 1)
+      )
+    )
+  );
+  v_recovery_email := lower(
+    trim(
+      coalesce(
+        nullif(new.email, ''),
+        nullif(new.raw_user_meta_data ->> 'recovery_email', '')
+      )
+    )
+  );
+
+  insert into public.profiles (
+    id,
+    username,
+    display_name,
+    recovery_email
+  )
+  values (
+    new.id,
+    nullif(v_username, ''),
+    nullif(
+      left(
+        coalesce(new.raw_user_meta_data ->> 'display_name', v_username),
+        80
+      ),
+      ''
+    ),
+    nullif(v_recovery_email, '')
+  )
+  on conflict (id) do update
+    set username = coalesce(public.profiles.username, excluded.username),
+        display_name = coalesce(
+          public.profiles.display_name,
+          excluded.display_name
+        ),
+        recovery_email = coalesce(
+          public.profiles.recovery_email,
+          excluded.recovery_email
+        ),
+        updated_at = now();
+
+  return new;
+end;
+$$;
+
+revoke all on function launcher.handle_new_user() from public;
+revoke all on function launcher.handle_new_user() from anon, authenticated;
+
+create or replace function launcher.auth_email_for_username(p_username text)
+returns text
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select lower(u.email)
+  from public.profiles as p
+  join auth.users as u on u.id = p.id
+  where lower(p.username) = lower(trim(p_username))
+    and p.status = 'active'
+    and u.email is not null
+  limit 1;
+$$;
+
+revoke all
+  on function launcher.auth_email_for_username(text)
+  from public;
+revoke all
+  on function launcher.auth_email_for_username(text)
+  from anon, authenticated;
+grant execute
+  on function launcher.auth_email_for_username(text)
+  to anon, authenticated;
+
+-- The boolean preflight lookup is no longer used by the Launcher. Keeping it
+-- public would create an unnecessary account-enumeration endpoint.
+create or replace function launcher.user_exists(p_username text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from auth.users as u
+    where lower(u.raw_user_meta_data ->> 'username')
+      = lower(trim(p_username))
+  );
+$$;
+
+revoke all on function launcher.user_exists(text) from public;
+revoke all on function launcher.user_exists(text) from anon, authenticated;

@@ -24,8 +24,12 @@ class FakeGateway:
         self.signed_out = False
         self.changed_password: str | None = None
         self.released: list[str] = []
+        self.last_signup: tuple[str, str, str] | None = None
+        self.last_reset_email: str | None = None
+        self.reset_error = False
 
     def sign_up(self, username: str, password: str, email: str) -> RegistrationResult:
+        self.last_signup = (username, password, email)
         return RegistrationResult(username, True)
 
     def sign_in(self, email: str, password: str) -> AuthenticatedUser:
@@ -40,7 +44,7 @@ class FakeGateway:
     def change_password(self, password: str) -> None:
         self.changed_password = password
 
-    def lookup_recovery_email(self, username: str) -> str | None:
+    def lookup_auth_email(self, username: str) -> str | None:
         if username == "norecovery":
             return None
         if username == "networkfail":
@@ -48,6 +52,8 @@ class FakeGateway:
         return f"{username}@example.com"
 
     def request_password_reset(self, email: str) -> None:
+        if self.reset_error:
+            raise RuntimeError("provider unavailable")
         self.last_reset_email = email
 
     def claim_session(
@@ -115,6 +121,33 @@ def test_sign_in_without_license_keeps_account_ready_for_coupon(
     assert controller.state.user_email == "testuser"
     assert controller.state.entitlement is None
     assert controller.state.session_id is None
+
+
+def test_sign_up_validates_and_forwards_recovery_email(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, _, gateway = workflow
+
+    service.sign_up(" TestUser ", "password123", " USER@Example.COM ")
+
+    assert gateway.last_signup == (
+        "testuser",
+        "password123",
+        "user@example.com",
+    )
+
+
+@pytest.mark.parametrize("email", ["", "missing-at.example.com", "user@example"])
+def test_sign_up_rejects_invalid_recovery_email(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+    email: str,
+) -> None:
+    service, _, gateway = workflow
+
+    with pytest.raises(Exception, match="อีเมล"):
+        service.sign_up("testuser", "password123", email)
+
+    assert gateway.last_signup is None
 
 
 def test_redeem_coupon_refreshes_entitlement_and_claims_session(
@@ -207,3 +240,47 @@ def test_credentials_are_validated_before_network_calls(
         service.sign_in(username, password)
 
 
+def test_password_reset_looks_up_auth_email_and_sends_link(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, _, gateway = workflow
+
+    service.request_password_reset(" TestUser ")
+
+    assert gateway.last_reset_email == "testuser@example.com"
+
+
+@pytest.mark.parametrize("username", ["norecovery", "networkfail"])
+def test_password_reset_silent_success_when_lookup_cannot_deliver(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+    username: str,
+) -> None:
+    service, _, gateway = workflow
+
+    service.request_password_reset(username)
+
+    assert gateway.last_reset_email is None
+
+
+def test_password_reset_silent_success_on_delivery_error(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, _, gateway = workflow
+    gateway.reset_error = True
+
+    service.request_password_reset("testuser")
+
+    assert gateway.last_reset_email is None
+
+
+@pytest.mark.parametrize("username", ["", "ab", "user@name"])
+def test_password_reset_validates_username_before_lookup(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+    username: str,
+) -> None:
+    service, _, gateway = workflow
+
+    with pytest.raises(Exception):
+        service.request_password_reset(username)
+
+    assert gateway.last_reset_email is None

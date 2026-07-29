@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse
 
 from supabase import Client, ClientOptions, create_client
 
@@ -31,11 +30,12 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         url: str,
         publishable_key: str,
         secure_store: SecureStore,
+        password_reset_redirect_url: str = "",
         client: Client | None = None,
     ) -> None:
         if not url or not publishable_key:
             raise ValueError("Supabase URL and publishable key are required")
-        self._synthetic_domain = urlparse(url).hostname or "localhost"
+        self._password_reset_redirect_url = password_reset_redirect_url.strip()
         self._client = client or create_client(
             url,
             publishable_key,
@@ -47,19 +47,24 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             ),
         )
 
-    def sign_up(self, username: str, password: str) -> RegistrationResult:
+    def sign_up(
+        self,
+        username: str,
+        password: str,
+        recovery_email: str,
+    ) -> RegistrationResult:
         username = username.strip().lower()
-        
-        synthetic_email = f"{username}@{self._synthetic_domain}"
+        recovery_email = recovery_email.strip().lower()
         try:
             response = self._client.auth.sign_up(
                 {
-                    "email": synthetic_email,
+                    "email": recovery_email,
                     "password": password,
                     "options": {
                         "data": {
                             "username": username,
                             "display_name": username,
+                            "recovery_email": recovery_email,
                         }
                     },
                 }
@@ -70,20 +75,20 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         user = self._to_user(response.user) if response.user else None
         return RegistrationResult(
             email=username,
-            requires_email_confirmation=False,
+            requires_email_confirmation=(
+                response.user is not None and response.session is None
+            ),
             user=user if response.session is not None else None,
         )
 
     def sign_in(self, username: str, password: str) -> AuthenticatedUser:
         username = username.strip().lower()
-        if not self.user_exists(username):
-            raise LauncherServiceError(
-                "ไม่พบบัญชีนี้ กรุณาตรวจสอบชื่อผู้ใช้หรือสมัครสมาชิกก่อน"
-            )
-        synthetic_email = f"{username}@{self._synthetic_domain}"
+        auth_email = self.lookup_auth_email(username)
+        if not auth_email:
+            raise LauncherServiceError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
         try:
             response = self._client.auth.sign_in_with_password(
-                {"email": synthetic_email, "password": password}
+                {"email": auth_email, "password": password}
             )
         except Exception as exc:
             raise self._auth_error(exc, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
@@ -91,17 +96,13 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise LauncherServiceError("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
         return self._to_user(response.user)
 
-    def user_exists(self, username: str) -> bool:
-        """Ask the launcher API/database whether a username is registered.
-
-        The RPC returns only a boolean.  Password verification remains in
-        Supabase Auth, so this lookup never reads credentials or user rows.
-        """
+    def lookup_auth_email(self, username: str) -> str | None:
+        """Resolve a username to the current Supabase Auth email."""
         username = username.strip().lower()
         try:
             response = (
                 self._client.schema("launcher")
-                .rpc("user_exists", {"p_username": username})
+                .rpc("auth_email_for_username", {"p_username": username})
                 .execute()
             )
         except Exception as exc:
@@ -109,7 +110,24 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 exc,
                 "ตรวจสอบบัญชีไม่ได้ชั่วคราว กรุณาลองใหม่",
             ) from exc
-        return response.data is True
+        auth_email = str(response.data or "").strip().lower()
+        return auth_email or None
+
+    def request_password_reset(self, auth_email: str) -> None:
+        if not self._password_reset_redirect_url:
+            raise LauncherServiceError(
+                "ระบบกู้คืนรหัสผ่านยังไม่พร้อมใช้งาน"
+            )
+        try:
+            self._client.auth.reset_password_for_email(
+                auth_email.strip().lower(),
+                {"redirect_to": self._password_reset_redirect_url},
+            )
+        except Exception as exc:
+            raise self._auth_error(
+                exc,
+                "ส่งลิงก์ตั้งรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่",
+            ) from exc
 
     def change_password(self, password: str) -> None:
         try:

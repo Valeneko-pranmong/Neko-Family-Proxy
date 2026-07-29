@@ -77,8 +77,10 @@ class AppWindow:
         self._login_email = tk.StringVar()
         self._login_password = tk.StringVar()
         self._register_username = tk.StringVar()
+        self._register_recovery_email = tk.StringVar()
         self._register_password = tk.StringVar()
         self._register_password_confirm = tk.StringVar()
+        self._reset_username = tk.StringVar()
         self._coupon_code = tk.StringVar()
         self._game_path = tk.StringVar(value=game_default_path)
         self._game_path_store = game_path_store
@@ -239,16 +241,42 @@ class AppWindow:
             self._register_password_confirm,
             show="●",
         )
+        self._field_label(register, "อีเมลสำหรับกู้คืนรหัสผ่าน")
+        self._register_recovery_email_entry = self._entry(
+            register,
+            "เช่น yourname@example.com",
+            self._register_recovery_email,
+        )
         self._register_email_entry.configure(placeholder_text="เช่น tester_01")
         self._register_email_entry.bind("<Return>", lambda _event: self._register())
         self._register_password_entry.bind("<Return>", lambda _event: self._register())
         self._register_password_confirm_entry.bind(
             "<Return>", lambda _event: self._register()
         )
+        self._register_recovery_email_entry.bind(
+            "<Return>", lambda _event: self._register()
+        )
         self._register_button = self._primary_button(
             register, "สร้างบัญชี", self._register
         )
         self._register_button.pack(fill="x", padx=14, pady=(10, 12))
+
+        reset = self._auth_panel.add("ลืมรหัสผ่าน")
+        self._field_label(reset, "ชื่อผู้ใช้")
+        self._reset_username_entry = self._entry(
+            reset,
+            "กรอกชื่อผู้ใช้ของคุณ",
+            self._reset_username,
+        )
+        self._reset_username_entry.bind(
+            "<Return>", lambda _event: self._request_password_reset()
+        )
+        self._reset_password_button = self._primary_button(
+            reset,
+            "ส่งลิงก์ตั้งรหัสผ่านใหม่",
+            self._request_password_reset,
+        )
+        self._reset_password_button.pack(fill="x", padx=14, pady=(10, 12))
 
         self._auth_hint = ctk.CTkLabel(
             self._auth_view,
@@ -571,15 +599,38 @@ class AppWindow:
             lambda: self._service.sign_up(
                 self._register_username.get(),
                 password,
+                self._register_recovery_email.get(),
             ),
             self._register_succeeded,
         )
 
-    def _register_succeeded(self, _: RegistrationResult) -> None:
+    def _register_succeeded(self, result: RegistrationResult) -> None:
         self._register_password.set("")
         self._register_password_confirm.set("")
+        self._register_recovery_email.set("")
+        if result.requires_email_confirmation:
+            self._notice.set(
+                "รับคำขอสมัครสมาชิกแล้ว หากระบบส่งอีเมลยืนยัน "
+                "กรุณาตรวจกล่องจดหมายก่อนเข้าสู่ระบบ"
+            )
+        else:
+            self._notice.set(
+                "สมัครสมาชิกสำเร็จ ใช้ชื่อผู้ใช้และรหัสผ่านเข้าสู่ระบบได้เลย"
+            )
+
+    def _request_password_reset(self) -> None:
+        self._submit(
+            lambda: self._service.request_password_reset(
+                self._reset_username.get()
+            ),
+            self._password_reset_requested,
+        )
+
+    def _password_reset_requested(self, _: Any) -> None:
+        self._reset_username.set("")
         self._notice.set(
-            "สมัครสมาชิกสำเร็จ ใช้ชื่อผู้ใช้และรหัสผ่านเข้าสู่ระบบได้เลย"
+            "หากชื่อผู้ใช้นี้มีบัญชีที่พร้อมรับอีเมล "
+            "ระบบได้ส่งลิงก์ตั้งรหัสผ่านใหม่ไปแล้ว"
         )
 
     def _sign_out(self) -> None:
@@ -772,6 +823,9 @@ class AppWindow:
             state="normal" if not signed_in and not authenticating else "disabled"
         )
         self._register_button.configure(
+            state="normal" if not signed_in and not authenticating else "disabled"
+        )
+        self._reset_password_button.configure(
             state="normal" if not signed_in and not authenticating else "disabled"
         )
 

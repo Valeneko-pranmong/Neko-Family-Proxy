@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>ตั้งรหัสผ่านใหม่ — Neko Family Proxy</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./config.js"></script>
+  <script
+    defer
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.111.0/dist/umd/supabase.min.js"
+  ></script>
+  <script defer src="./reset.js"></script>
+</head>
+<body>
+  <main class="card" aria-live="polite">
+    <header class="brand">
+      <div class="brand-mark" aria-hidden="true">🐾</div>
+      <div>
+        <h1>Neko Family Proxy</h1>
+        <p>ระบบตั้งรหัสผ่านใหม่</p>
+      </div>
+    </header>
+
+    <section id="state-loading">
+      <h2>กำลังตรวจสอบลิงก์…</h2>
+      <p class="message info">
+        <span class="spinner" aria-hidden="true"></span>
+        กรุณารอสักครู่
+      </p>
+    </section>
+
+    <section id="state-invalid" class="hidden">
+      <h2>ลิงก์ไม่ถูกต้อง</h2>
+      <p class="message error">
+        ลิงก์ตั้งรหัสผ่านไม่ถูกต้องหรือหมดอายุแล้ว
+        กรุณาขอลิงก์ใหม่จากหน้า “ลืมรหัสผ่าน” ใน Launcher
+      </p>
+    </section>
+
+    <section id="state-form" class="hidden">
+      <h2>ตั้งรหัสผ่านใหม่</h2>
+      <form id="reset-form">
+        <label for="password">รหัสผ่านใหม่</label>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          minlength="8"
+          autocomplete="new-password"
+          required
+        >
+
+        <label for="password-confirm">ยืนยันรหัสผ่านใหม่</label>
+        <input
+          id="password-confirm"
+          name="password-confirm"
+          type="password"
+          minlength="8"
+          autocomplete="new-password"
+          required
+        >
+
+        <button id="submit-button" type="submit">
+          เปลี่ยนรหัสผ่าน
+        </button>
+      </form>
+      <p id="form-message" class="message hidden"></p>
+      <p class="hint">รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร</p>
+    </section>
+
+    <section id="state-success" class="hidden">
+      <h2>เปลี่ยนรหัสผ่านสำเร็จ</h2>
+      <p class="message success">
+        กรุณาปิดหน้านี้ แล้วกลับไปเข้าสู่ระบบใน Launcher
+        ด้วยรหัสผ่านใหม่
+      </p>
+    </section>
+  </main>
+</body>
+</html>

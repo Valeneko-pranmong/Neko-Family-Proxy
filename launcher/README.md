@@ -21,12 +21,21 @@ python -m neko_launcher.main
 
 ## Customer flow
 
-1. Sign in or register with a username and password.
-2. Check remaining entitlement time or redeem a coupon.
-3. Start the embedded ProxyCore runtime.
-4. Select `Tweaker.exe`; the launcher remembers the path.
-5. Start Tweaker only while authentication, entitlement, session, and Proxy
+1. Register with a username, password, and real recovery email.
+2. Sign in with the username; the Launcher resolves the current Supabase Auth
+   email through the launcher RPC.
+3. Request a password-reset link from the **ลืมรหัสผ่าน** tab without exposing
+   whether an account exists.
+4. Check remaining entitlement time or redeem a coupon.
+5. Start the embedded ProxyCore runtime.
+6. Select `Tweaker.exe`; the launcher remembers the path.
+7. Start Tweaker only while authentication, entitlement, session, and Proxy
    checks remain valid.
+
+`PASSWORD_RESET_REDIRECT_URL` in
+`src/neko_launcher/infrastructure/defaults.py` must remain empty until the
+permanent Vercel production URL is deployed and allow-listed in Supabase Auth.
+Do not embed a preview URL in a Launcher release.
 
 ## Validation
 

@@ -27,7 +27,7 @@ def required_environment() -> tuple[str, str, str, str]:
     names = (
         "NEKO_INTEGRATION_SUPABASE_URL",
         "NEKO_INTEGRATION_SUPABASE_PUBLISHABLE_KEY",
-        "NEKO_INTEGRATION_EMAIL",
+        "NEKO_INTEGRATION_USERNAME",
         "NEKO_INTEGRATION_PASSWORD",
     )
     values = tuple(os.getenv(name, "").strip() for name in names)
@@ -42,19 +42,19 @@ def gateway(url: str, publishable_key: str) -> SupabaseGateway:
 
 @pytest.mark.integration
 def test_auth_entitlement_and_single_launcher_session_end_to_end() -> None:
-    url, publishable_key, email, password = required_environment()
+    url, publishable_key, username, password = required_environment()
     first = gateway(url, publishable_key)
     second = gateway(url, publishable_key)
     installation_hash = "a" * 64
 
-    first.sign_in(email, password)
+    first.sign_in(username, password)
     first_claim = first.claim_session(
         "neko-family-proxy",
         installation_hash,
         "Integration test runner",
     )
 
-    second.sign_in(email, password)
+    second.sign_in(username, password)
     second_claim = second.claim_session(
         "neko-family-proxy",
         installation_hash,
@@ -73,13 +73,13 @@ def test_auth_entitlement_and_single_launcher_session_end_to_end() -> None:
 
 @pytest.mark.integration
 def test_coupon_can_be_redeemed_only_once_end_to_end() -> None:
-    url, publishable_key, email, password = required_environment()
+    url, publishable_key, username, password = required_environment()
     coupon = os.getenv("NEKO_INTEGRATION_COUPON", "").strip()
     if not coupon:
         pytest.skip("A fresh disposable coupon was not supplied")
 
     client = gateway(url, publishable_key)
-    client.sign_in(email, password)
+    client.sign_in(username, password)
     try:
         result = client.redeem_coupon(coupon)
         assert result.days_added > 0

@@ -1,0 +1,177 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  background: #0b1220;
+  color: #e7edf7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(45, 132, 204, 0.24), transparent 38%),
+    linear-gradient(145deg, #0b1220, #101d33 55%, #0a2b46);
+}
+
+.card {
+  width: min(100%, 430px);
+  padding: 30px;
+  border: 1px solid rgba(126, 200, 227, 0.22);
+  border-radius: 18px;
+  background: rgba(20, 33, 52, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(126, 200, 227, 0.13);
+  font-size: 24px;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 3px;
+  color: #8fd8f0;
+  font-size: 19px;
+}
+
+.brand p {
+  margin-bottom: 0;
+  color: #96a9bf;
+  font-size: 13px;
+}
+
+h2 {
+  margin-bottom: 18px;
+  text-align: center;
+  font-size: 19px;
+}
+
+label {
+  display: block;
+  margin: 16px 0 7px;
+  color: #b9c8da;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid #40516a;
+  border-radius: 9px;
+  outline: none;
+  background: #0c1728;
+  color: #f7f9fc;
+  font: inherit;
+}
+
+input:focus {
+  border-color: #7ec8e3;
+  box-shadow: 0 0 0 3px rgba(126, 200, 227, 0.12);
+}
+
+button {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 22px;
+  border: 0;
+  border-radius: 9px;
+  background: #378bc8;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+}
+
+button:hover {
+  background: #2d7db7;
+}
+
+button:disabled {
+  background: #37465a;
+  color: #8795a8;
+  cursor: wait;
+}
+
+.message {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.info {
+  border-color: #294a64;
+  background: #132b3e;
+  color: #91d9ef;
+}
+
+.error {
+  border-color: #714249;
+  background: #3a2027;
+  color: #ffb1b8;
+}
+
+.success {
+  border-color: #32614b;
+  background: #183729;
+  color: #92e9b5;
+}
+
+.hint {
+  margin: 10px 0 0;
+  color: #8192a7;
+  text-align: center;
+  font-size: 12px;
+}
+
+.hidden {
+  display: none;
+}
+
+.spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  margin-right: 7px;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from neko_launcher.domain.events import (
     AuthFailed,
     AuthStarted,
@@ -44,12 +46,23 @@ class LauncherService:
         self._product_code = product_code
         self._heartbeat_failures = 0
 
-    def sign_up(self, username: str, password: str) -> RegistrationResult:
+    def sign_up(
+        self,
+        username: str,
+        password: str,
+        recovery_email: str,
+    ) -> RegistrationResult:
         username = username.strip().lower()
+        recovery_email = recovery_email.strip().lower()
         self._validate_username(username, password)
+        self._validate_email(recovery_email)
         self._controller.dispatch(AuthStarted(username))
         try:
-            result = self._auth_gateway.sign_up(username, password)
+            result = self._auth_gateway.sign_up(
+                username,
+                password,
+                recovery_email,
+            )
         except LauncherServiceError as exc:
             self._controller.dispatch(AuthFailed(str(exc)))
             raise
@@ -67,6 +80,23 @@ class LauncherService:
             except LauncherServiceError as exc:
                 self._controller.dispatch(ErrorOccurred(str(exc)))
         return result
+
+    def request_password_reset(self, username: str) -> None:
+        """Request a reset link without revealing account existence.
+
+        Lookup and delivery failures intentionally have the same caller-visible
+        result as an unknown username.  The UI always shows one generic notice.
+        """
+        username = username.strip().lower()
+        self._validate_username_format(username)
+        try:
+            auth_email = self._auth_gateway.lookup_auth_email(username)
+            if auth_email:
+                self._auth_gateway.request_password_reset(auth_email)
+        except Exception:
+            # Do not turn RPC/Auth error details into a username-enumeration
+            # oracle. Operational failures remain visible in provider logs.
+            return
 
     def sign_in(self, username: str, password: str) -> None:
         username = username.strip().lower()
@@ -228,6 +258,13 @@ class LauncherService:
 
     @staticmethod
     def _validate_username(username: str, password: str) -> None:
+        LauncherService._validate_username_format(username)
+        LauncherService._validate_password(password)
+
+    @staticmethod
+    def _validate_username_format(username: str) -> None:
+        if not username:
+            raise LauncherServiceError("กรุณากรอกชื่อผู้ใช้")
         if "@" in username or (
             not 3 <= len(username) <= 32
             or any(
@@ -238,7 +275,6 @@ class LauncherService:
             raise LauncherServiceError(
                 "ชื่อผู้ใช้ต้องมี 3-32 ตัวอักษร (a-z, 0-9 หรือ _)"
             )
-        LauncherService._validate_password(password)
 
     @staticmethod
     def _validate_login_identifier(identifier: str, password: str) -> None:
@@ -249,3 +285,7 @@ class LauncherService:
         if len(password) < 8:
             raise LauncherServiceError("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
 
+    @staticmethod
+    def _validate_email(email: str) -> None:
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise LauncherServiceError("กรุณากรอกอีเมลให้ถูกต้อง")
