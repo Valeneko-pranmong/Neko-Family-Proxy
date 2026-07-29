@@ -38,7 +38,6 @@ class AuthGateway(Protocol):
         self,
         username: str,
         password: str,
-        recovery_email: str,
     ) -> RegistrationResult:
         ...
 
@@ -49,9 +48,6 @@ class AuthGateway(Protocol):
         ...
 
     def auth_identifier_for_username(self, username: str) -> str:
-        ...
-
-    def request_password_reset(self, username: str) -> None:
         ...
 
     def restore_session(self) -> AuthenticatedUser | None:

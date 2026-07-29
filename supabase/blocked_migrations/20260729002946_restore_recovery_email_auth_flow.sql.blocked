@@ -1,3 +1,4 @@
+-- BLOCKED ARCHIVE: never apply or rename into the active migrations folder.
 -- Restore the username-to-Auth-email flow removed by
 -- 20260727141009_remove_recovery_email.sql and harden its privileges.
 --

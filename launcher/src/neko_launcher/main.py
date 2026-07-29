@@ -38,7 +38,6 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config.supabase_url,
         config.supabase_publishable_key,
         secure_store,
-        password_reset_redirect_url=config.password_reset_redirect_url,
     )
     service = LauncherService(
         controller,

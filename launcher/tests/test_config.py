@@ -21,7 +21,6 @@ def test_packaged_runtime_defaults_to_local_app_data(
     )
     assert config.supabase_url == "https://miikoutrnxsunbndecqh.supabase.co"
     assert config.supabase_publishable_key.startswith("sb_publishable_")
-    assert config.password_reset_redirect_url == ""
 
 
 def test_application_root_uses_pyinstaller_extraction_directory(

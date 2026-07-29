@@ -77,10 +77,10 @@ class AppWindow:
         self._login_email = tk.StringVar()
         self._login_password = tk.StringVar()
         self._register_username = tk.StringVar()
-        self._register_recovery_email = tk.StringVar()
         self._register_password = tk.StringVar()
         self._register_password_confirm = tk.StringVar()
-        self._reset_username = tk.StringVar()
+        self._new_password = tk.StringVar()
+        self._new_password_confirm = tk.StringVar()
         self._coupon_code = tk.StringVar()
         self._game_path = tk.StringVar(value=game_default_path)
         self._game_path_store = game_path_store
@@ -220,7 +220,13 @@ class AppWindow:
         self._login_button = self._primary_button(
             login, "เข้าสู่ระบบ", self._login
         )
-        self._login_button.pack(fill="x", padx=14, pady=(10, 12))
+        self._login_button.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(
+            login,
+            text="ลืมรหัสผ่าน กรุณาติดต่อผู้ดูแลระบบ",
+            text_color=PALETTE.text_muted,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+        ).pack(pady=(0, 12))
 
         register = self._auth_panel.add("สมัครสมาชิก")
         self._field_label(register, "ชื่อผู้ใช้")
@@ -241,42 +247,16 @@ class AppWindow:
             self._register_password_confirm,
             show="●",
         )
-        self._field_label(register, "อีเมลสำหรับกู้คืนรหัสผ่าน")
-        self._register_recovery_email_entry = self._entry(
-            register,
-            "เช่น yourname@example.com",
-            self._register_recovery_email,
-        )
         self._register_email_entry.configure(placeholder_text="เช่น tester_01")
         self._register_email_entry.bind("<Return>", lambda _event: self._register())
         self._register_password_entry.bind("<Return>", lambda _event: self._register())
         self._register_password_confirm_entry.bind(
             "<Return>", lambda _event: self._register()
         )
-        self._register_recovery_email_entry.bind(
-            "<Return>", lambda _event: self._register()
-        )
         self._register_button = self._primary_button(
             register, "สร้างบัญชี", self._register
         )
         self._register_button.pack(fill="x", padx=14, pady=(10, 12))
-
-        reset = self._auth_panel.add("ลืมรหัสผ่าน")
-        self._field_label(reset, "ชื่อผู้ใช้")
-        self._reset_username_entry = self._entry(
-            reset,
-            "กรอกชื่อผู้ใช้ของคุณ",
-            self._reset_username,
-        )
-        self._reset_username_entry.bind(
-            "<Return>", lambda _event: self._request_password_reset()
-        )
-        self._reset_password_button = self._primary_button(
-            reset,
-            "ส่งลิงก์ตั้งรหัสผ่านใหม่",
-            self._request_password_reset,
-        )
-        self._reset_password_button.pack(fill="x", padx=14, pady=(10, 12))
 
         self._auth_hint = ctk.CTkLabel(
             self._auth_view,
@@ -299,7 +279,7 @@ class AppWindow:
         ).pack(pady=(2, 2))
 
     def _build_program_view(self) -> None:
-        self._program_view = ctk.CTkFrame(
+        self._program_view = ctk.CTkScrollableFrame(
             self._content,
             fg_color="transparent",
         )
@@ -337,6 +317,38 @@ class AppWindow:
             "ออกจากระบบ",
             self._sign_out,
         ).pack(side="right", padx=4)
+
+        password_card = self._card(self._program_view)
+        ctk.CTkLabel(
+            password_card,
+            text="เปลี่ยนรหัสผ่าน",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
+            text_color=PALETTE.primary_dark,
+        ).pack(anchor="w", padx=14, pady=(10, 4))
+        self._new_password_entry = self._entry(
+            password_card,
+            "รหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร",
+            self._new_password,
+            show="●",
+        )
+        self._new_password_confirm_entry = self._entry(
+            password_card,
+            "ยืนยันรหัสผ่านใหม่",
+            self._new_password_confirm,
+            show="●",
+        )
+        self._new_password_entry.bind(
+            "<Return>", lambda _event: self._change_password()
+        )
+        self._new_password_confirm_entry.bind(
+            "<Return>", lambda _event: self._change_password()
+        )
+        self._change_password_button = self._primary_button(
+            password_card,
+            "เปลี่ยนรหัสผ่าน",
+            self._change_password,
+        )
+        self._change_password_button.pack(fill="x", padx=14, pady=(10, 12))
 
         usage = self._card(self._program_view)
         ctk.CTkLabel(
@@ -599,7 +611,6 @@ class AppWindow:
             lambda: self._service.sign_up(
                 self._register_username.get(),
                 password,
-                self._register_recovery_email.get(),
             ),
             self._register_succeeded,
         )
@@ -607,7 +618,6 @@ class AppWindow:
     def _register_succeeded(self, result: RegistrationResult) -> None:
         self._register_password.set("")
         self._register_password_confirm.set("")
-        self._register_recovery_email.set("")
         if result.requires_email_confirmation:
             self._notice.set(
                 "รับคำขอสมัครสมาชิกแล้ว หากระบบส่งอีเมลยืนยัน "
@@ -618,26 +628,28 @@ class AppWindow:
                 "สมัครสมาชิกสำเร็จ ใช้ชื่อผู้ใช้และรหัสผ่านเข้าสู่ระบบได้เลย"
             )
 
-    def _request_password_reset(self) -> None:
+    def _change_password(self) -> None:
+        password = self._new_password.get()
+        if not password or password != self._new_password_confirm.get():
+            self._error.set("รหัสผ่านใหม่และการยืนยันไม่ตรงกัน")
+            return
         self._submit(
-            lambda: self._service.request_password_reset(
-                self._reset_username.get()
-            ),
-            self._password_reset_requested,
+            lambda: self._service.change_password(password),
+            self._password_changed,
         )
 
-    def _password_reset_requested(self, _: Any) -> None:
-        self._reset_username.set("")
-        self._notice.set(
-            "หากชื่อผู้ใช้นี้มีบัญชีที่พร้อมรับอีเมล "
-            "ระบบได้ส่งลิงก์ตั้งรหัสผ่านใหม่ไปแล้ว"
-        )
+    def _password_changed(self, _: Any) -> None:
+        self._new_password.set("")
+        self._new_password_confirm.set("")
+        self._notice.set("เปลี่ยนรหัสผ่านสำเร็จ")
 
     def _sign_out(self) -> None:
         self._submit(self._service.sign_out, self._signed_out)
 
     def _signed_out(self, _: Any) -> None:
         self._coupon_code.set("")
+        self._new_password.set("")
+        self._new_password_confirm.set("")
         self._notice.set("ออกจากระบบแล้ว")
 
     def _redeem_coupon(self) -> None:

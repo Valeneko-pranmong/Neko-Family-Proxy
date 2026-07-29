@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .defaults import (
-    PASSWORD_RESET_REDIRECT_URL,
     PRODUCT_CODE,
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
@@ -21,7 +20,6 @@ class LauncherConfig:
     proxy_core_path: Path
     supabase_url: str
     supabase_publishable_key: str
-    password_reset_redirect_url: str
 
     @classmethod
     def from_environment(cls, workspace_root: Path) -> LauncherConfig:
@@ -57,5 +55,4 @@ class LauncherConfig:
             proxy_core_path=proxy_path,
             supabase_url=SUPABASE_URL,
             supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
-            password_reset_redirect_url=PASSWORD_RESET_REDIRECT_URL,
         )

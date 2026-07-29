@@ -8,9 +8,8 @@ The migrations in this directory define the server-side foundation for the launc
 - `public.launcher_sessions` enforces one active launcher session per user.
 - `launcher.claim_session`, `launcher.heartbeat_session`, and `launcher.release_session` are the only intended client write paths.
 - Row-level security is enabled on every public table created here.
-- Customer registration uses a username, password, and recovery email. The
-  username is the login identifier; the email is stored only for password
-  reset and is not confirmed during registration.
+- Customer registration uses only a username and password. The username is
+  converted to a deterministic internal Auth identifier by the Launcher.
 
 The `launcher` schema is included in the Supabase Data API exposed schemas by
 `20260725131024_expose_launcher_schema_to_data_api.sql`. The desktop client must
@@ -20,8 +19,9 @@ admin service or Edge Function.
 The launcher derives a deterministic, non-PII Auth identifier from the
 normalized username and the Supabase project hostname before calling Supabase
 Auth. It never queries a public RPC for `auth.users.email`, and the real
-recovery address is stored only in `public.profiles.recovery_email` for a
-trusted Send Email Hook. The legacy `auth_email_for_username(text)` and
+historical `public.profiles.recovery_email` column remains nullable during the
+rollback window but new Launcher versions do not write it. The legacy
+`auth_email_for_username(text)` and
 `user_exists(text)` functions must remain absent (or have no client execute
 privilege) because either endpoint would create an account-enumeration or PII
 disclosure risk. Session, entitlement, and coupon RPCs remain
@@ -44,10 +44,13 @@ The recovery email column from
 `20260726112000_add_recovery_email_auth_lookup.sql` exists in the historical
 schema. The local forward-fix
 `20260729120000_secure_option_a_recovery_flow.sql` removes the unsafe lookup
-functions and canonicalizes the trigger for internal Auth identifiers. The
-intermediate
-`20260729002946_restore_recovery_email_auth_flow.sql` is intentionally blocked
-and must not be applied or replayed against hosted production.
+functions and canonicalizes the trigger for internal Auth identifiers. It was
+applied to hosted production as
+`20260729053740_secure_option_a_recovery_flow`. The
+intermediate migration is archived at
+`supabase/blocked_migrations/20260729002946_restore_recovery_email_auth_flow.sql.blocked`.
+It is intentionally outside the active migration directory and must not be
+renamed, applied, or replayed against hosted production.
 Before enabling the coupon UI, run the security and concurrency test plan
 against test accounts and confirm that the `launcher` schema is exposed through
 the Data API.
@@ -65,9 +68,11 @@ is supplied and consumes that coupon.
 
 For local Supabase, `config.toml` disables email confirmation. For the hosted
 `miikoutrnxsunbndecqh` project, **Confirm email** is disabled under
-Authentication → Sign In / Providers and must remain disabled because the
-launcher intentionally does not require email confirmation during signup.
-Password recovery still sends a normal Auth reset link to the stored email.
+Authentication → Sign In / Providers because the launcher does not require
+email confirmation during signup. Forgotten passwords use the server-side
+Admin-assisted reset flow. The Admin API revokes active Launcher sessions,
+updates Supabase Auth with a server-generated temporary password, and writes an
+`admin_password_reset` audit event without recording the password.
 
 The live schema audit on 2026-07-26 found nine public tables. Every table is
 referenced by an Auth trigger, an entitlement/session RPC, a coupon RPC, or a

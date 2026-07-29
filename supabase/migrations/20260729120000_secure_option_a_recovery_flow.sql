@@ -1,6 +1,6 @@
--- Local/dev forward-fix for Option A (internal Auth identifier + Send Email
--- Hook). Do not apply this migration to hosted production until the decision
--- and production review gates in the handoff runbook are complete.
+-- Forward-fix for the approved Option A architecture (internal Auth identifier
+-- + Send Email Hook). Applied to hosted production as migration
+-- 20260729053740_secure_option_a_recovery_flow.
 --
 -- The desktop client derives username@<project-host> locally. The real
 -- recovery address is carried only in signup metadata and stored in
@@ -78,7 +78,9 @@ end;
 $$;
 
 revoke all on function launcher.handle_new_user() from public;
-revoke all on function launcher.handle_new_user() from anon, authenticated;
+revoke all
+  on function launcher.handle_new_user()
+  from anon, authenticated, service_role;
 
 drop function if exists launcher.auth_email_for_username(text);
 drop function if exists launcher.user_exists(text);

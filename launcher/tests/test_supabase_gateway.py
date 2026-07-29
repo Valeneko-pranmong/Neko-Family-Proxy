@@ -49,7 +49,7 @@ class FakeAuth:
     def __init__(self) -> None:
         self.sign_up_payload: dict[str, object] | None = None
         self.sign_in_payload: dict[str, str] | None = None
-        self.reset_call: tuple[str, dict[str, str] | None] | None = None
+        self.updated_password: str | None = None
 
     def sign_up(self, payload: dict[str, object]) -> SimpleNamespace:
         self.sign_up_payload = payload
@@ -74,23 +74,18 @@ class FakeAuth:
         )
         return SimpleNamespace(user=user, session=SimpleNamespace())
 
-    def reset_password_for_email(
-        self,
-        email: str,
-        options: dict[str, str] | None,
-    ) -> None:
-        self.reset_call = (email, options)
+    def update_user(self, payload: dict[str, str]) -> SimpleNamespace:
+        self.updated_password = payload["password"]
+        return SimpleNamespace(user=SimpleNamespace(id="user-id"))
 
 
 def build_gateway(
     client: FakeRpcClient,
-    reset_redirect_url: str = "",
 ) -> SupabaseGateway:
     return SupabaseGateway(
         "https://project.supabase.co",
         "sb_publishable_test",
         MemoryStore(),
-        password_reset_redirect_url=reset_redirect_url,
         client=client,  # type: ignore[arg-type]
     )
 
@@ -128,13 +123,12 @@ def test_auth_identifier_is_derived_without_a_launcher_lookup() -> None:
     assert client.function_name == ""
 
 
-def test_sign_up_uses_internal_identifier_and_recovery_metadata() -> None:
+def test_sign_up_uses_internal_identifier_without_recovery_metadata() -> None:
     client = FakeRpcClient(None)
 
     result = build_gateway(client).sign_up(
         " Tester ",
         "password123",
-        " USER@Example.COM ",
     )
 
     assert result.username == "tester"
@@ -145,7 +139,6 @@ def test_sign_up_uses_internal_identifier_and_recovery_metadata() -> None:
             "data": {
                 "username": "tester",
                 "display_name": "tester",
-                "recovery_email": "user@example.com",
             }
         },
     }
@@ -163,26 +156,12 @@ def test_sign_in_derives_internal_identifier_without_rpc() -> None:
         "password": "password123",
     }
 
-def test_password_reset_uses_permanent_redirect_url() -> None:
-    client = FakeRpcClient(None)
-    redirect_url = "https://neko-reset.vercel.app/reset-password/"
-
-    build_gateway(client, redirect_url).request_password_reset(" Tester ")
-
-    assert client.auth.reset_call == (
-        "tester@project.supabase.co",
-        {"redirect_to": redirect_url},
-    )
-    assert client.function_name == ""
-
-
-def test_password_reset_refuses_stale_site_url_fallback() -> None:
+def test_change_password_uses_authenticated_auth_client() -> None:
     client = FakeRpcClient(None)
 
-    with pytest.raises(LauncherServiceError, match="ยังไม่พร้อม"):
-        build_gateway(client).request_password_reset("user@example.com")
+    build_gateway(client).change_password("new-password")
 
-    assert client.auth.reset_call is None
+    assert client.auth.updated_password == "new-password"
 
 
 def test_redeem_coupon_maps_safe_server_error() -> None:

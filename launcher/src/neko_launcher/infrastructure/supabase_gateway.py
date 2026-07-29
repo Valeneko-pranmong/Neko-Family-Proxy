@@ -31,7 +31,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         url: str,
         publishable_key: str,
         secure_store: SecureStore,
-        password_reset_redirect_url: str = "",
         client: Client | None = None,
     ) -> None:
         if not url or not publishable_key:
@@ -40,7 +39,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if not hostname:
             raise ValueError("Supabase URL must include a hostname")
         self._auth_identifier_domain = hostname.lower()
-        self._password_reset_redirect_url = password_reset_redirect_url.strip()
         self._client = client or create_client(
             url,
             publishable_key,
@@ -56,10 +54,8 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         self,
         username: str,
         password: str,
-        recovery_email: str,
     ) -> RegistrationResult:
         username = username.strip().lower()
-        recovery_email = recovery_email.strip().lower()
         auth_identifier = self.auth_identifier_for_username(username)
         try:
             response = self._client.auth.sign_up(
@@ -70,7 +66,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                         "data": {
                             "username": username,
                             "display_name": username,
-                            "recovery_email": recovery_email,
                         }
                     },
                 }
@@ -104,23 +99,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         """Derive the non-PII Auth identifier without a database lookup."""
         normalized = username.strip().lower()
         return f"{normalized}@{self._auth_identifier_domain}"
-
-    def request_password_reset(self, username: str) -> None:
-        if not self._password_reset_redirect_url:
-            raise LauncherServiceError(
-                "ระบบกู้คืนรหัสผ่านยังไม่พร้อมใช้งาน"
-            )
-        auth_identifier = self.auth_identifier_for_username(username)
-        try:
-            self._client.auth.reset_password_for_email(
-                auth_identifier,
-                {"redirect_to": self._password_reset_redirect_url},
-            )
-        except Exception as exc:
-            raise self._auth_error(
-                exc,
-                "ส่งลิงก์ตั้งรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่",
-            ) from exc
 
     def change_password(self, password: str) -> None:
         try:
