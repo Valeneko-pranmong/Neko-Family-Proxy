@@ -2,6 +2,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import customtkinter as ctk
+
 from neko_launcher.domain.models import (
     AppState,
     AuthStatus,
@@ -61,9 +63,43 @@ class FakeExecutor:
 class FakeRoot:
     def __init__(self) -> None:
         self.destroyed = False
+        self.quit_called = False
+
+    def quit(self) -> None:
+        self.quit_called = True
 
     def destroy(self) -> None:
         self.destroyed = True
+
+
+class FakeSizingRoot:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.minimum: tuple[int, int] | None = None
+        self.maximum: tuple[int, int] | None = None
+
+    def update_idletasks(self) -> None:
+        self.events.append("update_idletasks")
+
+    def winfo_screenwidth(self) -> int:
+        return 1920
+
+    def winfo_screenheight(self) -> int:
+        return 1080
+
+    def winfo_exists(self) -> bool:
+        return True
+
+    def minsize(self, width: int, height: int) -> None:
+        self.minimum = (width, height)
+        self.events.append(f"minsize:{width}x{height}")
+
+    def maxsize(self, width: int, height: int) -> None:
+        self.maximum = (width, height)
+        self.events.append(f"maxsize:{width}x{height}")
+
+    def geometry(self, value: str) -> None:
+        self.events.append(f"geometry:{value}")
 
 
 class FakeView:
@@ -181,7 +217,7 @@ def test_notification_reuses_header_subtitle_without_changing_layout() -> None:
     }
 
 
-def test_close_waits_for_worker_and_destroys_the_window() -> None:
+def test_close_stops_worker_and_quits_before_destroying_the_window() -> None:
     window = object.__new__(AppWindow)
     window._closing = False
     window._service = FakeShutdownService()  # type: ignore[assignment]
@@ -192,10 +228,58 @@ def test_close_waits_for_worker_and_destroys_the_window() -> None:
 
     assert window._service.calls == 1  # type: ignore[attr-defined]
     assert window._executor.options == {  # type: ignore[attr-defined]
-        "wait": True,
+        "wait": False,
         "cancel_futures": True,
     }
+    assert window.root.quit_called  # type: ignore[attr-defined]
     assert window.root.destroyed  # type: ignore[attr-defined]
+
+
+def test_fit_portrait_window_locks_native_size_before_rounded_region(
+    monkeypatch: Any,
+) -> None:
+    window = object.__new__(AppWindow)
+    window.root = FakeSizingRoot()  # type: ignore[assignment]
+    widget_scales: list[float] = []
+    monkeypatch.setattr(
+        ctk.ScalingTracker,
+        "get_window_scaling",
+        staticmethod(lambda _root: 1.0),
+    )
+    monkeypatch.setattr(ctk, "set_widget_scaling", widget_scales.append)
+
+    window._fit_portrait_window()
+
+    assert window._window_size == (480, 760)
+    assert window.root.minimum == (480, 760)  # type: ignore[attr-defined]
+    assert window.root.maximum == (480, 760)  # type: ignore[attr-defined]
+    assert widget_scales == [1.0]
+    assert window.root.events[-3:] == [  # type: ignore[attr-defined]
+        "minsize:480x760",
+        "maxsize:480x760",
+        "geometry:480x760+720+160",
+    ]
+
+
+def test_center_window_flushes_geometry_before_applying_rounded_region(
+    monkeypatch: Any,
+) -> None:
+    window = object.__new__(AppWindow)
+    window.root = FakeSizingRoot()  # type: ignore[assignment]
+    window._window_size = (480, 760)
+    monkeypatch.setattr(
+        AppWindow,
+        "_apply_rounded_window_shape",
+        staticmethod(lambda root: root.events.append("rounded_region")),
+    )
+
+    window._center_window()
+
+    assert window.root.events == [  # type: ignore[attr-defined]
+        "geometry:480x760+720+160",
+        "update_idletasks",
+        "rounded_region",
+    ]
 
 
 def test_show_program_view_packs_scrollable_frame_with_internal_manager() -> None:

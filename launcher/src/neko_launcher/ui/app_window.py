@@ -161,10 +161,22 @@ class AppWindow:
         # Windows, so compensate here to keep the final visual scale stable.
         ctk.set_widget_scaling(scale / window_scale)
 
-        x = max(0, (screen_w - width) // 2)
-        y = max(0, (screen_h - height) // 2)
-        self._window_size = (int(width), int(height))
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        logical_width = int(width)
+        logical_height = int(height)
+        x = max(0, (screen_w - logical_width) // 2)
+        y = max(0, (screen_h - logical_height) // 2)
+        self._window_size = (logical_width, logical_height)
+
+        # set_widget_scaling() temporarily restores CTk's default 600x500
+        # min/max bounds until its delayed scaling callback runs.  If Windows
+        # receives the rounded region during that interval, the later 480x760
+        # resize remains clipped to 600x500.  Lock the calculated bounds now so
+        # the native size and the rounded region always agree.
+        self.root.minsize(logical_width, logical_height)
+        self.root.maxsize(logical_width, logical_height)
+        self.root.geometry(
+            f"{logical_width}x{logical_height}+{x}+{y}"
+        )
 
     def _center_window(self) -> None:
         """Apply the final centered position after the native window is mapped."""
@@ -176,6 +188,9 @@ class AppWindow:
         x = max(0, (screen_w - width) // 2)
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
+        # Geometry changes are asynchronous in Tk.  Flush the native resize
+        # before reading winfo_width/height to build the Windows clipping region.
+        self.root.update_idletasks()
         self._apply_rounded_window_shape(self.root)
 
     @staticmethod
