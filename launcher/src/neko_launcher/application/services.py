@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from threading import Thread
+
 from neko_launcher.domain.events import (
     AuthFailed,
     AuthStarted,
@@ -209,17 +211,31 @@ class LauncherService:
         """Launch Tweaker; ProxyCore starts after pso2.exe appears."""
         self._controller.dispatch(LaunchTweakerRequested(executable))
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, remote_release_grace: float = 0.75) -> None:
         # Closing the launcher is explicit: clean up only child processes
         # that this launcher started, including Tweaker and ProxyCore.
         self._controller.shutdown()
         session_id = self._controller.state.session_id
-        if session_id:
-            try:
-                self._entitlement_gateway.release_session(session_id)
-            except Exception:
-                pass
         self._controller.dispatch(SessionRevoked("ปิดโปรแกรมแล้ว"))
+        if session_id:
+            # Releasing the server session is best-effort. PostgREST may wait
+            # for a long network timeout, so never let that request keep a
+            # windowless launcher process alive. A daemon thread is forcibly
+            # ended by main() if it outlives this short grace period.
+            release = Thread(
+                target=self._release_session_safely,
+                args=(session_id,),
+                name="neko-session-release",
+                daemon=True,
+            )
+            release.start()
+            release.join(timeout=max(0.0, remote_release_grace))
+
+    def _release_session_safely(self, session_id: str) -> None:
+        try:
+            self._entitlement_gateway.release_session(session_id)
+        except Exception:
+            pass
 
     def _claim_session(self, *, allow_missing: bool) -> None:
         try:

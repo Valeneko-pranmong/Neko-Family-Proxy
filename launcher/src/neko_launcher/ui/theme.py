@@ -25,8 +25,10 @@ class PinkPalette:
     on_primary: str = "#FFFFFF"
     border: str = "#FFC1D6"
     success: str = "#32CD72"
+    success_surface: str = "#ECFBF3"
     warning: str = "#FFA07A"
     danger: str = "#FF6347"
+    danger_surface: str = "#FFF1EE"
 
 
 PALETTE = PinkPalette()

@@ -44,6 +44,19 @@ class FakeLabel:
         self.options.update(kwargs)
 
 
+class FakeBanner(FakeLabel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pack_options: dict[str, Any] = {}
+        self.pack_forget_calls = 0
+
+    def pack(self, **kwargs: Any) -> None:
+        self.pack_options = kwargs
+
+    def pack_forget(self) -> None:
+        self.pack_forget_calls += 1
+
+
 class FakeShutdownService:
     def __init__(self) -> None:
         self.calls = 0
@@ -203,18 +216,44 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
     assert window._register_button.state == "disabled"
 
 
-def test_notification_reuses_header_subtitle_without_changing_layout() -> None:
+def test_error_notification_uses_prominent_overlay_without_truncation() -> None:
     window = object.__new__(AppWindow)
-    window._header_message = FakeLabel()  # type: ignore[assignment]
-    window._notice = FakeVariable("บันทึกไฟล์เปิดเกมแล้ว")  # type: ignore[assignment]
+    window._message_banner = FakeBanner()  # type: ignore[assignment]
+    window._message_icon = FakeLabel()  # type: ignore[assignment]
+    window._message_title = FakeLabel()  # type: ignore[assignment]
+    window._message_detail = FakeLabel()  # type: ignore[assignment]
+    window._message_copy = FakeLabel()  # type: ignore[assignment]
+    window._message_close = FakeLabel()  # type: ignore[assignment]
+    window._notice = FakeVariable()  # type: ignore[assignment]
+    window._error = FakeVariable(
+        "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่"
+    )  # type: ignore[assignment]
+
+    window._update_message_visibility()
+
+    assert window._message_banner.options == {  # type: ignore[attr-defined]
+        "bg": PALETTE.danger_surface,
+        "highlightbackground": PALETTE.danger,
+        "highlightcolor": PALETTE.danger,
+    }
+    assert window._message_title.options["text"] == "โปรดตรวจสอบข้อมูล"  # type: ignore[attr-defined]
+    assert window._message_detail.options["text"] == window._error.get()  # type: ignore[attr-defined]
+    assert window._message_banner.pack_options == {  # type: ignore[attr-defined]
+        "fill": "x",
+        "padx": 0,
+        "pady": (4, 8),
+    }
+
+
+def test_empty_notification_hides_overlay() -> None:
+    window = object.__new__(AppWindow)
+    window._message_banner = FakeBanner()  # type: ignore[assignment]
+    window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable()  # type: ignore[assignment]
 
     window._update_message_visibility()
 
-    assert window._header_message.options == {  # type: ignore[attr-defined]
-        "text": "บันทึกไฟล์เปิดเกมแล้ว",
-        "text_color": PALETTE.success,
-    }
+    assert window._message_banner.pack_forget_calls == 1  # type: ignore[attr-defined]
 
 
 def test_close_stops_worker_and_quits_before_destroying_the_window() -> None:

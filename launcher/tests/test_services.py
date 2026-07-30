@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
+from threading import Event
+
 import pytest
 
 from neko_launcher.application.controller import ApplicationController
@@ -25,6 +27,8 @@ class FakeGateway:
         self.changed_password: str | None = None
         self.released: list[str] = []
         self.last_signup: tuple[str, str] | None = None
+        self.release_started: Event | None = None
+        self.release_continue: Event | None = None
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -68,6 +72,10 @@ class FakeGateway:
         return self.heartbeat_alive
 
     def release_session(self, session_id: str) -> bool:
+        if self.release_started is not None:
+            self.release_started.set()
+        if self.release_continue is not None:
+            self.release_continue.wait()
         self.released.append(session_id)
         return True
 
@@ -192,6 +200,22 @@ def test_change_password_requires_login_and_updates_auth_gateway(
 
     assert gateway.changed_password == "new-password"
     assert controller.state.user_email == "testuser"
+
+
+def test_shutdown_does_not_wait_for_a_stalled_remote_release(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.release_started = Event()
+    gateway.release_continue = Event()
+
+    service.shutdown(remote_release_grace=0.01)
+
+    assert gateway.release_started.is_set()
+    assert controller.state.session_id is None
+    gateway.release_continue.set()
 
 
 @pytest.mark.parametrize(
