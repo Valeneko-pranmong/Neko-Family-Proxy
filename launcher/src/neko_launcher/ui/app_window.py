@@ -6,6 +6,7 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from queue import Empty, SimpleQueue
 from typing import Any, Callable
 
 import customtkinter as ctk
@@ -73,6 +74,7 @@ class AppWindow:
         self._icon_path = icon_path
         self._password_dialog: ctk.CTkToplevel | None = None
         self._closing = False
+        self._tray_actions: SimpleQueue[str] = SimpleQueue()
 
         self.root = ctk.CTk()
         # A custom title bar gives us exactly two controls: minimize and close.
@@ -122,6 +124,7 @@ class AppWindow:
         self.root.after(350, self._show_initial_window)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(100, self._drain_events)
+        self.root.after(100, self._drain_tray_actions)
         self.root.after(30_000, self._heartbeat)
         self.root.after(3_000, self._poll_game_process)
         self._submit(self._service.restore_session, self._restore_completed)
@@ -420,7 +423,7 @@ class AppWindow:
             image = Image.new('RGB', (64, 64), color=(255, 255, 255))
         menu = pystray.Menu(
             pystray.MenuItem("Show Launcher", self._restore_from_tray, default=True),
-            pystray.MenuItem("Exit", self.close)
+            pystray.MenuItem("Exit", self._close_from_tray)
         )
         self._tray_icon = pystray.Icon("NekoLauncher", image, "Neko Family Proxy", menu)
         threading.Thread(target=self._tray_icon.run, daemon=True).start()
@@ -432,13 +435,30 @@ class AppWindow:
             self.root.withdraw()
 
     def _restore_from_tray(self, icon, item) -> None:
-        if not self._closing and self.root.winfo_exists():
-            def restore_ui():
+        self._tray_actions.put("restore")
+
+    def _close_from_tray(self, icon, item) -> None:
+        self._tray_actions.put("close")
+
+    def _drain_tray_actions(self) -> None:
+        """Run all Tk work on the main UI thread, never pystray's thread."""
+        if self._closing:
+            return
+        while True:
+            try:
+                action = self._tray_actions.get_nowait()
+            except Empty:
+                break
+            if action == "close":
+                self.close()
+                return
+            if action == "restore" and self.root.winfo_exists():
                 self.root.deiconify()
                 self.root.attributes("-topmost", True)
                 self.root.lift()
                 self.root.after(100, lambda: self.root.attributes("-topmost", False))
-            self.root.after(0, restore_ui)
+        if self.root.winfo_exists():
+            self.root.after(100, self._drain_tray_actions)
 
     def _start_window_drag(self, event: tk.Event[tk.Misc]) -> None:
         self._drag_offset = (event.x_root, event.y_root)

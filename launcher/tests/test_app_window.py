@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+from queue import SimpleQueue
 from typing import Any
 
 import customtkinter as ctk
@@ -83,6 +84,28 @@ class FakeRoot:
 
     def destroy(self) -> None:
         self.destroyed = True
+
+
+class FakeTrayRoot:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.scheduled: list[Any] = []
+
+    def winfo_exists(self) -> bool:
+        self.events.append("winfo_exists")
+        return True
+
+    def deiconify(self) -> None:
+        self.events.append("deiconify")
+
+    def attributes(self, name: str, value: bool) -> None:
+        self.events.append(f"attributes:{name}:{value}")
+
+    def lift(self) -> None:
+        self.events.append("lift")
+
+    def after(self, _delay: int, callback: Any) -> None:
+        self.scheduled.append(callback)
 
 
 class FakeSizingRoot:
@@ -216,9 +239,9 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
     assert window._register_button.state == "disabled"
 
 
-def test_error_notification_uses_compact_text_without_banner_chrome() -> None:
+def test_error_notification_replaces_header_subtitle() -> None:
     window = object.__new__(AppWindow)
-    window._message_banner = FakeBanner()  # type: ignore[assignment]
+    window._header_message = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable(
         "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่"
@@ -226,27 +249,62 @@ def test_error_notification_uses_compact_text_without_banner_chrome() -> None:
 
     window._update_message_visibility()
 
-    assert window._message_banner.options == {  # type: ignore[attr-defined]
-        "text": window._error.get(),
-        "bg": PALETTE.card,
-        "fg": PALETTE.danger,
-    }
-    assert window._message_banner.pack_options == {  # type: ignore[attr-defined]
-        "fill": "x",
-        "padx": 8,
-        "pady": (4, 2),
+    expected = f"{window._error.get()[:47]}…"
+    assert window._header_message.options == {  # type: ignore[attr-defined]
+        "text": expected,
+        "text_color": PALETTE.danger,
     }
 
 
-def test_empty_notification_hides_overlay() -> None:
+def test_empty_notification_restores_default_header_subtitle() -> None:
     window = object.__new__(AppWindow)
-    window._message_banner = FakeBanner()  # type: ignore[assignment]
+    window._header_message = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable()  # type: ignore[assignment]
 
     window._update_message_visibility()
 
-    assert window._message_banner.pack_forget_calls == 1  # type: ignore[attr-defined]
+    assert window._header_message.options == {  # type: ignore[attr-defined]
+        "text": "บัญชีและการใช้งาน",
+        "text_color": PALETTE.text_muted,
+    }
+
+
+def test_tray_restore_is_marshaled_to_the_ui_thread() -> None:
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._tray_actions = SimpleQueue()
+    window.root = FakeTrayRoot()  # type: ignore[assignment]
+
+    window._restore_from_tray(None, None)
+
+    assert window.root.events == []  # type: ignore[attr-defined]
+
+    window._drain_tray_actions()
+
+    assert window.root.events == [  # type: ignore[attr-defined]
+        "winfo_exists",
+        "deiconify",
+        "attributes:-topmost:True",
+        "lift",
+        "winfo_exists",
+    ]
+
+
+def test_tray_exit_is_marshaled_to_the_ui_thread() -> None:
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._tray_actions = SimpleQueue()
+    close_calls: list[bool] = []
+    window.close = lambda: close_calls.append(True)  # type: ignore[method-assign]
+
+    window._close_from_tray(None, None)
+
+    assert close_calls == []
+
+    window._drain_tray_actions()
+
+    assert close_calls == [True]
 
 
 def test_close_stops_worker_and_quits_before_destroying_the_window() -> None:
