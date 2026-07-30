@@ -96,6 +96,8 @@ def _acquire_instance_mutex(name: str = _INSTANCE_MUTEX_NAME) -> int | None:
         ctypes.c_wchar_p,
     )
     kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes.c_bool
     ctypes.set_last_error(0)
     handle = kernel32.CreateMutexW(None, False, name)
     if not handle:
@@ -108,7 +110,10 @@ def _acquire_instance_mutex(name: str = _INSTANCE_MUTEX_NAME) -> int | None:
 
 def _release_instance_mutex(handle: int) -> None:
     if sys.platform == "win32" and handle != -1:
-        ctypes.windll.kernel32.CloseHandle(handle)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel32.CloseHandle.restype = ctypes.c_bool
+        kernel32.CloseHandle(handle)
 
 
 def _show_already_running_message() -> None:

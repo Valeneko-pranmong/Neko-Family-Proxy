@@ -46,6 +46,19 @@ class GameProcessManager:
                     creationflags=creationflags,
                 )
             except OSError as exc:
+                if getattr(exc, "winerror", None) == 740:
+                    try:
+                        import ctypes
+                        result = ctypes.windll.shell32.ShellExecuteW(
+                            None, "open", str(executable), None, str(executable.parent), 1
+                        )
+                        if result <= 32:
+                            raise GameProcessError(f"ShellExecute failed: {result}")
+                        self._process = None
+                        return
+                    except Exception as fallback_exc:
+                        self._process = None
+                        raise GameProcessError(f"UAC fallback failed: {fallback_exc}") from fallback_exc
                 self._process = None
                 raise GameProcessError(str(exc)) from exc
 

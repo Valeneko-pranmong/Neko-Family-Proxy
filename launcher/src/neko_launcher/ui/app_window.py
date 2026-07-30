@@ -44,7 +44,6 @@ class AppWindow:
     # window is never resizable and is kept inside the red guide frame.
     _DESIGN_WIDTH = 480
     _DESIGN_HEIGHT = 760
-    _MESSAGE_SLOT_HEIGHT = 82
     # Keep a small breathing room from the physical top/bottom edges, matching
     # the red guide frame used for the launcher layout.
     _SCREEN_MARGIN_RATIO = 0.04
@@ -251,6 +250,7 @@ class AppWindow:
             gwl_style = -16
             ws_maximizebox = 0x00010000
             ws_thickframe = 0x00040000
+            ws_caption = 0x00C00000
             get_window_long = user32.GetWindowLongPtrW
             get_window_long.argtypes = (ctypes.c_void_p, ctypes.c_int)
             get_window_long.restype = ctypes.c_ssize_t
@@ -262,7 +262,7 @@ class AppWindow:
             )
             set_window_long.restype = ctypes.c_ssize_t
             style = get_window_long(hwnd, gwl_style)
-            style &= ~(ws_maximizebox | ws_thickframe)
+            style &= ~(ws_maximizebox | ws_thickframe | ws_caption)
             set_window_long(hwnd, gwl_style, style)
 
             # Ask Windows to redraw the non-client frame after changing style.
@@ -353,17 +353,6 @@ class AppWindow:
         )
         self._status_badge.pack(side="right", padx=(6, 0), pady=2, ipadx=6, ipady=3)
 
-        # Reserve the notification area permanently.  Only the banner inside
-        # this slot is shown/hidden, so login and program content never moves.
-        self._message_slot = ctk.CTkFrame(
-            shell,
-            fg_color="transparent",
-            height=self._MESSAGE_SLOT_HEIGHT,
-        )
-        self._message_slot.pack(fill="x", padx=6, pady=0)
-        self._message_slot.pack_propagate(False)
-        self._build_message_banner(self._message_slot)
-
         self._content = ctk.CTkFrame(shell, fg_color="transparent")
         self._content.pack(fill="both", expand=True, padx=6, pady=(0, 2))
         self._build_auth_view()
@@ -379,106 +368,27 @@ class AppWindow:
         )
         footer.pack(pady=(0, 4))
 
-    def _build_message_banner(self, parent: ctk.CTkBaseClass) -> None:
-        """Build the prominent, dismissible status banner."""
-        self._message_banner = tk.Frame(
-            parent,
-            height=70,
-            borderwidth=0,
-            highlightthickness=2,
-        )
-        self._message_banner.pack_propagate(False)
-
-        self._message_icon = tk.Label(
-            self._message_banner,
-            text="!",
-            width=3,
-            font=(FONT_FAMILY, 20, "bold"),
-        )
-        self._message_icon.pack(side="left", padx=(12, 10), pady=14)
-
-        self._message_copy = tk.Frame(self._message_banner, borderwidth=0)
-        self._message_copy.pack(side="left", fill="both", expand=True, pady=8)
-        self._message_title = tk.Label(
-            self._message_copy,
-            text="",
-            anchor="w",
-            font=(FONT_FAMILY, 13, "bold"),
-        )
-        self._message_title.pack(fill="x")
-        self._message_detail = tk.Label(
-            self._message_copy,
-            text="",
-            anchor="w",
-            justify="left",
-            wraplength=320,
-            font=(FONT_FAMILY, 12),
-        )
-        self._message_detail.pack(fill="x")
-
-        self._message_close = tk.Button(
-            self._message_banner,
-            text="×",
-            width=2,
-            borderwidth=0,
-            relief="flat",
-            cursor="hand2",
-            font=(FONT_FAMILY, 18),
-            command=self._dismiss_message,
-        )
-        self._message_close.pack(side="right", padx=(6, 10), pady=14)
-
     def _update_message_visibility(self, *_args: Any) -> None:
-        if not hasattr(self, "_message_banner"):
+        if not hasattr(self, "_header_message"):
             return
         error = self._error.get().strip()
         notice = self._notice.get().strip()
-        message = error or notice
-        if not message:
-            self._message_banner.pack_forget()
-            return
-
-        is_error = bool(error)
-        accent = PALETTE.danger if is_error else PALETTE.success
-        surface = (
-            PALETTE.danger_surface if is_error else PALETTE.success_surface
-        )
-        self._message_banner.configure(
-            bg=surface,
-            highlightbackground=accent,
-            highlightcolor=accent,
-        )
-        self._message_icon.configure(
-            text="!" if is_error else "✓",
-            bg=accent,
-            fg=PALETTE.on_primary,
-        )
-        self._message_title.configure(
-            text="โปรดตรวจสอบข้อมูล" if is_error else "ดำเนินการสำเร็จ",
-            bg=surface,
-            fg=accent,
-        )
-        self._message_detail.configure(
+        message = error or notice or "บัญชีและการใช้งาน"
+        # This label deliberately replaces the fixed header subtitle.  Adding
+        # a message row to the packed layout caused the program cards to be
+        # pushed below the fixed-height launcher on short displays.
+        if len(message) > 48:
+            message = f"{message[:47]}…"
+        self._header_message.configure(
             text=message,
-            bg=surface,
-            fg=PALETTE.text,
+            text_color=(
+                PALETTE.danger
+                if error
+                else PALETTE.success
+                if notice
+                else PALETTE.text_muted
+            ),
         )
-        self._message_copy.configure(bg=surface)
-        self._message_close.configure(
-            bg=surface,
-            fg=PALETTE.text_muted,
-            activebackground=PALETTE.card,
-            activeforeground=PALETTE.text,
-        )
-        self._message_banner.pack(
-            fill="x",
-            padx=0,
-            pady=(4, 8),
-        )
-
-    def _dismiss_message(self) -> None:
-        self._error.set("")
-        self._notice.set("")
 
     def _build_window_controls(self, drag_surface: ctk.CTkBaseClass) -> None:
         controls = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -500,10 +410,35 @@ class AppWindow:
         drag_surface.bind("<ButtonPress-1>", self._start_window_drag, add="+")
         drag_surface.bind("<B1-Motion>", self._drag_window, add="+")
 
+    def _setup_tray(self) -> None:
+        import pystray
+        from PIL import Image
+        import threading
+        try:
+            image = Image.open(self._icon_path)
+        except Exception:
+            image = Image.new('RGB', (64, 64), color=(255, 255, 255))
+        menu = pystray.Menu(
+            pystray.MenuItem("Show Launcher", self._restore_from_tray, default=True),
+            pystray.MenuItem("Exit", self.close)
+        )
+        self._tray_icon = pystray.Icon("NekoLauncher", image, "Neko Family Proxy", menu)
+        threading.Thread(target=self._tray_icon.run, daemon=True).start()
+
     def _minimize_window(self) -> None:
-        """Minimize normally; never keep a hidden tray/background process."""
         if not self._closing and self.root.winfo_exists():
-            self.root.iconify()
+            if not hasattr(self, "_tray_icon") or self._tray_icon is None:
+                self._setup_tray()
+            self.root.withdraw()
+
+    def _restore_from_tray(self, icon, item) -> None:
+        if not self._closing and self.root.winfo_exists():
+            def restore_ui():
+                self.root.deiconify()
+                self.root.attributes("-topmost", True)
+                self.root.lift()
+                self.root.after(100, lambda: self.root.attributes("-topmost", False))
+            self.root.after(0, restore_ui)
 
     def _start_window_drag(self, event: tk.Event[tk.Misc]) -> None:
         self._drag_offset = (event.x_root, event.y_root)
@@ -1170,20 +1105,9 @@ class AppWindow:
             }[state.auth_status]
         )
         self._account.set(state.user_email or "")
-        auth_failed = state.auth_status is AuthStatus.FAILED
         self._status_badge.configure(
-            fg_color=(
-                PALETTE.success
-                if signed_in
-                else PALETTE.danger
-                if auth_failed
-                else PALETTE.surface
-            ),
-            text_color=(
-                PALETTE.on_primary
-                if signed_in or auth_failed
-                else PALETTE.primary_dark
-            ),
+            fg_color=PALETTE.success if signed_in else PALETTE.surface,
+            text_color=PALETTE.on_primary if signed_in else PALETTE.primary_dark,
         )
         self._render_entitlement(state)
 
@@ -1342,5 +1266,10 @@ class AppWindow:
             pass
         # Do not block the UI thread waiting for background tasks to finish.
         self._executor.shutdown(wait=False, cancel_futures=True)
+        if hasattr(self, "_tray_icon") and self._tray_icon is not None:
+            try:
+                self._tray_icon.stop()
+            except Exception:
+                pass
         self.root.quit()
         self.root.destroy()

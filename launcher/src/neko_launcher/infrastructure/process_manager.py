@@ -25,24 +25,35 @@ class ProxyProcessManager:
             if not self._executable.is_file():
                 raise ProxyProcessError(f"ProxyCore not found: {self._executable}")
 
+            import sys
             startupinfo = None
             creationflags = 0
-            if os.name == "nt":
+            if sys.platform == "win32":
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-            try:
-                self._process = subprocess.Popen(
-                    [str(self._executable)],
-                    cwd=str(self._executable.parent),
-                    startupinfo=startupinfo,
-                    creationflags=creationflags,
-                )
-            except OSError as exc:
-                self._process = None
-                raise ProxyProcessError(str(exc)) from exc
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                # Run Netch on a separate virtual desktop to completely hide its tray icon and windows
+                startupinfo.lpDesktop = "HiddenDesktop"
+                
+                try:
+                    self._process = subprocess.Popen(
+                        [str(self._executable)],
+                        cwd=str(self._executable.parent),
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                except OSError as exc:
+                    self._process = None
+                    raise ProxyProcessError(str(exc)) from exc
+            else:
+                try:
+                    self._process = subprocess.Popen(
+                        [str(self._executable)],
+                        cwd=str(self._executable.parent),
+                    )
+                except OSError as exc:
+                    self._process = None
+                    raise ProxyProcessError(str(exc)) from exc
 
     def stop(self, timeout: float = 5.0) -> None:
         with self._lock:
@@ -50,8 +61,15 @@ class ProxyProcessManager:
             if process is None:
                 return
             if process.poll() is None:
-                self._terminate_owned_process_tree(process, timeout)
+                self._terminate_owned_process_tree(self._process, timeout=5.0)
             self._process = None
+            if hasattr(self, "_desktop_handle") and self._desktop_handle:
+                try:
+                    import ctypes
+                    ctypes.WinDLL("user32").CloseDesktop(self._desktop_handle)
+                except Exception:
+                    pass
+                self._desktop_handle = None
 
     @staticmethod
     def _terminate_owned_process_tree(

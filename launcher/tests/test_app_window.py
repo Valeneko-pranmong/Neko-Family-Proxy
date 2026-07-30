@@ -216,14 +216,9 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
     assert window._register_button.state == "disabled"
 
 
-def test_error_notification_uses_prominent_overlay_without_truncation() -> None:
+def test_error_notification_uses_compact_text_without_banner_chrome() -> None:
     window = object.__new__(AppWindow)
     window._message_banner = FakeBanner()  # type: ignore[assignment]
-    window._message_icon = FakeLabel()  # type: ignore[assignment]
-    window._message_title = FakeLabel()  # type: ignore[assignment]
-    window._message_detail = FakeLabel()  # type: ignore[assignment]
-    window._message_copy = FakeLabel()  # type: ignore[assignment]
-    window._message_close = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable(
         "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่"
@@ -232,16 +227,14 @@ def test_error_notification_uses_prominent_overlay_without_truncation() -> None:
     window._update_message_visibility()
 
     assert window._message_banner.options == {  # type: ignore[attr-defined]
-        "bg": PALETTE.danger_surface,
-        "highlightbackground": PALETTE.danger,
-        "highlightcolor": PALETTE.danger,
+        "text": window._error.get(),
+        "bg": PALETTE.card,
+        "fg": PALETTE.danger,
     }
-    assert window._message_title.options["text"] == "โปรดตรวจสอบข้อมูล"  # type: ignore[attr-defined]
-    assert window._message_detail.options["text"] == window._error.get()  # type: ignore[attr-defined]
     assert window._message_banner.pack_options == {  # type: ignore[attr-defined]
         "fill": "x",
-        "padx": 0,
-        "pady": (4, 8),
+        "padx": 8,
+        "pady": (4, 2),
     }
 
 
