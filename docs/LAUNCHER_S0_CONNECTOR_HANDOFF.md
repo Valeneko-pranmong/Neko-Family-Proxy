@@ -4,8 +4,9 @@
 **Delivery status:** `DESIGN READY / IMPLEMENTATION PARTIAL`
 **Repository:** `D:\Neko-Family-Proxy`
 **Branch:** `main`
-**Assessed base/HEAD:** `bc26454110730745f914bb6d2596d3df1142e53e`
-**Working tree:** Dirty; changes listed below are uncommitted
+**Original delivery commit:** `791be353ebaed007147dc634055edf12ccec3b4c`
+**Connector correction commit:** `2a305e476b1a863c1e87c34ebdfadf1cffa3b88b`
+**Working tree:** Clean after the Connector correction commit
 **Contract proposal revision:** `launcher-s0-proposal-01`
 **Release authorization:** Not granted
 
@@ -59,6 +60,8 @@ Implemented or verified:
 13. partial host-start failures enter owned-process cleanup;
 14. cleanup adapter exceptions cannot replace the sanitized public failure;
 15. no alternate `_start_admitted` admission entry remains.
+16. adapter-originated typed exceptions are reduced to an allow-listed public message and arbitrary adapter detail is not republished.
+17. regression coverage includes heartbeat, process, channel and permit adapter exceptions plus an unstable exception renderer.
 
 ## 2. TDD and executable evidence
 
@@ -118,7 +121,7 @@ uv run --frozen pytest -q -m "not integration"
 Result:
 
 ```text
-92 passed, 2 deselected in 0.97s
+97 passed, 2 deselected in 0.57s
 exit code 0
 ```
 
@@ -220,18 +223,14 @@ All remain `PROPOSED` until required approval.
 
 ## 5. Repository and hygiene state
 
-Expected uncommitted paths at handoff:
+Original delivery paths were committed in `791be353ebaed007147dc634055edf12ccec3b4c`. The Connector correction changed and committed:
 
 ```text
- M launcher/src/neko_launcher/application/authorized_core.py
- M launcher/src/neko_launcher/main.py
- M launcher/tests/test_authorized_core.py
- M launcher/tests/test_main.py
-?? docs/LAUNCHER_S0_CONTRACT_PROPOSAL.md
-?? docs/LAUNCHER_S0_CONNECTOR_HANDOFF.md
+launcher/src/neko_launcher/application/authorized_core.py
+launcher/tests/test_authorized_core.py
 ```
 
-- no commit created;
+- original delivery and Connector correction are committed;
 - no push performed;
 - no production wiring enabled;
 - no offline/allow-all/local-signing fallback added;
