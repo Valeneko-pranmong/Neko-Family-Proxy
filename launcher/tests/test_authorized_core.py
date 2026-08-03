@@ -200,6 +200,66 @@ def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
     assert "sentinel-backend-token" not in rendered
 
 
+@pytest.mark.parametrize(
+    "adapter",
+    ["heartbeat", "process", "channel", "permit"],
+)
+def test_typed_adapter_exception_detail_is_not_republished(adapter: str) -> None:
+    orchestrator, _, _, _, precondition = build_orchestrator()
+
+    def leak(*args: object, **kwargs: object) -> object:
+        raise AuthorizedCoreError("sentinel-adapter-private-detail")
+
+    if adapter == "heartbeat":
+        precondition.require_fresh = leak  # type: ignore[method-assign]
+    elif adapter == "process":
+        orchestrator._process.start_host_without_secrets = leak  # type: ignore[method-assign]
+    elif adapter == "channel":
+        orchestrator._channel.request_challenge = leak  # type: ignore[method-assign]
+    else:
+        orchestrator._permits.issue_launch_permit = leak  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    rendered = "".join(
+        traceback.format_exception(
+            type(raised.value), raised.value, raised.value.__traceback__
+        )
+    )
+    assert "sentinel-adapter-private-detail" not in rendered
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+def test_typed_adapter_exception_with_unstable_string_is_not_republished() -> None:
+    orchestrator, _, _, _, precondition = build_orchestrator()
+
+    class UnstableAdapterError(AuthorizedCoreError):
+        def __init__(self) -> None:
+            super().__init__("fresh heartbeat is unavailable")
+            self._render_count = 0
+
+        def __str__(self) -> str:
+            self._render_count += 1
+            if self._render_count == 1:
+                return "fresh heartbeat is unavailable"
+            return "sentinel-unstable-private-detail"
+
+    def leak(*args: object, **kwargs: object) -> object:
+        raise UnstableAdapterError()
+
+    precondition.require_fresh = leak  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert str(raised.value) == "fresh heartbeat is unavailable"
+    assert "sentinel-unstable-private-detail" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
 def test_no_target_never_starts_core_or_requests_permit() -> None:
     orchestrator, calls, _, _, _ = build_orchestrator(detector=FakeDetector(target=None))
 

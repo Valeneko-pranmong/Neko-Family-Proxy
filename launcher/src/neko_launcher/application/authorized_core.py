@@ -193,6 +193,19 @@ class ProcessTargetDetector(Protocol[TargetT]):
 class AuthorizedCoreOrchestrator:
     """Single-flight, fail-closed orchestration independent of the draft wire protocol."""
 
+    _PUBLIC_FAILURES = frozenset(
+        {
+            "authorization context is unavailable",
+            "start configuration is unavailable",
+            "authorized start is already in progress",
+            "authorized start was cancelled",
+            "target process is unavailable",
+            "target process exited",
+            "fresh heartbeat is unavailable",
+            "authorized start did not reach Running",
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -275,7 +288,13 @@ class AuthorizedCoreOrchestrator:
                         "authorized start did not reach Running"
                     )
             except AuthorizedCoreError as exc:
-                failure = AuthorizedCoreError(str(exc))
+                rendered_message = str(exc)
+                public_message = (
+                    rendered_message
+                    if rendered_message in self._PUBLIC_FAILURES
+                    else "authorized start failed"
+                )
+                failure = AuthorizedCoreError(public_message)
             except Exception:
                 failure = AuthorizedCoreError("authorized start failed")
 
