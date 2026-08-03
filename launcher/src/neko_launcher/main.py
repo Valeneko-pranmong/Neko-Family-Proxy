@@ -3,7 +3,6 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-import traceback
 from pathlib import Path
 
 from neko_launcher.application.controller import ApplicationController
@@ -132,15 +131,20 @@ def _show_already_running_message() -> None:
 
 
 def _report_startup_error(exc: Exception) -> None:
-    """Show a visible error instead of a console flash for a failed startup."""
+    """Persist and display only allow-listed startup failure information."""
+    del exc
     log_dir = Path(os.getenv("LOCALAPPDATA", ".")) / "NEKO FAMILY"
     log_file = log_dir / "launcher-error.log"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file.write_text(traceback.format_exc(), encoding="utf-8")
+        log_file.write_text("StartupFailed\n", encoding="utf-8")
     except OSError:
         pass
-    message = f"เปิด Neko Launcher ไม่สำเร็จ\n\n{exc}\n\nรายละเอียด: {log_file}"
+    message = f"เปิด Neko Launcher ไม่สำเร็จ\n\nรายละเอียด: {log_file}"
+    _show_startup_error_message(message)
+
+
+def _show_startup_error_message(message: str) -> None:
     if sys.platform == "win32":
         ctypes.windll.user32.MessageBoxW(None, message, "Neko Launcher", 0x10)
 

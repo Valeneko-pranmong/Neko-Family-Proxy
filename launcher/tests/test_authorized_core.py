@@ -12,7 +12,10 @@ from neko_launcher.application.authorized_core import (
     CoreChallenge,
     CoreStatus,
     CoreStatusKind,
+    LaunchAccessContext,
     OpaquePermit,
+    OpaqueStartCommand,
+    OnlineHeartbeatLaunchPrecondition,
     OrchestrationTimeouts,
 )
 
@@ -20,6 +23,14 @@ from neko_launcher.application.authorized_core import (
 @dataclass(frozen=True)
 class Target:
     pid: int = 42
+
+
+def valid_access_context() -> LaunchAccessContext:
+    return LaunchAccessContext(True, True, "session", "installation")
+
+
+def valid_command() -> OpaqueStartCommand:
+    return OpaqueStartCommand("profile-0", "server-0")
 
 
 class FakeDetector:
@@ -79,6 +90,22 @@ class FakeChannel:
         return CoreStatus(CoreStatusKind.STOPPED)
 
 
+class FakeLaunchPrecondition:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+        self.available = True
+
+    def require_fresh(
+        self,
+        session_id: str,
+        installation_key_hash: str,
+        timeout: float,
+    ) -> None:
+        self.calls.append("backend.heartbeat")
+        if not self.available:
+            raise AuthorizedCoreError("fresh heartbeat is unavailable")
+
+
 class FakePermitGateway:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
@@ -97,18 +124,26 @@ class FakePermitGateway:
 
 def build_orchestrator(
     *, detector: FakeDetector | None = None
-) -> tuple[AuthorizedCoreOrchestrator, list[str], FakeDetector, FakeChannel]:
+) -> tuple[
+    AuthorizedCoreOrchestrator,
+    list[str],
+    FakeDetector,
+    FakeChannel,
+    FakeLaunchPrecondition,
+]:
     calls: list[str] = []
     actual_detector = detector or FakeDetector()
     channel = FakeChannel(calls)
+    precondition = FakeLaunchPrecondition(calls)
     orchestrator = AuthorizedCoreOrchestrator(
         process=FakeProcess(calls),
         channel=channel,
         permits=FakePermitGateway(calls),
+        launch_precondition=precondition,
         detector=actual_detector,
         timeouts=OrchestrationTimeouts(1, 1, 1, 1, 1),
     )
-    return orchestrator, calls, actual_detector, channel
+    return orchestrator, calls, actual_detector, channel, precondition
 
 
 def test_opaque_permit_never_reveals_value() -> None:
@@ -119,8 +154,35 @@ def test_opaque_permit_never_reveals_value() -> None:
     assert permit.reveal_for_transport() == "sentinel-permit"
 
 
+@pytest.mark.parametrize(
+    ("profile_reference", "server_reference"),
+    [
+        ("", "server-0"),
+        ("profile-0", ""),
+        ("profile-0", "server.example.invalid:443"),
+        ("profile-0", "method:password@server-0"),
+        ("profile-0", "server-0000000"),
+    ],
+)
+def test_invalid_opaque_references_fail_before_activation(
+    profile_reference: str,
+    server_reference: str,
+) -> None:
+    orchestrator, calls, detector, _, _ = build_orchestrator()
+
+    with pytest.raises(AuthorizedCoreError, match="start configuration is unavailable"):
+        orchestrator.start(
+            OpaqueStartCommand(profile_reference, server_reference),
+            valid_access_context(),
+            Event(),
+        )
+
+    assert detector.wait_calls == 0
+    assert calls == []
+
+
 def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
-    orchestrator, _, _, _ = build_orchestrator()
+    orchestrator, _, _, _, _ = build_orchestrator()
 
     def leak(*args: object, **kwargs: object) -> OpaquePermit:
         raise RuntimeError("sentinel-backend-token")
@@ -128,7 +190,7 @@ def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
     orchestrator._permits.issue_launch_permit = leak  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError) as raised:
-        orchestrator.start(object(), "session", "installation", Event())
+        orchestrator.start(valid_command(), valid_access_context(), Event())
 
     rendered = "".join(
         traceback.format_exception(
@@ -139,21 +201,138 @@ def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
 
 
 def test_no_target_never_starts_core_or_requests_permit() -> None:
-    orchestrator, calls, _, _ = build_orchestrator(detector=FakeDetector(target=None))
+    orchestrator, calls, _, _, _ = build_orchestrator(detector=FakeDetector(target=None))
 
     with pytest.raises(AuthorizedCoreError, match="target process is unavailable"):
-        orchestrator.start(object(), "session", "installation", Event())
+        orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert calls == []
 
 
-def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> None:
-    orchestrator, calls, _, _ = build_orchestrator()
+@pytest.mark.parametrize(
+    "access_context",
+    [
+        LaunchAccessContext(False, True, "session", "installation"),
+        LaunchAccessContext(True, False, "session", "installation"),
+        LaunchAccessContext(True, True, "", "installation"),
+        LaunchAccessContext(True, True, "session", ""),
+    ],
+)
+def test_invalid_local_access_context_has_no_activation_side_effects(
+    access_context: LaunchAccessContext,
+) -> None:
+    orchestrator, calls, detector, _, _ = build_orchestrator()
 
-    status = orchestrator.start(object(), "session", "installation", Event())
+    with pytest.raises(AuthorizedCoreError, match="authorization context is unavailable"):
+        orchestrator.start(valid_command(), access_context, Event())
+
+    assert detector.wait_calls == 0
+    assert calls == []
+
+
+def test_unavailable_fresh_heartbeat_blocks_host_and_permit_side_effects() -> None:
+    orchestrator, calls, _, _, precondition = build_orchestrator()
+    precondition.available = False
+
+    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert calls == ["backend.heartbeat"]
+
+
+def test_online_heartbeat_precondition_records_only_a_successful_fresh_result() -> None:
+    probe_calls: list[tuple[str, str, float]] = []
+
+    def probe(session_id: str, installation_key_hash: str, timeout: float) -> bool:
+        probe_calls.append((session_id, installation_key_hash, timeout))
+        return True
+
+    precondition = OnlineHeartbeatLaunchPrecondition(probe, monotonic=lambda: 123.0)
+
+    precondition.require_fresh("session", "installation", 2.0)
+
+    assert probe_calls == [("session", "installation", 2.0)]
+    assert precondition.last_success_monotonic == 123.0
+
+
+def test_online_heartbeat_precondition_sanitizes_probe_failure() -> None:
+    def probe(*args: object) -> bool:
+        raise RuntimeError("sentinel-heartbeat-detail")
+
+    precondition = OnlineHeartbeatLaunchPrecondition(probe)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        precondition.require_fresh("session", "installation", 2.0)
+
+    assert str(raised.value) == "fresh heartbeat is unavailable"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert precondition.last_success_monotonic is None
+
+
+def test_online_heartbeat_false_has_no_success_timestamp() -> None:
+    precondition = OnlineHeartbeatLaunchPrecondition(lambda *args: False)
+
+    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+        precondition.require_fresh("session", "installation", 2.0)
+
+    assert precondition.last_success_monotonic is None
+
+
+def test_failed_heartbeat_does_not_advance_previous_success_timestamp() -> None:
+    results = iter([True, False])
+    times = iter([123.0, 456.0])
+    precondition = OnlineHeartbeatLaunchPrecondition(
+        lambda *args: next(results),
+        monotonic=lambda: next(times),
+    )
+    precondition.require_fresh("session", "installation", 2.0)
+
+    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+        precondition.require_fresh("session", "installation", 2.0)
+
+    assert precondition.last_success_monotonic == 123.0
+
+
+def test_cancellation_during_heartbeat_blocks_host_and_permit_side_effects() -> None:
+    orchestrator, calls, _, _, precondition = build_orchestrator()
+    cancellation = Event()
+
+    def cancel_after_heartbeat(*args: object) -> None:
+        precondition.calls.append("backend.heartbeat")
+        cancellation.set()
+
+    precondition.require_fresh = cancel_after_heartbeat  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError, match="cancelled"):
+        orchestrator.start(valid_command(), valid_access_context(), cancellation)
+
+    assert calls == ["backend.heartbeat"]
+
+
+def test_target_exit_after_heartbeat_blocks_host_spawn() -> None:
+    orchestrator, calls, detector, _, precondition = build_orchestrator()
+
+    def exit_after_heartbeat(*args: object) -> None:
+        precondition.calls.append("backend.heartbeat")
+        detector.running = False
+
+    precondition.require_fresh = exit_after_heartbeat  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError, match="target process exited"):
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert calls == ["backend.heartbeat"]
+
+
+def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> None:
+    orchestrator, calls, _, _, _ = build_orchestrator()
+
+    status = orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert status.kind is CoreStatusKind.RUNNING
     assert calls == [
+        "backend.heartbeat",
         "host.start",
         "host.ready",
         "core.challenge",
@@ -163,7 +342,7 @@ def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> 
 
 
 def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
-    orchestrator, calls, detector, _ = build_orchestrator()
+    orchestrator, calls, detector, _, _ = build_orchestrator()
     original = orchestrator._permits.issue_launch_permit
 
     def issue_and_exit(*args: object, **kwargs: object) -> OpaquePermit:
@@ -174,39 +353,88 @@ def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
     orchestrator._permits.issue_launch_permit = issue_and_exit  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError, match="target process exited"):
-        orchestrator.start(object(), "session", "installation", Event())
+        orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert "core.start" not in calls
     assert calls[-2:] == ["core.stop", "host.stop"]
 
 
 def test_non_running_start_response_fails_and_cleans_up() -> None:
-    orchestrator, calls, _, channel = build_orchestrator()
+    orchestrator, calls, _, channel, _ = build_orchestrator()
     channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
 
     with pytest.raises(AuthorizedCoreError, match="authorized start did not reach Running"):
-        orchestrator.start(object(), "session", "installation", Event())
+        orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert calls[-2:] == ["core.stop", "host.stop"]
 
 
 def test_cleanup_kills_only_owned_host_when_graceful_stop_fails() -> None:
-    orchestrator, calls, _, channel = build_orchestrator()
+    orchestrator, calls, _, channel, _ = build_orchestrator()
     channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
     orchestrator._process.stop_gracefully = lambda timeout: False  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError):
-        orchestrator.start(object(), "session", "installation", Event())
+        orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert calls[-2:] == ["core.stop", "host.kill"]
 
 
+def test_partial_host_start_failure_triggers_owned_process_cleanup() -> None:
+    orchestrator, calls, _, _, _ = build_orchestrator()
+
+    def partially_start_then_fail() -> None:
+        calls.append("host.start")
+        raise RuntimeError("sentinel-partial-start-detail")
+
+    orchestrator._process.start_host_without_secrets = partially_start_then_fail  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert str(raised.value) == "authorized start failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert calls[-2:] == ["core.stop", "host.stop"]
+
+
+def test_owned_process_kill_failure_does_not_replace_sanitized_start_error() -> None:
+    orchestrator, calls, _, channel, _ = build_orchestrator()
+    channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
+
+    def fail_gracefully(timeout: float) -> bool:
+        calls.append("host.stop")
+        return False
+
+    orchestrator._process.stop_gracefully = fail_gracefully  # type: ignore[method-assign]
+
+    def fail_kill() -> None:
+        calls.append("host.kill")
+        raise RuntimeError("sentinel-kill-detail")
+
+    orchestrator._process.kill_owned_process_after_timeout = fail_kill  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert str(raised.value) == "authorized start did not reach Running"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert calls[-2:] == ["host.stop", "host.kill"]
+
+
+def test_orchestrator_exposes_no_alternate_unvalidated_start_entry() -> None:
+    orchestrator, _, _, _, _ = build_orchestrator()
+
+    assert not hasattr(orchestrator, "_start_admitted")
+
+
 def test_duplicate_start_is_rejected_without_a_second_flow() -> None:
-    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator, calls, _, _, _ = build_orchestrator()
     assert orchestrator._single_flight.acquire(blocking=False)
     try:
         with pytest.raises(AuthorizedCoreError, match="already in progress"):
-            orchestrator.start(object(), "session", "installation", Event())
+            orchestrator.start(valid_command(), valid_access_context(), Event())
     finally:
         orchestrator._single_flight.release()
 
@@ -214,11 +442,11 @@ def test_duplicate_start_is_rejected_without_a_second_flow() -> None:
 
 
 def test_cancelled_attempt_does_not_start_host() -> None:
-    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator, calls, _, _, _ = build_orchestrator()
     cancellation = Event()
     cancellation.set()
 
     with pytest.raises(AuthorizedCoreError, match="cancelled"):
-        orchestrator.start(object(), "session", "installation", cancellation)
+        orchestrator.start(valid_command(), valid_access_context(), cancellation)
 
     assert calls == []

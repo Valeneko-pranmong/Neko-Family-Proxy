@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from re import fullmatch
 from threading import Event, Lock
-from typing import Protocol, TypeVar
+from time import monotonic
+from typing import Callable, Protocol, TypeVar
 from uuid import uuid4
 
 
@@ -65,6 +67,40 @@ class OrchestrationTimeouts:
             raise ValueError("orchestration timeouts must be positive")
 
 
+@dataclass(frozen=True)
+class LaunchAccessContext:
+    """Local fail-fast facts; Backend authorization remains authoritative."""
+
+    authenticated: bool
+    entitlement_active: bool
+    session_id: str
+    installation_key_hash: str
+
+    def require_available(self) -> None:
+        if not (
+            self.authenticated
+            and self.entitlement_active
+            and self.session_id
+            and self.installation_key_hash
+        ):
+            raise AuthorizedCoreError("authorization context is unavailable")
+
+
+@dataclass(frozen=True)
+class OpaqueStartCommand:
+    """Credential-free references for one canonical ProcessMode start."""
+
+    profile_reference: str
+    server_reference: str
+
+    def require_available(self) -> None:
+        if not (
+            fullmatch(r"profile-[0-9]{1,6}", self.profile_reference)
+            and fullmatch(r"server-[0-9]{1,6}", self.server_reference)
+        ):
+            raise AuthorizedCoreError("start configuration is unavailable")
+
+
 TargetT = TypeVar("TargetT")
 
 
@@ -103,6 +139,49 @@ class LaunchPermitGateway(Protocol):
     ) -> OpaquePermit: ...
 
 
+class LaunchPrecondition(Protocol):
+    """Online, fail-closed validation required before a Core host can start."""
+
+    def require_fresh(
+        self,
+        session_id: str,
+        installation_key_hash: str,
+        timeout: float,
+    ) -> None: ...
+
+
+class OnlineHeartbeatLaunchPrecondition:
+    """Runs a new online heartbeat for each admitted start attempt."""
+
+    def __init__(
+        self,
+        probe: Callable[[str, str, float], bool],
+        *,
+        monotonic: Callable[[], float] = monotonic,
+    ) -> None:
+        self._probe = probe
+        self._monotonic = monotonic
+        self._last_success_monotonic: float | None = None
+
+    @property
+    def last_success_monotonic(self) -> float | None:
+        return self._last_success_monotonic
+
+    def require_fresh(
+        self,
+        session_id: str,
+        installation_key_hash: str,
+        timeout: float,
+    ) -> None:
+        try:
+            alive = self._probe(session_id, installation_key_hash, timeout)
+        except Exception:
+            alive = False
+        if not alive:
+            raise AuthorizedCoreError("fresh heartbeat is unavailable")
+        self._last_success_monotonic = self._monotonic()
+
+
 class ProcessTargetDetector(Protocol[TargetT]):
     def wait_for_exact_pso2(
         self, timeout: float, cancellation: Event
@@ -120,76 +199,96 @@ class AuthorizedCoreOrchestrator:
         process: CoreProcessAdapter,
         channel: CoreControlChannel,
         permits: LaunchPermitGateway,
+        launch_precondition: LaunchPrecondition,
         detector: ProcessTargetDetector[object],
         timeouts: OrchestrationTimeouts,
     ) -> None:
         self._process = process
         self._channel = channel
         self._permits = permits
+        self._launch_precondition = launch_precondition
         self._detector = detector
         self._timeouts = timeouts
         self._single_flight = Lock()
 
     def start(
         self,
-        command: object,
-        session_id: str,
-        installation_key_hash: str,
+        command: OpaqueStartCommand,
+        access_context: LaunchAccessContext,
         cancellation: Event,
     ) -> CoreStatus:
+        command.require_available()
+        access_context.require_available()
         if not self._single_flight.acquire(blocking=False):
             raise AuthorizedCoreError("authorized start is already in progress")
-        host_started = False
+
+        host_start_attempted = False
+        status: CoreStatus | None = None
+        failure: AuthorizedCoreError | None = None
         try:
-            self._require_not_cancelled(cancellation)
-            if not session_id or not installation_key_hash:
-                raise AuthorizedCoreError("authorization context is unavailable")
+            try:
+                self._require_not_cancelled(cancellation)
+                target = self._detector.wait_for_exact_pso2(
+                    self._timeouts.target, cancellation
+                )
+                if target is None:
+                    raise AuthorizedCoreError("target process is unavailable")
+                self._require_not_cancelled(cancellation)
 
-            target = self._detector.wait_for_exact_pso2(
-                self._timeouts.target, cancellation
-            )
-            if target is None:
-                raise AuthorizedCoreError("target process is unavailable")
-            self._require_not_cancelled(cancellation)
+                self._launch_precondition.require_fresh(
+                    access_context.session_id,
+                    access_context.installation_key_hash,
+                    self._timeouts.permit,
+                )
+                self._require_not_cancelled(cancellation)
+                self._require_target(target)
 
-            self._process.start_host_without_secrets()
-            host_started = True
-            self._process.wait_for_control_channel(self._timeouts.control_channel)
-            self._require_target(target)
+                # Cleanup is safe for an unowned/no-process state and must run even
+                # when an adapter creates the host and then reports a failure.
+                host_start_attempted = True
+                self._process.start_host_without_secrets()
+                self._process.wait_for_control_channel(self._timeouts.control_channel)
+                self._require_target(target)
 
-            challenge = self._channel.request_challenge(
-                self._correlation_id(), self._timeouts.challenge
-            )
-            self._require_target(target)
-            permit = self._permits.issue_launch_permit(
-                session_id,
-                installation_key_hash,
-                challenge,
-                command,
-                self._timeouts.permit,
-            )
-            self._require_not_cancelled(cancellation)
-            self._require_target(target)
+                challenge = self._channel.request_challenge(
+                    self._correlation_id(), self._timeouts.challenge
+                )
+                self._require_target(target)
+                permit = self._permits.issue_launch_permit(
+                    access_context.session_id,
+                    access_context.installation_key_hash,
+                    challenge,
+                    command,
+                    self._timeouts.permit,
+                )
+                self._require_not_cancelled(cancellation)
+                self._require_target(target)
 
-            status = self._channel.start_authorized(
-                command,
-                permit,
-                self._correlation_id(),
-                self._timeouts.start,
-            )
-            if status.kind is not CoreStatusKind.RUNNING:
-                raise AuthorizedCoreError("authorized start did not reach Running")
-            return status
-        except AuthorizedCoreError:
-            if host_started:
+                status = self._channel.start_authorized(
+                    command,
+                    permit,
+                    self._correlation_id(),
+                    self._timeouts.start,
+                )
+                if status.kind is not CoreStatusKind.RUNNING:
+                    raise AuthorizedCoreError(
+                        "authorized start did not reach Running"
+                    )
+            except AuthorizedCoreError as exc:
+                failure = AuthorizedCoreError(str(exc))
+            except Exception:
+                failure = AuthorizedCoreError("authorized start failed")
+
+            if failure is not None and host_start_attempted:
                 self._cleanup()
-            raise
-        except Exception:
-            if host_started:
-                self._cleanup()
-            raise AuthorizedCoreError("authorized start failed") from None
         finally:
             self._single_flight.release()
+
+        if failure is not None:
+            raise failure
+        if status is None:
+            raise AuthorizedCoreError("authorized start failed")
+        return status
 
     def _require_target(self, target: object) -> None:
         if not self._detector.is_same_target_still_running(target):
@@ -210,7 +309,10 @@ class AuthorizedCoreOrchestrator:
         except Exception:
             stopped = False
         if not stopped:
-            self._process.kill_owned_process_after_timeout()
+            try:
+                self._process.kill_owned_process_after_timeout()
+            except Exception:
+                pass
 
     @staticmethod
     def _correlation_id() -> str:
