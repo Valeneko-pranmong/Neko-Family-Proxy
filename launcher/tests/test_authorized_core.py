@@ -267,6 +267,27 @@ def test_adapter_cannot_spoof_an_allow_listed_condition_by_message() -> None:
     assert calls == []
 
 
+def test_adapter_exception_with_raising_string_is_not_republished() -> None:
+    orchestrator, _, _, _, precondition = build_orchestrator()
+
+    class RaisingStringAdapterError(AuthorizedCoreError):
+        def __str__(self) -> str:
+            raise RuntimeError("sentinel-render-private-detail")
+
+    def leak(*args: object, **kwargs: object) -> object:
+        raise RaisingStringAdapterError(AuthorizedCoreErrorCode.TARGET_EXITED)
+
+    precondition.require_fresh = leak  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE
+    assert str(raised.value) == "fresh heartbeat is unavailable"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
 def test_typed_adapter_exception_with_unstable_string_is_not_republished() -> None:
     orchestrator, _, _, _, precondition = build_orchestrator()
 
