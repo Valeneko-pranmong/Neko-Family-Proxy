@@ -8,6 +8,7 @@ import pytest
 
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
+    AuthorizedCoreErrorCode,
     AuthorizedCoreOrchestrator,
     CoreChallenge,
     CoreStatus,
@@ -103,7 +104,7 @@ class FakeLaunchPrecondition:
     ) -> None:
         self.calls.append("backend.heartbeat")
         if not self.available:
-            raise AuthorizedCoreError("fresh heartbeat is unavailable")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE)
 
 
 class FakePermitGateway:
@@ -232,6 +233,40 @@ def test_typed_adapter_exception_detail_is_not_republished(adapter: str) -> None
     assert raised.value.__context__ is None
 
 
+def test_permit_adapter_cannot_spoof_a_public_condition_by_typed_code() -> None:
+    orchestrator, _, _, _, _ = build_orchestrator()
+
+    def spoof(*args: object, **kwargs: object) -> object:
+        raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_EXITED)
+
+    orchestrator._permits.issue_launch_permit = spoof  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+    assert str(raised.value) == "authorized start failed"
+
+
+def test_adapter_cannot_spoof_an_allow_listed_condition_by_message() -> None:
+    orchestrator, calls, _, _, precondition = build_orchestrator()
+
+    def spoof(*args: object, **kwargs: object) -> object:
+        raise AuthorizedCoreError(
+            AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+            "fresh heartbeat is unavailable",
+        )
+
+    precondition.require_fresh = spoof  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE
+    assert str(raised.value) == "fresh heartbeat is unavailable"
+    assert calls == []
+
+
 def test_typed_adapter_exception_with_unstable_string_is_not_republished() -> None:
     orchestrator, _, _, _, precondition = build_orchestrator()
 
@@ -254,6 +289,7 @@ def test_typed_adapter_exception_with_unstable_string_is_not_republished() -> No
     with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
+    assert raised.value.code is AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE
     assert str(raised.value) == "fresh heartbeat is unavailable"
     assert "sentinel-unstable-private-detail" not in str(raised.value)
     assert raised.value.__cause__ is None

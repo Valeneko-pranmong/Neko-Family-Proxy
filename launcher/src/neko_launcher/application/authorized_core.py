@@ -5,12 +5,62 @@ from enum import Enum
 from re import fullmatch
 from threading import Event, Lock
 from time import monotonic
-from typing import Callable, Protocol, TypeVar
+from typing import Callable, Protocol, TypeVar, cast
 from uuid import uuid4
 
 
+class AuthorizedCoreErrorCode(str, Enum):
+    ADAPTER_FAILURE = "AdapterFailure"
+    AUTHORIZATION_CONTEXT_UNAVAILABLE = "AuthorizationContextUnavailable"
+    CONFIGURATION_UNAVAILABLE = "ConfigurationUnavailable"
+    DUPLICATE_START = "DuplicateStart"
+    CANCELLED = "Cancelled"
+    TARGET_UNAVAILABLE = "TargetUnavailable"
+    TARGET_EXITED = "TargetExited"
+    HEARTBEAT_UNAVAILABLE = "HeartbeatUnavailable"
+    RUNNING_NOT_REACHED = "RunningNotReached"
+    PERMIT_UNAVAILABLE = "PermitUnavailable"
+    CHALLENGE_UNAVAILABLE = "ChallengeUnavailable"
+
+
+_PUBLIC_ERROR_MESSAGES = {
+    AuthorizedCoreErrorCode.ADAPTER_FAILURE: "authorized start failed",
+    AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE: (
+        "authorization context is unavailable"
+    ),
+    AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE: (
+        "start configuration is unavailable"
+    ),
+    AuthorizedCoreErrorCode.DUPLICATE_START: "authorized start is already in progress",
+    AuthorizedCoreErrorCode.CANCELLED: "authorized start was cancelled",
+    AuthorizedCoreErrorCode.TARGET_UNAVAILABLE: "target process is unavailable",
+    AuthorizedCoreErrorCode.TARGET_EXITED: "target process exited",
+    AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE: "fresh heartbeat is unavailable",
+    AuthorizedCoreErrorCode.RUNNING_NOT_REACHED: (
+        "authorized start did not reach Running"
+    ),
+    AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE: "authorization permit is unavailable",
+    AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE: (
+        "authorization challenge is unavailable"
+    ),
+}
+
+
 class AuthorizedCoreError(RuntimeError):
-    """Sanitized failure from an authorized Core start attempt."""
+    """Typed sanitized failure from an authorized Core start attempt."""
+
+    def __init__(
+        self,
+        code: AuthorizedCoreErrorCode | str,
+        private_detail: str | None = None,
+    ) -> None:
+        # Legacy/adapter-owned text is never treated as a public condition.
+        self.code = (
+            code
+            if isinstance(code, AuthorizedCoreErrorCode)
+            else AuthorizedCoreErrorCode.ADAPTER_FAILURE
+        )
+        super().__init__(_PUBLIC_ERROR_MESSAGES[self.code])
 
 
 class OpaquePermit:
@@ -20,7 +70,7 @@ class OpaquePermit:
 
     def __init__(self, value: str) -> None:
         if not value:
-            raise AuthorizedCoreError("authorization permit is unavailable")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE)
         self._value = value
 
     def __repr__(self) -> str:
@@ -39,7 +89,7 @@ class CoreChallenge:
 
     def __post_init__(self) -> None:
         if not self.value:
-            raise AuthorizedCoreError("authorization challenge is unavailable")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE)
 
 
 class CoreStatusKind(str, Enum):
@@ -83,7 +133,9 @@ class LaunchAccessContext:
             and self.session_id
             and self.installation_key_hash
         ):
-            raise AuthorizedCoreError("authorization context is unavailable")
+            raise AuthorizedCoreError(
+                AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE
+            )
 
 
 @dataclass(frozen=True)
@@ -98,10 +150,11 @@ class OpaqueStartCommand:
             fullmatch(r"profile-[0-9]{1,6}", self.profile_reference)
             and fullmatch(r"server-[0-9]{1,6}", self.server_reference)
         ):
-            raise AuthorizedCoreError("start configuration is unavailable")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE)
 
 
 TargetT = TypeVar("TargetT")
+AdapterResultT = TypeVar("AdapterResultT")
 
 
 class CoreProcessAdapter(Protocol):
@@ -178,7 +231,7 @@ class OnlineHeartbeatLaunchPrecondition:
         except Exception:
             alive = False
         if not alive:
-            raise AuthorizedCoreError("fresh heartbeat is unavailable")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE)
         self._last_success_monotonic = self._monotonic()
 
 
@@ -192,19 +245,6 @@ class ProcessTargetDetector(Protocol[TargetT]):
 
 class AuthorizedCoreOrchestrator:
     """Single-flight, fail-closed orchestration independent of the draft wire protocol."""
-
-    _PUBLIC_FAILURES = frozenset(
-        {
-            "authorization context is unavailable",
-            "start configuration is unavailable",
-            "authorized start is already in progress",
-            "authorized start was cancelled",
-            "target process is unavailable",
-            "target process exited",
-            "fresh heartbeat is unavailable",
-            "authorized start did not reach Running",
-        }
-    )
 
     def __init__(
         self,
@@ -233,7 +273,7 @@ class AuthorizedCoreOrchestrator:
         command.require_available()
         access_context.require_available()
         if not self._single_flight.acquire(blocking=False):
-            raise AuthorizedCoreError("authorized start is already in progress")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.DUPLICATE_START)
 
         host_start_attempted = False
         status: CoreStatus | None = None
@@ -241,17 +281,23 @@ class AuthorizedCoreOrchestrator:
         try:
             try:
                 self._require_not_cancelled(cancellation)
-                target = self._detector.wait_for_exact_pso2(
-                    self._timeouts.target, cancellation
+                target = self._invoke_adapter(
+                    lambda: self._detector.wait_for_exact_pso2(
+                        self._timeouts.target, cancellation
+                    ),
+                    AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
                 )
                 if target is None:
-                    raise AuthorizedCoreError("target process is unavailable")
+                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_UNAVAILABLE)
                 self._require_not_cancelled(cancellation)
 
-                self._launch_precondition.require_fresh(
-                    access_context.session_id,
-                    access_context.installation_key_hash,
-                    self._timeouts.permit,
+                self._invoke_adapter(
+                    lambda: self._launch_precondition.require_fresh(
+                        access_context.session_id,
+                        access_context.installation_key_hash,
+                        self._timeouts.permit,
+                    ),
+                    AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE,
                 )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
@@ -259,44 +305,53 @@ class AuthorizedCoreOrchestrator:
                 # Cleanup is safe for an unowned/no-process state and must run even
                 # when an adapter creates the host and then reports a failure.
                 host_start_attempted = True
-                self._process.start_host_without_secrets()
-                self._process.wait_for_control_channel(self._timeouts.control_channel)
-                self._require_target(target)
-
-                challenge = self._channel.request_challenge(
-                    self._correlation_id(), self._timeouts.challenge
+                self._invoke_adapter(
+                    self._process.start_host_without_secrets,
+                    AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                )
+                self._invoke_adapter(
+                    lambda: self._process.wait_for_control_channel(
+                        self._timeouts.control_channel
+                    ),
+                    AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                 )
                 self._require_target(target)
-                permit = self._permits.issue_launch_permit(
-                    access_context.session_id,
-                    access_context.installation_key_hash,
-                    challenge,
-                    command,
-                    self._timeouts.permit,
+
+                challenge = self._invoke_adapter(
+                    lambda: self._channel.request_challenge(
+                        self._correlation_id(), self._timeouts.challenge
+                    ),
+                    AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                )
+                self._require_target(target)
+                permit = self._invoke_adapter(
+                    lambda: self._permits.issue_launch_permit(
+                        access_context.session_id,
+                        access_context.installation_key_hash,
+                        challenge,
+                        command,
+                        self._timeouts.permit,
+                    ),
+                    AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                 )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
 
-                status = self._channel.start_authorized(
-                    command,
-                    permit,
-                    self._correlation_id(),
-                    self._timeouts.start,
+                status = self._invoke_adapter(
+                    lambda: self._channel.start_authorized(
+                        command,
+                        permit,
+                        self._correlation_id(),
+                        self._timeouts.start,
+                    ),
+                    AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                 )
                 if status.kind is not CoreStatusKind.RUNNING:
-                    raise AuthorizedCoreError(
-                        "authorized start did not reach Running"
-                    )
+                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.RUNNING_NOT_REACHED)
             except AuthorizedCoreError as exc:
-                rendered_message = str(exc)
-                public_message = (
-                    rendered_message
-                    if rendered_message in self._PUBLIC_FAILURES
-                    else "authorized start failed"
-                )
-                failure = AuthorizedCoreError(public_message)
+                failure = AuthorizedCoreError(exc.code)
             except Exception:
-                failure = AuthorizedCoreError("authorized start failed")
+                failure = AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
             if failure is not None and host_start_attempted:
                 self._cleanup()
@@ -306,17 +361,36 @@ class AuthorizedCoreOrchestrator:
         if failure is not None:
             raise failure
         if status is None:
-            raise AuthorizedCoreError("authorized start failed")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         return status
 
     def _require_target(self, target: object) -> None:
-        if not self._detector.is_same_target_still_running(target):
-            raise AuthorizedCoreError("target process exited")
+        running = self._invoke_adapter(
+            lambda: self._detector.is_same_target_still_running(target),
+            AuthorizedCoreErrorCode.TARGET_EXITED,
+        )
+        if not running:
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_EXITED)
+
+    @staticmethod
+    def _invoke_adapter(
+        operation: Callable[[], AdapterResultT],
+        failure_code: AuthorizedCoreErrorCode,
+    ) -> AdapterResultT:
+        failed = False
+        result: object = None
+        try:
+            result = operation()
+        except Exception:
+            failed = True
+        if failed:
+            raise AuthorizedCoreError(failure_code)
+        return cast(AdapterResultT, result)
 
     @staticmethod
     def _require_not_cancelled(cancellation: Event) -> None:
         if cancellation.is_set():
-            raise AuthorizedCoreError("authorized start was cancelled")
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.CANCELLED)
 
     def _cleanup(self) -> None:
         try:
