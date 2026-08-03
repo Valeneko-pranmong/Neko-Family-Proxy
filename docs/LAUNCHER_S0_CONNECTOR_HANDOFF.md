@@ -6,6 +6,7 @@
 **Branch:** `main`
 **Original delivery commit:** `791be353ebaed007147dc634055edf12ccec3b4c`
 **Connector correction commit:** `2a305e476b1a863c1e87c34ebdfadf1cffa3b88b`
+**Typed-boundary follow-up commit:** `f42f358`
 **Working tree:** Clean after the Connector correction commit
 **Contract proposal revision:** `launcher-s0-proposal-01`
 **Release authorization:** Not granted
@@ -62,6 +63,7 @@ Implemented or verified:
 15. no alternate `_start_admitted` admission entry remains.
 16. adapter-originated typed exceptions are reduced to an allow-listed public message and arbitrary adapter detail is not republished.
 17. regression coverage includes heartbeat, process, channel and permit adapter exceptions plus an unstable exception renderer.
+18. public errors derive from `AuthorizedCoreErrorCode`; adapter messages/codes are reduced by call-site-owned mappings and cannot impersonate unrelated public conditions.
 
 ## 2. TDD and executable evidence
 
@@ -121,7 +123,7 @@ uv run --frozen pytest -q -m "not integration"
 Result:
 
 ```text
-97 passed, 2 deselected in 0.57s
+99 passed, 2 deselected in 0.58s
 exit code 0
 ```
 
