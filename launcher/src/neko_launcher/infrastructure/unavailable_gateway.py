@@ -10,6 +10,16 @@ from neko_launcher.domain.models import (
 )
 
 
+class AuthorizationPendingProxyGateway:
+    """Fail closed until the approved Backend/Core protocol is wired."""
+
+    def start(self) -> None:
+        raise RuntimeError("authorization integration is unavailable")
+
+    def stop(self) -> None:
+        return
+
+
 class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
     """Fallback for a temporary API outage."""
 

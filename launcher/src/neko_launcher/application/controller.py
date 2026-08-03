@@ -171,6 +171,12 @@ class ApplicationController:
                 last_error="บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน",
             )
             return
+        if not state.game_process_running:
+            self._update(
+                proxy_status=ProxyStatus.FAILED,
+                last_error="ยังไม่พบ pso2.exe จึงยังไม่เริ่มการเชื่อมต่อ",
+            )
+            return
         if self._proxy_gateway is None:
             self._update(
                 proxy_status=ProxyStatus.FAILED,

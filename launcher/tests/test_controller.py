@@ -71,6 +71,7 @@ def test_proxy_commands_use_gateway_and_update_state() -> None:
         )
     )
     controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(GameProcessStateChanged(True))
 
     controller.dispatch(StartProxyRequested())
 
@@ -114,6 +115,25 @@ def test_proxy_refuses_to_start_without_entitlement_and_session() -> None:
     assert proxy.running is False
     assert controller.state.proxy_status is ProxyStatus.FAILED
     assert controller.state.last_error is not None
+
+
+def test_proxy_refuses_to_start_before_exact_game_process_is_detected() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    controller = ApplicationController(bus, proxy)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+
+    controller.dispatch(StartProxyRequested())
+
+    assert proxy.running is False
+    assert controller.state.proxy_status is ProxyStatus.FAILED
+    assert "pso2.exe" in (controller.state.last_error or "")
 
 
 def test_auto_tweaker_launch_does_not_start_proxy_before_pso2_process() -> None:
@@ -176,9 +196,9 @@ def test_expiry_waits_for_pso2_to_exit_before_stopping_proxy() -> None:
         )
     )
     controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(GameProcessStateChanged(True))
     controller.dispatch(StartProxyRequested())
     controller.dispatch(LaunchTweakerRequested("C:/Games/Tweaker.exe"))
-    controller.dispatch(GameProcessStateChanged(True))
     controller.dispatch(
         EntitlementLoaded(
             Entitlement(
@@ -215,8 +235,8 @@ def test_proxy_stops_when_pso2_exits_while_entitlement_is_still_valid() -> None:
         )
     )
     controller.dispatch(SessionClaimed("session-id"))
-    controller.dispatch(StartProxyRequested())
     controller.dispatch(GameProcessStateChanged(True))
+    controller.dispatch(StartProxyRequested())
 
     controller.dispatch(GameProcessStateChanged(False))
 
