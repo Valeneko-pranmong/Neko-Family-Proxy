@@ -41,11 +41,11 @@ class LauncherConfig:
                 ).strip()
             except OSError:
                 stored_game_exe = ""
-        bundled_proxy = workspace_root / "ProxyCore" / "ProxyCore.exe"
+        bundled_proxy = workspace_root / "ProxyCore" / "NekoProxyCore.exe"
         proxy_path = (
             bundled_proxy
             if bundled_proxy.is_file()
-            else local_app_data / "NEKO FAMILY" / "ProxyCore" / "ProxyCore.exe"
+            else local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
         )
         return cls(
             workspace_root=workspace_root,
