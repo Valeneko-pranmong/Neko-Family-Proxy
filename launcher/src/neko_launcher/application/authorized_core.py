@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from hashlib import sha256
 from re import fullmatch
 from threading import Event, Lock
 from time import monotonic
@@ -125,6 +126,7 @@ class LaunchAccessContext:
     entitlement_active: bool
     session_id: str
     installation_key_hash: str
+    authenticated_transport: object | None
 
     def require_available(self) -> None:
         if not (
@@ -132,6 +134,7 @@ class LaunchAccessContext:
             and self.entitlement_active
             and self.session_id
             and self.installation_key_hash
+            and self.authenticated_transport is not None
         ):
             raise AuthorizedCoreError(
                 AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE
@@ -151,6 +154,48 @@ class OpaqueStartCommand:
             and fullmatch(r"server-[0-9]{1,6}", self.server_reference)
         ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE)
+
+
+@dataclass(frozen=True)
+class TargetBoundStartCommand:
+    """Validated Protocol v2 command and its exact canonical configuration."""
+
+    profile_reference: str
+    server_reference: str
+    target_pid: int
+    process_name: str = "pso2.exe"
+    mode: str = "ProcessMode"
+
+    @classmethod
+    def from_opaque(
+        cls,
+        command: OpaqueStartCommand,
+        *,
+        target_pid: int,
+    ) -> TargetBoundStartCommand:
+        command.require_available()
+        if (
+            isinstance(target_pid, bool)
+            or not isinstance(target_pid, int)
+            or not 1 <= target_pid <= 4_294_967_295
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE)
+        return cls(command.profile_reference, command.server_reference, target_pid)
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return (
+            "protocolVersion=2\n"
+            f"mode={self.mode}\n"
+            f"processName={self.process_name}\n"
+            f"targetPid={self.target_pid}\n"
+            f"profileReference={self.profile_reference}\n"
+            f"serverReference={self.server_reference}\n"
+        ).encode("utf-8")
+
+    @property
+    def configuration_digest(self) -> str:
+        return sha256(self.canonical_bytes).hexdigest()
 
 
 TargetT = TypeVar("TargetT")
@@ -184,10 +229,15 @@ class CoreControlChannel(Protocol):
 class LaunchPermitGateway(Protocol):
     def issue_launch_permit(
         self,
-        session_id: str,
-        installation_key_hash: str,
+        authenticated_transport: object,
+        correlation_id: str,
         challenge: CoreChallenge,
-        command: object,
+        configuration_digest: str,
+        process_name: str,
+        target_pid: int,
+        mode: str,
+        product: str,
+        scope: str,
         timeout: float,
     ) -> OpaquePermit: ...
 
@@ -324,12 +374,21 @@ class AuthorizedCoreOrchestrator:
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                 )
                 self._require_target(target)
+                target_bound_command = TargetBoundStartCommand.from_opaque(
+                    command,
+                    target_pid=self._target_pid(target),
+                )
                 permit = self._invoke_adapter(
                     lambda: self._permits.issue_launch_permit(
-                        access_context.session_id,
-                        access_context.installation_key_hash,
+                        access_context.authenticated_transport,
+                        self._correlation_id(),
                         challenge,
-                        command,
+                        target_bound_command.configuration_digest,
+                        target_bound_command.process_name,
+                        target_bound_command.target_pid,
+                        target_bound_command.mode,
+                        "neko-family-proxy",
+                        "proxy:start",
                         self._timeouts.permit,
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
@@ -339,7 +398,7 @@ class AuthorizedCoreOrchestrator:
 
                 status = self._invoke_adapter(
                     lambda: self._channel.start_authorized(
-                        command,
+                        target_bound_command,
                         permit,
                         self._correlation_id(),
                         self._timeouts.start,
@@ -363,6 +422,13 @@ class AuthorizedCoreOrchestrator:
         if status is None:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         return status
+
+    @staticmethod
+    def _target_pid(target: object) -> int:
+        pid = getattr(target, "pid", None)
+        if isinstance(pid, bool) or not isinstance(pid, int):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_UNAVAILABLE)
+        return pid
 
     def _require_target(self, target: object) -> None:
         running = self._invoke_adapter(

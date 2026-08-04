@@ -1,5 +1,9 @@
 # NekoProxyCore — S0 Security Contract Freeze Request
 
+> **HISTORICAL — REQUEST SUPERSEDED BY A LATER BASELINE.** Use
+> [`../neko-auth-s0-production-handoff.md`](../neko-auth-s0-production-handoff.md)
+> for current repository guidance.
+
 วันที่จัดทำ: 2026-08-03
 Repository: `D:\NekoProxyCore`
 Branch: `feature/neko-headless`

@@ -14,7 +14,7 @@
 
 **Source of truth:** `Backend Security/security-contract/NEKO-AUTH-S0/s0-rc1/`
 
-**Central handoff:** `docs/NEKO-AUTH-S0 CENTRAL PRODUCTION ADAPTER HANDOFF.md`
+**Central handoff:** [`neko-auth-s0-production-handoff.md`](neko-auth-s0-production-handoff.md)
 
 > เอกสารนี้แปลง central handoff เป็นข้อกำหนดฝั่ง Launcher เท่านั้น ไม่ใช่ production release approval หากข้อความใดขัดกับ package `s0-rc1` ให้ยึด package เป็น source of truth และหยุด production wiring จนกว่า owner จะ reconcile สำเร็จ
 
@@ -608,9 +608,9 @@ Launcher handoffต้องมี:
 
 Repository references:
 
-- `docs/NEKO-AUTH-S0 CENTRAL PRODUCTION ADAPTER HANDOFF.md`
-- `docs/LAUNCHER_S0_CONNECTOR_HANDOFF.md`
-- `docs/LAUNCHER_CORE_AUTHORIZATION_ADAPTER_HANDOFF.md`
+- [`neko-auth-s0-production-handoff.md`](neko-auth-s0-production-handoff.md)
+- `docs/archive/launcher-s0-connector-handoff.md` (historical)
+- `docs/archive/launcher-core-authorization-adapter-draft.md` (historical)
 - `launcher/src/neko_launcher/application/authorized_core.py`
 - `launcher/src/neko_launcher/infrastructure/unavailable_gateway.py`
 - `launcher/src/neko_launcher/main.py`

@@ -1,5 +1,9 @@
 # Launcher release candidate — 29 July 2026
 
+> **HISTORICAL RELEASE EVIDENCE — NOT CURRENT.** Artifact hash, test counts,
+> deployment IDs, and warnings below describe only the 29 July 2026 candidate.
+> See [`../README.md`](../README.md) for current documentation status.
+
 ## Artifact
 
 - Path: `launcher/dist/NekoLauncher.exe`

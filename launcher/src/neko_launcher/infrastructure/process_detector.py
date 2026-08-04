@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import csv
+import ctypes
 import os
 import subprocess
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 from threading import Event
 from time import monotonic
 from typing import Callable, FrozenSet, Sequence
@@ -19,6 +21,7 @@ PSO2_PROCESS_NAMES: FrozenSet[str] = frozenset({"pso2.exe"})
 class TargetProcess:
     pid: int
     image_name: str
+    creation_identity: int
 
 
 class ExactPso2TargetDetector:
@@ -43,7 +46,7 @@ class ExactPso2TargetDetector:
         deadline = monotonic() + timeout
         while not cancellation.is_set():
             for process in self._snapshot():
-                if process.image_name.casefold() == "pso2.exe":
+                if process.image_name == "pso2.exe":
                     return process
             remaining = deadline - monotonic()
             if remaining <= 0:
@@ -54,7 +57,8 @@ class ExactPso2TargetDetector:
     def is_same_target_still_running(self, target: TargetProcess) -> bool:
         return any(
             process.pid == target.pid
-            and process.image_name.casefold() == "pso2.exe"
+            and process.image_name == "pso2.exe"
+            and process.creation_identity == target.creation_identity
             for process in self._snapshot()
         )
 
@@ -126,9 +130,12 @@ def _snapshot_processes() -> tuple[TargetProcess, ...]:
                 if len(row) < 2:
                     continue
                 try:
-                    processes.append(TargetProcess(int(row[1]), row[0]))
+                    pid = int(row[1])
                 except ValueError:
                     continue
+                creation_identity = _windows_creation_identity(pid)
+                if creation_identity is not None:
+                    processes.append(TargetProcess(pid, row[0], creation_identity))
             return tuple(processes)
 
         result = subprocess.run(
@@ -143,9 +150,60 @@ def _snapshot_processes() -> tuple[TargetProcess, ...]:
             if not separator:
                 continue
             try:
-                processes.append(TargetProcess(int(pid), image.strip()))
+                numeric_pid = int(pid)
             except ValueError:
                 continue
+            creation_identity = _posix_creation_identity(numeric_pid)
+            if creation_identity is not None:
+                processes.append(
+                    TargetProcess(numeric_pid, image.strip(), creation_identity)
+                )
         return tuple(processes)
     except Exception:
         return ()
+
+
+def _windows_creation_identity(pid: int) -> int | None:
+    """Return the immutable Windows process creation FILETIME, failing closed."""
+    process_query_limited_information = 0x1000
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetProcessTimes.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    )
+    kernel32.GetProcessTimes.restype = ctypes.c_bool
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes.c_bool
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return None
+    creation = ctypes.c_uint64()
+    exit_time = ctypes.c_uint64()
+    kernel = ctypes.c_uint64()
+    user = ctypes.c_uint64()
+    try:
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation),
+            ctypes.byref(exit_time),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        ):
+            return None
+        return creation.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _posix_creation_identity(pid: int) -> int | None:
+    """Development-only process start ticks; production launcher targets Windows."""
+    try:
+        fields = (Path(f"/proc/{pid}/stat").read_text(encoding="ascii")).split()
+        return int(fields[21])
+    except (OSError, ValueError, IndexError):
+        return None

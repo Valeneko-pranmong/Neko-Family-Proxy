@@ -1,5 +1,9 @@
 # Launcher S0 Consumer Connector Handoff
 
+> **HISTORICAL — SUPERSEDED.** Retained as commit-specific evidence only. Use
+> [`../launcher-production-adapters.md`](../launcher-production-adapters.md) for
+> current Launcher requirements.
+
 **Work item:** `Launcher-S0-Consumer-01`
 **Delivery status:** `DESIGN READY / IMPLEMENTATION PARTIAL`
 **Repository:** `D:\Neko-Family-Proxy`
@@ -17,7 +21,7 @@
 
 ### Task A — Launcher-owned S0 proposal
 
-- `docs/LAUNCHER_S0_CONTRACT_PROPOSAL.md`
+- `docs/archive/launcher-s0-contract-proposal.md` (historical)
 
 The proposal marks every value as `PROPOSED`, separates Launcher ownership from Core/Backend/Security decisions, and supplies:
 

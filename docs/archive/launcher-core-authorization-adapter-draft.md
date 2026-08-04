@@ -1,5 +1,9 @@
 # Launcher ↔ Backend ↔ NekoProxyCore Authorization Adapter Handoff
 
+> **HISTORICAL — SUPERSEDED DRAFT.** Use
+> [`../neko-auth-s0-production-handoff.md`](../neko-auth-s0-production-handoff.md)
+> for the current technical baseline and stop rules.
+
 วันที่จัดทำ: 2026-08-03
 ผู้รับผิดชอบปลายทาง: Launcher, Backend, Security และ NekoProxyCore teams
 เอกสารอ้างอิงหลัก: `tools/STEP_E_SECURITY_AUTHORIZATION_REPORT.md`

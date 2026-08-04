@@ -1,6 +1,9 @@
-# ProxyCore runtime distribution
+# NekoProxyCore runtime distribution
 
-`ProxyCore` is a separately licensed runtime and is never committed to this
+**Status:** Current policy — reviewed 4 August 2026. Production runtime startup
+remains blocked by the `NEKO-AUTH-S0` release gates.
+
+`NekoProxyCore` is a separately licensed runtime and is never committed to this
 repository or published in GitHub release artifacts. An approved local
 distribution build may embed the runtime into a one-file launcher; the runtime
 must still be delivered through the team's access-controlled channel.
@@ -13,13 +16,17 @@ must still be delivered through the team's access-controlled channel.
 3. Verify the checksum before extraction.
 4. For a separate-runtime installation, extract the approved runtime to:
 
-   `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\ProxyCore.exe`
+   `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe`
 
 5. Keep customer data, Supabase secret/service-role keys, and private signing
    keys out of the archive.
 6. Revoke and replace the archive immediately if its checksum, licensing
    status, or provenance cannot be verified.
 
-Developers may override the location with `NEKO_PROXY_CORE_PATH`. The public
-release pipeline builds only the launcher and installer and fails if a tracked
-`ProxyCore` file is detected.
+The current launcher resolves a bundled runtime first and then the local path
+above. It does not implement an environment-variable path override. The public
+release pipeline builds only the launcher and fails if a tracked `ProxyCore`
+file is detected.
+
+Embedding or installing the runtime does not bypass the fail-closed production
+authorization gateway.

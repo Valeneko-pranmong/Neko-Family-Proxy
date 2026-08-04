@@ -1,7 +1,12 @@
 # Neko Family Launcher
 
 Desktop launcher for Supabase username/password membership, entitlement checks,
-ProxyCore, and user-selected PSO2 Tweaker startup.
+launcher-session control, and user-selected PSO2 Tweaker configuration.
+
+> **Current status (4 August 2026):** production Core startup is intentionally
+> fail closed through `AuthorizationPendingProxyGateway`. The S0 authorization
+> contract is not fully accepted or released, so the current production
+> composition does not start NekoProxyCore or Tweaker.
 
 ## Set up
 
@@ -28,10 +33,10 @@ python -m neko_launcher.main
    part of the Launcher.
 4. Change the password from the Launcher after signing in.
 5. Check remaining entitlement time or redeem a coupon.
-6. Start the embedded ProxyCore runtime.
-7. Select `Tweaker.exe`; the launcher remembers the path.
-8. Start Tweaker only while authentication, entitlement, session, and Proxy
-   checks remain valid.
+6. Select `Tweaker.exe`; the launcher remembers the path.
+7. Request startup. The current fail-closed gateway rejects the request until
+   the production authorization adapters and Core contract pass all release
+   gates.
 
 ## Validation
 
@@ -48,12 +53,18 @@ python -m pytest -q -m integration
 
 ## One-file build
 
-An approved `../ProxyCore/` directory must exist during the build:
+An approved `../ProxyCore/` directory may be present as a controlled local build
+input. The current build specification embeds the directory when it exists:
 
 ```powershell
 python -m PyInstaller --clean --noconfirm NekoLauncher.spec
 ```
 
-The output is `dist/NekoLauncher.exe`. ProxyCore and the publishable client
-configuration are embedded. The publishable key is extractable by design;
-never embed a secret/service-role key.
+The output is `dist/NekoLauncher.exe`. If `../ProxyCore/` exists, its contents
+are embedded; that does not enable production startup or constitute release
+approval. The publishable client configuration is embedded and extractable by
+design; never embed a secret/service-role key.
+
+See [`../docs/build-windows-executable.md`](../docs/build-windows-executable.md)
+and [`../docs/README.md`](../docs/README.md) for the maintained build procedure
+and documentation status.

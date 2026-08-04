@@ -18,6 +18,7 @@ from neko_launcher.application.authorized_core import (
     OpaqueStartCommand,
     OnlineHeartbeatLaunchPrecondition,
     OrchestrationTimeouts,
+    TargetBoundStartCommand,
 )
 
 
@@ -27,11 +28,38 @@ class Target:
 
 
 def valid_access_context() -> LaunchAccessContext:
-    return LaunchAccessContext(True, True, "session", "installation")
+    return LaunchAccessContext(True, True, "session", "installation", object())
 
 
 def valid_command() -> OpaqueStartCommand:
     return OpaqueStartCommand("profile-0", "server-0")
+
+
+def test_target_bound_command_builds_exact_canonical_bytes_and_digest() -> None:
+    command = TargetBoundStartCommand.from_opaque(valid_command(), target_pid=4242)
+
+    assert command.canonical_bytes == (
+        b"protocolVersion=2\n"
+        b"mode=ProcessMode\n"
+        b"processName=pso2.exe\n"
+        b"targetPid=4242\n"
+        b"profileReference=profile-0\n"
+        b"serverReference=server-0\n"
+    )
+    assert command.configuration_digest == (
+        "92ac70d0f9b100ba664f2bb205b2c042bc1058f779e94e759822d906ea880871"
+    )
+
+
+@pytest.mark.parametrize("target_pid", [True, 0, 4_294_967_296, "4242"])
+def test_target_bound_command_rejects_invalid_pid_types_and_bounds(
+    target_pid: object,
+) -> None:
+    with pytest.raises(AuthorizedCoreError, match="start configuration is unavailable"):
+        TargetBoundStartCommand.from_opaque(
+            valid_command(),
+            target_pid=target_pid,  # type: ignore[arg-type]
+        )
 
 
 class FakeDetector:
@@ -70,6 +98,7 @@ class FakeChannel:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
         self.status = CoreStatus(CoreStatusKind.RUNNING)
+        self.start_command: object | None = None
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
         self.calls.append("core.challenge")
@@ -83,6 +112,7 @@ class FakeChannel:
         timeout: float,
     ) -> CoreStatus:
         assert "sentinel-permit" not in repr(permit)
+        self.start_command = command
         self.calls.append("core.start")
         return self.status
 
@@ -110,15 +140,33 @@ class FakeLaunchPrecondition:
 class FakePermitGateway:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
+        self.request: dict[str, object] | None = None
 
     def issue_launch_permit(
         self,
-        session_id: str,
-        installation_key_hash: str,
+        authenticated_transport: object,
+        correlation_id: str,
         challenge: CoreChallenge,
-        command: object,
+        configuration_digest: str,
+        process_name: str,
+        target_pid: int,
+        mode: str,
+        product: str,
+        scope: str,
         timeout: float,
     ) -> OpaquePermit:
+        self.request = {
+            "authenticated_transport": authenticated_transport,
+            "correlation_id": correlation_id,
+            "challenge": challenge,
+            "configuration_digest": configuration_digest,
+            "process_name": process_name,
+            "target_pid": target_pid,
+            "mode": mode,
+            "product": product,
+            "scope": scope,
+            "timeout": timeout,
+        }
         self.calls.append("backend.permit")
         return OpaquePermit("sentinel-permit")
 
@@ -329,10 +377,11 @@ def test_no_target_never_starts_core_or_requests_permit() -> None:
 @pytest.mark.parametrize(
     "access_context",
     [
-        LaunchAccessContext(False, True, "session", "installation"),
-        LaunchAccessContext(True, False, "session", "installation"),
-        LaunchAccessContext(True, True, "", "installation"),
-        LaunchAccessContext(True, True, "session", ""),
+        LaunchAccessContext(False, True, "session", "installation", object()),
+        LaunchAccessContext(True, False, "session", "installation", object()),
+        LaunchAccessContext(True, True, "", "installation", object()),
+        LaunchAccessContext(True, True, "session", "", object()),
+        LaunchAccessContext(True, True, "session", "installation", None),
     ],
 )
 def test_invalid_local_access_context_has_no_activation_side_effects(
@@ -456,6 +505,24 @@ def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> 
         "backend.permit",
         "core.start",
     ]
+
+
+def test_authority_request_uses_target_binding_without_server_owned_identity_fields() -> None:
+    orchestrator, _, _, channel, _ = build_orchestrator()
+    permits = orchestrator._permits
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert isinstance(channel.start_command, TargetBoundStartCommand)
+    assert permits.request is not None  # type: ignore[attr-defined]
+    request = permits.request  # type: ignore[attr-defined]
+    assert request["target_pid"] == 42
+    assert request["process_name"] == "pso2.exe"
+    assert request["mode"] == "ProcessMode"
+    assert request["product"] == "neko-family-proxy"
+    assert request["scope"] == "proxy:start"
+    assert request["configuration_digest"] == channel.start_command.configuration_digest
+    assert set(request).isdisjoint({"sub", "sid", "iid", "lid", "installation_key_hash"})
 
 
 def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:

@@ -56,7 +56,7 @@ against test accounts and confirm that the `launcher` schema is exposed through
 the Data API.
 
 The required test cases are documented in
-[`SECURITY_TEST_PLAN.md`](SECURITY_TEST_PLAN.md).
+[`security-test-plan.md`](security-test-plan.md).
 
 The repository also includes an environment-gated live client test for Auth,
 Coupon replay, and launcher-session takeover. Run the manual

@@ -1,5 +1,9 @@
 # Change Log
 
+> **HISTORICAL WORK LOG — NOT A CURRENT TASK LIST.** Completed and remaining
+> items below reflect July 2026 only. Use [`../README.md`](../README.md) and the
+> current component documentation for present status.
+
 ## 29 กรกฎาคม 2026 — เปลี่ยนแผน Password Recovery
 
 ### สิ่งที่ทำในรอบนี้
