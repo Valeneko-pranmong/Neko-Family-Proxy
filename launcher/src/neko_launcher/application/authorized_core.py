@@ -302,14 +302,12 @@ class AuthorizedCoreOrchestrator:
         process: CoreProcessAdapter,
         channel: CoreControlChannel,
         permits: LaunchPermitGateway,
-        launch_precondition: LaunchPrecondition,
         detector: ProcessTargetDetector[object],
         timeouts: OrchestrationTimeouts,
     ) -> None:
         self._process = process
         self._channel = channel
         self._permits = permits
-        self._launch_precondition = launch_precondition
         self._detector = detector
         self._timeouts = timeouts
         self._single_flight = Lock()
@@ -340,17 +338,6 @@ class AuthorizedCoreOrchestrator:
                 if target is None:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_UNAVAILABLE)
                 self._require_not_cancelled(cancellation)
-
-                self._invoke_adapter(
-                    lambda: self._launch_precondition.require_fresh(
-                        access_context.session_id,
-                        access_context.installation_key_hash,
-                        self._timeouts.permit,
-                    ),
-                    AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE,
-                )
-                self._require_not_cancelled(cancellation)
-                self._require_target(target)
 
                 # Cleanup is safe for an unowned/no-process state and must run even
                 # when an adapter creates the host and then reports a failure.

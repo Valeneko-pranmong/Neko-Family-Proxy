@@ -187,6 +187,59 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             return False
         return response.data is True
 
+    def issue_launch_permit(
+        self,
+        authenticated_transport: object,
+        correlation_id: str,
+        challenge: "CoreChallenge",
+        configuration_digest: str,
+        process_name: str,
+        target_pid: int,
+        mode: str,
+        product: str,
+        scope: str,
+        timeout: float,
+    ) -> "OpaquePermit":
+        """Call Backend Edge Function to obtain an opaque RS256-signed permit.
+
+        The Launcher never decodes or verifies the permit; Core is the sole
+        verifier.  The authenticated Supabase session provides the Bearer
+        token automatically.
+        """
+        from neko_launcher.application.authorized_core import (
+            AuthorizedCoreError,
+            AuthorizedCoreErrorCode,
+            OpaquePermit,
+        )
+
+        try:
+            response = self._client.functions.invoke(
+                "issue_launch_permit",
+                invoke_options={
+                    "body": {
+                        "challenge": challenge.value,
+                        "configuration_digest": configuration_digest,
+                        "process_name": process_name,
+                        "target_pid": target_pid,
+                        "mode": mode,
+                        "product": product,
+                        "scope": scope,
+                    },
+                },
+            )
+        except Exception:
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE)
+        try:
+            import json
+
+            data = json.loads(response) if isinstance(response, (str, bytes)) else response
+            permit_value = data.get("permit") if isinstance(data, dict) else None
+        except Exception:
+            permit_value = None
+        if not permit_value or not isinstance(permit_value, str):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE)
+        return OpaquePermit(permit_value)
+
     def redeem_coupon(self, code: str) -> CouponRedemption:
         try:
             response = (

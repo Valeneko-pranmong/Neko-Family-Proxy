@@ -16,10 +16,19 @@ from neko_launcher.infrastructure.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.secure_store import KeyringSecureStore
 from neko_launcher.infrastructure.supabase_gateway import SupabaseGateway
-
 from neko_launcher.ui.app_window import AppWindow
-
-
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreOrchestrator,
+    LaunchAccessContext,
+    OpaqueStartCommand,
+    OrchestrationTimeouts,
+)
+from neko_launcher.infrastructure.authorized_proxy_gateway import AuthorizedProxyGateway
+from neko_launcher.infrastructure.core_control_channel import NamedPipeCoreControlChannel
+from neko_launcher.infrastructure.core_process import WindowsCoreProcessAdapter
+from neko_launcher.infrastructure.process_detector import ExactPso2TargetDetector
+from neko_launcher.application.production_authorization import CURRENT_PRODUCTION_AUTHORIZATION
+from neko_launcher.domain.models import AuthStatus, EntitlementStatus
 _INSTANCE_MUTEX_NAME = "Local\\NekoFamilyProxyLauncher"
 _ERROR_ALREADY_EXISTS = 183
 
@@ -38,9 +47,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
     event_bus = EventBus()
-    proxy_manager = create_production_proxy_gateway()
     game_manager = GameProcessManager()
-    controller = ApplicationController(event_bus, proxy_manager, game_manager)
     secure_store = KeyringSecureStore()
     installation = LocalInstallationIdentity(secure_store)
     gateway = SupabaseGateway(
@@ -48,6 +55,55 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config.supabase_publishable_key,
         secure_store,
     )
+
+    if CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
+        core_process = WindowsCoreProcessAdapter(config.proxy_core_path)
+        core_channel = NamedPipeCoreControlChannel("NekoProxyCoreControl")
+        detector = ExactPso2TargetDetector()
+        timeouts = OrchestrationTimeouts(
+            target=30.0,
+            control_channel=10.0,
+            challenge=5.0,
+            permit=10.0,
+            start=10.0,
+        )
+        orchestrator = AuthorizedCoreOrchestrator(
+            process=core_process,
+            channel=core_channel,
+            permits=gateway,
+            detector=detector,
+            timeouts=timeouts,
+        )
+
+        def access_context_provider() -> LaunchAccessContext:
+            state = controller.state
+            return LaunchAccessContext(
+                authenticated=(state.auth_status == AuthStatus.AUTHENTICATED),
+                entitlement_active=(
+                    state.entitlement is not None
+                    and state.entitlement.status == EntitlementStatus.ACTIVE
+                ),
+                session_id=state.session_id or "",
+                installation_key_hash=installation.key_hash,
+                authenticated_transport=gateway,
+            )
+
+        def command_provider() -> OpaqueStartCommand:
+            # Minimal V1 uses a hardcoded profile reference
+            return OpaqueStartCommand(
+                profile_reference="profile-0",
+                server_reference="server-0",
+            )
+
+        proxy_manager = AuthorizedProxyGateway(
+            orchestrator=orchestrator,
+            access_context_provider=access_context_provider,
+            command_provider=command_provider,
+        )
+    else:
+        proxy_manager = create_production_proxy_gateway()
+
+    controller = ApplicationController(event_bus, proxy_manager, game_manager)
     service = LauncherService(
         controller,
         gateway,
