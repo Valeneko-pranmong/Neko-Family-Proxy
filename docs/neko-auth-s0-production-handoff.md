@@ -5,7 +5,7 @@
 **Contract revision:** `s0-rc1`
 **Contract package SHA-256:** `6697351b6b280afc566fedaaa1a6cfe207b1ea1d803c2eb613b4c1a891e192df`
 **Canonical configuration SHA-256 (synthetic fixture):** `92ac70d0f9b100ba664f2bb205b2c042bc1058f779e94e759822d906ea880871`
-**สถานะ:** `BACKEND/SECURITY TECHNICAL BASELINE APPROVED — LAUNCHER/CORE ACCEPTANCE PENDING — PRODUCTION RELEASE BLOCKED`
+**สถานะ:** `FAIL-CLOSED RELEASE GATE IMPLEMENTED/LOCALLY VERIFIED — LAUNCHER/CORE ACCEPTANCE PENDING — PRODUCTION RELEASE BLOCKED`
 **Source package:** `Backend Security/security-contract/NEKO-AUTH-S0/s0-rc1/`
 
 > เอกสารนี้เป็น implementation handoff กลางที่ pin กับ package ข้างต้น ไม่ใช่ production release approval ไม่มี production endpoint, private/signing key, bearer token, permit, credential, customer/session/installation identifier หรือ raw proxy configuration ทีมใดพบว่าข้อความในเอกสารเดิมขัดกับ package `s0-rc1` ให้ยึด package เป็น source of truth และหยุด production wiring จนกว่าจะ reconcile สำเร็จ
@@ -811,3 +811,33 @@ Connector รับได้เมื่อ source, tests, artifact identity, co
 ## Final decision
 
 เอกสารนี้ supersede คำแนะนำ adapter เดิมที่ขัดกับ `s0-rc1` แต่ไม่เปลี่ยนสถานะ approvals: Backend/Security technical baselineพร้อมแล้ว; Launcher/Core acceptance, implementation, S1, real E2E และ Release approvalยังต้องส่งหลักฐานจริง Production wiringและreleaseยัง `BLOCKED` จน checklist §19 ผ่านครบ
+
+---
+
+## 22. 2026-08-05 fail-closed production-composition progress
+
+ตรวจจาก `E:\Github\Neko-Family-Proxy` branch `main` ที่
+`1ea639ff042e06bbea57d0f46e93fd0e7f718970` ซึ่งตรงกับ `origin/main` ก่อนแก้ไข:
+
+- เพิ่ม `ProductionAuthorizationGate` ที่ pin `NEKO-AUTH-S0/s0-rc1` และ package SHA-256 ข้างต้น
+- ระบุ blocker ที่ยังเปิดแบบ machine-readable และให้ `is_ready=false` จน blocker เป็นศูนย์
+- ให้ Launcher composition root เรียก `create_production_proxy_gateway()` แทนการสร้าง pending gateway โดยตรง
+- factory ปัจจุบันคืน `AuthorizationPendingProxyGateway` เท่านั้น จึงไม่มี partial/implicit production enablement
+- หาก gate ถูกตั้ง ready ก่อนมี approved production adapters factory จะ throw และ fail closed แทนการเปิด start
+
+หลักฐาน fresh local:
+
+```text
+uv run --frozen --extra dev python -m ruff check src tests
+All checks passed
+
+uv run --frozen --extra dev python -m pytest -q -m "not integration"
+112 passed, 2 deselected
+
+python scripts/check_repository_safety.py
+Repository safety check passed
+```
+
+ไฟล์ implementation/test ของ progress นี้ยังเป็น working-tree changes และยังไม่มี commit/release approval
+ผลนี้พิสูจน์เฉพาะ contract pinning และ fail-closed composition; ไม่ได้พิสูจน์ Backend issuance,
+approved public-key release, `start → Running`, renewal, S1 access, signed bundle หรือ production readiness

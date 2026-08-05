@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 
 from neko_launcher.application.controller import ApplicationController
+from neko_launcher.application.production_authorization import (
+    create_production_proxy_gateway,
+)
 from neko_launcher.application.services import LauncherService
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.event_bus import EventBus
@@ -13,9 +16,7 @@ from neko_launcher.infrastructure.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.secure_store import KeyringSecureStore
 from neko_launcher.infrastructure.supabase_gateway import SupabaseGateway
-from neko_launcher.infrastructure.unavailable_gateway import (
-    AuthorizationPendingProxyGateway,
-)
+
 from neko_launcher.ui.app_window import AppWindow
 
 
@@ -37,10 +38,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
     event_bus = EventBus()
-    # Production authorization protocol/Backend issuance is intentionally not
-    # guessed from the draft handoff. Keep startup fail closed until the frozen
-    # adapters can replace this gateway.
-    proxy_manager = AuthorizationPendingProxyGateway()
+    proxy_manager = create_production_proxy_gateway()
     game_manager = GameProcessManager()
     controller = ApplicationController(event_bus, proxy_manager, game_manager)
     secure_store = KeyringSecureStore()
