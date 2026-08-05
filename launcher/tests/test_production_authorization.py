@@ -1,12 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from neko_launcher.application.production_authorization import (
     CURRENT_PRODUCTION_AUTHORIZATION,
-    ProductionAuthorizationBlocker,
     create_production_proxy_gateway,
-)
-from neko_launcher.infrastructure.unavailable_gateway import (
-    AuthorizationPendingProxyGateway,
 )
 
 
@@ -20,18 +18,16 @@ def test_current_release_pins_the_same_s0_contract_as_core() -> None:
     )
 
 
-def test_current_release_cannot_enable_partial_production_authorization() -> None:
+def test_current_release_enables_complete_minimal_v1_authorization() -> None:
     gate = CURRENT_PRODUCTION_AUTHORIZATION
 
-    assert not gate.is_ready
-    assert set(gate.blockers) == {
-        ProductionAuthorizationBlocker.BACKEND_PERMIT_ISSUER_UNAVAILABLE,
-        ProductionAuthorizationBlocker.PUBLIC_KEY_RELEASE_UNAVAILABLE,
-        ProductionAuthorizationBlocker.PRODUCTION_ADAPTERS_INCOMPLETE,
-    }
+    assert gate.is_ready
+    assert gate.blockers == ()
 
 
-def test_current_release_composes_only_the_fail_closed_gateway() -> None:
-    gateway = create_production_proxy_gateway()
-
-    assert isinstance(gateway, AuthorizationPendingProxyGateway)
+def test_ready_release_rejects_the_pending_gateway_factory() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="approved production authorization adapters are composed in main",
+    ):
+        create_production_proxy_gateway()

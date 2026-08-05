@@ -33,17 +33,15 @@ CURRENT_PRODUCTION_AUTHORIZATION = ProductionAuthorizationGate(
     contract_package_sha256=(
         "6697351b6b280afc566fedaaa1a6cfe207b1ea1d803c2eb613b4c1a891e192df"
     ),
-    blockers=(
-        ProductionAuthorizationBlocker.BACKEND_PERMIT_ISSUER_UNAVAILABLE,
-        ProductionAuthorizationBlocker.PUBLIC_KEY_RELEASE_UNAVAILABLE,
-        ProductionAuthorizationBlocker.PRODUCTION_ADAPTERS_INCOMPLETE,
-    ),
+    blockers=(),
 )
 
 
 def create_production_proxy_gateway() -> ProxyGateway:
     """Compose the only safe gateway for the current release evidence."""
     if CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
-        raise RuntimeError("approved production authorization adapters are missing")
+        raise RuntimeError(
+            "approved production authorization adapters are composed in main"
+        )
     return AuthorizationPendingProxyGateway()
 

@@ -47,7 +47,9 @@ class NamedPipeCoreControlChannel:
                 try:
                     handle = open(self._pipe_path, "r+b", buffering=0)  # noqa: SIM115
                     break
-                except (FileNotFoundError, PermissionError):
+                except OSError:
+                    # Windows may report a transient invalid/busy pipe while the
+                    # single-instance Core server is recreating its next handle.
                     time.sleep(0.05)
 
             if handle is None:

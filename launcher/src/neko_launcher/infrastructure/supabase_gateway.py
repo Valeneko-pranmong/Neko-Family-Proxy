@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from supabase import Client, ClientOptions, create_client
@@ -21,6 +21,9 @@ from neko_launcher.domain.models import (
 )
 
 from .secure_store import SupabaseAuthStorage
+
+if TYPE_CHECKING:
+    from neko_launcher.application.authorized_core import CoreChallenge, OpaquePermit
 
 
 class SupabaseGateway(AuthGateway, EntitlementGateway):
