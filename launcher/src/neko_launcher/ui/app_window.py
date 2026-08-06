@@ -77,11 +77,13 @@ class AppWindow:
         self._tray_actions: SimpleQueue[str] = SimpleQueue()
 
         self.root = ctk.CTk()
+        self.root.withdraw()
         # A custom title bar gives us exactly two controls: minimize and close.
         # The custom title bar remains visual-only, while the window title
         # keeps the launcher identifiable to Windows and accessibility tools.
         self.root.title("Neko Family Proxy")
-        self.root.overrideredirect(True)
+        # Ensure the window appears in the taskbar by NOT using overrideredirect(True).
+        # We will style the native title bar instead to make it borderless.
         self.root.resizable(False, False)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
@@ -191,10 +193,10 @@ class AppWindow:
         x = max(0, (screen_w - width) // 2)
         y = max(0, (screen_h - height) // 2)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        # Geometry changes are asynchronous in Tk.  Flush the native resize
-        # before reading winfo_width/height to build the Windows clipping region.
+        # Geometry changes are asynchronous in Tk.  Flush the native resize.
+        # Note: Do not apply rounded shape here since the window is withdrawn and
+        # winfo_width() will return an incorrect default size, clipping the UI.
         self.root.update_idletasks()
-        self._apply_rounded_window_shape(self.root)
 
     @staticmethod
     def _apply_rounded_window_shape(
@@ -229,7 +231,10 @@ class AppWindow:
         """Ensure a borderless window is visible after Windows maps it."""
         if not self.root.winfo_exists() or self._closing:
             return
+        self._style_native_title_bar()
         self.root.deiconify()
+        self.root.update_idletasks()
+        self._apply_rounded_window_shape(self.root)
         self.root.attributes("-topmost", True)
         self.root.lift()
         self.root.focus_force()
@@ -304,7 +309,7 @@ class AppWindow:
             self.root,
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
-            border_width=1,
+            border_width=2,
             corner_radius=20,
         )
         shell.pack(fill="both", expand=True, padx=10, pady=8)
@@ -319,14 +324,14 @@ class AppWindow:
             try:
                 self._logo_image = ctk.CTkImage(
                     Image.open(logo_path),
-                    size=(110, 38),
+                    size=(260, 90),
                 )
                 ctk.CTkLabel(
                     brand,
                     image=self._logo_image,
                     text="",
                     fg_color="transparent",
-                ).pack(anchor="w")
+                ).pack(anchor="center")
             except Exception:
                 self._add_heading(brand)
         else:
@@ -335,26 +340,18 @@ class AppWindow:
         ctk.CTkLabel(
             brand,
             text="NEKO FAMILY PROXY PSO2NGS",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=18, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", pady=(2, 0))
+        ).pack(anchor="center", pady=(10, 0))
         self._header_message = ctk.CTkLabel(
             brand,
-            text="บัญชีและการใช้งาน",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            text="High Performance & Low Latency",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         )
-        self._header_message.pack(anchor="w")
+        self._header_message.pack(anchor="center")
 
-        self._status_badge = ctk.CTkLabel(
-            header,
-            textvariable=self._status,
-            fg_color=PALETTE.surface,
-            corner_radius=10,
-            text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=10, weight="bold"),
-        )
-        self._status_badge.pack(side="right", padx=(6, 0), pady=2, ipadx=6, ipady=3)
+
 
         self._content = ctk.CTkFrame(shell, fg_color="transparent")
         self._content.pack(fill="both", expand=True, padx=6, pady=(0, 2))
@@ -376,22 +373,73 @@ class AppWindow:
             return
         error = self._error.get().strip()
         notice = self._notice.get().strip()
-        message = error or notice or "บัญชีและการใช้งาน"
-        # This label deliberately replaces the fixed header subtitle.  Adding
-        # a message row to the packed layout caused the program cards to be
-        # pushed below the fixed-height launcher on short displays.
-        if len(message) > 48:
-            message = f"{message[:47]}…"
+        message = error or notice
+
         self._header_message.configure(
-            text=message,
-            text_color=(
-                PALETTE.danger
-                if error
-                else PALETTE.success
-                if notice
-                else PALETTE.text_muted
-            ),
+            text="High Performance & Low Latency",
+            text_color=PALETTE.text_muted,
         )
+
+        if message:
+            if len(message) > 48:
+                message = f"{message[:47]}…"
+            self._show_toast(message, is_error=bool(error))
+        else:
+            self._hide_toast()
+
+    def _show_toast(self, message: str, is_error: bool) -> None:
+        if not hasattr(self, "_toast_frame"):
+            self._toast_frame = ctk.CTkFrame(
+                self.root,
+                corner_radius=20,
+                fg_color=PALETTE.surface,
+                bg_color="transparent",
+                border_width=0,
+            )
+            self._toast_label = ctk.CTkLabel(
+                self._toast_frame,
+                text="",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
+                text_color=PALETTE.text,
+            )
+            self._toast_label.pack(side="left", padx=(30, 14), pady=14)
+
+            self._toast_close_btn = ctk.CTkButton(
+                self._toast_frame,
+                text="×",
+                width=28,
+                height=28,
+                corner_radius=14,
+                fg_color="black",
+                text_color="white",
+                hover_color="#333333",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+                command=self._hide_toast
+            )
+            self._toast_close_btn.pack(side="left", padx=(0, 10), pady=14)
+            self._toast_timer = None
+
+        self._toast_label.configure(
+            text=message,
+            text_color=PALETTE.danger if is_error else PALETTE.text,
+        )
+
+        self._toast_frame.place(relx=0.5, rely=1.0, y=-20, anchor="s")
+        self._toast_frame.lift()
+
+        if self._toast_timer:
+            self.root.after_cancel(self._toast_timer)
+        self._toast_timer = self.root.after(5000, self._hide_toast)
+
+    def _hide_toast(self) -> None:
+        if hasattr(self, "_toast_frame"):
+            self._toast_frame.place_forget()
+            if self._toast_timer:
+                self.root.after_cancel(self._toast_timer)
+                self._toast_timer = None
+        
+        # Note: Do not call self._error.set("") here as it will trigger an infinite trace loop
+        # Instead we just hide the UI until the next set("") clears it, or set("msg") updates it.
 
     def _build_window_controls(self, drag_surface: ctk.CTkBaseClass) -> None:
         controls = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -478,84 +526,226 @@ class AppWindow:
             fg_color="transparent",
         )
         intro = self._card(self._auth_view)
-        intro.pack_configure(fill="both", expand=True)
-        ctk.CTkLabel(
-            intro,
-            text="เข้าสู่ระบบและสมัครสมาชิก",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.text,
-        ).pack(anchor="w", padx=14, pady=(10, 6))
+        intro.pack_configure(fill="both", expand=True, padx=8, pady=8)
 
-        self._auth_panel = ctk.CTkTabview(
-            intro,
-            fg_color=PALETTE.surface,
-            segmented_button_selected_color=PALETTE.primary,
-            segmented_button_selected_hover_color=PALETTE.primary_hover,
-            text_color=PALETTE.text,
-            corner_radius=12,
+        top_row = ctk.CTkFrame(intro, fg_color="transparent")
+        top_row.pack(fill="x", padx=14, pady=(10, 0))
+        
+        self._auth_hint = ctk.CTkLabel(
+            top_row,
+            text="เข้าสู่ระบบเพื่อเริ่มใช้งาน",
+            text_color=PALETTE.primary_dark,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
         )
-        self._auth_panel.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self._auth_hint.pack(side="left")
 
-        login = self._auth_panel.add("เข้าสู่ระบบ")
-        self._field_label(login, "ชื่อผู้ใช้สำหรับเข้าสู่ระบบ")
-        self._login_email_entry = self._entry(
-            login, "ชื่อผู้ใช้", self._login_email
+        self._status_badge = ctk.CTkLabel(
+            top_row,
+            textvariable=self._status,
+            text_color=PALETTE.text_muted,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+        )
+        self._status_badge.pack(side="right")
+        
+        title_frame = ctk.CTkFrame(intro, fg_color="transparent")
+        title_frame.pack(fill="x", pady=(10, 4))
+        ctk.CTkLabel(
+            title_frame,
+            text="เข้าสู่ระบบและสมัครสมาชิก",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=18, weight="bold"),
+            text_color=PALETTE.text,
+        ).pack(anchor="center")
+        ctk.CTkLabel(
+            title_frame,
+            text="— ♥ —",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
+            text_color=PALETTE.primary_soft,
+        ).pack(anchor="center", pady=(0, 6))
+
+        self._tab_controls = ctk.CTkFrame(
+            intro,
+            fg_color="#F3F4F6", # Very light gray for pill container
+            corner_radius=22,
+            height=44,
+        )
+        self._tab_controls.pack(fill="x", padx=30, pady=(10, 10))
+        self._tab_controls.pack_propagate(False)
+        
+        self._login_tab_btn = ctk.CTkButton(
+            self._tab_controls,
+            text="เข้าสู่ระบบ",
+            fg_color=PALETTE.card,
+            text_color=PALETTE.primary,
+            hover_color=PALETTE.card,
+            corner_radius=18,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            command=lambda: self._switch_tab("login"),
+        )
+        self._login_tab_btn.pack(side="left", padx=4, pady=4, expand=True, fill="both")
+        
+        self._register_tab_btn = ctk.CTkButton(
+            self._tab_controls,
+            text="สมัครสมาชิก",
+            fg_color="transparent",
+            text_color="#888888",
+            hover_color="#E5E7EB",
+            corner_radius=18,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            command=lambda: self._switch_tab("register"),
+        )
+        self._register_tab_btn.pack(side="left", padx=4, pady=4, expand=True, fill="both")
+        
+        self._login_frame = ctk.CTkFrame(intro, fg_color="transparent")
+        self._register_frame = ctk.CTkFrame(intro, fg_color="transparent")
+
+        # Login Frame
+        login = self._login_frame
+        self._field_label(login, "ชื่อผู้ใช้")
+        self._login_email_entry = self._icon_entry(
+            login, "👤", "กรอกชื่อผู้ใช้", self._login_email
         )
         self._field_label(login, "รหัสผ่าน")
-        self._login_password_entry = self._entry(
-            login, "รหัสผ่าน", self._login_password, show="●"
+        self._login_password_entry = self._icon_entry(
+            login, "🔒", "กรอกรหัสผ่าน", self._login_password, show="●", right_icon="👁"
         )
-        self._login_email_entry.configure(placeholder_text="ชื่อผู้ใช้")
         self._login_email_entry.bind("<Return>", lambda _event: self._login())
         self._login_password_entry.bind("<Return>", lambda _event: self._login())
-        self._login_button = self._primary_button(
-            login, "เข้าสู่ระบบ", self._login
-        )
-        self._login_button.pack(fill="x", padx=14, pady=(10, 6))
-        ctk.CTkLabel(
-            login,
-            text="ลืมรหัสผ่าน กรุณาติดต่อผู้ดูแลระบบ",
+        
+        options_row = ctk.CTkFrame(login, fg_color="transparent")
+        options_row.pack(fill="x", padx=14, pady=(12, 12))
+        
+        self._remember_me = ctk.CTkCheckBox(
+            options_row,
+            text="จำฉันไว้ในระบบ",
             text_color=PALETTE.text_muted,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-        ).pack(pady=(0, 12))
+            fg_color=PALETTE.primary,
+            border_color=PALETTE.primary,
+            hover_color=PALETTE.primary_hover,
+            checkbox_width=18,
+            checkbox_height=18,
+            corner_radius=4,
+        )
+        self._remember_me.pack(side="left")
+        self._remember_me.select()
+        
+        forgot_pw = ctk.CTkLabel(
+            options_row,
+            text="ลืมรหัสผ่าน?",
+            text_color=PALETTE.primary_dark,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            cursor="hand2"
+        )
+        forgot_pw.pack(side="right", pady=(2, 0))
+        forgot_pw.bind("<Button-1>", lambda e: self._notice.set("กรุณาติดต่อแอดมินเพื่อรีเซ็ตรหัสผ่าน"))
+        
+        self._login_button = self._primary_button(
+            login, "เข้าสู่ระบบ ➔", self._login
+        )
+        self._login_button.pack(side="bottom", fill="x", padx=14, pady=20)
 
-        register = self._auth_panel.add("สมัครสมาชิก")
+        # Register Frame
+        register = self._register_frame
         self._field_label(register, "ชื่อผู้ใช้")
-        self._register_email_entry = self._entry(
-            register, "เช่น tester_01", self._register_username
+        self._register_email_entry = self._icon_entry(
+            register, "👤", "กรอกชื่อผู้ใช้", self._register_username
         )
         self._field_label(register, "รหัสผ่าน (อย่างน้อย 8 ตัวอักษร)")
-        self._register_password_entry = self._entry(
-            register,
-            "รหัสผ่านอย่างน้อย 8 ตัวอักษร",
-            self._register_password,
-            show="●",
+        self._register_password_entry = self._icon_entry(
+            register, "🔒", "กรอกรหัสผ่าน", self._register_password, show="●", right_icon="👁"
         )
+        ctk.CTkLabel(
+            register,
+            text="ใช้ตัวอักษรอย่างน้อย 8 ตัวอักษร",
+            text_color=PALETTE.text_muted,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+        ).pack(anchor="w", padx=16, pady=(2, 0))
         self._field_label(register, "ยืนยันรหัสผ่าน")
-        self._register_password_confirm_entry = self._entry(
-            register,
-            "ยืนยันรหัสผ่าน",
-            self._register_password_confirm,
-            show="●",
+        self._register_password_confirm_entry = self._icon_entry(
+            register, "🔒", "กรอกรหัสผ่านอีกครั้ง", self._register_password_confirm, show="●", right_icon="👁"
         )
-        self._register_email_entry.configure(placeholder_text="เช่น tester_01")
         self._register_email_entry.bind("<Return>", lambda _event: self._register())
         self._register_password_entry.bind("<Return>", lambda _event: self._register())
         self._register_password_confirm_entry.bind(
             "<Return>", lambda _event: self._register()
         )
         self._register_button = self._primary_button(
-            register, "สร้างบัญชี", self._register
+            register, "สร้างบัญชี ➔", self._register
         )
-        self._register_button.pack(fill="x", padx=14, pady=(10, 12))
+        self._register_button.pack(side="bottom", fill="x", padx=14, pady=20)
 
-        self._auth_hint = ctk.CTkLabel(
-            self._auth_view,
-            text="เข้าสู่ระบบเพื่อเริ่มใช้งาน",
-            text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
+        self._switch_tab("login")
+
+    def _switch_tab(self, tab: str) -> None:
+        if tab == "login":
+            self._login_tab_btn.configure(
+                fg_color=PALETTE.card, text_color=PALETTE.primary, hover_color=PALETTE.card
+            )
+            self._register_tab_btn.configure(
+                fg_color="transparent", text_color="#888888", hover_color="#E5E7EB"
+            )
+            self._register_frame.pack_forget()
+            self._login_frame.pack(fill="both", expand=True)
+        else:
+            self._register_tab_btn.configure(
+                fg_color=PALETTE.primary, text_color=PALETTE.on_primary, hover_color=PALETTE.primary_hover
+            )
+            self._login_tab_btn.configure(
+                fg_color="transparent", text_color="#888888", hover_color="#E5E7EB"
+            )
+            self._login_frame.pack_forget()
+            self._register_frame.pack(fill="both", expand=True)
+
+    def _icon_entry(
+        self,
+        parent: ctk.CTkBaseClass,
+        icon: str,
+        placeholder: str,
+        variable: tk.StringVar,
+        *,
+        show: str | None = None,
+        right_icon: str | None = None,
+    ) -> ctk.CTkEntry:
+        frame = ctk.CTkFrame(
+            parent,
+            fg_color=PALETTE.card,
+            border_width=0,
+            corner_radius=10,
         )
-        self._auth_hint.pack(pady=(4, 0))
+        frame.pack(fill="x", padx=16, pady=(4, 6))
+
+        ctk.CTkLabel(
+            frame,
+            text=icon,
+            text_color="#A0A0A0",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=18),
+            width=30,
+        ).pack(side="left", padx=(10, 4), pady=4)
+
+        entry = ctk.CTkEntry(
+            frame,
+            textvariable=variable,
+            placeholder_text=placeholder,
+            show=show,
+            fg_color="transparent",
+            text_color=PALETTE.text,
+            border_width=0,
+            height=38,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13)
+        )
+        entry.pack(side="left", fill="both", expand=True, pady=4)
+        
+        if right_icon:
+            ctk.CTkLabel(
+                frame,
+                text=right_icon,
+                text_color="#C0C0C0",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=18),
+                width=30,
+            ).pack(side="right", padx=(4, 10), pady=4)
+            
+        return entry
+
 
     def _build_program_view(self) -> None:
         # Keep the original single-page layout; the outer window is scaled to
@@ -704,9 +894,8 @@ class AppWindow:
         card = ctk.CTkFrame(
             parent,
             fg_color=PALETTE.surface,
-            border_color=PALETTE.border,
-            border_width=1,
-            corner_radius=12,
+            border_width=0,
+            corner_radius=14,
         )
         card.pack(fill="x", padx=8, pady=3)
         return card
@@ -735,7 +924,7 @@ class AppWindow:
             parent,
             text=text,
             text_color=PALETTE.text,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
         ).pack(anchor="w", padx=14, pady=(6, 0))
 
     @staticmethod
@@ -750,9 +939,9 @@ class AppWindow:
             fg_color=PALETTE.primary,
             hover_color=PALETTE.primary_hover,
             text_color=PALETTE.on_primary,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
-            corner_radius=8,
-            height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            corner_radius=10,
+            height=42,
             command=command,
         )
 
@@ -1126,8 +1315,7 @@ class AppWindow:
         )
         self._account.set(state.user_email or "")
         self._status_badge.configure(
-            fg_color=PALETTE.success if signed_in else PALETTE.surface,
-            text_color=PALETTE.on_primary if signed_in else PALETTE.primary_dark,
+            text_color=PALETTE.success if signed_in else PALETTE.text_muted,
         )
         self._render_entitlement(state)
 

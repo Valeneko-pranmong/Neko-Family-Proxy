@@ -13,14 +13,14 @@ FONT_FILENAMES = ("Sarabun-Regular.ttf", "Sarabun-Bold.ttf")
 
 @dataclass(frozen=True)
 class PinkPalette:
-    background: str = "#FFF0F5"
+    background: str = "#FFFFFF"
     card: str = "#FFFFFF"
-    surface: str = "#FFE4EC"
-    primary: str = "#FF69B4"
+    surface: str = "#FFF0F5"
+    primary: str = "#F84B93"
     primary_soft: str = "#FFB6C1"
-    primary_dark: str = "#FF1493"
-    primary_hover: str = "#FF4FA3"
-    text: str = "#555555"
+    primary_dark: str = "#E83A82"
+    primary_hover: str = "#FF65A8"
+    text: str = "#333333"
     text_muted: str = "#8A7180"
     on_primary: str = "#FFFFFF"
     border: str = "#FFC1D6"
@@ -35,7 +35,7 @@ PALETTE = PinkPalette()
 
 
 def _load_bundled_fonts() -> None:
-    """Register the bundled Sarabun fonts so Tkinter can use them (Windows only).
+    """Register the bundled Noto Sans Thai fonts so Tkinter can use them (Windows only).
 
     Uses ``AddFontResourceExW`` with ``FR_PRIVATE`` so the font is available
     only within this process and is not installed system-wide.
