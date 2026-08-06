@@ -68,13 +68,18 @@ class LauncherService:
             raise LauncherServiceError(message) from exc
 
         if result.user is not None:
-            self._controller.dispatch(
-                AuthSucceeded(result.user.user_id, result.user.username)
-            )
             try:
                 self._claim_session(allow_missing=True)
             except LauncherServiceError as exc:
+                if self._controller.state.auth_status is not AuthStatus.SIGNED_OUT:
+                    self._controller.dispatch(
+                        AuthSucceeded(result.user.user_id, result.user.username)
+                    )
                 self._controller.dispatch(ErrorOccurred(str(exc)))
+            else:
+                self._controller.dispatch(
+                    AuthSucceeded(result.user.user_id, result.user.username)
+                )
         return result
 
     def sign_in(self, username: str, password: str) -> None:
@@ -90,8 +95,13 @@ class LauncherService:
             message = "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่"
             self._controller.dispatch(AuthFailed(message))
             raise LauncherServiceError(message) from exc
+        try:
+            self._claim_session(allow_missing=True)
+        except LauncherServiceError as exc:
+            if self._controller.state.auth_status is not AuthStatus.SIGNED_OUT:
+                self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
+            raise
         self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
-        self._claim_session(allow_missing=True)
 
     def change_password(self, password: str) -> None:
         """Change the password for the currently authenticated user."""
@@ -114,11 +124,16 @@ class LauncherService:
             return False
         if user is None:
             return False
-        self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
         try:
             self._claim_session(allow_missing=True)
         except LauncherServiceError as exc:
+            if self._controller.state.auth_status is AuthStatus.SIGNED_OUT:
+                self._controller.dispatch(ErrorOccurred(str(exc)))
+                return False
+            self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
             self._controller.dispatch(ErrorOccurred(str(exc)))
+            return True
+        self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
         return True
 
     def sign_out(self) -> None:
@@ -166,21 +181,22 @@ class LauncherService:
             # _claim_session clears the session when it cannot claim one.
             # Keep the redeemed entitlement visible even when launching is
             # temporarily blocked by a device/session constraint.
-            self._controller.dispatch(
-                EntitlementLoaded(
-                    Entitlement(
-                        product_code=result.product_code,
-                        status=EntitlementStatus.ACTIVE,
-                        valid_until=result.valid_until,
+            if self._controller.state.auth_status is not AuthStatus.SIGNED_OUT:
+                self._controller.dispatch(
+                    EntitlementLoaded(
+                        Entitlement(
+                            product_code=result.product_code,
+                            status=EntitlementStatus.ACTIVE,
+                            valid_until=result.valid_until,
+                        )
                     )
                 )
-            )
-            self._controller.dispatch(
-                ErrorOccurred(
-                    "เติมคูปองสำเร็จแล้ว แต่ยังเริ่มใช้งานไม่ได้ "
-                    "กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่"
+                self._controller.dispatch(
+                    ErrorOccurred(
+                        "เติมคูปองสำเร็จแล้ว แต่ยังเริ่มใช้งานไม่ได้ "
+                        "กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่"
+                    )
                 )
-            )
         return result
 
     def heartbeat(self) -> bool:
@@ -248,6 +264,10 @@ class LauncherService:
             self._controller.dispatch(EntitlementLoaded(None))
             if not allow_missing:
                 raise
+        except LauncherServiceError as exc:
+            if "อุปกรณ์แล้ว" in str(exc):
+                self.sign_out()
+            raise
         else:
             self._controller.dispatch(EntitlementLoaded(claim.entitlement))
             self._controller.dispatch(SessionClaimed(claim.session_id))
