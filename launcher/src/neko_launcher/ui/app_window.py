@@ -391,10 +391,11 @@ class AppWindow:
         if not hasattr(self, "_toast_frame"):
             self._toast_frame = ctk.CTkFrame(
                 self.root,
-                corner_radius=20,
+                corner_radius=0,
                 fg_color=PALETTE.surface,
                 bg_color="transparent",
-                border_width=0,
+                border_width=1,
+                border_color=PALETTE.border,
             )
             self._toast_label = ctk.CTkLabel(
                 self._toast_frame,
@@ -407,9 +408,9 @@ class AppWindow:
             self._toast_close_btn = ctk.CTkButton(
                 self._toast_frame,
                 text="×",
-                width=28,
-                height=28,
-                corner_radius=14,
+                width=24,
+                height=24,
+                corner_radius=0,
                 fg_color="black",
                 text_color="white",
                 hover_color="#333333",
@@ -526,10 +527,12 @@ class AppWindow:
             fg_color="transparent",
         )
         intro = self._card(self._auth_view)
-        intro.pack_configure(fill="both", expand=True, padx=8, pady=8)
+        intro.configure(height=540)
+        intro.pack_propagate(False)
+        intro.pack_configure(side="top", fill="x", expand=False, padx=8, pady=8)
 
         top_row = ctk.CTkFrame(intro, fg_color="transparent")
-        top_row.pack(fill="x", padx=14, pady=(10, 0))
+        top_row.pack(fill="x", padx=14, pady=(6, 0))
         
         self._auth_hint = ctk.CTkLabel(
             top_row,
@@ -548,7 +551,7 @@ class AppWindow:
         self._status_badge.pack(side="right")
         
         title_frame = ctk.CTkFrame(intro, fg_color="transparent")
-        title_frame.pack(fill="x", pady=(10, 4))
+        title_frame.pack(fill="x", pady=(4, 2))
         ctk.CTkLabel(
             title_frame,
             text="เข้าสู่ระบบและสมัครสมาชิก",
@@ -568,7 +571,7 @@ class AppWindow:
             corner_radius=22,
             height=44,
         )
-        self._tab_controls.pack(fill="x", padx=30, pady=(10, 10))
+        self._tab_controls.pack(fill="x", padx=30, pady=(6, 6))
         self._tab_controls.pack_propagate(False)
         
         self._login_tab_btn = ctk.CTkButton(
@@ -612,7 +615,7 @@ class AppWindow:
         self._login_password_entry.bind("<Return>", lambda _event: self._login())
         
         options_row = ctk.CTkFrame(login, fg_color="transparent")
-        options_row.pack(fill="x", padx=14, pady=(12, 12))
+        options_row.pack(fill="x", padx=14, pady=(8, 8))
         
         self._remember_me = ctk.CTkCheckBox(
             options_row,
@@ -642,7 +645,7 @@ class AppWindow:
         self._login_button = self._primary_button(
             login, "เข้าสู่ระบบ ➔", self._login
         )
-        self._login_button.pack(side="bottom", fill="x", padx=14, pady=20)
+        self._login_button.pack(side="bottom", fill="x", padx=14, pady=(10, 14))
 
         # Register Frame
         register = self._register_frame
@@ -672,7 +675,7 @@ class AppWindow:
         self._register_button = self._primary_button(
             register, "สร้างบัญชี ➔", self._register
         )
-        self._register_button.pack(side="bottom", fill="x", padx=14, pady=20)
+        self._register_button.pack(side="bottom", fill="x", padx=14, pady=(10, 14))
 
         self._switch_tab("login")
 
@@ -712,7 +715,7 @@ class AppWindow:
             border_width=0,
             corner_radius=10,
         )
-        frame.pack(fill="x", padx=16, pady=(4, 6))
+        frame.pack(fill="x", padx=16, pady=(2, 4))
 
         ctk.CTkLabel(
             frame,
