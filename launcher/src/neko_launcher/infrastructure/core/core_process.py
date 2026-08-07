@@ -31,6 +31,8 @@ class WindowsCoreProcessAdapter:
         self._debug_log_dir = debug_log_dir
         self._stdout_handle: Any = None
         self._stderr_handle: Any = None
+        self._process_started_at: float | None = None
+        self._early_exit_observed = False
 
     @staticmethod
     def _clean_env() -> dict[str, str]:
@@ -59,6 +61,8 @@ class WindowsCoreProcessAdapter:
             except Exception:
                 pass
             self._stderr_handle = None
+        self._process_started_at = None
+        self._early_exit_observed = False
 
     def start_host_without_secrets(self) -> None:
         """Start the Core executable as a child process.
@@ -118,6 +122,7 @@ class WindowsCoreProcessAdapter:
                 stdout=stdout,
                 stderr=stderr,
             )
+            self._process_started_at = time.monotonic()
             if self._diagnostics:
                 self._diagnostics.record_stage("HOST_START", pid=self._process.pid)
         except OSError as exc:
@@ -144,13 +149,15 @@ class WindowsCoreProcessAdapter:
             # Observation only - do not alter the loop's natural timeout behavior
             if self._process is not None:
                 return_code = self._process.poll()
-                if return_code is not None and self._diagnostics:
-                    runtime = time.monotonic() - start_time
-                    self._diagnostics.record_stage(
-                        "PROCESS_EXITED_EARLY",
-                        exit_code=return_code,
-                        runtime=runtime,
-                    )
+                if return_code is not None and not self._early_exit_observed:
+                    self._early_exit_observed = True
+                    if self._diagnostics and self._process_started_at is not None:
+                        runtime = time.monotonic() - self._process_started_at
+                        self._diagnostics.record_process_event(
+                            "PROCESS_EXITED_EARLY",
+                            exit_code=return_code,
+                            runtime=runtime,
+                        )
             
             if Path(pipe_path).exists():
                 if self._diagnostics:

@@ -378,3 +378,57 @@ def test_missing_tweaker_is_reported_before_starting_proxy(tmp_path: Path) -> No
 
     assert window._service.started == []  # type: ignore[attr-defined]
     assert "ไม่พบไฟล์ Tweaker.exe" in window._error.get()
+
+
+def test_debug_window_retry_submits_to_executor(tmp_path: Path) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._debug_retry_pending = False
+    
+    # Mock submit
+    submitted_tasks = []
+    def fake_submit(task: Any, callback: Any = None) -> None:
+        submitted_tasks.append(task)
+    
+    window._submit = fake_submit  # type: ignore[method-assign]
+    
+    window._retry_proxy_core_debug()
+    
+    assert len(submitted_tasks) == 1
+    assert window._debug_retry_pending is True
+    
+    # Duplicate should not queue again
+    window._retry_proxy_core_debug()
+    assert len(submitted_tasks) == 1
+
+def test_debug_window_hex_format(tmp_path: Path) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    from neko_launcher.application.diagnostics import CoreDiagnosticsSnapshot
+    
+    snapshot = CoreDiagnosticsSnapshot(
+        attempt_id="TEST",
+        stage="STAGE",
+        process_event=None,
+        core_path="core.exe",
+        pid=123,
+        runtime=1.0,
+        exit_code=-1073741819, # 0xC0000005
+        winerror=None,
+        last_diagnostic=None
+    )
+    
+    content = window._format_debug_snapshot(snapshot)
+    assert "Hex: 0xC0000005" in content
+    
+    snapshot_zero = CoreDiagnosticsSnapshot(
+        attempt_id="TEST",
+        stage="STAGE",
+        process_event=None,
+        core_path="core.exe",
+        pid=123,
+        runtime=1.0,
+        exit_code=0,
+        winerror=None,
+        last_diagnostic=None
+    )
+    content_zero = window._format_debug_snapshot(snapshot_zero)
+    assert "Hex: 0x00000000" in content_zero

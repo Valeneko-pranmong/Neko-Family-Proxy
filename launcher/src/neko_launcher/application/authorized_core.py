@@ -6,7 +6,7 @@ from hashlib import sha256
 from re import fullmatch
 from threading import Event, Lock
 from time import monotonic
-from typing import Callable, Protocol, TypeVar, cast
+from typing import Callable, Protocol, TypeVar, cast, Any
 from uuid import uuid4
 
 

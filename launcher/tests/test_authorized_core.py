@@ -506,3 +506,27 @@ def test_cancelled_attempt_does_not_start_host() -> None:
         orchestrator.start(valid_command(), valid_access_context(), cancellation)
 
     assert calls == []
+
+
+def test_debug_mode_equivalence_on_failure() -> None:
+    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder, NoopDiagnosticsSink
+    
+    # Test OFF
+    orchestrator_off, _, _, _ = build_orchestrator()
+    def leak_off(*args: object, **kwargs: object) -> OpaquePermit:
+        raise RuntimeError("backend_error")
+    orchestrator_off._permits.issue_launch_permit = leak_off  # type: ignore
+    with pytest.raises(AuthorizedCoreError) as raised_off:
+        orchestrator_off.start(valid_command(), valid_access_context(), Event())
+    
+    # Test ON
+    orchestrator_on, _, _, _ = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator_on._diagnostics = recorder
+    def leak_on(*args: object, **kwargs: object) -> OpaquePermit:
+        raise RuntimeError("backend_error")
+    orchestrator_on._permits.issue_launch_permit = leak_on  # type: ignore
+    with pytest.raises(AuthorizedCoreError) as raised_on:
+        orchestrator_on.start(valid_command(), valid_access_context(), Event())
+        
+    assert raised_off.value.code == raised_on.value.code

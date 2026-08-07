@@ -83,6 +83,7 @@ class AppWindow:
         self._diagnostics = diagnostics
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
+        self._debug_retry_pending = False
 
         self.root = ctk.CTk()
         self.root.withdraw()
@@ -392,8 +393,24 @@ class AppWindow:
         secondary_button(
             header,
             "Retry ProxyCore (Simulate Restart)",
-            self._service.start_proxy,
+            self._retry_proxy_core_debug,
         ).pack(side="right")
+
+        actions_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        actions_frame.pack(fill="x", pady=(0, 10))
+        
+        secondary_button(
+            actions_frame,
+            "Copy Debug",
+            self._copy_debug_to_clipboard,
+        ).pack(side="left", padx=(0, 10))
+        
+        if self._debug_log_dir:
+            secondary_button(
+                actions_frame,
+                "Open Logs",
+                self._open_debug_logs,
+            ).pack(side="left")
 
         self._debug_text = ctk.CTkTextbox(
             frame,
@@ -413,24 +430,75 @@ class AppWindow:
 
         self._update_debug_dialog()
 
+    def _retry_proxy_core_debug(self) -> None:
+        if self._debug_retry_pending:
+            return
+        state = self._controller.state.proxy_status
+        if state in (ProxyStatus.STARTING, ProxyStatus.RUNNING, ProxyStatus.STOPPING):
+            return
+            
+        self._debug_retry_pending = True
+        self._submit(self._do_debug_retry, self._on_debug_retry_done)
+
+    def _do_debug_retry(self) -> None:
+        self._service.start_proxy()
+        
+    def _on_debug_retry_done(self, _result: Any) -> None:
+        self._debug_retry_pending = False
+
+    def _copy_debug_to_clipboard(self) -> None:
+        if not self._diagnostics:
+            return
+        snapshot = self._diagnostics.snapshot()
+        from neko_launcher.application.diagnostics import sanitize_diagnostic_text
+        content = self._format_debug_snapshot(snapshot)
+        sanitized = sanitize_diagnostic_text(content)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(sanitized)
+        self._toast.show_toast("Copied to clipboard!")
+
+    def _open_debug_logs(self) -> None:
+        if self._debug_log_dir:
+            try:
+                os.startfile(self._debug_log_dir)
+            except (OSError, AttributeError):
+                self._toast.show_toast("Failed to open logs directory.", PALETTE.danger)
+
+    def _format_debug_snapshot(self, snapshot: Any) -> str:
+        content = (
+            f"Attempt ID: {snapshot.attempt_id}\n"
+            f"Stage:      {snapshot.stage}\n"
+        )
+        if snapshot.process_event:
+            content += f"Event:      {snapshot.process_event}\n"
+        
+        content += (
+            f"PID:        {snapshot.pid}\n"
+            f"Runtime:    {snapshot.runtime}\n"
+        )
+        
+        if snapshot.exit_code is not None:
+            hex_exit = f"0x{snapshot.exit_code & 0xFFFFFFFF:08X}"
+            content += f"Exit Code:  {snapshot.exit_code} (Hex: {hex_exit})\n"
+        else:
+            content += "Exit Code:  None\n"
+            
+        content += (
+            f"WinError:   {snapshot.winerror}\n"
+            f"Core Path:  {snapshot.core_path}\n"
+            "\n"
+        )
+        if snapshot.last_diagnostic:
+            content += f"Last Error/Diagnostic:\n{snapshot.last_diagnostic}\n"
+        return content
+
     def _update_debug_dialog(self) -> None:
         if self._debug_dialog is None or not self._debug_dialog.winfo_exists():
             return
 
         if self._diagnostics:
             snapshot = self._diagnostics.snapshot()
-            content = (
-                f"Attempt ID: {snapshot.attempt_id}\n"
-                f"Stage:      {snapshot.stage}\n"
-                f"PID:        {snapshot.pid}\n"
-                f"Exit Code:  {snapshot.exit_code}\n"
-                f"WinError:   {snapshot.winerror}\n"
-                f"Runtime:    {snapshot.runtime}\n"
-                f"Core Path:  {snapshot.core_path}\n"
-                "\n"
-            )
-            if snapshot.last_diagnostic:
-                content += f"Last Error/Diagnostic:\n{snapshot.last_diagnostic}\n"
+            content = self._format_debug_snapshot(snapshot)
             
             self._debug_text.configure(state="normal")
             self._debug_text.delete("1.0", "end")
