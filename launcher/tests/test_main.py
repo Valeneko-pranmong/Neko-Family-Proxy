@@ -6,10 +6,10 @@ from uuid import uuid4
 
 import pytest
 
-from neko_launcher.main import (
-    _acquire_instance_mutex,
-    _report_startup_error,
-    _release_instance_mutex,
+from neko_launcher.main import _report_startup_error
+from neko_launcher.bootstrap.single_instance import (
+    acquire_instance_mutex,
+    release_instance_mutex,
 )
 from neko_launcher.infrastructure.unavailable_gateway import (
     AuthorizationPendingProxyGateway,
@@ -19,16 +19,16 @@ from neko_launcher.infrastructure.unavailable_gateway import (
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows mutex behavior")
 def test_instance_mutex_rejects_a_second_launcher_process() -> None:
     name = f"Local\\NekoFamilyProxyLauncher-Test-{uuid4()}"
-    first = _acquire_instance_mutex(name)
+    first = acquire_instance_mutex(name)
     assert first is not None
     try:
-        assert _acquire_instance_mutex(name) is None
+        assert acquire_instance_mutex(name) is None
     finally:
-        _release_instance_mutex(first)
+        release_instance_mutex(first)
 
-    replacement = _acquire_instance_mutex(name)
+    replacement = acquire_instance_mutex(name)
     assert replacement is not None
-    _release_instance_mutex(replacement)
+    release_instance_mutex(replacement)
 
 
 def test_pending_authorization_contract_fails_closed_without_starting_core() -> None:

@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from neko_launcher.application.controller import ApplicationController
+from neko_launcher.application.production_authorization import (
+    CURRENT_PRODUCTION_AUTHORIZATION,
+    create_production_proxy_gateway,
+)
+from neko_launcher.application.services import LauncherService
+from neko_launcher.domain.models import AuthStatus, EntitlementStatus
+from neko_launcher.infrastructure.auth.authorized_proxy_gateway import AuthorizedProxyGateway
+from neko_launcher.infrastructure.auth.secure_store import KeyringSecureStore
+from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
+from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
+from neko_launcher.infrastructure.core.game_process_manager import GameProcessManager
+from neko_launcher.infrastructure.core.process_detector import ExactPso2TargetDetector
+from neko_launcher.infrastructure.storage.config import LauncherConfig
+from neko_launcher.infrastructure.storage.event_bus import EventBus
+from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
+from neko_launcher.ui.app_window import AppWindow
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreOrchestrator,
+    LaunchAccessContext,
+    OpaqueStartCommand,
+    OrchestrationTimeouts,
+)
+
+
+def application_root() -> Path:
+    """Return the source checkout or PyInstaller extraction directory."""
+    if getattr(sys, "frozen", False):
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if bundle_root:
+            return Path(bundle_root)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[3]
+
+
+def build_window(workspace_root: Path | None = None) -> AppWindow:
+    root = workspace_root or application_root()
+    config = LauncherConfig.from_environment(root)
+    event_bus = EventBus()
+    game_manager = GameProcessManager()
+    secure_store = KeyringSecureStore()
+    installation = LocalInstallationIdentity(secure_store)
+    gateway = SupabaseGateway(
+        config.supabase_url,
+        config.supabase_publishable_key,
+        secure_store,
+    )
+
+    if CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
+        core_process = WindowsCoreProcessAdapter(config.proxy_core_path)
+        core_channel = NamedPipeCoreControlChannel("NekoProxyCoreControl")
+        detector = ExactPso2TargetDetector()
+        timeouts = OrchestrationTimeouts(
+            target=30.0,
+            control_channel=10.0,
+            challenge=5.0,
+            permit=10.0,
+            start=10.0,
+        )
+        orchestrator = AuthorizedCoreOrchestrator(
+            process=core_process,
+            channel=core_channel,
+            permits=gateway,
+            detector=detector,
+            timeouts=timeouts,
+        )
+
+        def access_context_provider() -> LaunchAccessContext:
+            state = controller.state
+            return LaunchAccessContext(
+                authenticated=(state.auth_status == AuthStatus.AUTHENTICATED),
+                entitlement_active=(
+                    state.entitlement is not None
+                    and state.entitlement.status == EntitlementStatus.ACTIVE
+                ),
+                session_id=state.session_id or "",
+                installation_key_hash=installation.key_hash,
+                authenticated_transport=gateway,
+            )
+
+        def command_provider() -> OpaqueStartCommand:
+            # Minimal V1 uses a hardcoded profile reference
+            return OpaqueStartCommand(
+                profile_reference="profile-0",
+                server_reference="server-0",
+            )
+
+        proxy_manager = AuthorizedProxyGateway(
+            orchestrator=orchestrator,
+            access_context_provider=access_context_provider,
+            command_provider=command_provider,
+        )
+    else:
+        proxy_manager = create_production_proxy_gateway()
+
+    controller = ApplicationController(event_bus, proxy_manager, game_manager)
+    service = LauncherService(
+        controller,
+        gateway,
+        gateway,
+        installation,
+        config.product_code,
+    )
+    logo_path = root / "image_11.png"
+    icon_path = root / "icon_app.ico"
+    return AppWindow(
+        controller,
+        service,
+        event_bus,
+        logo_path,
+        icon_path,
+        game_default_path=config.game_exe,
+        game_path_store=config.game_path_store,
+    )
