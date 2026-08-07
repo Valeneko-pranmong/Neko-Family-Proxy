@@ -88,16 +88,14 @@ def style_native_title_bar(window: tk.Tk | tk.Toplevel, palette: Any) -> None:
 class WindowDragHandler:
     def __init__(self, root: tk.Tk | tk.Toplevel) -> None:
         self._root = root
-        self._drag_offset: tuple[int, int] | None = None
+        self._offset_x: int = 0
+        self._offset_y: int = 0
 
     def start(self, event: tk.Event) -> None:
-        self._drag_offset = (event.x_root, event.y_root)
+        self._offset_x = event.x_root - self._root.winfo_x()
+        self._offset_y = event.y_root - self._root.winfo_y()
 
     def drag(self, event: tk.Event) -> None:
-        if self._drag_offset is None:
-            return
-        previous_x, previous_y = self._drag_offset
-        x = self._root.winfo_x() + event.x_root - previous_x
-        y = self._root.winfo_y() + event.y_root - previous_y
+        x = event.x_root - self._offset_x
+        y = event.y_root - self._offset_y
         self._root.geometry(f"+{x}+{y}")
-        self._drag_offset = (event.x_root, event.y_root)
