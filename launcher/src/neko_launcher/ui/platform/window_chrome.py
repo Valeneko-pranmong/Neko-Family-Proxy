@@ -92,10 +92,17 @@ class WindowDragHandler:
         self._offset_y: int = 0
 
     def start(self, event: tk.Event) -> None:
-        self._offset_x = event.x_root - self._root.winfo_x()
-        self._offset_y = event.y_root - self._root.winfo_y()
+        if sys.platform == "win32":
+            hwnd = ctypes.windll.user32.GetParent(self._root.winfo_id()) or self._root.winfo_id()
+            ctypes.windll.user32.ReleaseCapture()
+            ctypes.windll.user32.SendMessageW(hwnd, 0x00A1, 2, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
+        else:
+            self._offset_x = event.x_root - self._root.winfo_x()
+            self._offset_y = event.y_root - self._root.winfo_y()
 
     def drag(self, event: tk.Event) -> None:
+        if sys.platform == "win32":
+            return
         x = event.x_root - self._offset_x
         y = event.y_root - self._offset_y
         self._root.geometry(f"+{x}+{y}")
