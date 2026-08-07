@@ -15,7 +15,7 @@ Perform a maintainability-focused architectural refactor of the Python launcher,
 - **`ui/`**: Decomposed into `platform/` (window chrome, scaling, tray), `views/` (encapsulated UI state presentation), and `components/`. `app_window.py` is now a thin coordinator.
 - **`infrastructure/`**: Logically grouped by external integrations:
   - `auth/`: Supabase integration.
-  - `core/`: Authorized Core orchestrator and permits.
+  - `core/`: Core process/control adapters, authorized proxy gateway, and launch-permit adapter.
   - `process/`: Game and generic process management.
   - `storage/`: Local credential storage and installation identity.
 
@@ -34,7 +34,7 @@ Perform a maintainability-focused architectural refactor of the Python launcher,
 - Repository safety checks (baseline).
 - Ruff linter passes with 0 violations.
 - All non-integration tests pass.
-- Verified Windows 100%, 125%, 150%, and short-notebook DPI scaling behavior.
+- Automated scaling tests cover 100%, 125%, 150%, and short-notebook display scenarios.
 - Manual UI regression validation (Pending).
 - GitHub Actions CI / release workflows (Pending).
 
