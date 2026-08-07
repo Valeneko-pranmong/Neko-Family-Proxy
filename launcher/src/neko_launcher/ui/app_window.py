@@ -257,9 +257,8 @@ class AppWindow:
             width=30,
             height=24,
         ).pack(side="left")
-        drag_handler = WindowDragHandler(self.root)
-        drag_surface.bind("<ButtonPress-1>", drag_handler.start, add="+")
-        drag_surface.bind("<B1-Motion>", drag_handler.drag, add="+")
+        self._window_drag_handler = WindowDragHandler(self.root)
+        self._window_drag_handler.bind_to(drag_surface)
 
     # ------------------------------------------------------------------
     # Tray
