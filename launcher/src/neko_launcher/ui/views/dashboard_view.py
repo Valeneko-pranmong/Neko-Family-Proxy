@@ -109,6 +109,9 @@ class DashboardView:
             coupon_row,
             textvariable=coupon_var,
             placeholder_text="NEKO-XXXXXXXX-…",
+            fg_color="transparent",
+            border_color=PALETTE.border,
+            border_width=1,
             height=34,
         )
         self._coupon_entry.pack(fill="x", padx=4, pady=(0, 6))
@@ -159,6 +162,9 @@ class DashboardView:
             game_path_row,
             textvariable=game_path_var,
             placeholder_text="กรุณาเลือก Tweaker.exe ในเครื่องคุณ",
+            fg_color="transparent",
+            border_color=PALETTE.border,
+            border_width=1,
             height=34,
         )
         self._game_path_entry.pack(side="left", fill="x", expand=True, padx=4)
@@ -174,6 +180,12 @@ class DashboardView:
             variable=auto_launch_var,
             text_color=PALETTE.text,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=PALETTE.primary,
+            border_color=PALETTE.primary,
+            hover_color=PALETTE.primary_hover,
+            checkbox_width=18,
+            checkbox_height=18,
+            corner_radius=4,
         )
         self._auto_launch_checkbox.pack(anchor="w", padx=14, pady=(10, 10))
         if auto_launch_var.get():
