@@ -3,8 +3,6 @@ from pathlib import Path
 from queue import SimpleQueue
 from typing import Any
 
-import customtkinter as ctk
-
 from neko_launcher.domain.models import (
     AppState,
     AuthStatus,
@@ -16,6 +14,14 @@ from neko_launcher.domain.models import (
 from neko_launcher.ui.app_window import AppWindow
 from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.ui.theme import PALETTE
+from neko_launcher.ui.platform.system_tray import drain_tray_actions
+from neko_launcher.ui.platform.window_scaling import (
+    calculate_portrait_geometry,
+    calculate_centered_position,
+    DESIGN_WIDTH,
+    DESIGN_HEIGHT,
+    SCREEN_MARGIN_RATIO,
+)
 
 
 class FakeVariable:
@@ -141,6 +147,7 @@ class FakeSizingRoot:
 class FakeView:
     def __init__(self, manager: str = "") -> None:
         self.manager = manager
+        self.frame = self
         self.pack_calls: list[dict[str, Any]] = []
         self.pack_forget_calls = 0
 
@@ -191,6 +198,12 @@ class FakeController:
             self.state = replace(self.state, game_process_running=event.running)
 
 
+class FakeAuthView:
+    def __init__(self) -> None:
+        self.login_button = FakeButton()
+        self.register_button = FakeButton()
+
+
 def build_password_window() -> AppWindow:
     window = object.__new__(AppWindow)
     window._new_password = FakeVariable("new-password")  # type: ignore[assignment]
@@ -230,13 +243,12 @@ def test_successful_password_change_clears_both_password_fields() -> None:
 
 def test_auth_controls_update_without_removed_reset_password_button() -> None:
     window = object.__new__(AppWindow)
-    window._login_button = FakeButton()  # type: ignore[assignment]
-    window._register_button = FakeButton()  # type: ignore[assignment]
+    window._auth_view = FakeAuthView()  # type: ignore[assignment]
 
     window._set_auth_enabled(signed_in=False, authenticating=True)
 
-    assert window._login_button.state == "disabled"
-    assert window._register_button.state == "disabled"
+    assert window._auth_view.login_button.state == "disabled"
+    assert window._auth_view.register_button.state == "disabled"
 
 
 def test_error_notification_shows_toast(monkeypatch: Any) -> None:
@@ -283,18 +295,17 @@ def test_empty_notification_restores_default_header_subtitle(monkeypatch: Any) -
 
 
 def test_tray_restore_is_marshaled_to_the_ui_thread() -> None:
-    window = object.__new__(AppWindow)
-    window._closing = False
-    window._tray_actions = SimpleQueue()
-    window.root = FakeTrayRoot()  # type: ignore[assignment]
+    """Test that restore action is marshaled through queue to the UI thread."""
+    action_queue: SimpleQueue[str] = SimpleQueue()
+    root = FakeTrayRoot()
 
-    window._restore_from_tray(None, None)
+    # Simulate a tray manager putting a restore action
+    action_queue.put("restore")
 
-    assert window.root.events == []  # type: ignore[attr-defined]
+    # Drain should process on the main thread
+    drain_tray_actions(action_queue, root, lambda: None)  # type: ignore[arg-type]
 
-    window._drain_tray_actions()
-
-    assert window.root.events == [  # type: ignore[attr-defined]
+    assert root.events == [
         "winfo_exists",
         "deiconify",
         "attributes:-topmost:True",
@@ -304,17 +315,14 @@ def test_tray_restore_is_marshaled_to_the_ui_thread() -> None:
 
 
 def test_tray_exit_is_marshaled_to_the_ui_thread() -> None:
-    window = object.__new__(AppWindow)
-    window._closing = False
-    window._tray_actions = SimpleQueue()
+    """Test that close action is marshaled through queue to the UI thread."""
+    action_queue: SimpleQueue[str] = SimpleQueue()
     close_calls: list[bool] = []
-    window.close = lambda: close_calls.append(True)  # type: ignore[method-assign]
 
-    window._close_from_tray(None, None)
+    action_queue.put("close")
 
-    assert close_calls == []
-
-    window._drain_tray_actions()
+    # Use a fake root that won't be checked since close returns early
+    drain_tray_actions(action_queue, FakeTrayRoot(), lambda: close_calls.append(True))  # type: ignore[arg-type]
 
     assert close_calls == [True]
 
@@ -324,6 +332,7 @@ def test_close_stops_worker_and_quits_before_destroying_the_window() -> None:
     window._closing = False
     window._service = FakeShutdownService()  # type: ignore[assignment]
     window._executor = FakeExecutor()  # type: ignore[assignment]
+    window._tray_manager = None
     window.root = FakeRoot()  # type: ignore[assignment]
 
     window.close()
@@ -337,54 +346,41 @@ def test_close_stops_worker_and_quits_before_destroying_the_window() -> None:
     assert window.root.destroyed  # type: ignore[attr-defined]
 
 
-def test_fit_portrait_window_locks_native_size_before_rounded_region(
-    monkeypatch: Any,
-) -> None:
-    window = object.__new__(AppWindow)
-    window.root = FakeSizingRoot()  # type: ignore[assignment]
-    widget_scales: list[float] = []
-    monkeypatch.setattr(
-        ctk.ScalingTracker,
-        "get_window_scaling",
-        staticmethod(lambda _root: 1.0),
+def test_fit_portrait_window_pure_calculation() -> None:
+    """Test the pure geometry calculation function directly."""
+    geometry = calculate_portrait_geometry(
+        screen_w=1920,
+        screen_h=1080,
+        window_scale=1.0,
+        design_width=DESIGN_WIDTH,
+        design_height=DESIGN_HEIGHT,
+        margin_ratio=SCREEN_MARGIN_RATIO,
     )
-    monkeypatch.setattr(ctk, "set_widget_scaling", widget_scales.append)
 
-    window._fit_portrait_window()
-
-    assert window._window_size == (480, 760)
-    assert window.root.minimum == (480, 760)  # type: ignore[attr-defined]
-    assert window.root.maximum == (480, 760)  # type: ignore[attr-defined]
-    assert widget_scales == [1.0]
-    assert window.root.events[-3:] == [  # type: ignore[attr-defined]
-        "minsize:480x760",
-        "maxsize:480x760",
-        "geometry:480x760+720+160",
-    ]
+    assert geometry.logical_width == 480
+    assert geometry.logical_height == 760
+    assert geometry.widget_scale == 1.0
+    assert geometry.x == 720
+    assert geometry.y == 160
 
 
-def test_center_window_flushes_geometry_without_rounded_region() -> None:
-    window = object.__new__(AppWindow)
-    window.root = FakeSizingRoot()  # type: ignore[assignment]
-    window._window_size = (480, 760)
+def test_center_window_calculation() -> None:
+    """Test the pure centering calculation function."""
+    x, y = calculate_centered_position(1920, 1080, 480, 760)
 
-    window._center_window()
-
-    assert window.root.events == [  # type: ignore[attr-defined]
-        "geometry:480x760+720+160",
-        "update_idletasks",
-    ]
+    assert x == 720
+    assert y == 160
 
 
 def test_show_program_view_packs_scrollable_frame_with_internal_manager() -> None:
     window = object.__new__(AppWindow)
     window._auth_view = FakeView()  # type: ignore[assignment]
-    window._program_view = FakeView(manager="grid")  # type: ignore[assignment]
+    window._dashboard_view = FakeView(manager="grid")  # type: ignore[assignment]
 
     window._show_program_view()
 
     assert window._auth_view.pack_forget_calls == 1
-    assert window._program_view.pack_calls == [
+    assert window._dashboard_view.pack_calls == [
         {"fill": "both", "expand": True, "padx": 8, "pady": (2, 6)}
     ]
 
