@@ -181,17 +181,15 @@ class AuthView:
 
         self._switch_tab("login")
 
-    @property
-    def status_badge(self) -> ctk.CTkLabel:
-        return self._status_badge
+    def set_status_signed_in(self, signed_in: bool) -> None:
+        self._status_badge.configure(
+            text_color=PALETTE.success if signed_in else PALETTE.text_muted,
+        )
 
-    @property
-    def login_button(self) -> ctk.CTkButton:
-        return self._login_button
-
-    @property
-    def register_button(self) -> ctk.CTkButton:
-        return self._register_button
+    def set_actions_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
+        state = "normal" if not signed_in and not authenticating else "disabled"
+        self._login_button.configure(state=state)
+        self._register_button.configure(state=state)
 
     def _switch_tab(self, tab: str) -> None:
         if tab == "login":

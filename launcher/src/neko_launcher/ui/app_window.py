@@ -29,8 +29,8 @@ from neko_launcher.domain.models import (
     RegistrationResult,
     entitlement_is_active,
 )
-from neko_launcher.infrastructure.storage.event_bus import EventBus
-from neko_launcher.infrastructure.core.process_detector import is_any_process_running
+from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.process.process_detector import is_any_process_running
 
 from .theme import FONT_FAMILY, PALETTE, apply_theme
 from .platform.window_chrome import (
@@ -556,9 +556,7 @@ class AppWindow:
             }[state.auth_status]
         )
         self._account.set(state.user_email or "")
-        self._auth_view.status_badge.configure(
-            text_color=PALETTE.success if signed_in else PALETTE.text_muted,
-        )
+        self._auth_view.set_status_signed_in(signed_in)
         self._render_entitlement(state)
 
         if signed_in:
@@ -585,9 +583,7 @@ class AppWindow:
             ProxyStatus.FAILED: "ProxyCore: เริ่มทำงานไม่สำเร็จ",
         }[state.proxy_status]
         self._proxy_connection_status.set(proxy_text)
-        self._dashboard_view.redeem_button.configure(
-            state="normal" if signed_in else "disabled"
-        )
+        self._dashboard_view.set_redeem_enabled(signed_in)
         can_launch_game = (
             signed_in
             and state.session_id is not None
@@ -602,9 +598,7 @@ class AppWindow:
                 GameStatus.RUNNING,
             }
         )
-        self._dashboard_view.launch_game_button.configure(
-            state="normal" if can_launch_game else "disabled"
-        )
+        self._dashboard_view.set_launch_enabled(can_launch_game)
         if state.last_error:
             self._error.set(state.last_error)
 
@@ -614,15 +608,11 @@ class AppWindow:
             self._entitlement.set(
                 "เหลือ 0 วัน • เติมวันด้วยคูปองเพื่อเริ่มต้น"
             )
-            self._dashboard_view.entitlement_label.configure(
-                text_color=PALETTE.warning
-            )
+            self._dashboard_view.set_entitlement_style(PALETTE.warning)
             return
         if entitlement.valid_until is None:
             self._entitlement.set("ใช้งานได้ • ไม่จำกัดวัน")
-            self._dashboard_view.entitlement_label.configure(
-                text_color=PALETTE.success
-            )
+            self._dashboard_view.set_entitlement_style(PALETTE.success)
             return
         now = datetime.now(entitlement.valid_until.tzinfo)
         remaining = entitlement.valid_until - now
@@ -632,32 +622,23 @@ class AppWindow:
                 f"ใช้งานได้ • เหลือประมาณ {days} วัน • "
                 f"หมดอายุ {entitlement.valid_until:%d/%m/%Y %H:%M}"
             )
-            self._dashboard_view.entitlement_label.configure(
-                text_color=PALETTE.success
-            )
+            self._dashboard_view.set_entitlement_style(PALETTE.success)
         else:
             if state.game_process_running:
                 self._entitlement.set(
                     "สิทธิ์หมดอายุแล้ว • จะตัดการเชื่อมต่อหลังออกจากเกม"
                 )
-                self._dashboard_view.entitlement_label.configure(
-                    text_color=PALETTE.warning
-                )
+                self._dashboard_view.set_entitlement_style(PALETTE.warning)
             else:
                 self._entitlement.set(
                     f"หมดอายุแล้ว • เหลือ 0 วัน • "
                     f"{entitlement.valid_until:%d/%m/%Y %H:%M}"
                 )
-                self._dashboard_view.entitlement_label.configure(
-                    text_color=PALETTE.danger
-                )
+                self._dashboard_view.set_entitlement_style(PALETTE.danger)
 
     def _set_auth_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
-        self._auth_view.login_button.configure(
-            state="normal" if not signed_in and not authenticating else "disabled"
-        )
-        self._auth_view.register_button.configure(
-            state="normal" if not signed_in and not authenticating else "disabled"
+        self._auth_view.set_actions_enabled(
+            signed_in=signed_in, authenticating=authenticating
         )
 
     # ------------------------------------------------------------------

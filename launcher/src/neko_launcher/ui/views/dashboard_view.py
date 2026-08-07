@@ -189,17 +189,14 @@ class DashboardView:
         self._launch_game_button.pack(side="left", fill="x", expand=True, padx=4)
         self._launch_game_button.configure(state="disabled")
 
-    @property
-    def entitlement_label(self) -> ctk.CTkLabel:
-        return self._entitlement_label
+    def set_entitlement_style(self, text_color: str) -> None:
+        self._entitlement_label.configure(text_color=text_color)
 
-    @property
-    def redeem_button(self) -> ctk.CTkButton:
-        return self._redeem_button
+    def set_redeem_enabled(self, enabled: bool) -> None:
+        self._redeem_button.configure(state="normal" if enabled else "disabled")
 
-    @property
-    def launch_game_button(self) -> ctk.CTkButton:
-        return self._launch_game_button
+    def set_launch_enabled(self, enabled: bool) -> None:
+        self._launch_game_button.configure(state="normal" if enabled else "disabled")
 
 
 def open_password_dialog(
