@@ -90,28 +90,25 @@ class WindowDragHandler:
         self._root = root
         self._offset_x: int = 0
         self._offset_y: int = 0
+        self._target_x: int = 0
+        self._target_y: int = 0
+        self._after_id: str | None = None
 
     def start(self, event: tk.Event) -> None:
-        if sys.platform == "win32":
-            try:
-                user32 = ctypes.windll.user32
-                hwnd = user32.GetParent(self._root.winfo_id()) or self._root.winfo_id()
-                user32.ReleaseCapture()
-                user32.SendMessageW(
-                    ctypes.c_void_p(hwnd),
-                    ctypes.c_uint(0x00A1),
-                    ctypes.c_void_p(2),
-                    ctypes.c_void_p(0),
-                )
-            except Exception:
-                pass
-        else:
-            self._offset_x = event.x_root - self._root.winfo_x()
-            self._offset_y = event.y_root - self._root.winfo_y()
+        if self._after_id is not None:
+            self._root.after_cancel(self._after_id)
+            self._after_id = None
+        self._offset_x = event.x_root - self._root.winfo_x()
+        self._offset_y = event.y_root - self._root.winfo_y()
 
     def drag(self, event: tk.Event) -> None:
-        if sys.platform == "win32":
-            return
-        x = event.x_root - self._offset_x
-        y = event.y_root - self._offset_y
-        self._root.geometry(f"+{x}+{y}")
+        self._target_x = event.x_root - self._offset_x
+        self._target_y = event.y_root - self._offset_y
+        
+        if self._after_id is None:
+            self._after_id = self._root.after(12, self._apply_drag)
+
+    def _apply_drag(self) -> None:
+        self._after_id = None
+        self._root.geometry(f"+{self._target_x}+{self._target_y}")
+        self._root.update_idletasks()
