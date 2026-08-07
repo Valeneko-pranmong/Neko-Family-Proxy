@@ -30,12 +30,35 @@ def _get_window_handle(window: tk.Tk | tk.Toplevel) -> int:
     except Exception:
         return 0
 
-def _pack_screen_point(x: int, y: int) -> int:
-    """
-    Pack X and Y coordinates into a signed 32-bit integer (LPARAM).
-    Properly handles negative screen coordinates for multi-monitor setups.
-    """
-    return (x & 0xFFFF) | ((y & 0xFFFF) << 16)
+def _set_native_window_position(window: tk.Tk | tk.Toplevel, x: int, y: int) -> None:
+    """Uses SetWindowPos to move the window without resizing or activating."""
+    try:
+        hwnd = _get_window_handle(window)
+        if not hwnd:
+            return
+            
+        user32 = ctypes.windll.user32
+        set_window_pos = user32.SetWindowPos
+        set_window_pos.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        )
+        set_window_pos.restype = ctypes.c_int
+        
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        
+        flags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+        
+        set_window_pos(ctypes.c_void_p(hwnd), None, x, y, 0, 0, flags)
+    except Exception:
+        pass
 
 
 def apply_rounded_window_shape(
@@ -130,80 +153,67 @@ class WindowDragHandler:
         self._offset_x: int = 0
         self._offset_y: int = 0
         self._is_win32 = sys.platform == "win32"
+        
+        self._pending_x: int | None = None
+        self._pending_y: int | None = None
+        self._move_job: str | None = None
 
     def bind_to(self, drag_surface: ctk.CTkBaseClass) -> None:
         """Bind the appropriate events to the surface depending on the OS."""
         drag_surface.bind("<ButtonPress-1>", self.start, add="+")
-        if not self._is_win32:
-            drag_surface.bind("<B1-Motion>", self.drag, add="+")
+        drag_surface.bind("<B1-Motion>", self.drag, add="+")
+        if self._is_win32:
+            drag_surface.bind("<ButtonRelease-1>", self.stop, add="+")
 
     def start(self, event: tk.Event) -> None:
         """Called upon mouse press."""
         if self._is_win32:
-            x_root = int(event.x_root)
-            y_root = int(event.y_root)
-            self._root.after_idle(
-                lambda: self._begin_native_drag(x_root, y_root)
-            )
+            self._offset_x = int(event.x_root) - self._root.winfo_x()
+            self._offset_y = int(event.y_root) - self._root.winfo_y()
         else:
             self._offset_x = event.x_root - self._root.winfo_x()
             self._offset_y = event.y_root - self._root.winfo_y()
 
-    def _begin_native_drag(self, x_root: int, y_root: int) -> None:
-        """
-        Deferred execution of the native Win32 drag.
-        Executes after Tkinter finishes processing the mouse event to prevent 
-        event loop corruption.
-        """
+    def drag(self, event: tk.Event) -> None:
+        """Called upon mouse motion."""
+        if self._is_win32:
+            x = int(event.x_root) - self._offset_x
+            y = int(event.y_root) - self._offset_y
+            
+            self._pending_x = x
+            self._pending_y = y
+            
+            if self._move_job is None:
+                self._move_job = self._root.after(16, self._flush_move)
+        else:
+            x = event.x_root - self._offset_x
+            y = event.y_root - self._offset_y
+            self._root.geometry(f"+{x}+{y}")
+            
+    def stop(self, event: tk.Event) -> None:
+        """Called upon mouse release."""
+        if self._is_win32:
+            if self._move_job is not None:
+                self._root.after_cancel(self._move_job)
+                self._move_job = None
+                self._flush_move()
+            self._pending_x = None
+            self._pending_y = None
+
+    def _flush_move(self) -> None:
+        """Execute the physical move using Win32 API."""
+        self._move_job = None
+        
+        if self._pending_x is None or self._pending_y is None:
+            return
+            
+        x = self._pending_x
+        y = self._pending_y
+        
+        self._pending_x = None
+        self._pending_y = None
+        
         if not self._root.winfo_exists():
             return
             
-        hwnd = _get_window_handle(self._root)
-        if not hwnd:
-            return
-            
-        try:
-            user32 = ctypes.windll.user32
-            
-            # Check if left button is still pressed
-            get_async_key_state = user32.GetAsyncKeyState
-            get_async_key_state.argtypes = (ctypes.c_int,)
-            get_async_key_state.restype = ctypes.c_short
-            VK_LBUTTON = 0x01
-            
-            state = get_async_key_state(VK_LBUTTON)
-            if (state & 0x8000) == 0:
-                # Mouse was already released
-                return
-            
-            release_capture = user32.ReleaseCapture
-            release_capture.argtypes = ()
-            release_capture.restype = ctypes.c_int
-            
-            send_message = user32.SendMessageW
-            send_message.argtypes = (
-                ctypes.c_void_p,
-                ctypes.c_uint,
-                ctypes.c_size_t,
-                ctypes.c_ssize_t,
-            )
-            send_message.restype = ctypes.c_ssize_t
-            
-            WM_NCLBUTTONDOWN = 0x00A1
-            HTCAPTION = 2
-            
-            lparam = _pack_screen_point(x_root, y_root)
-            
-            release_capture()
-            send_message(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, lparam)
-            
-        except Exception:
-            pass
-
-    def drag(self, event: tk.Event) -> None:
-        """Called upon mouse motion. Used only as a non-Windows fallback."""
-        if self._is_win32:
-            return
-        x = event.x_root - self._offset_x
-        y = event.y_root - self._offset_y
-        self._root.geometry(f"+{x}+{y}")
+        _set_native_window_position(self._root, x, y)

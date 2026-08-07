@@ -4,7 +4,7 @@ import pytest
 
 from neko_launcher.ui.platform.window_chrome import (
     WindowDragHandler,
-    _pack_screen_point,
+    _set_native_window_position,
 )
 
 @pytest.fixture
@@ -14,88 +14,81 @@ def tk_root():
     yield root
     root.destroy()
 
-def test_pack_screen_point():
-    """Verify negative and positive coordinates are correctly packed into LPARAM."""
-    # Positive coordinates
-    assert _pack_screen_point(100, 50) == 0x00320064
-    
-    # Negative X
-    assert _pack_screen_point(-100, 50) == 0x0032FF9C
-    
-    # Negative Y
-    assert _pack_screen_point(100, -50) == 0xFFCE0064
-    
-    # Negative X and Y (e.g. multi-monitor negative coordinate layout)
-    assert _pack_screen_point(-1920, -100) == 0xFF9CF880
-
 class TestWindowDragHandler:
     @patch("neko_launcher.ui.platform.window_chrome.sys.platform", "win32")
-    def test_windows_start_schedules_drag_and_checks_mouse(self, tk_root):
-        """
-        Verify that on Windows, start() defers execution via after_idle
-        and checks if the mouse button is still pressed before executing.
-        """
-        handler = WindowDragHandler(tk_root)
-        
-        # Override is_win32 flag which was set during __init__
-        handler._is_win32 = True 
-        
-        mock_event = Mock(spec=tk.Event)
-        mock_event.x_root = -1920
-        mock_event.y_root = 100
-        
-        with patch.object(tk_root, "after_idle") as mock_after_idle:
-            handler.start(mock_event)
-            
-            # 1. Ensure after_idle is called instead of synchronous execution
-            mock_after_idle.assert_called_once()
-            
-            # Extract the scheduled callback
-            callback = mock_after_idle.call_args[0][0]
-            
-            # Simulate invoking the callback
-            with patch("neko_launcher.ui.platform.window_chrome._get_window_handle") as mock_get_hwnd, \
-                 patch("ctypes.windll.user32.GetAsyncKeyState") as mock_get_async_key_state, \
-                 patch("ctypes.windll.user32.ReleaseCapture") as mock_release_capture, \
-                 patch("ctypes.windll.user32.SendMessageW") as mock_send_message:
-                 
-                 mock_get_hwnd.return_value = 12345
-                 
-                 # 2. Simulate mouse button RELEASED (state bit 0x8000 is 0)
-                 mock_get_async_key_state.return_value = 0
-                 callback()
-                 
-                 mock_get_async_key_state.assert_called_once_with(0x01) # VK_LBUTTON
-                 mock_release_capture.assert_not_called()
-                 mock_send_message.assert_not_called()
-                 
-                 mock_get_async_key_state.reset_mock()
-                 
-                 # 3. Simulate mouse button STILL PRESSED (state bit 0x8000 is 1)
-                 mock_get_async_key_state.return_value = 0x8000
-                 callback()
-                 
-                 mock_get_async_key_state.assert_called_once_with(0x01)
-                 mock_release_capture.assert_called_once()
-                 mock_send_message.assert_called_once()
-                 
-                 # Verify SendMessageW arguments
-                 hwnd, msg, wparam, lparam = mock_send_message.call_args[0]
-                 assert hwnd == 12345
-                 assert msg == 0x00A1 # WM_NCLBUTTONDOWN
-                 assert wparam == 2   # HTCAPTION
-                 # Verify packed coordinate -1920, 100
-                 assert lparam == _pack_screen_point(-1920, 100)
-
-    @patch("neko_launcher.ui.platform.window_chrome.sys.platform", "win32")
-    def test_windows_drag_is_noop(self, tk_root):
-        """Verify that B1-Motion geometry fallback is disabled on Windows."""
+    def test_windows_drag_coalescing(self, tk_root):
+        """Verify that on Windows, drag events are coalesced and use SetWindowPos."""
         handler = WindowDragHandler(tk_root)
         handler._is_win32 = True
         
-        with patch.object(tk_root, "geometry") as mock_geometry:
-            handler.drag(Mock(spec=tk.Event))
-            mock_geometry.assert_not_called()
+        with patch.object(tk_root, "winfo_x", return_value=100), \
+             patch.object(tk_root, "winfo_y", return_value=100):
+             
+             mock_start_event = Mock(spec=tk.Event)
+             mock_start_event.x_root = 150
+             mock_start_event.y_root = 150
+             
+             # offset should be 150 - 100 = 50
+             handler.start(mock_start_event)
+             assert handler._offset_x == 50
+             assert handler._offset_y == 50
+             
+             with patch.object(tk_root, "after") as mock_after, \
+                  patch.object(tk_root, "after_cancel") as mock_after_cancel, \
+                  patch("neko_launcher.ui.platform.window_chrome._set_native_window_position") as mock_set_pos:
+                  
+                  mock_after.return_value = "job_id_123"
+                  
+                  # First drag event
+                  mock_drag_event1 = Mock(spec=tk.Event)
+                  mock_drag_event1.x_root = 200
+                  mock_drag_event1.y_root = 200
+                  handler.drag(mock_drag_event1)
+                  
+                  # Should have scheduled a move
+                  mock_after.assert_called_once()
+                  assert handler._pending_x == 150 # 200 - 50
+                  assert handler._pending_y == 150 # 200 - 50
+                  assert handler._move_job == "job_id_123"
+                  
+                  # Second drag event rapidly (before after timer fires)
+                  mock_drag_event2 = Mock(spec=tk.Event)
+                  mock_drag_event2.x_root = 300
+                  mock_drag_event2.y_root = 300
+                  handler.drag(mock_drag_event2)
+                  
+                  # Shouldn't schedule another job, just update pending coords
+                  mock_after.assert_called_once()
+                  assert handler._pending_x == 250
+                  assert handler._pending_y == 250
+                  
+                  # Simulate mouse release (stop)
+                  handler.stop(Mock(spec=tk.Event))
+                  
+                  # Should cancel pending job and flush synchronously
+                  mock_after_cancel.assert_called_once_with("job_id_123")
+                  mock_set_pos.assert_called_once_with(tk_root, 250, 250)
+                  assert handler._move_job is None
+                  assert handler._pending_x is None
+                  assert handler._pending_y is None
+
+    @patch("neko_launcher.ui.platform.window_chrome.sys.platform", "win32")
+    def test_windows_flush_move(self, tk_root):
+        """Verify _flush_move invokes _set_native_window_position."""
+        handler = WindowDragHandler(tk_root)
+        handler._is_win32 = True
+        
+        handler._pending_x = 500
+        handler._pending_y = 600
+        handler._move_job = "dummy_job"
+        
+        with patch("neko_launcher.ui.platform.window_chrome._set_native_window_position") as mock_set_pos:
+            handler._flush_move()
+            
+            assert handler._move_job is None
+            assert handler._pending_x is None
+            assert handler._pending_y is None
+            mock_set_pos.assert_called_once_with(tk_root, 500, 600)
 
     @patch("neko_launcher.ui.platform.window_chrome.sys.platform", "linux")
     def test_non_windows_fallback(self, tk_root):
@@ -131,15 +124,11 @@ class TestWindowDragHandler:
     @patch("neko_launcher.ui.platform.window_chrome.sys.platform", "win32")
     def test_windows_native_failure_is_graceful(self, tk_root):
         """Verify that if Win32 APIs fail, the launcher doesn't crash."""
-        handler = WindowDragHandler(tk_root)
-        handler._is_win32 = True
-        
-        # Override _get_window_handle to simulate failure
         with patch("neko_launcher.ui.platform.window_chrome._get_window_handle", return_value=0):
             # Should safely return without crashing
-            handler._begin_native_drag(100, 100)
+            _set_native_window_position(tk_root, 100, 100)
             
         with patch("neko_launcher.ui.platform.window_chrome._get_window_handle", return_value=12345), \
-             patch("ctypes.windll.user32.GetAsyncKeyState", side_effect=Exception("API failure")):
+             patch("ctypes.windll.user32.SetWindowPos", side_effect=Exception("API failure")):
             # Should safely catch exception without crashing
-            handler._begin_native_drag(100, 100)
+            _set_native_window_position(tk_root, 100, 100)
