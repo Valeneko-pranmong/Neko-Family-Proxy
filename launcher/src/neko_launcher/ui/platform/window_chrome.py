@@ -93,9 +93,18 @@ class WindowDragHandler:
 
     def start(self, event: tk.Event) -> None:
         if sys.platform == "win32":
-            hwnd = ctypes.windll.user32.GetParent(self._root.winfo_id()) or self._root.winfo_id()
-            ctypes.windll.user32.ReleaseCapture()
-            ctypes.windll.user32.SendMessageW(hwnd, 0x00A1, 2, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
+            try:
+                user32 = ctypes.windll.user32
+                hwnd = user32.GetParent(self._root.winfo_id()) or self._root.winfo_id()
+                user32.ReleaseCapture()
+                user32.SendMessageW(
+                    ctypes.c_void_p(hwnd),
+                    ctypes.c_uint(0x00A1),
+                    ctypes.c_void_p(2),
+                    ctypes.c_void_p(0),
+                )
+            except Exception:
+                pass
         else:
             self._offset_x = event.x_root - self._root.winfo_x()
             self._offset_y = event.y_root - self._root.winfo_y()
