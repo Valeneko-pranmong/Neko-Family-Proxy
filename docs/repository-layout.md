@@ -1,13 +1,13 @@
 # Repository layout
 
-**Status:** Current — reviewed 4 August 2026.
+**Status:** Current — reviewed 7 August 2026.
 
 ## Tracked source
 
 - `launcher/` — launcher source, tests, and one-file build specification.
   - `application/` — business logic, services, and ports.
   - `domain/` — core models and events.
-  - `infrastructure/` — external integrations, grouped by `auth`, `core`, and `storage`.
+  - `infrastructure/` — external integrations, grouped by `auth`, `core`, `process`, and `storage`.
   - `ui/` — views, components, and platform-specific window handling.
   - `bootstrap/` — dependency assembly and application startup.
 - `supabase/` — schema migrations and operational documentation.
