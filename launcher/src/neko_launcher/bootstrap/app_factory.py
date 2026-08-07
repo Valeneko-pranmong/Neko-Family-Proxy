@@ -52,8 +52,22 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         secure_store,
     )
 
+    if config.debug_mode:
+        from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
+        diagnostics_sink = DevelopmentLogger(config.debug_log_dir)
+    else:
+        from neko_launcher.application.diagnostics import NoopDiagnosticsSink
+        diagnostics_sink = NoopDiagnosticsSink()
+
+    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
+    diagnostics_recorder = CoreDiagnosticsRecorder(diagnostics_sink)
+
     if CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
-        core_process = WindowsCoreProcessAdapter(config.proxy_core_path)
+        core_process = WindowsCoreProcessAdapter(
+            config.proxy_core_path,
+            diagnostics=diagnostics_recorder,
+            debug_log_dir=config.debug_log_dir if config.debug_mode else None,
+        )
         core_channel = NamedPipeCoreControlChannel("NekoProxyCoreControl")
         detector = ExactPso2TargetDetector()
         timeouts = OrchestrationTimeouts(
@@ -69,6 +83,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             permits=gateway,
             detector=detector,
             timeouts=timeouts,
+            diagnostics=diagnostics_recorder,
         )
 
         def access_context_provider() -> LaunchAccessContext:
@@ -117,4 +132,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         icon_path,
         game_default_path=config.game_exe,
         game_path_store=config.game_path_store,
+        diagnostics=diagnostics_recorder,
+        debug_mode=config.debug_mode,
+        debug_log_dir=config.debug_log_dir,
     )

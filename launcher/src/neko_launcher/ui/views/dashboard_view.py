@@ -53,6 +53,8 @@ class DashboardView:
         on_redeem_coupon: Callable[[], None],
         on_choose_game: Callable[[], None],
         on_launch_game: Callable[[], None],
+        debug_mode: bool = False,
+        on_open_debug: Callable[[], None] | None = None,
     ) -> None:
         self._root = root
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -121,12 +123,23 @@ class DashboardView:
         self._redeem_button.pack(fill="x", padx=4)
 
         proxy = card(self.frame)
+        
+        proxy_header = ctk.CTkFrame(proxy, fg_color="transparent")
+        proxy_header.pack(fill="x", padx=14, pady=(10, 4))
+        
         ctk.CTkLabel(
-            proxy,
+            proxy_header,
             text="สถานะการเชื่อมต่อ (Connection Status)",
             font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=14, pady=(10, 4))
+        ).pack(side="left")
+        
+        if debug_mode and on_open_debug:
+            secondary_button(
+                proxy_header,
+                "DEBUG MODE",
+                on_open_debug,
+            ).pack(side="right")
 
         ctk.CTkLabel(
             proxy,

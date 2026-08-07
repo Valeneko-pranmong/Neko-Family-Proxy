@@ -304,6 +304,7 @@ class AuthorizedCoreOrchestrator:
         permits: LaunchPermitGateway,
         detector: ProcessTargetDetector[object],
         timeouts: OrchestrationTimeouts,
+        diagnostics: Any = None,
     ) -> None:
         self._process = process
         self._channel = channel
@@ -311,6 +312,7 @@ class AuthorizedCoreOrchestrator:
         self._detector = detector
         self._timeouts = timeouts
         self._single_flight = Lock()
+        self._diagnostics = diagnostics
 
     def start(
         self,
@@ -318,8 +320,18 @@ class AuthorizedCoreOrchestrator:
         access_context: LaunchAccessContext,
         cancellation: Event,
     ) -> CoreStatus:
+        if self._diagnostics:
+            from uuid import uuid4
+            self._diagnostics.begin_attempt(f"DBG-{uuid4().hex[:6]}")
+
+        if self._diagnostics:
+            self._diagnostics.record_stage("COMMAND_VALIDATE")
         command.require_available()
+        
+        if self._diagnostics:
+            self._diagnostics.record_stage("ACCESS_CONTEXT_VALIDATE")
         access_context.require_available()
+        
         if not self._single_flight.acquire(blocking=False):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.DUPLICATE_START)
 
@@ -329,11 +341,15 @@ class AuthorizedCoreOrchestrator:
         try:
             try:
                 self._require_not_cancelled(cancellation)
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("TARGET_WAIT")
                 target = self._invoke_adapter(
                     lambda: self._detector.wait_for_exact_pso2(
                         self._timeouts.target, cancellation
                     ),
                     AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
+                    stage="TARGET_WAIT",
                 )
                 if target is None:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_UNAVAILABLE)
@@ -342,29 +358,49 @@ class AuthorizedCoreOrchestrator:
                 # Cleanup is safe for an unowned/no-process state and must run even
                 # when an adapter creates the host and then reports a failure.
                 host_start_attempted = True
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("HOST_START")
                 self._invoke_adapter(
                     self._process.start_host_without_secrets,
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                    stage="HOST_START",
                 )
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("CONTROL_CHANNEL_WAIT")
                 self._invoke_adapter(
                     lambda: self._process.wait_for_control_channel(
                         self._timeouts.control_channel
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                    stage="CONTROL_CHANNEL_WAIT",
                 )
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("TARGET_RECHECK")
                 self._require_target(target)
 
+                if self._diagnostics:
+                    self._diagnostics.record_stage("CHALLENGE_REQUEST")
                 challenge = self._invoke_adapter(
                     lambda: self._channel.request_challenge(
                         self._correlation_id(), self._timeouts.challenge
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                    stage="CHALLENGE_REQUEST",
                 )
                 self._require_target(target)
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("TARGET_BIND")
                 target_bound_command = TargetBoundStartCommand.from_opaque(
                     command,
                     target_pid=self._target_pid(target),
                 )
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("PERMIT_REQUEST")
                 permit = self._invoke_adapter(
                     lambda: self._permits.issue_launch_permit(
                         access_context.authenticated_transport,
@@ -379,10 +415,13 @@ class AuthorizedCoreOrchestrator:
                         self._timeouts.permit,
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                    stage="PERMIT_REQUEST",
                 )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
 
+                if self._diagnostics:
+                    self._diagnostics.record_stage("AUTHORIZED_START")
                 status = self._invoke_adapter(
                     lambda: self._channel.start_authorized(
                         target_bound_command,
@@ -391,15 +430,23 @@ class AuthorizedCoreOrchestrator:
                         self._timeouts.start,
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                    stage="AUTHORIZED_START",
                 )
+                
+                if self._diagnostics:
+                    self._diagnostics.record_stage("RUNNING_VERIFY")
                 if status.kind is not CoreStatusKind.RUNNING:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.RUNNING_NOT_REACHED)
             except AuthorizedCoreError as exc:
                 failure = AuthorizedCoreError(exc.code)
-            except Exception:
+            except Exception as exc:
+                if self._diagnostics:
+                    self._diagnostics.record_exception(exc, "UNKNOWN_STAGE")
                 failure = AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
             if failure is not None and host_start_attempted:
+                if self._diagnostics:
+                    self._diagnostics.record_stage("CLEANUP")
                 self._cleanup()
         finally:
             self._single_flight.release()
@@ -421,21 +468,25 @@ class AuthorizedCoreOrchestrator:
         running = self._invoke_adapter(
             lambda: self._detector.is_same_target_still_running(target),
             AuthorizedCoreErrorCode.TARGET_EXITED,
+            stage="TARGET_RECHECK",
         )
         if not running:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_EXITED)
 
-    @staticmethod
     def _invoke_adapter(
+        self,
         operation: Callable[[], AdapterResultT],
         failure_code: AuthorizedCoreErrorCode,
+        stage: str | None = None,
     ) -> AdapterResultT:
         failed = False
         result: object = None
         try:
             result = operation()
-        except Exception:
+        except Exception as exc:
             failed = True
+            if self._diagnostics and stage:
+                self._diagnostics.record_exception(exc, stage)
         if failed:
             raise AuthorizedCoreError(failure_code)
         return cast(AdapterResultT, result)

@@ -20,6 +20,8 @@ class LauncherConfig:
     proxy_core_path: Path
     supabase_url: str
     supabase_publishable_key: str
+    debug_mode: bool
+    debug_log_dir: Path
 
     @classmethod
     def from_environment(cls, workspace_root: Path) -> LauncherConfig:
@@ -47,6 +49,8 @@ class LauncherConfig:
             if bundled_proxy.is_file()
             else local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
         )
+        debug_mode = os.getenv("NEKO_DEBUG") == "1"
+        debug_log_dir = local_app_data / "NEKO FAMILY" / "logs"
         return cls(
             workspace_root=workspace_root,
             product_code=PRODUCT_CODE,
@@ -55,4 +59,6 @@ class LauncherConfig:
             proxy_core_path=proxy_path,
             supabase_url=SUPABASE_URL,
             supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
+            debug_mode=debug_mode,
+            debug_log_dir=debug_log_dir,
         )

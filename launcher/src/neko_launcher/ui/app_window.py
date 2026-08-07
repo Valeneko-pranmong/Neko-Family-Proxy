@@ -58,6 +58,9 @@ class AppWindow:
         icon_path: Path | None = None,
         game_default_path: str = "",
         game_path_store: Path | None = None,
+        diagnostics: Any = None,
+        debug_mode: bool = False,
+        debug_log_dir: Path | None = None,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -73,9 +76,13 @@ class AppWindow:
         self._logo_image = None
         self._icon_path = icon_path
         self._password_dialog: ctk.CTkToplevel | None = None
+        self._debug_dialog: ctk.CTkToplevel | None = None
         self._closing = False
         self._tray_actions: SimpleQueue[str] = SimpleQueue()
         self._tray_manager: SystemTrayManager | None = None
+        self._diagnostics = diagnostics
+        self._debug_mode = debug_mode
+        self._debug_log_dir = debug_log_dir
 
         self.root = ctk.CTk()
         self.root.withdraw()
@@ -227,6 +234,8 @@ class AppWindow:
             on_redeem_coupon=self._redeem_coupon,
             on_choose_game=self._choose_game,
             on_launch_game=self._launch_game,
+            debug_mode=self._debug_mode,
+            on_open_debug=self._show_debug_dialog,
         )
         self._show_auth_view()
         self._update_message_visibility()
@@ -343,6 +352,97 @@ class AppWindow:
         self._error.set("")
         if dialog is not None and dialog.winfo_exists():
             dialog.grab_release()
+            dialog.destroy()
+
+    # ------------------------------------------------------------------
+    # Debug dialog
+    # ------------------------------------------------------------------
+    def _show_debug_dialog(self) -> None:
+        if not self._debug_mode or self._diagnostics is None:
+            return
+        if self._debug_dialog is not None and self._debug_dialog.winfo_exists():
+            self._debug_dialog.lift()
+            self._debug_dialog.focus_force()
+            return
+
+        self._debug_dialog = ctk.CTkToplevel(self.root)
+        self._debug_dialog.title("Development Debug Mode")
+        self._debug_dialog.geometry("700x500")
+        self._debug_dialog.attributes("-topmost", True)
+        if self._icon_path and self._icon_path.is_file():
+            try:
+                self._debug_dialog.iconbitmap(self._icon_path)
+            except Exception:
+                pass
+
+        self._debug_dialog.protocol("WM_DELETE_WINDOW", self._close_debug_dialog)
+
+        frame = ctk.CTkFrame(self._debug_dialog, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(
+            header,
+            text="Diagnostics Recorder",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+            text_color=PALETTE.primary,
+        ).pack(side="left")
+        
+        secondary_button(
+            header,
+            "Retry ProxyCore (Simulate Restart)",
+            self._service.start_proxy,
+        ).pack(side="right")
+
+        self._debug_text = ctk.CTkTextbox(
+            frame,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            wrap="word",
+        )
+        self._debug_text.pack(fill="both", expand=True, pady=(0, 10))
+        self._debug_text.configure(state="disabled")
+        
+        if self._debug_log_dir:
+            ctk.CTkLabel(
+                frame,
+                text=f"Logs written to: {self._debug_log_dir}",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                text_color=PALETTE.text_muted,
+            ).pack(anchor="w")
+
+        self._update_debug_dialog()
+
+    def _update_debug_dialog(self) -> None:
+        if self._debug_dialog is None or not self._debug_dialog.winfo_exists():
+            return
+
+        if self._diagnostics:
+            snapshot = self._diagnostics.snapshot()
+            content = (
+                f"Attempt ID: {snapshot.attempt_id}\n"
+                f"Stage:      {snapshot.stage}\n"
+                f"PID:        {snapshot.pid}\n"
+                f"Exit Code:  {snapshot.exit_code}\n"
+                f"WinError:   {snapshot.winerror}\n"
+                f"Runtime:    {snapshot.runtime}\n"
+                f"Core Path:  {snapshot.core_path}\n"
+                "\n"
+            )
+            if snapshot.last_diagnostic:
+                content += f"Last Error/Diagnostic:\n{snapshot.last_diagnostic}\n"
+            
+            self._debug_text.configure(state="normal")
+            self._debug_text.delete("1.0", "end")
+            self._debug_text.insert("1.0", content)
+            self._debug_text.configure(state="disabled")
+
+        self.root.after(250, self._update_debug_dialog)
+
+    def _close_debug_dialog(self) -> None:
+        dialog = self._debug_dialog
+        self._debug_dialog = None
+        if dialog is not None and dialog.winfo_exists():
             dialog.destroy()
 
     # ------------------------------------------------------------------
