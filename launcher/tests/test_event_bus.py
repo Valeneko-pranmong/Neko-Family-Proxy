@@ -1,5 +1,5 @@
 from neko_launcher.domain.events import AuthStarted
-from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.storage.event_bus import EventBus
 
 
 def test_event_bus_preserves_order_and_drains() -> None:

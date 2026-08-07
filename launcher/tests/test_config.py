@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from neko_launcher.infrastructure.config import LauncherConfig
+from neko_launcher.infrastructure.storage.config import LauncherConfig
 from neko_launcher.main import application_root
 
 

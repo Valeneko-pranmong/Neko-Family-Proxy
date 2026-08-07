@@ -4,7 +4,7 @@ import builtins
 import json
 from typing import Any
 
-from neko_launcher.infrastructure.core_control_channel import NamedPipeCoreControlChannel
+from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 
 
 class _PipeHandle:
@@ -43,7 +43,7 @@ def test_pipe_open_retries_transient_os_error(monkeypatch: Any) -> None:
         return handle
 
     monkeypatch.setattr(builtins, "open", transient_open)
-    monkeypatch.setattr("neko_launcher.infrastructure.core_control_channel.time.sleep", lambda _: None)
+    monkeypatch.setattr("neko_launcher.infrastructure.core.core_control_channel.time.sleep", lambda _: None)
 
     challenge = NamedPipeCoreControlChannel().request_challenge(
         "0123456789abcdef0123456789abcdef",

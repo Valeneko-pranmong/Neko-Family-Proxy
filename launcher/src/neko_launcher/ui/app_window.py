@@ -29,8 +29,8 @@ from neko_launcher.domain.models import (
     RegistrationResult,
     entitlement_is_active,
 )
-from neko_launcher.infrastructure.event_bus import EventBus
-from neko_launcher.infrastructure.process_detector import is_any_process_running
+from neko_launcher.infrastructure.storage.event_bus import EventBus
+from neko_launcher.infrastructure.core.process_detector import is_any_process_running
 
 from .theme import FONT_FAMILY, PALETTE, apply_theme
 from .platform.window_chrome import (

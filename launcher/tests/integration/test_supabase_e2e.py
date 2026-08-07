@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from neko_launcher.application.errors import LauncherServiceError
-from neko_launcher.infrastructure.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 
 
 @dataclass

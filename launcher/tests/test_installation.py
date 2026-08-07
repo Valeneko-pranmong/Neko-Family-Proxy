@@ -1,8 +1,8 @@
 import hashlib
 import random
 
-from neko_launcher.infrastructure.installation import LocalInstallationIdentity
-from neko_launcher.infrastructure.secure_store import SupabaseAuthStorage
+from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
+from neko_launcher.infrastructure.auth.secure_store import SupabaseAuthStorage
 
 
 class MemoryStore:

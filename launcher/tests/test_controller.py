@@ -17,7 +17,7 @@ from neko_launcher.domain.models import (
     GameStatus,
     ProxyStatus,
 )
-from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.storage.event_bus import EventBus
 
 
 class FakeProxy:

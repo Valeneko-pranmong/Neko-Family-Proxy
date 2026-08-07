@@ -2,8 +2,8 @@ from typing import Any
 
 import pytest
 
-import neko_launcher.infrastructure.process_manager as process_module
-from neko_launcher.infrastructure.process_manager import (
+import neko_launcher.infrastructure.core.process_manager as process_module
+from neko_launcher.infrastructure.core.process_manager import (
     ProxyProcessError,
     ProxyProcessManager,
 )
