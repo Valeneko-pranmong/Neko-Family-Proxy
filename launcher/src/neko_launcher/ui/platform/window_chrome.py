@@ -18,19 +18,21 @@ def apply_rounded_window_shape(
         return
     try:
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
-        width = max(1, int(window.winfo_width()))
-        height = max(1, int(window.winfo_height()))
-        region = ctypes.windll.gdi32.CreateRoundRectRgn(
-            0,
-            0,
-            width + 1,
-            height + 1,
-            radius,
-            radius,
+        
+        # Use Windows 11 hardware-accelerated DWM rounded corners.
+        # We explicitly DO NOT use GDI CreateRoundRectRgn because it forces 
+        # software rendering compositing, which causes horrific smearing when dragged!
+        dwmapi = ctypes.windll.dwmapi
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND = 2
+        value = ctypes.c_int(DWMWCP_ROUND)
+        dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd),
+            ctypes.c_uint(DWMWA_WINDOW_CORNER_PREFERENCE),
+            ctypes.byref(value),
+            ctypes.c_size_t(ctypes.sizeof(value))
         )
-        if region:
-            ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
-    except (AttributeError, OSError):
+    except Exception:
         pass
 
 
@@ -92,35 +94,10 @@ class WindowDragHandler:
         self._offset_y: int = 0
 
     def start(self, event: tk.Event) -> None:
-        if sys.platform == "win32":
-            try:
-                user32 = ctypes.windll.user32
-                
-                get_parent = user32.GetParent
-                get_parent.argtypes = [ctypes.c_void_p]
-                get_parent.restype = ctypes.c_void_p
-                
-                hwnd = get_parent(self._root.winfo_id()) or self._root.winfo_id()
-                
-                release_capture = user32.ReleaseCapture
-                release_capture.argtypes = []
-                release_capture.restype = ctypes.c_int
-                
-                send_message = user32.SendMessageW
-                send_message.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
-                send_message.restype = ctypes.c_void_p
-                
-                release_capture()
-                send_message(hwnd, 0x00A1, 2, 0)
-            except Exception:
-                pass
-        else:
-            self._offset_x = event.x_root - self._root.winfo_x()
-            self._offset_y = event.y_root - self._root.winfo_y()
+        self._offset_x = event.x_root - self._root.winfo_x()
+        self._offset_y = event.y_root - self._root.winfo_y()
 
     def drag(self, event: tk.Event) -> None:
-        if sys.platform == "win32":
-            return
         x = event.x_root - self._offset_x
         y = event.y_root - self._offset_y
         self._root.geometry(f"+{x}+{y}")
