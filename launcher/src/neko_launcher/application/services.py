@@ -97,7 +97,7 @@ class LauncherService:
             raise LauncherServiceError(message) from exc
         try:
             self._claim_session(allow_missing=True)
-        except LauncherServiceError as exc:
+        except LauncherServiceError:
             if self._controller.state.auth_status is not AuthStatus.SIGNED_OUT:
                 self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
             raise

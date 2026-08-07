@@ -239,7 +239,7 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
     assert window._register_button.state == "disabled"
 
 
-def test_error_notification_replaces_header_subtitle() -> None:
+def test_error_notification_shows_toast(monkeypatch: Any) -> None:
     window = object.__new__(AppWindow)
     window._header_message = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
@@ -247,25 +247,37 @@ def test_error_notification_replaces_header_subtitle() -> None:
         "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่"
     )  # type: ignore[assignment]
 
+    toast_calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "_show_toast",
+        lambda msg, is_error: toast_calls.append((msg, is_error)),
+    )
+
     window._update_message_visibility()
 
-    expected = f"{window._error.get()[:47]}…"
+    expected_msg = f"{window._error.get()[:47]}…"
+    assert toast_calls == [(expected_msg, True)]
     assert window._header_message.options == {  # type: ignore[attr-defined]
-        "text": expected,
-        "text_color": PALETTE.danger,
+        "text": "High Performance & Low Latency",
+        "text_color": PALETTE.text_muted,
     }
 
 
-def test_empty_notification_restores_default_header_subtitle() -> None:
+def test_empty_notification_restores_default_header_subtitle(monkeypatch: Any) -> None:
     window = object.__new__(AppWindow)
     window._header_message = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable()  # type: ignore[assignment]
 
+    hidden: list[bool] = []
+    monkeypatch.setattr(window, "_hide_toast", lambda: hidden.append(True))
+
     window._update_message_visibility()
 
+    assert hidden == [True]
     assert window._header_message.options == {  # type: ignore[attr-defined]
-        "text": "บัญชีและการใช้งาน",
+        "text": "High Performance & Low Latency",
         "text_color": PALETTE.text_muted,
     }
 
@@ -351,24 +363,16 @@ def test_fit_portrait_window_locks_native_size_before_rounded_region(
     ]
 
 
-def test_center_window_flushes_geometry_before_applying_rounded_region(
-    monkeypatch: Any,
-) -> None:
+def test_center_window_flushes_geometry_without_rounded_region() -> None:
     window = object.__new__(AppWindow)
     window.root = FakeSizingRoot()  # type: ignore[assignment]
     window._window_size = (480, 760)
-    monkeypatch.setattr(
-        AppWindow,
-        "_apply_rounded_window_shape",
-        staticmethod(lambda root: root.events.append("rounded_region")),
-    )
 
     window._center_window()
 
     assert window.root.events == [  # type: ignore[attr-defined]
         "geometry:480x760+720+160",
         "update_idletasks",
-        "rounded_region",
     ]
 
 
