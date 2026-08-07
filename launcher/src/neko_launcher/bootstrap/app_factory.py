@@ -10,15 +10,15 @@ from neko_launcher.application.production_authorization import (
 )
 from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.models import AuthStatus, EntitlementStatus
-from neko_launcher.infrastructure.auth.authorized_proxy_gateway import AuthorizedProxyGateway
-from neko_launcher.infrastructure.auth.secure_store import KeyringSecureStore
+from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
+from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
-from neko_launcher.infrastructure.core.game_process_manager import GameProcessManager
-from neko_launcher.infrastructure.core.process_detector import ExactPso2TargetDetector
-from neko_launcher.infrastructure.storage.config import LauncherConfig
-from neko_launcher.infrastructure.storage.event_bus import EventBus
+from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
+from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
+from neko_launcher.infrastructure.config import LauncherConfig
+from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 from neko_launcher.ui.app_window import AppWindow
 from neko_launcher.application.authorized_core import (
@@ -36,7 +36,7 @@ def application_root() -> Path:
         if bundle_root:
             return Path(bundle_root)
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[4]
 
 
 def build_window(workspace_root: Path | None = None) -> AppWindow:

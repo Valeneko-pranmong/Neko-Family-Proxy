@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from neko_launcher.infrastructure.storage.config import LauncherConfig
+from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.bootstrap.app_factory import application_root
 
 
@@ -45,3 +45,15 @@ def test_application_root_uses_pyinstaller_extraction_directory(
     )
 
     assert application_root() == tmp_path
+
+
+def test_application_root_resolves_to_repository_root_in_source_mode(
+    monkeypatch: object,
+) -> None:
+    monkeypatch.setattr("sys.frozen", False, raising=False)  # type: ignore[attr-defined]
+
+    root = application_root()
+
+    assert (root / "launcher").is_dir()
+    assert (root / "image_11.png").is_file()
+    assert (root / "icon_app.ico").is_file()
