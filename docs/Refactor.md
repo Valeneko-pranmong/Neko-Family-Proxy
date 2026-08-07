@@ -4,6 +4,14 @@ https://github.com/Valeneko-pranmong/Neko-Family-Proxy
 
 Your task is to perform a maintainability-focused architectural refactor of the Python launcher.
 
+> **Status:** Refactoring Complete (7 August 2026).
+> **Result:** The launcher architecture was successfully refactored across four phases:
+> 1. `app_window.py` was reduced to a thin UI coordinator by extracting `ui/platform/`, `ui/views/`, and `ui/components/`.
+> 2. `infrastructure/` was reorganized into cohesive `auth/`, `core/`, and `storage/` sub-packages.
+> 3. `main.py` was thinned by extracting dependency assembly and single-instance mutex logic into `bootstrap/`.
+> 
+> All 109 non-integration tests pass. No behavioral changes were introduced.
+
 IMPORTANT: This is a REFACTOR-ONLY task.
 
 Do NOT intentionally change application behavior, business logic, security rules, authentication behavior, entitlement behavior, ProxyCore authorization behavior, UI appearance, UI layout, text displayed to users, startup behavior, game launching behavior, or Supabase behavior.
