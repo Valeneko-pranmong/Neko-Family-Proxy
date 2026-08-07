@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-import neko_launcher.infrastructure.core.game_process_manager as process_module
-from neko_launcher.infrastructure.core.game_process_manager import GameProcessManager
+import neko_launcher.infrastructure.process.game_process_manager as process_module
+from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 
 
 class FakeProcess:

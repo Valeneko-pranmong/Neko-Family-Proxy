@@ -8,7 +8,7 @@ from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     CoreChallenge,
 )
-from neko_launcher.infrastructure.auth.launch_permit_gateway import (
+from neko_launcher.infrastructure.core.launch_permit_gateway import (
     IssueLaunchPermitGateway,
 )
 

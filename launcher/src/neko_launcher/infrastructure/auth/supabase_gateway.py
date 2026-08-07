@@ -20,7 +20,7 @@ from neko_launcher.domain.models import (
     SessionClaim,
 )
 
-from .secure_store import SupabaseAuthStorage
+from neko_launcher.infrastructure.storage.secure_store import SupabaseAuthStorage
 
 if TYPE_CHECKING:
     from neko_launcher.application.authorized_core import CoreChallenge, OpaquePermit

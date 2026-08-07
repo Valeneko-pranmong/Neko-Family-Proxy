@@ -1,6 +1,6 @@
 from threading import Event
 
-from neko_launcher.infrastructure.core.process_detector import (
+from neko_launcher.infrastructure.process.process_detector import (
     PSO2_PROCESS_NAMES,
     ExactPso2TargetDetector,
     TargetProcess,
