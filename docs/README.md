@@ -28,6 +28,8 @@ plans or historical evidence.
 | [`current/debug-console.md`](current/debug-console.md) | Current | Operate the live Launcher/Core debug console and interpret startup failures |
 | [`current/repository-layout.md`](current/repository-layout.md) | Current | Tracked source, local inputs, and generated output |
 | [`current/runtime-distribution.md`](current/runtime-distribution.md) | Current policy | Controlled NekoProxyCore runtime delivery policy |
+| [`current/backend-single-active-session-ai-prompt.md`](current/backend-single-active-session-ai-prompt.md) | Current implementation handoff | Backend/Admin Web policy for multiple installations and one active session |
+| [`current/launcher-single-active-session-ai-prompt.md`](current/launcher-single-active-session-ai-prompt.md) | Current implementation handoff | Desktop Launcher behavior for latest-login-wins session replacement |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |
 
 ## Component documentation

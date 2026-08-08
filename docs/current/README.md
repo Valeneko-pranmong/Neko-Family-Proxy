@@ -15,3 +15,4 @@ Operational guides:
 Implementation handoffs:
 
 - [`backend-single-active-session-ai-prompt.md`](backend-single-active-session-ai-prompt.md) — AI-ready Backend/Admin Web prompt for multiple remembered installations with one active session.
+- [`launcher-single-active-session-ai-prompt.md`](launcher-single-active-session-ai-prompt.md) — AI-ready Desktop Launcher prompt for latest-login-wins handling, forced local sign-out, and stale-heartbeat safety.
