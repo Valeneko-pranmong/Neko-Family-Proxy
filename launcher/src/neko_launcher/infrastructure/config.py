@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,7 +50,10 @@ class LauncherConfig:
             if bundled_proxy.is_file()
             else local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
         )
-        debug_mode = os.getenv("NEKO_DEBUG") == "1"
+        # Command-line arguments survive the Windows UAC elevation boundary,
+        # while ad-hoc environment variables may not. Keep NEKO_DEBUG for
+        # source development and use --debug for packaged shortcuts.
+        debug_mode = os.getenv("NEKO_DEBUG") == "1" or "--debug" in sys.argv[1:]
         debug_log_dir = local_app_data / "NEKO FAMILY" / "logs"
         return cls(
             workspace_root=workspace_root,

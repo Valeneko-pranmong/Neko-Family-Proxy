@@ -20,6 +20,7 @@ Common entry points:
 - [Launcher development](launcher/README.md)
 - [Launcher architecture](docs/current/launcher-architecture.md)
 - [Windows executable build](docs/current/build-windows-executable.md)
+- [Launcher debug console](docs/current/debug-console.md)
 - [Repository layout](docs/current/repository-layout.md)
 - [Runtime distribution policy](docs/current/runtime-distribution.md)
 - [Blocked NEKO-AUTH-S0 handoff](docs/blocked/neko-auth-s0-production-handoff.md)

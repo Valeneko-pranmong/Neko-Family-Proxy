@@ -84,6 +84,8 @@ class AppWindow:
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
         self._debug_retry_pending = False
+        self._last_debug_status: tuple[str, tuple[tuple[str, str], ...]] | None = None
+        self._record_debug_status("LAUNCHER_START", message="Debug console enabled")
 
         self.root = ctk.CTk()
         self.root.withdraw()
@@ -811,6 +813,22 @@ class AppWindow:
     # ------------------------------------------------------------------
     # Auto-connect: poll for the actual pso2.exe client process.
     # ------------------------------------------------------------------
+    def _record_debug_status(self, stage: str, **details: Any) -> None:
+        """Write useful launcher state transitions without flooding the log."""
+        if not getattr(self, "_debug_mode", False):
+            return
+        diagnostics = getattr(self, "_diagnostics", None)
+        if diagnostics is None:
+            return
+        signature = (
+            stage,
+            tuple(sorted((key, str(value)) for key, value in details.items())),
+        )
+        if getattr(self, "_last_debug_status", None) == signature:
+            return
+        self._last_debug_status = signature
+        diagnostics.record_stage(stage, **details)
+
     def _poll_game_process(self) -> None:
         """Every 3 seconds, check if a PSO2 process appeared."""
         if not self._process_detection_pending:
@@ -830,15 +848,30 @@ class AppWindow:
         if state.game_process_running is not detected:
             self._controller.dispatch(GameProcessStateChanged(detected))
         if not detected:
+            self._record_debug_status(
+                "WAITING_FOR_GAME",
+                process="pso2.exe",
+                reason="ProxyCore starts only after the game process is detected",
+            )
             return
+        self._record_debug_status("GAME_PROCESS_DETECTED", process="pso2.exe")
         state = self._controller.state
-        if (
-            state.auth_status is not AuthStatus.AUTHENTICATED
-            or state.session_id is None
-            or not entitlement_is_active(state.entitlement)
-            or state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RUNNING}
-        ):
+        if state.auth_status is not AuthStatus.AUTHENTICATED:
+            self._record_debug_status("PROXY_START_BLOCKED", reason="not authenticated")
             return
+        if state.session_id is None:
+            self._record_debug_status("PROXY_START_BLOCKED", reason="session is unavailable")
+            return
+        if not entitlement_is_active(state.entitlement):
+            self._record_debug_status("PROXY_START_BLOCKED", reason="entitlement is inactive")
+            return
+        if state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RUNNING}:
+            self._record_debug_status(
+                "PROXY_ALREADY_ACTIVE",
+                status=state.proxy_status.value,
+            )
+            return
+        self._record_debug_status("PROXY_START_REQUESTED", process="pso2.exe")
         self._service.start_proxy()
 
     def _heartbeat(self) -> None:

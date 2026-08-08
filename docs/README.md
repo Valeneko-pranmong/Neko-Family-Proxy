@@ -24,6 +24,7 @@ plans or historical evidence.
 | [`../launcher/README.md`](../launcher/README.md) | Current | Launcher setup, behavior, and validation |
 | [`current/launcher-architecture.md`](current/launcher-architecture.md) | Current; validation pending | Launcher architecture after the maintainability refactor |
 | [`current/build-windows-executable.md`](current/build-windows-executable.md) | Current | Build and smoke-test `NekoLauncher.exe` |
+| [`current/debug-console.md`](current/debug-console.md) | Current | Operate the live Launcher/Core debug console and interpret startup failures |
 | [`current/repository-layout.md`](current/repository-layout.md) | Current | Tracked source, local inputs, and generated output |
 | [`current/runtime-distribution.md`](current/runtime-distribution.md) | Current policy | Controlled NekoProxyCore runtime delivery policy |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |

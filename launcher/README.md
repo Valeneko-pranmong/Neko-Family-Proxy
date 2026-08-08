@@ -24,6 +24,19 @@ Run from source:
 python -m neko_launcher.main
 ```
 
+## Debug console
+
+After building `dist/NekoLauncher.exe`, run the live diagnostic console with:
+
+```powershell
+.\NekoLauncherDebugConsole.cmd
+```
+
+It launches the packaged executable with `--debug` and streams launcher/Core
+status from `%LOCALAPPDATA%\NEKO FAMILY\logs`. See the
+[debug console guide](../docs/current/debug-console.md) for stage meanings,
+log files, troubleshooting, and security guidance.
+
 ## Customer flow
 
 1. Register with a username and password.
