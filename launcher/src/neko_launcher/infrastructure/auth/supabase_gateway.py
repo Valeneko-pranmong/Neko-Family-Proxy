@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from supabase import Client, ClientOptions, create_client
 
 from neko_launcher.application.errors import (
+    DeviceAuthorizationDenied,
     EntitlementUnavailable,
     LauncherServiceError,
 )
@@ -42,12 +43,13 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if not hostname:
             raise ValueError("Supabase URL must include a hostname")
         self._auth_identifier_domain = hostname.lower()
+        self._auth_storage = SupabaseAuthStorage(secure_store)
         self._client = client or create_client(
             url,
             publishable_key,
             options=ClientOptions(
                 schema="launcher",
-                storage=SupabaseAuthStorage(secure_store),
+                storage=self._auth_storage,
                 auto_refresh_token=True,
                 persist_session=True,
             ),
@@ -129,6 +131,17 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             self._client.auth.sign_out()
         except Exception as exc:
             raise self._auth_error(exc, "ออกจากระบบไม่สำเร็จ")
+
+    def clear_local_session(self) -> None:
+        """Remove persisted auth even when the remote sign-out request fails."""
+        remover = getattr(self._client.auth, "_remove_session", None)
+        if callable(remover):
+            remover()
+            return
+        storage_key = str(
+            getattr(self._client.auth, "_storage_key", "supabase.auth.token")
+        )
+        self._auth_storage.remove_item(storage_key)
 
     def claim_session(
         self,
@@ -325,11 +338,16 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     @classmethod
     def _rpc_error(cls, exc: Exception, fallback: str) -> LauncherServiceError:
         text = str(exc).lower()
-        mapping = {
+        device_errors = {
             "device_limit_reached": "บัญชีนี้ใช้งานครบจำนวนอุปกรณ์แล้ว",
             "installation_revoked": (
                 "เครื่องนี้ไม่สามารถใช้งานบัญชีนี้ได้ กรุณาติดต่อฝ่ายบริการ"
             ),
+        }
+        for code, message in device_errors.items():
+            if code in text:
+                return DeviceAuthorizationDenied(message)
+        mapping = {
             "not_authenticated": "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่",
             "account_restricted": (
                 "บัญชีนี้ยังไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ"

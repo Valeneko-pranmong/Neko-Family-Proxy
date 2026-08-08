@@ -5,10 +5,14 @@ from threading import Event
 import pytest
 
 from neko_launcher.application.controller import ApplicationController
-from neko_launcher.application.errors import EntitlementUnavailable
+from neko_launcher.application.errors import (
+    DeviceAuthorizationDenied,
+    EntitlementUnavailable,
+)
 from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.models import (
     AuthenticatedUser,
+    AuthStatus,
     CouponRedemption,
     Entitlement,
     EntitlementStatus,
@@ -24,11 +28,14 @@ class FakeGateway:
         self.heartbeat_alive = True
         self.heartbeat_error = False
         self.signed_out = False
+        self.sign_out_error = False
+        self.local_session_cleared = False
         self.changed_password: str | None = None
         self.released: list[str] = []
         self.last_signup: tuple[str, str] | None = None
         self.release_started: Event | None = None
         self.release_continue: Event | None = None
+        self.claim_error: Exception | None = None
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -41,7 +48,12 @@ class FakeGateway:
         return AuthenticatedUser("user-id", "user@example.com")
 
     def sign_out(self) -> None:
+        if self.sign_out_error:
+            raise RuntimeError("remote sign-out failed")
         self.signed_out = True
+
+    def clear_local_session(self) -> None:
+        self.local_session_cleared = True
 
     def change_password(self, password: str) -> None:
         self.changed_password = password
@@ -55,6 +67,8 @@ class FakeGateway:
         installation_key_hash: str,
         display_name: str,
     ) -> SessionClaim:
+        if self.claim_error is not None:
+            raise self.claim_error
         if not self.has_access:
             raise EntitlementUnavailable("ยังไม่มีสิทธิ์")
         return SessionClaim(
@@ -120,6 +134,39 @@ def test_sign_in_without_license_keeps_account_ready_for_coupon(
     assert controller.state.session_id is None
 
 
+def test_sign_in_stays_signed_out_when_device_authorization_is_denied(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.claim_error = DeviceAuthorizationDenied(
+        "เครื่องนี้ไม่สามารถใช้งานบัญชีนี้ได้ กรุณาติดต่อฝ่ายบริการ"
+    )
+
+    with pytest.raises(DeviceAuthorizationDenied):
+        service.sign_in("testuser", "password123")
+
+    assert gateway.signed_out is True
+    assert gateway.local_session_cleared is True
+    assert controller.state.user_id is None
+    assert controller.state.auth_status.value == "signed_out"
+
+
+def test_restore_session_stays_signed_out_when_device_authorization_is_denied(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.claim_error = DeviceAuthorizationDenied(
+        "เครื่องนี้ไม่สามารถใช้งานบัญชีนี้ได้ กรุณาติดต่อฝ่ายบริการ"
+    )
+
+    assert service.restore_session() is False
+
+    assert gateway.signed_out is True
+    assert gateway.local_session_cleared is True
+    assert controller.state.user_id is None
+    assert controller.state.auth_status.value == "signed_out"
+
+
 def test_sign_up_normalizes_username_and_uses_only_username_and_password(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
@@ -153,8 +200,42 @@ def test_failed_heartbeat_revokes_launcher_session(
     gateway.heartbeat_alive = False
 
     assert service.heartbeat() is False
+    assert gateway.signed_out is True
+    assert gateway.local_session_cleared is True
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller.state.user_id is None
     assert controller.state.session_id is None
     assert controller.state.entitlement is None
+    assert "เซสชัน" in (controller.state.last_error or "")
+
+
+def test_failed_heartbeat_clears_local_session_when_remote_sign_out_fails(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+    gateway.sign_out_error = True
+
+    assert service.heartbeat() is False
+
+    assert gateway.local_session_cleared is True
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+
+
+def test_device_denial_preserves_typed_error_when_remote_sign_out_fails(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.claim_error = DeviceAuthorizationDenied("installation_revoked")
+    gateway.sign_out_error = True
+
+    with pytest.raises(DeviceAuthorizationDenied, match="installation_revoked"):
+        service.sign_in("testuser", "password123")
+
+    assert gateway.local_session_cleared is True
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
 
 
 def test_transient_heartbeat_errors_need_three_failures_before_revocation(

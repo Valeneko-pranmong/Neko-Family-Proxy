@@ -11,3 +11,7 @@ Operational guides:
 
 - [`build-windows-executable.md`](build-windows-executable.md) — build and smoke-test the Launcher.
 - [`debug-console.md`](debug-console.md) — watch Launcher/Core startup and diagnose failures.
+
+Implementation handoffs:
+
+- [`backend-single-active-session-ai-prompt.md`](backend-single-active-session-ai-prompt.md) — AI-ready Backend/Admin Web prompt for multiple remembered installations with one active session.

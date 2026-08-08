@@ -56,6 +56,9 @@ class AuthGateway(Protocol):
     def sign_out(self) -> None:
         ...
 
+    def clear_local_session(self) -> None:
+        ...
+
 
 class EntitlementGateway(Protocol):
     def claim_session(

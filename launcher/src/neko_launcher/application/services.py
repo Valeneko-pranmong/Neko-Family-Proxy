@@ -24,7 +24,11 @@ from neko_launcher.domain.models import (
 )
 
 from .controller import ApplicationController
-from .errors import EntitlementUnavailable, LauncherServiceError
+from .errors import (
+    DeviceAuthorizationDenied,
+    EntitlementUnavailable,
+    LauncherServiceError,
+)
 from .ports import AuthGateway, EntitlementGateway, InstallationIdentity
 
 
@@ -151,7 +155,10 @@ class LauncherService:
         try:
             self._auth_gateway.sign_out()
         finally:
-            self._controller.sign_out()
+            try:
+                self._auth_gateway.clear_local_session()
+            finally:
+                self._controller.sign_out()
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
         if not code.strip():
@@ -213,11 +220,9 @@ class LauncherService:
         else:
             self._heartbeat_failures = 0
         if not alive:
-            self._controller.dispatch(
-                SessionRevoked(
-                    "บัญชีนี้กำลังถูกใช้งานจากเครื่องอื่น กรุณาเข้าสู่ระบบใหม่"
-                )
-            )
+            reason = "เซสชันนี้สิ้นสุดแล้ว กรุณาเข้าสู่ระบบใหม่"
+            self._force_sign_out_safely()
+            self._controller.dispatch(ErrorOccurred(reason))
         return alive
 
     def start_proxy(self) -> None:
@@ -264,13 +269,21 @@ class LauncherService:
             self._controller.dispatch(EntitlementLoaded(None))
             if not allow_missing:
                 raise
-        except LauncherServiceError as exc:
-            if "อุปกรณ์แล้ว" in str(exc):
-                self.sign_out()
+        except DeviceAuthorizationDenied:
+            self._force_sign_out_safely()
+            raise
+        except LauncherServiceError:
             raise
         else:
             self._controller.dispatch(EntitlementLoaded(claim.entitlement))
             self._controller.dispatch(SessionClaimed(claim.session_id))
+
+    def _force_sign_out_safely(self) -> None:
+        try:
+            self.sign_out()
+        except Exception:
+            # Local cleanup and controller reset run in sign_out() finally blocks.
+            pass
 
     @staticmethod
     def _validate_username(username: str, password: str) -> None:

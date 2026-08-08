@@ -47,6 +47,9 @@ class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
     def sign_out(self) -> None:
         return
 
+    def clear_local_session(self) -> None:
+        return
+
     def claim_session(
         self,
         product_code: str,
