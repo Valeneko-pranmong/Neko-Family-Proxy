@@ -302,8 +302,6 @@ class AppWindow:
         )
 
         if message:
-            if len(message) > 48:
-                message = f"{message[:47]}…"
             self._show_toast(message, is_error=bool(error))
         else:
             self._hide_toast()

@@ -6,6 +6,7 @@ from neko_launcher.application.errors import (
     DeviceAuthorizationDenied,
     LauncherServiceError,
 )
+from neko_launcher.domain.models import SessionTerminationReason
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 
 
@@ -83,6 +84,53 @@ class FakeAuth:
     def update_user(self, payload: dict[str, str]) -> SimpleNamespace:
         self.updated_password = payload["password"]
         return SimpleNamespace(user=SimpleNamespace(id="user-id"))
+
+
+class FakeTableQuery:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+        self.filters: list[tuple[str, str, object]] = []
+
+    def select(self, columns: str) -> "FakeTableQuery":
+        return self
+
+    def eq(self, key: str, value: object) -> "FakeTableQuery":
+        self.filters.append(("eq", key, value))
+        return self
+
+    def neq(self, key: str, value: object) -> "FakeTableQuery":
+        self.filters.append(("neq", key, value))
+        return self
+
+    def is_(self, key: str, value: object) -> "FakeTableQuery":
+        self.filters.append(("is", key, value))
+        return self
+
+    def limit(self, count: int) -> "FakeTableQuery":
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        rows = self.rows
+        for operation, key, value in self.filters:
+            if operation == "eq":
+                rows = [row for row in rows if row.get(key) == value]
+            elif operation == "neq":
+                rows = [row for row in rows if row.get(key) != value]
+            elif operation == "is" and value == "null":
+                rows = [row for row in rows if row.get(key) is None]
+        return SimpleNamespace(data=rows)
+
+
+class FakeTableClient:
+    def __init__(self, tables: dict[str, list[dict[str, object]]]) -> None:
+        self.auth = FakeAuth()
+        self.tables = tables
+
+    def schema(self, name: str) -> "FakeTableClient":
+        return self
+
+    def table(self, name: str) -> FakeTableQuery:
+        return FakeTableQuery(self.tables[name])
 
 
 def build_gateway(
@@ -201,6 +249,60 @@ def test_redeem_coupon_maps_safe_server_error() -> None:
 
     with pytest.raises(LauncherServiceError, match="คูปองไม่ถูกต้อง"):
         build_gateway(client).redeem_coupon("bad-code")
+
+
+def test_account_restriction_uses_suspended_account_copy() -> None:
+    error = SupabaseGateway._rpc_error(RuntimeError("account_restricted"), "fallback")
+
+    assert "ระงับ" in str(error)
+
+
+def termination_client(
+    *,
+    sessions: list[dict[str, object]] | None = None,
+    valid_from: str = "2020-01-01T00:00:00+00:00",
+    valid_until: str = "2099-01-01T00:00:00+00:00",
+) -> FakeTableClient:
+    return FakeTableClient(
+        {
+            "launcher_sessions": sessions
+            or [
+                {
+                    "id": "current-session",
+                    "user_id": "user-id",
+                    "installation_id": "installation-id",
+                    "license_id": "license-id",
+                    "revoked_at": None,
+                }
+            ],
+            "profiles": [{"id": "user-id", "status": "active"}],
+            "installations": [{"id": "installation-id", "revoked_at": None}],
+            "licenses": [
+                {
+                    "id": "license-id",
+                    "status": "active",
+                    "valid_from": valid_from,
+                    "valid_until": valid_until,
+                }
+            ],
+        }
+    )
+
+
+def test_current_session_is_not_classified_as_its_own_replacement() -> None:
+    client = termination_client()
+
+    reason = build_gateway(client).session_termination_reason("current-session")  # type: ignore[arg-type]
+
+    assert reason is SessionTerminationReason.REVOKED
+
+
+def test_future_license_is_classified_as_unavailable() -> None:
+    client = termination_client(valid_from="2099-01-01T00:00:00+00:00")
+
+    reason = build_gateway(client).session_termination_reason("current-session")  # type: ignore[arg-type]
+
+    assert reason is SessionTerminationReason.LICENSE_UNAVAILABLE
 
 
 def test_invalid_password_error_uses_customer_friendly_copy() -> None:

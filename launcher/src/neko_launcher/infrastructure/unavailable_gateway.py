@@ -7,6 +7,7 @@ from neko_launcher.domain.models import (
     CouponRedemption,
     RegistrationResult,
     SessionClaim,
+    SessionTerminationReason,
 )
 
 
@@ -60,6 +61,11 @@ class UnavailableSupabaseGateway(AuthGateway, EntitlementGateway):
 
     def heartbeat_session(self, session_id: str) -> bool:
         return False
+
+    def session_termination_reason(
+        self, session_id: str
+    ) -> SessionTerminationReason:
+        return SessionTerminationReason.REVOKED
 
     def release_session(self, session_id: str) -> bool:
         return False

@@ -31,6 +31,8 @@ class ToastNotification:
             text="",
             font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.text,
+            wraplength=430,
+            justify="left",
         )
         self._label.pack(side="left", padx=(30, 14), pady=14)
 

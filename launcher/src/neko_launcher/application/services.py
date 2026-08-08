@@ -21,6 +21,7 @@ from neko_launcher.domain.models import (
     EntitlementStatus,
     ProxyStatus,
     RegistrationResult,
+    SessionTerminationReason,
 )
 
 from .controller import ApplicationController
@@ -217,11 +218,42 @@ class LauncherService:
             self._heartbeat_failures += 1
             if self._heartbeat_failures < 3:
                 return True
-            alive = False
+            reason = (
+                "เชื่อมต่อเครือข่ายไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต"
+                "แล้วเข้าสู่ระบบใหม่"
+            )
+            self._force_sign_out_safely()
+            self._controller.dispatch(ErrorOccurred(reason))
+            return False
         else:
             self._heartbeat_failures = 0
         if not alive:
-            reason = "เซสชันนี้สิ้นสุดแล้ว กรุณาเข้าสู่ระบบใหม่"
+            try:
+                termination = self._entitlement_gateway.session_termination_reason(
+                    session_id
+                )
+            except Exception:
+                termination = SessionTerminationReason.REVOKED
+            reason = {
+                SessionTerminationReason.REPLACED: (
+                    "เซสชันถูกแทนที่ด้วยการเข้าสู่ระบบใหม่กว่า "
+                    "กรุณาเข้าสู่ระบบอีกครั้ง"
+                ),
+                SessionTerminationReason.REVOKED: (
+                    "เซสชันปัจจุบันใช้งานไม่ได้แล้ว กรุณาเข้าสู่ระบบใหม่"
+                ),
+                SessionTerminationReason.INSTALLATION_REVOKED: (
+                    "เครื่องนี้ไม่ได้รับอนุญาตให้ใช้งานบัญชีนี้ "
+                    "กรุณาติดต่อฝ่ายบริการ"
+                ),
+                SessionTerminationReason.LICENSE_UNAVAILABLE: (
+                    "สิทธิ์ใช้งานไม่พร้อม ถูกยกเลิก หรือหมดอายุ "
+                    "กรุณาติดต่อฝ่ายบริการ"
+                ),
+                SessionTerminationReason.ACCOUNT_RESTRICTED: (
+                    "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"
+                ),
+            }[termination]
             self._force_sign_out_safely()
             self._controller.dispatch(ErrorOccurred(reason))
         return alive
@@ -268,8 +300,7 @@ class LauncherService:
             )
         except EntitlementUnavailable:
             self._controller.dispatch(EntitlementLoaded(None))
-            if not allow_missing:
-                raise
+            raise
         except DeviceAuthorizationDenied:
             self._force_sign_out_safely()
             raise

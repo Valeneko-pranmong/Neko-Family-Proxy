@@ -20,6 +20,14 @@ class EntitlementStatus(str, Enum):
     REVOKED = "revoked"
 
 
+class SessionTerminationReason(str, Enum):
+    REPLACED = "replaced"
+    REVOKED = "revoked"
+    INSTALLATION_REVOKED = "installation_revoked"
+    LICENSE_UNAVAILABLE = "license_unavailable"
+    ACCOUNT_RESTRICTED = "account_restricted"
+
+
 class ProxyStatus(str, Enum):
     STOPPED = "stopped"
     STARTING = "starting"

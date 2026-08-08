@@ -9,6 +9,7 @@ from neko_launcher.domain.models import (
     CouponRedemption,
     RegistrationResult,
     SessionClaim,
+    SessionTerminationReason,
 )
 
 
@@ -70,6 +71,11 @@ class EntitlementGateway(Protocol):
         ...
 
     def heartbeat_session(self, session_id: str) -> bool:
+        ...
+
+    def session_termination_reason(
+        self, session_id: str
+    ) -> SessionTerminationReason:
         ...
 
     def release_session(self, session_id: str) -> bool:

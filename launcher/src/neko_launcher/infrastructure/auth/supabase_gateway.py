@@ -19,6 +19,7 @@ from neko_launcher.domain.models import (
     EntitlementStatus,
     RegistrationResult,
     SessionClaim,
+    SessionTerminationReason,
 )
 
 from neko_launcher.infrastructure.storage.secure_store import SupabaseAuthStorage
@@ -165,7 +166,8 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         except Exception as exc:
             if self._contains_error(exc, "license_invalid"):
                 raise EntitlementUnavailable(
-                    "บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน"
+                    "สิทธิ์ใช้งานไม่พร้อม ถูกยกเลิก หรือหมดอายุ "
+                    "กรุณาติดต่อฝ่ายบริการ"
                 ) from exc
             raise self._rpc_error(exc, "ตรวจสอบวันใช้งานไม่ได้ กรุณาลองใหม่")
 
@@ -191,6 +193,70 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         except Exception as exc:
             raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
         return response.data is True
+
+    def session_termination_reason(
+        self, session_id: str
+    ) -> SessionTerminationReason:
+        """Resolve a customer-safe reason from rows visible through RLS."""
+        session = self._first_public_row(
+            "launcher_sessions",
+            "id,user_id,installation_id,license_id,revoked_at",
+            id=session_id,
+        )
+        if session is None:
+            return SessionTerminationReason.REVOKED
+
+        profile = self._first_public_row(
+            "profiles", "status", id=str(session["user_id"])
+        )
+        if profile is not None and profile.get("status") != "active":
+            return SessionTerminationReason.ACCOUNT_RESTRICTED
+
+        installation = self._first_public_row(
+            "installations", "revoked_at", id=str(session["installation_id"])
+        )
+        if installation is not None and installation.get("revoked_at") is not None:
+            return SessionTerminationReason.INSTALLATION_REVOKED
+
+        license_row = self._first_public_row(
+            "licenses", "status,valid_from,valid_until", id=str(session["license_id"])
+        )
+        if license_row is not None:
+            valid_from = self._parse_datetime(license_row.get("valid_from"))
+            valid_until = self._parse_datetime(license_row.get("valid_until"))
+            now = datetime.now(valid_until.tzinfo)
+            if (
+                license_row.get("status") != "active"
+                or valid_from > now
+                or valid_until <= now
+            ):
+                return SessionTerminationReason.LICENSE_UNAVAILABLE
+
+        active = (
+            self._client.schema("public")
+            .table("launcher_sessions")
+            .select("id")
+            .eq("user_id", str(session["user_id"]))
+            .neq("id", session_id)
+            .is_("revoked_at", "null")
+            .limit(1)
+            .execute()
+        )
+        if isinstance(active.data, list) and active.data:
+            return SessionTerminationReason.REPLACED
+        return SessionTerminationReason.REVOKED
+
+    def _first_public_row(
+        self, table: str, columns: str, **filters: str
+    ) -> dict[str, Any] | None:
+        query = self._client.schema("public").table(table).select(columns)
+        for key, value in filters.items():
+            query = query.eq(key, value)
+        response = query.limit(1).execute()
+        if not isinstance(response.data, list) or not response.data:
+            return None
+        row = response.data[0]
+        return row if isinstance(row, dict) else None
 
     def release_session(self, session_id: str) -> bool:
         try:
@@ -350,7 +416,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         mapping = {
             "not_authenticated": "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่",
             "account_restricted": (
-                "บัญชีนี้ยังไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ"
+                "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"
             ),
         }
         for code, message in mapping.items():

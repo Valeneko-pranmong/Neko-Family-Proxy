@@ -214,12 +214,12 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
     assert window._auth_view.register_button_state == "disabled"
 
 
-def test_error_notification_shows_toast(monkeypatch: Any) -> None:
+def test_error_notification_shows_complete_actionable_toast(monkeypatch: Any) -> None:
     window = object.__new__(AppWindow)
     window._header_message = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable(
-        "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่"
+        "เซสชันถูกแทนที่ด้วยการเข้าสู่ระบบใหม่กว่า กรุณาเข้าสู่ระบบอีกครั้ง"
     )  # type: ignore[assignment]
 
     toast_calls: list[tuple[str, bool]] = []
@@ -231,8 +231,7 @@ def test_error_notification_shows_toast(monkeypatch: Any) -> None:
 
     window._update_message_visibility()
 
-    expected_msg = f"{window._error.get()[:47]}…"
-    assert toast_calls == [(expected_msg, True)]
+    assert toast_calls == [(window._error.get(), True)]
     assert window._header_message.options == {  # type: ignore[attr-defined]
         "text": "High Performance & Low Latency",
         "text_color": PALETTE.text_muted,

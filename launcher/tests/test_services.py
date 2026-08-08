@@ -18,6 +18,7 @@ from neko_launcher.domain.models import (
     EntitlementStatus,
     RegistrationResult,
     SessionClaim,
+    SessionTerminationReason,
 )
 from neko_launcher.infrastructure.event_bus import EventBus
 
@@ -36,6 +37,7 @@ class FakeGateway:
         self.release_started: Event | None = None
         self.release_continue: Event | None = None
         self.claim_error: Exception | None = None
+        self.termination_reason = SessionTerminationReason.REVOKED
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -85,6 +87,11 @@ class FakeGateway:
             raise RuntimeError("network")
         return self.heartbeat_alive
 
+    def session_termination_reason(
+        self, session_id: str
+    ) -> SessionTerminationReason:
+        return self.termination_reason
+
     def release_session(self, session_id: str) -> bool:
         if self.release_started is not None:
             self.release_started.set()
@@ -127,9 +134,11 @@ def test_sign_in_without_license_keeps_account_ready_for_coupon(
 ) -> None:
     service, controller, _ = workflow
 
-    service.sign_in("TestUser", "password123")
+    with pytest.raises(EntitlementUnavailable, match="ยังไม่มีสิทธิ์"):
+        service.sign_in("TestUser", "password123")
 
     assert controller.state.user_email == "testuser"
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
     assert controller.state.entitlement is None
     assert controller.state.session_id is None
 
@@ -181,7 +190,8 @@ def test_redeem_coupon_refreshes_entitlement_and_claims_session(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, _ = workflow
-    service.sign_in("testuser", "password123")
+    with pytest.raises(EntitlementUnavailable):
+        service.sign_in("testuser", "password123")
 
     result = service.redeem_coupon("NEKO-test")
 
@@ -207,6 +217,32 @@ def test_failed_heartbeat_revokes_launcher_session(
     assert controller.state.session_id is None
     assert controller.state.entitlement is None
     assert "เซสชัน" in (controller.state.last_error or "")
+
+
+@pytest.mark.parametrize(
+    ("termination_reason", "expected_message"),
+    [
+        (SessionTerminationReason.REPLACED, "การเข้าสู่ระบบใหม่กว่า"),
+        (SessionTerminationReason.REVOKED, "ใช้งานไม่ได้แล้ว"),
+        (SessionTerminationReason.INSTALLATION_REVOKED, "เครื่องนี้"),
+        (SessionTerminationReason.LICENSE_UNAVAILABLE, "สิทธิ์ใช้งาน"),
+        (SessionTerminationReason.ACCOUNT_RESTRICTED, "บัญชี"),
+    ],
+)
+def test_failed_heartbeat_explains_the_safe_termination_reason(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+    termination_reason: SessionTerminationReason,
+    expected_message: str,
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+    gateway.termination_reason = termination_reason
+
+    assert service.heartbeat() is False
+
+    assert expected_message in (controller.state.last_error or "")
 
 
 def test_failed_heartbeat_clears_local_session_when_remote_sign_out_fails(
@@ -252,6 +288,7 @@ def test_transient_heartbeat_errors_need_three_failures_before_revocation(
 
     assert service.heartbeat() is False
     assert controller.state.session_id is None
+    assert "เครือข่าย" in (controller.state.last_error or "")
 
 
 def test_heartbeat_failure_counter_resets_for_a_new_session(
@@ -298,7 +335,8 @@ def test_change_password_requires_login_and_updates_auth_gateway(
     with pytest.raises(Exception, match="เข้าสู่ระบบก่อน"):
         service.change_password("new-password")
 
-    service.sign_in("testuser", "password123")
+    with pytest.raises(EntitlementUnavailable):
+        service.sign_in("testuser", "password123")
     service.change_password("new-password")
 
     assert gateway.changed_password == "new-password"
