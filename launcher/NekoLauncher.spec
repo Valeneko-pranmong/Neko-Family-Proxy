@@ -61,5 +61,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=[str(repository_root / "icon_app.ico")],
-    uac_admin=True,
+    uac_admin=False,
 )

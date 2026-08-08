@@ -20,7 +20,7 @@ class WindowsCoreProcessAdapter:
     def __init__(
         self,
         executable: Path,
-        pipe_name: str = "NekoProxyCoreControl",
+        pipe_name: str = "NekoProxyCore.s0-rc1",
         diagnostics: CoreDiagnosticsRecorder | None = None,
         debug_log_dir: Path | None = None,
     ) -> None:
@@ -132,7 +132,7 @@ class WindowsCoreProcessAdapter:
             raise
 
     def wait_for_control_channel(self, timeout: float) -> None:
-        """Block until the Named Pipe ``NekoProxyCoreControl`` is available."""
+        """Block until the bundled Core's approved Named Pipe is available."""
         if self._diagnostics:
             self._diagnostics.record_stage("CONTROL_CHANNEL_WAIT")
 

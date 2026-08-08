@@ -21,6 +21,7 @@ plans or historical evidence.
 | Document | Status | Purpose |
 | --- | --- | --- |
 | [`../README.md`](../README.md) | Current | Project overview and current production state |
+| [`Tool.md`](Tool.md) | Current | Windows developer tool installation and readiness checklist |
 | [`../launcher/README.md`](../launcher/README.md) | Current | Launcher setup, behavior, and validation |
 | [`current/launcher-architecture.md`](current/launcher-architecture.md) | Current; validation pending | Launcher architecture after the maintainability refactor |
 | [`current/build-windows-executable.md`](current/build-windows-executable.md) | Current | Build and smoke-test `NekoLauncher.exe` |

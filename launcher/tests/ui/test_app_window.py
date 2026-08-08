@@ -135,6 +135,14 @@ class FakeService:
         self.proxy_started += 1
 
 
+class FakeDiagnostics:
+    def __init__(self) -> None:
+        self.stages: list[tuple[str, dict[str, Any]]] = []
+
+    def record_stage(self, stage: str, **details: Any) -> None:
+        self.stages.append((stage, details))
+
+
 class FakeController:
     def __init__(self, state: AppState) -> None:
         self.state = state
@@ -304,6 +312,12 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._error = FakeVariable()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._login_password = FakeVariable("password")  # type: ignore[assignment]
+    window._proxy_start_attempted_for_detected_game = False
+    window._proxy_retry_suppression_logged = False
+    window._submitted_work = []
+    window._submit = (  # type: ignore[method-assign]
+        lambda work, on_success=None: window._submitted_work.append(work)
+    )
     return window
 
 
@@ -327,8 +341,47 @@ def test_detected_pso2_starts_proxy_only_when_entitlement_is_valid(
     window = build_tweaker_window(tweaker)
     window._on_game_detected(True)
 
+    assert window._service.proxy_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+    window._submitted_work[0]()  # type: ignore[attr-defined]
     assert window._service.proxy_started == 1  # type: ignore[attr-defined]
     assert window._controller.state.game_process_running is True  # type: ignore[attr-defined]
+
+
+def test_detected_pso2_attempts_proxy_only_once_until_game_exits(tmp_path: Path) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._on_game_detected(True)
+    window._on_game_detected(True)
+
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+
+    window._on_game_detected(False)
+    window._on_game_detected(True)
+
+    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
+
+
+def test_debug_log_records_game_detection_and_suppressed_retry_only_once(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    diagnostics = FakeDiagnostics()
+    window._debug_mode = True
+    window._diagnostics = diagnostics
+    window._last_debug_status = None
+
+    window._on_game_detected(True)
+    window._on_game_detected(True)
+    window._on_game_detected(True)
+
+    stages = [stage for stage, _ in diagnostics.stages]
+    assert stages.count("GAME_PROCESS_DETECTED") == 1
+    assert stages.count("PROXY_START_NOT_RETRIED") == 1
 
 
 def test_detected_pso2_does_not_start_proxy_when_entitlement_is_missing(

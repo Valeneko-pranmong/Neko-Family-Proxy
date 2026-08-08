@@ -4,6 +4,12 @@ from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAda
 from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder, NoopDiagnosticsSink
 
 
+def test_windows_core_process_uses_the_bundled_core_pipe_identity(tmp_path):
+    adapter = WindowsCoreProcessAdapter(tmp_path / "NekoProxyCore.exe")
+
+    assert adapter._pipe_name == "NekoProxyCore.s0-rc1"
+
+
 @patch("subprocess.Popen")
 def test_windows_core_process_adapter_runtime(mock_popen, tmp_path):
     mock_process = MagicMock()

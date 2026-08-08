@@ -84,6 +84,8 @@ class AppWindow:
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
         self._debug_retry_pending = False
+        self._proxy_start_attempted_for_detected_game = False
+        self._proxy_retry_suppression_logged = False
         self._last_debug_status: tuple[str, tuple[tuple[str, str], ...]] | None = None
         self._record_debug_status("LAUNCHER_START", message="Debug console enabled")
 
@@ -845,16 +847,20 @@ class AppWindow:
         """Callback when process detection finishes."""
         self._process_detection_pending = False
         state = self._controller.state
-        if state.game_process_running is not detected:
+        detection_changed = state.game_process_running is not detected
+        if detection_changed:
             self._controller.dispatch(GameProcessStateChanged(detected))
         if not detected:
+            self._proxy_start_attempted_for_detected_game = False
+            self._proxy_retry_suppression_logged = False
             self._record_debug_status(
                 "WAITING_FOR_GAME",
                 process="pso2.exe",
                 reason="ProxyCore starts only after the game process is detected",
             )
             return
-        self._record_debug_status("GAME_PROCESS_DETECTED", process="pso2.exe")
+        if detection_changed:
+            self._record_debug_status("GAME_PROCESS_DETECTED", process="pso2.exe")
         state = self._controller.state
         if state.auth_status is not AuthStatus.AUTHENTICATED:
             self._record_debug_status("PROXY_START_BLOCKED", reason="not authenticated")
@@ -871,8 +877,17 @@ class AppWindow:
                 status=state.proxy_status.value,
             )
             return
+        if self._proxy_start_attempted_for_detected_game:
+            if not self._proxy_retry_suppression_logged:
+                self._record_debug_status(
+                    "PROXY_START_NOT_RETRIED",
+                    reason="automatic start already attempted for this game process",
+                )
+                self._proxy_retry_suppression_logged = True
+            return
+        self._proxy_start_attempted_for_detected_game = True
         self._record_debug_status("PROXY_START_REQUESTED", process="pso2.exe")
-        self._service.start_proxy()
+        self._submit(self._service.start_proxy)
 
     def _heartbeat(self) -> None:
         if self._controller.state.session_id:

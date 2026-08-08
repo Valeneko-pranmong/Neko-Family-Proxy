@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import time
 from typing import Any
 
@@ -22,20 +23,45 @@ _STATUS_MAP: dict[str, CoreStatusKind] = {
 
 
 class NamedPipeCoreControlChannel:
-    """Protocol v2, JSON newline-delimited control channel over Windows Named Pipes.
+    """Protocol v2, length-prefixed JSON over Windows Named Pipes.
 
-    Pipe name: ``NekoProxyCoreControl``  (Core = server, Launcher = client).
+    Pipe name: ``NekoProxyCore.s0-rc1`` (Core = server, Launcher = client).
     The permit is serialized *only* inside the ``start`` frame and is never
     logged, cached, or stored.
     """
 
-    def __init__(self, pipe_name: str = "NekoProxyCoreControl") -> None:
+    _MAX_PAYLOAD_BYTES = 8192
+
+    def __init__(self, pipe_name: str = "NekoProxyCore.s0-rc1") -> None:
         self._pipe_name = pipe_name
         self._pipe_path = rf"\\.\pipe\{pipe_name}"
 
     # ------------------------------------------------------------------
     # Wire helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _read_exact(handle: Any, size: int) -> bytes:
+        chunks = bytearray()
+        while len(chunks) < size:
+            chunk = handle.read(size - len(chunks))
+            if not chunk:
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            chunks.extend(chunk)
+        return bytes(chunks)
+
+    @staticmethod
+    def _write_all(handle: Any, payload: bytes) -> None:
+        offset = 0
+        while offset < len(payload):
+            written = handle.write(payload[offset:])
+            if written is None:
+                # Buffered Python file objects conventionally return the count,
+                # while lightweight/test pipe handles may consume all bytes.
+                return
+            if written <= 0:
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            offset += written
 
     def _send_and_receive(
         self, message: dict[str, Any], timeout: float,
@@ -56,12 +82,17 @@ class NamedPipeCoreControlChannel:
                 raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
             with handle:
-                payload = json.dumps(message) + "\n"
-                handle.write(payload.encode("utf-8"))
-
-                response_bytes = handle.readline()
-                if not response_bytes:
+                payload = json.dumps(
+                    message, separators=(",", ":"), ensure_ascii=True
+                ).encode("utf-8")
+                if not 1 <= len(payload) <= self._MAX_PAYLOAD_BYTES:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                self._write_all(handle, struct.pack(">I", len(payload)) + payload)
+
+                response_size = struct.unpack(">I", self._read_exact(handle, 4))[0]
+                if not 1 <= response_size <= self._MAX_PAYLOAD_BYTES:
+                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                response_bytes = self._read_exact(handle, response_size)
 
                 try:
                     response = json.loads(response_bytes.decode("utf-8"))
@@ -87,10 +118,18 @@ class NamedPipeCoreControlChannel:
     # ------------------------------------------------------------------
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
-        msg = {"type": "challenge", "correlationId": correlation_id}
+        msg = {
+            "version": 2,
+            "command": "challenge",
+            "correlationId": correlation_id,
+        }
         res = self._send_and_receive(msg, timeout)
 
-        if res.get("type") != "challengeResponse":
+        if (
+            res.get("version") != 2
+            or res.get("kind") != "challenge"
+            or res.get("succeeded") is not True
+        ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 
@@ -112,9 +151,9 @@ class NamedPipeCoreControlChannel:
         if not hasattr(command, "mode"):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         msg = {
-            "type": "start",
+            "version": 2,
+            "command": "start",
             "correlationId": correlation_id,
-            "protocolVersion": 2,
             "mode": command.mode,  # type: ignore[attr-defined]
             "processName": command.process_name,  # type: ignore[attr-defined]
             "targetPid": command.target_pid,  # type: ignore[attr-defined]
@@ -125,17 +164,17 @@ class NamedPipeCoreControlChannel:
 
         res = self._send_and_receive(msg, timeout)
 
-        if res.get("type") != "startResponse":
+        if res.get("version") != 2 or res.get("kind") != "result":
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 
         return self._parse_status(res)
 
     def stop(self, correlation_id: str, timeout: float) -> CoreStatus:
-        msg = {"type": "stop", "correlationId": correlation_id}
+        msg = {"version": 2, "command": "stop", "correlationId": correlation_id}
         res = self._send_and_receive(msg, timeout)
 
-        if res.get("type") != "stopResponse":
+        if res.get("version") != 2 or res.get("kind") != "result":
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 

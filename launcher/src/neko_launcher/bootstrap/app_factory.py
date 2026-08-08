@@ -68,7 +68,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             diagnostics=diagnostics_recorder,
             debug_log_dir=config.debug_log_dir if config.debug_mode else None,
         )
-        core_channel = NamedPipeCoreControlChannel("NekoProxyCoreControl")
+        core_channel = NamedPipeCoreControlChannel("NekoProxyCore.s0-rc1")
         detector = ExactPso2TargetDetector()
         timeouts = OrchestrationTimeouts(
             target=30.0,
