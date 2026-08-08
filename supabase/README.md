@@ -68,6 +68,16 @@ Coupon replay, and launcher-session takeover. Run the manual
 The coupon replay case runs only when a fresh `NEKO_INTEGRATION_COUPON` secret
 is supplied and consumes that coupon.
 
+The forward migration
+`20260808143000_harden_session_policy_admin_operations.sql` keeps the
+multiple-installation/one-active-session policy backward compatible while
+binding heartbeat validity to the license stored on the session. It also adds
+the trusted, service-role-only `launcher.admin_revoke_installation(uuid, uuid)`
+operation so installation revocation, session invalidation, and audit logging
+are one transaction. Apply it to staging first and compare the live function
+definitions and unique partial session index before production approval; this
+repository change does not modify production.
+
 ## Auth and database cleanup
 
 For local Supabase, `config.toml` disables email confirmation. For the hosted
