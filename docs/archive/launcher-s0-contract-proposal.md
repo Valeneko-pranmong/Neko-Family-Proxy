@@ -1,7 +1,7 @@
 # Launcher S0 Consumer Contract Proposal
 
 > **HISTORICAL — SUPERSEDED PROPOSAL.** Use
-> [`../neko-auth-s0-production-handoff.md`](../neko-auth-s0-production-handoff.md)
+> [`../blocked/neko-auth-s0-production-handoff.md`](../blocked/neko-auth-s0-production-handoff.md)
 > for the current technical baseline and stop rules.
 
 **Work item:** `Launcher-S0-Consumer-01`

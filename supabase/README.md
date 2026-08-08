@@ -1,5 +1,9 @@
 # Launcher Supabase database
 
+> **Status: CURRENT — reviewed 8 August 2026.** Production permit issuance is
+> separate and remains blocked; see the prototype warning under
+> [`functions/issue_launch_permit/README.md`](functions/issue_launch_permit/README.md).
+
 The migrations in this directory define the server-side foundation for the launcher:
 
 - Supabase Auth users are mirrored into `public.profiles`.

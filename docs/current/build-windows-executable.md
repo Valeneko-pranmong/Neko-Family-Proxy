@@ -1,5 +1,8 @@
 # คู่มือ Build `NekoLauncher.exe`
 
+> **สถานะ: CURRENT — reviewed 8 August 2026.** คู่มือนี้อธิบายการ build และ
+> smoke test เท่านั้น การ build สำเร็จไม่ถือเป็น production approval.
+
 เอกสารนี้ใช้สำหรับผู้พัฒนาที่ต้องการสร้างไฟล์ Windows แบบ one-file ด้วย
 PyInstaller
 

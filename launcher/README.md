@@ -3,7 +3,7 @@
 Desktop launcher for Supabase username/password membership, entitlement checks,
 launcher-session control, and user-selected PSO2 Tweaker configuration.
 
-> **Current status (4 August 2026):** production Core startup is intentionally
+> **Current status (8 August 2026):** production Core startup is intentionally
 > fail closed through `AuthorizationPendingProxyGateway`. The S0 authorization
 > contract is not fully accepted or released, so the current production
 > composition does not start NekoProxyCore or Tweaker.
@@ -65,6 +65,6 @@ are embedded; that does not enable production startup or constitute release
 approval. The publishable client configuration is embedded and extractable by
 design; never embed a secret/service-role key.
 
-See [`../docs/build-windows-executable.md`](../docs/build-windows-executable.md)
+See [`../docs/current/build-windows-executable.md`](../docs/current/build-windows-executable.md)
 and [`../docs/README.md`](../docs/README.md) for the maintained build procedure
 and documentation status.

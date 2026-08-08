@@ -1,7 +1,7 @@
 # Launcher S0 Consumer Connector Handoff
 
 > **HISTORICAL — SUPERSEDED.** Retained as commit-specific evidence only. Use
-> [`../launcher-production-adapters.md`](../launcher-production-adapters.md) for
+> [`../blocked/launcher-production-adapters.md`](../blocked/launcher-production-adapters.md) for
 > current Launcher requirements.
 
 **Work item:** `Launcher-S0-Consumer-01`

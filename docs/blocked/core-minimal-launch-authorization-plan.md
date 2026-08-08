@@ -1,5 +1,10 @@
 # แผนลดระบบ Authorization — ทีม NekoProxyCore
 
+> **สถานะ: DRAFT / PRODUCTION BLOCKED — reviewed 8 August 2026.** ใช้สำหรับ
+> วางแผนหลัง Product, Security และ Launcher อนุมัติขอบเขตเท่านั้น ห้ามใช้เป็น
+> production release approval หรือแทน baseline ใน
+> [`neko-auth-s0-production-handoff.md`](neko-auth-s0-production-handoff.md)
+
 > **For Hermes:** ใช้แผนนี้เป็น execution handoff แบบ task-by-task หลัง Product/Security/Launcher ยืนยันขอบเขต “Minimal Launch Authorization” แล้วเท่านั้น
 
 **Goal:** ทำให้ NekoProxyCore เปิดใช้งานจาก Launcher ได้จริง โดย Coreปฏิเสธทุก startที่ไม่มี Backend-signed permit และ reuse implementation initial authorizationที่มีอยู่แทนการขยายระบบต่อ
@@ -8,7 +13,7 @@
 
 **Tech Stack:** .NET 6, C#, Windows Named Pipe, RS256/SHA-256, `NekoProxyCore.Host`, existing headless runtime
 
-**แผนคู่กัน:** `2026-08-05_165150-launcher-minimal-launch-authorization.md`
+**แผนคู่กัน:** [`launcher-minimal-launch-authorization-plan.md`](launcher-minimal-launch-authorization-plan.md)
 
 ---
 

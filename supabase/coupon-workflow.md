@@ -1,5 +1,7 @@
 # Coupon workflow
 
+> **Status: CURRENT — reviewed 8 August 2026.**
+
 ## Roles
 
 - Customers register and sign in with Supabase Auth.

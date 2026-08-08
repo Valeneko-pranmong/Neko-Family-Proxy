@@ -1,7 +1,7 @@
 # Launcher ↔ Backend ↔ NekoProxyCore Authorization Adapter Handoff
 
 > **HISTORICAL — SUPERSEDED DRAFT.** Use
-> [`../neko-auth-s0-production-handoff.md`](../neko-auth-s0-production-handoff.md)
+> [`../blocked/neko-auth-s0-production-handoff.md`](../blocked/neko-auth-s0-production-handoff.md)
 > for the current technical baseline and stop rules.
 
 วันที่จัดทำ: 2026-08-03

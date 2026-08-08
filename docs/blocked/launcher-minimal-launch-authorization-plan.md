@@ -1,5 +1,10 @@
 # แผนลดระบบ Authorization — ทีม Launcher
 
+> **สถานะ: DRAFT / PRODUCTION BLOCKED — reviewed 8 August 2026.** ใช้สำหรับ
+> วางแผนหลัง Product, Security และ Core อนุมัติขอบเขตเท่านั้น ห้ามใช้เป็น
+> production release approval หรือแทน baseline ใน
+> [`neko-auth-s0-production-handoff.md`](neko-auth-s0-production-handoff.md)
+
 > **For Hermes:** ใช้แผนนี้เป็น execution handoff แบบ task-by-task หลัง Product/Security/Core ยืนยันขอบเขต “Minimal Launch Authorization” แล้วเท่านั้น
 
 **Goal:** ทำให้ Launcher เปิด NekoProxyCore ได้จริงโดยใช้ระบบอนุญาตขั้นต่ำที่ยัง fail closed: ผู้ใช้ต้อง login, Backend ออก permit อายุสั้นที่เซ็นด้วย private key, Launcher ส่ง permit แบบ opaque และ Core เป็นผู้ตรวจเอง
@@ -8,7 +13,7 @@
 
 **Tech Stack:** Python 3.11, Supabase/authenticated backend, PyInstaller, Windows process/Named Pipe, opaque RS256 launch permit
 
-**แผนคู่กัน:** `2026-08-05_165150-core-minimal-launch-authorization.md`
+**แผนคู่กัน:** [`core-minimal-launch-authorization-plan.md`](core-minimal-launch-authorization-plan.md)
 
 ---
 

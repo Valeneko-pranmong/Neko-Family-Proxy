@@ -1,6 +1,6 @@
 # Repository layout
 
-**Status:** Current — reviewed 7 August 2026.
+**Status:** Current — reviewed 8 August 2026.
 
 ## Tracked source
 
@@ -13,8 +13,9 @@
 - `supabase/` — schema migrations and operational documentation.
 - `.github/workflows/` — CI and manual Supabase integration checks.
 - `scripts/` — repository validation.
-- `docs/` — maintained documentation and historical records under
-  `docs/archive/`.
+- `docs/current/` — maintained cross-component documentation.
+- `docs/blocked/` — active plans and handoffs without production approval.
+- `docs/archive/` — superseded and dated evidence retained for traceability.
 - Root assets, project overview, and contribution guide.
 
 ## Local-only inputs and generated files

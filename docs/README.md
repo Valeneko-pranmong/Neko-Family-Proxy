@@ -1,63 +1,74 @@
 # Documentation index
 
-Last reviewed: **4 August 2026**
+Last reviewed: **8 August 2026**
 
-This index is the entry point for repository documentation. File names use
-lowercase kebab-case, except conventional `README.md` files and license files.
+This is the canonical index for repository documentation. Documentation is
+organized by lifecycle so that active instructions are not mixed with blocked
+plans or historical evidence.
 
-## Status definitions
+## Directory rules
 
-- **Current** — describes the source tree or an active operating procedure.
-- **Blocked** — current design/handoff, but not approved for production use.
-- **Historical** — retained for traceability; do not use as current instructions.
-- **Removed** — generated, duplicated, or misleading material deleted from Git.
+- `current/` — maintained architecture, build, layout, and operating guidance.
+- `blocked/` — active proposals or handoffs that must not be treated as
+  production approval.
+- `archive/` — superseded or dated evidence retained only for traceability.
+- Component documentation stays beside its component, such as `launcher/` and
+  `supabase/`.
+- File names use lowercase kebab-case, except conventional `README.md` files.
 
-## Current
+## Start here
 
-| Document | Purpose |
-| --- | --- |
-| [`../README.md`](../README.md) | Project overview and current system status |
-| [`../launcher/README.md`](../launcher/README.md) | Launcher setup, behavior, and validation |
-| [`build-windows-executable.md`](build-windows-executable.md) | Build and smoke-test the Windows executable |
-| [`repository-layout.md`](repository-layout.md) | Tracked source, local inputs, and generated output |
-| [`runtime-distribution.md`](runtime-distribution.md) | Controlled NekoProxyCore delivery policy |
-| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Local checks and contribution safety rules |
-| [`../supabase/README.md`](../supabase/README.md) | Database architecture and migration status |
-| [`../supabase/coupon-workflow.md`](../supabase/coupon-workflow.md) | Coupon roles, flows, and security behavior |
-| [`../supabase/security-test-plan.md`](../supabase/security-test-plan.md) | Supabase security and concurrency test plan |
+| Document | Status | Purpose |
+| --- | --- | --- |
+| [`../README.md`](../README.md) | Current | Project overview and current production state |
+| [`../launcher/README.md`](../launcher/README.md) | Current | Launcher setup, behavior, and validation |
+| [`current/launcher-architecture.md`](current/launcher-architecture.md) | Current; validation pending | Launcher architecture after the maintainability refactor |
+| [`current/build-windows-executable.md`](current/build-windows-executable.md) | Current | Build and smoke-test `NekoLauncher.exe` |
+| [`current/repository-layout.md`](current/repository-layout.md) | Current | Tracked source, local inputs, and generated output |
+| [`current/runtime-distribution.md`](current/runtime-distribution.md) | Current policy | Controlled NekoProxyCore runtime delivery policy |
+| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |
 
-## Current but production-blocked
+## Component documentation
 
-| Document | Status |
-| --- | --- |
-| [`neko-auth-s0-production-handoff.md`](neko-auth-s0-production-handoff.md) | Central `NEKO-AUTH-S0` technical baseline; owner acceptance and release gates remain pending |
-| [`launcher-production-adapters.md`](launcher-production-adapters.md) | Launcher implementation specification pinned to the same baseline; production composition must remain fail closed |
+| Document | Status | Purpose |
+| --- | --- | --- |
+| [`../supabase/README.md`](../supabase/README.md) | Current | Database architecture and migration status |
+| [`../supabase/coupon-workflow.md`](../supabase/coupon-workflow.md) | Current | Coupon roles, flows, and security behavior |
+| [`../supabase/security-test-plan.md`](../supabase/security-test-plan.md) | Current | Disposable-environment security and concurrency checks |
+| [`../supabase/blocked_migrations/README.md`](../supabase/blocked_migrations/README.md) | Current warning | Files that must never enter the active migration path |
+| [`../supabase/functions/issue_launch_permit/README.md`](../supabase/functions/issue_launch_permit/README.md) | Experimental; production-blocked | Prototype Edge Function notes and explicit security limitations |
 
-The central handoff is the repository-level overview. The Launcher adapter
-document narrows that contract to Launcher responsibilities. If either conflicts
-with the external signed contract package, the package is authoritative and
-production wiring must stop.
+## Production-blocked authorization work
 
-## Historical records
+These documents are still useful for design and implementation work, but none
+of them authorizes production Core startup.
 
-Files under [`archive/`](archive/) preserve dated release evidence, superseded
-proposals, and pre-baseline handoffs. They are not implementation instructions.
-See [`archive/README.md`](archive/README.md) for the classification and replacement
-for each file.
+| Document | Status | Purpose |
+| --- | --- | --- |
+| [`blocked/neko-auth-s0-production-handoff.md`](blocked/neko-auth-s0-production-handoff.md) | Blocked | Central `NEKO-AUTH-S0` baseline and release gates |
+| [`blocked/launcher-production-adapters.md`](blocked/launcher-production-adapters.md) | Blocked | Launcher responsibilities pinned to the S0 baseline |
+| [`blocked/launcher-minimal-launch-authorization-plan.md`](blocked/launcher-minimal-launch-authorization-plan.md) | Draft; approval required | Reduced-scope Launcher execution plan |
+| [`blocked/core-minimal-launch-authorization-plan.md`](blocked/core-minimal-launch-authorization-plan.md) | Draft; approval required | Matching NekoProxyCore execution plan |
 
-## Removed
+## Historical and unused material
 
-- `tasks.txt` — an accidental UTF-16 Windows process-list capture, not a project
-  task list or documentation file.
+Files under [`archive/`](archive/) are not current instructions. The archive
+index records why each file is retained and identifies its current replacement.
+
+The accidental Windows process capture formerly stored as `tasks.csv` was
+removed because it was neither project documentation nor a task list.
 
 ## Maintenance rules
 
-1. Update this index whenever a document is added, archived, renamed, or removed.
-2. Put active procedures in `docs/` or the relevant component directory.
-3. Put superseded or date-specific evidence in `docs/archive/` and add a
-   historical-status banner.
-4. Do not create file names with spaces; use lowercase kebab-case.
-5. Do not describe a design as implemented unless the production composition
-   and tests demonstrate it.
-6. Keep secrets, tokens, customer identifiers, private keys, and raw production
-   configuration out of documentation.
+1. Add every maintained document to this index.
+2. Put active cross-component guidance in `current/`.
+3. Put unapproved plans, release gates, and incomplete production handoffs in
+   `blocked/`.
+4. Move superseded or date-specific evidence to `archive/`; do not silently
+   rewrite historical claims.
+5. Give every blocked or archived document a status banner and a current
+   replacement where one exists.
+6. Do not describe a prototype as production-ready unless production
+   composition, security review, and tests demonstrate it.
+7. Never store secrets, tokens, customer identifiers, private keys, raw
+   production configuration, or machine-specific absolute links in docs.

@@ -1,6 +1,7 @@
 # Neko Launcher Architecture Refactor
 
-> **Status:** Implementation complete; final validation pending (7 August 2026).
+> **Status:** Current architecture; implementation complete and final manual UI
+> and GitHub Actions validation pending (reviewed 8 August 2026).
 
 ## Purpose
 Perform a maintainability-focused architectural refactor of the Python launcher, resolving a monolithic 1700-line UI script and an unorganized infrastructure layer.

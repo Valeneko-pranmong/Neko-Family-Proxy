@@ -1,5 +1,8 @@
 # Supabase security and concurrency test plan
 
+> **Status: CURRENT — reviewed 8 August 2026.** Run only with disposable test
+> accounts and data.
+
 Run this plan against disposable test accounts before enabling the Launcher
 login, coupon, or session UI. Do not store test passwords, access tokens,
 customer data, or secret/service-role keys in this repository.

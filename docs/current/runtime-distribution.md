@@ -1,6 +1,6 @@
 # NekoProxyCore runtime distribution
 
-**Status:** Current policy — reviewed 4 August 2026. Production runtime startup
+**Status:** Current policy — reviewed 8 August 2026. Production runtime startup
 remains blocked by the `NEKO-AUTH-S0` release gates.
 
 `NekoProxyCore` is a separately licensed runtime and is never committed to this

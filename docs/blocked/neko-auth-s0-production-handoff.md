@@ -816,7 +816,7 @@ Connector รับได้เมื่อ source, tests, artifact identity, co
 
 ## 22. 2026-08-05 fail-closed production-composition progress
 
-ตรวจจาก `E:\Github\Neko-Family-Proxy` branch `main` ที่
+ตรวจจาก repository นี้บน branch `main` ที่
 `1ea639ff042e06bbea57d0f46e93fd0e7f718970` ซึ่งตรงกับ `origin/main` ก่อนแก้ไข:
 
 - เพิ่ม `ProductionAuthorizationGate` ที่ pin `NEKO-AUTH-S0/s0-rc1` และ package SHA-256 ข้างต้น
