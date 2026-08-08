@@ -158,6 +158,7 @@ class LauncherService:
             try:
                 self._auth_gateway.clear_local_session()
             finally:
+                self._heartbeat_failures = 0
                 self._controller.sign_out()
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
@@ -275,6 +276,7 @@ class LauncherService:
         except LauncherServiceError:
             raise
         else:
+            self._heartbeat_failures = 0
             self._controller.dispatch(EntitlementLoaded(claim.entitlement))
             self._controller.dispatch(SessionClaimed(claim.session_id))
 

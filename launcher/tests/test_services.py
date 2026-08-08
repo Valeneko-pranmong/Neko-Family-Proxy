@@ -254,6 +254,28 @@ def test_transient_heartbeat_errors_need_three_failures_before_revocation(
     assert controller.state.session_id is None
 
 
+def test_heartbeat_failure_counter_resets_for_a_new_session(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_error = True
+
+    assert service.heartbeat() is True
+    assert service.heartbeat() is True
+    assert service.heartbeat() is False
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+
+    gateway.heartbeat_error = False
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_error = True
+
+    assert service.heartbeat() is True
+    assert service.heartbeat() is True
+    assert controller.state.session_id == "session-id"
+
+
 def test_sign_out_releases_launcher_session_and_auth_session(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
