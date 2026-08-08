@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import pytest
@@ -45,28 +46,86 @@ def test_auth_entitlement_and_single_launcher_session_end_to_end() -> None:
     url, publishable_key, username, password = required_environment()
     first = gateway(url, publishable_key)
     second = gateway(url, publishable_key)
-    installation_hash = "a" * 64
+    first_installation_hash = "a" * 64
+    second_installation_hash = "b" * 64
 
-    first.sign_in(username, password)
-    first_claim = first.claim_session(
-        "neko-family-proxy",
-        installation_hash,
-        "Integration test runner",
-    )
-
-    second.sign_in(username, password)
-    second_claim = second.claim_session(
-        "neko-family-proxy",
-        installation_hash,
-        "Integration test runner",
-    )
-
+    first_claim = None
+    second_claim = None
+    replacement_claim = None
     try:
+        first.sign_in(username, password)
+        first_claim = first.claim_session(
+            "neko-family-proxy",
+            first_installation_hash,
+            "Integration test runner A",
+        )
+
+        second.sign_in(username, password)
+        second_claim = second.claim_session(
+            "neko-family-proxy",
+            second_installation_hash,
+            "Integration test runner B",
+        )
+
         assert first_claim.session_id != second_claim.session_id
         assert first.heartbeat_session(first_claim.session_id) is False
         assert second.heartbeat_session(second_claim.session_id) is True
+
+        replacement_claim = first.claim_session(
+            "neko-family-proxy",
+            first_installation_hash,
+            "Integration test runner A",
+        )
+        assert replacement_claim.installation_id == first_claim.installation_id
+        assert second.heartbeat_session(second_claim.session_id) is False
+        assert first.heartbeat_session(replacement_claim.session_id) is True
     finally:
-        second.release_session(second_claim.session_id)
+        if replacement_claim is not None:
+            first.release_session(replacement_claim.session_id)
+        elif second_claim is not None:
+            second.release_session(second_claim.session_id)
+        elif first_claim is not None:
+            first.release_session(first_claim.session_id)
+        first.sign_out()
+        second.sign_out()
+
+
+@pytest.mark.integration
+def test_concurrent_claims_leave_exactly_one_live_session() -> None:
+    url, publishable_key, username, password = required_environment()
+    first = gateway(url, publishable_key)
+    second = gateway(url, publishable_key)
+    first.sign_in(username, password)
+    second.sign_in(username, password)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first_future = executor.submit(
+                first.claim_session,
+                "neko-family-proxy",
+                "c" * 64,
+                "Concurrent runner C",
+            )
+            second_future = executor.submit(
+                second.claim_session,
+                "neko-family-proxy",
+                "d" * 64,
+                "Concurrent runner D",
+            )
+            first_claim = first_future.result()
+            second_claim = second_future.result()
+
+        heartbeat_results = (
+            first.heartbeat_session(first_claim.session_id),
+            second.heartbeat_session(second_claim.session_id),
+        )
+        assert heartbeat_results.count(True) == 1
+        assert heartbeat_results.count(False) == 1
+    finally:
+        if "first_claim" in locals():
+            first.release_session(first_claim.session_id)
+        if "second_claim" in locals():
+            second.release_session(second_claim.session_id)
         first.sign_out()
         second.sign_out()
 
