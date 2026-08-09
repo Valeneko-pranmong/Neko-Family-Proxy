@@ -10,7 +10,7 @@ class EntitlementUnavailable(LauncherServiceError):
 
 
 class DeviceAuthorizationDenied(LauncherServiceError):
-    """The authenticated account cannot be used from this installation."""
+    """Legacy compatibility error for deprecated installation authorization."""
 
 
 class RecoverySessionInvalid(LauncherServiceError):

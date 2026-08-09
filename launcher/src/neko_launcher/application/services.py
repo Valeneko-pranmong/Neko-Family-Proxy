@@ -27,7 +27,6 @@ from neko_launcher.domain.models import (
 
 from .controller import ApplicationController
 from .errors import (
-    DeviceAuthorizationDenied,
     EntitlementUnavailable,
     LauncherServiceError,
     RecoveryRetryRequired,
@@ -300,9 +299,8 @@ class LauncherService:
         except Exception as exc:
             raise LauncherServiceError("ใช้คูปองไม่สำเร็จ กรุณาลองใหม่") from exc
         # Update the home screen immediately from the server's redemption
-        # result.  The session claim below may still fail (for example when
-        # another device is active), but the newly added days are real and
-        # should not remain displayed as 0.
+        # result. The session claim below may still fail, but the newly added
+        # days are real and should not remain displayed as 0.
         self._controller.dispatch(
             EntitlementLoaded(
                 Entitlement(
@@ -316,8 +314,8 @@ class LauncherService:
             self._claim_session(allow_missing=False)
         except LauncherServiceError:
             # _claim_session clears the session when it cannot claim one.
-            # Keep the redeemed entitlement visible even when launching is
-            # temporarily blocked by a device/session constraint.
+            # Keep the redeemed entitlement visible while a new session cannot
+            # be claimed.
             if self._controller.state.auth_status is not AuthStatus.SIGNED_OUT:
                 self._controller.dispatch(
                     EntitlementLoaded(
@@ -343,6 +341,9 @@ class LauncherService:
         try:
             alive = self._entitlement_gateway.heartbeat_session(session_id)
         except Exception:
+            if self._controller.state.session_id != session_id:
+                self._heartbeat_failures = 0
+                return True
             self._heartbeat_failures += 1
             if self._heartbeat_failures < 3:
                 return True
@@ -354,6 +355,9 @@ class LauncherService:
             self._controller.dispatch(ErrorOccurred(reason))
             return False
         else:
+            if self._controller.state.session_id != session_id:
+                self._heartbeat_failures = 0
+                return True
             self._heartbeat_failures = 0
         if not alive:
             generic_reason = (
@@ -371,14 +375,13 @@ class LauncherService:
                 termination = SessionTerminationReason.REVOKED
             reason = {
                 SessionTerminationReason.REPLACED: (
-                    "เซสชันถูกแทนที่ด้วยการเข้าสู่ระบบใหม่กว่า "
+                    "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น "
                     "กรุณาเข้าสู่ระบบอีกครั้ง"
                 ),
                 SessionTerminationReason.REVOKED: generic_reason,
-                SessionTerminationReason.INSTALLATION_REVOKED: (
-                    "เครื่องนี้ไม่ได้รับอนุญาตให้ใช้งานบัญชีนี้ "
-                    "กรุณาติดต่อฝ่ายบริการ"
-                ),
+                # Kept for backward-compatible diagnostics only. Installation
+                # history no longer represents permanent machine authorization.
+                SessionTerminationReason.INSTALLATION_REVOKED: generic_reason,
                 SessionTerminationReason.LICENSE_UNAVAILABLE: (
                     "สิทธิ์ใช้งานไม่พร้อม ถูกยกเลิก หรือหมดอายุ "
                     "กรุณาติดต่อฝ่ายบริการ"
@@ -387,6 +390,8 @@ class LauncherService:
                     "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"
                 ),
             }[termination]
+            if self._controller.state.session_id is not None:
+                return True
             self._force_sign_out_safely()
             self._controller.dispatch(ErrorOccurred(reason))
         return alive
@@ -443,9 +448,6 @@ class LauncherService:
             if allow_missing:
                 return False
             raise
-        except DeviceAuthorizationDenied:
-            self._force_sign_out_safely()
-            raise
         except LauncherServiceError:
             raise
         else:
@@ -455,11 +457,26 @@ class LauncherService:
             return True
 
     def _force_sign_out_safely(self) -> None:
+        """Fail closed locally without revoking other Supabase refresh tokens."""
+        self._clear_recovery_session()
+        if self._controller.state.proxy_status in {
+            ProxyStatus.STARTING,
+            ProxyStatus.RUNNING,
+        }:
+            self._controller.dispatch(StopProxyRequested())
+        session_id = self._controller.state.session_id
+        if session_id:
+            try:
+                self._entitlement_gateway.release_session(session_id)
+            except Exception:
+                pass
         try:
-            self.sign_out()
+            self._auth_gateway.clear_local_session()
         except Exception:
-            # Local cleanup and controller reset run in sign_out() finally blocks.
             pass
+        finally:
+            self._heartbeat_failures = 0
+            self._controller.sign_out()
 
     def _clear_recovery_session(self) -> None:
         with self._recovery_lock:

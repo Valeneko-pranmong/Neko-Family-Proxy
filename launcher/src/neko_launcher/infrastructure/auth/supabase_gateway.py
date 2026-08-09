@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from supabase import Client, ClientOptions, create_client
 
 from neko_launcher.application.errors import (
-    DeviceAuthorizationDenied,
     EntitlementUnavailable,
     LauncherServiceError,
 )
@@ -129,7 +128,9 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
 
     def sign_out(self) -> None:
         try:
-            self._client.auth.sign_out()
+            # Launcher sign-out is local to this installation. Global scope would
+            # revoke refresh tokens on the newest logged-in machine as well.
+            self._client.auth.sign_out({"scope": "local"})
         except Exception as exc:
             raise self._auth_error(exc, "ออกจากระบบไม่สำเร็จ")
 
@@ -181,6 +182,8 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 valid_until=valid_until,
                 max_devices=int(data.get("max_devices") or 1),
             ),
+            installation_id=self._required_text(data, "installation_id"),
+            license_id=self._required_text(data, "license_id"),
         )
 
     def heartbeat_session(self, session_id: str) -> bool:
@@ -212,12 +215,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if profile is not None and profile.get("status") != "active":
             return SessionTerminationReason.ACCOUNT_RESTRICTED
 
-        installation = self._first_public_row(
-            "installations", "revoked_at", id=str(session["installation_id"])
-        )
-        if installation is not None and installation.get("revoked_at") is not None:
-            return SessionTerminationReason.INSTALLATION_REVOKED
-
         license_row = self._first_public_row(
             "licenses", "status,valid_from,valid_until", id=str(session["license_id"])
         )
@@ -244,6 +241,15 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         )
         if isinstance(active.data, list) and active.data:
             return SessionTerminationReason.REPLACED
+
+        # Compatibility-only diagnosis for a backend that has not yet removed
+        # legacy installation revocation. It is not consulted before a newer
+        # active session and does not participate in session claims.
+        installation = self._first_public_row(
+            "installations", "revoked_at", id=str(session["installation_id"])
+        )
+        if installation is not None and installation.get("revoked_at") is not None:
+            return SessionTerminationReason.INSTALLATION_REVOKED
         return SessionTerminationReason.REVOKED
 
     def _first_public_row(
@@ -404,15 +410,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     @classmethod
     def _rpc_error(cls, exc: Exception, fallback: str) -> LauncherServiceError:
         text = str(exc).lower()
-        device_errors = {
-            "device_limit_reached": "บัญชีนี้ใช้งานครบจำนวนอุปกรณ์แล้ว",
-            "installation_revoked": (
-                "เครื่องนี้ไม่สามารถใช้งานบัญชีนี้ได้ กรุณาติดต่อฝ่ายบริการ"
-            ),
-        }
-        for code, message in device_errors.items():
-            if code in text:
-                return DeviceAuthorizationDenied(message)
         mapping = {
             "not_authenticated": "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่",
             "account_restricted": (

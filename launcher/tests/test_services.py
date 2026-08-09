@@ -21,7 +21,11 @@ from neko_launcher.domain.models import (
     SessionClaim,
     SessionTerminationReason,
 )
-from neko_launcher.domain.events import EntitlementLoaded, GameProcessStateChanged
+from neko_launcher.domain.events import (
+    EntitlementLoaded,
+    GameProcessStateChanged,
+    SessionClaimed,
+)
 from neko_launcher.infrastructure.event_bus import EventBus
 
 
@@ -30,9 +34,11 @@ class FakeGateway:
         self.has_access = False
         self.heartbeat_alive = True
         self.heartbeat_error = False
+        self.before_heartbeat: Callable[[], None] | None = None
         self.signed_out = False
         self.sign_out_error = False
         self.local_session_cleared = False
+        self.clear_local_session_error = False
         self.changed_password: str | None = None
         self.released: list[str] = []
         self.last_signup: tuple[str, str] | None = None
@@ -42,6 +48,9 @@ class FakeGateway:
         self.termination_reason = SessionTerminationReason.REVOKED
         self.termination_error = False
         self.before_termination_lookup: Callable[[], None] | None = None
+        self.claimed_installations: list[str] = []
+        self.proxy_running = False
+        self.proxy_stop_count = 0
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -59,6 +68,8 @@ class FakeGateway:
         self.signed_out = True
 
     def clear_local_session(self) -> None:
+        if self.clear_local_session_error:
+            raise RuntimeError("local auth cleanup failed")
         self.local_session_cleared = True
 
     def change_password(self, password: str) -> None:
@@ -73,6 +84,7 @@ class FakeGateway:
         installation_key_hash: str,
         display_name: str,
     ) -> SessionClaim:
+        self.claimed_installations.append(installation_key_hash)
         if self.claim_error is not None:
             raise self.claim_error
         if not self.has_access:
@@ -84,9 +96,20 @@ class FakeGateway:
                 EntitlementStatus.ACTIVE,
                 datetime.now(UTC) + timedelta(days=30),
             ),
+            installation_id="installation-id",
+            license_id="license-id",
         )
 
+    def start(self) -> None:
+        self.proxy_running = True
+
+    def stop(self) -> None:
+        self.proxy_running = False
+        self.proxy_stop_count += 1
+
     def heartbeat_session(self, session_id: str) -> bool:
+        if self.before_heartbeat is not None:
+            self.before_heartbeat()
         if self.heartbeat_error:
             raise RuntimeError("network")
         return self.heartbeat_alive
@@ -125,8 +148,8 @@ class FakeInstallation:
 @pytest.fixture
 def workflow() -> tuple[LauncherService, ApplicationController, FakeGateway]:
     bus = EventBus()
-    controller = ApplicationController(bus)
     gateway = FakeGateway()
+    controller = ApplicationController(bus, proxy_gateway=gateway)
     service = LauncherService(
         controller,
         gateway,
@@ -165,7 +188,7 @@ def test_safe_claim_error_after_valid_credentials_preserves_authenticated_state(
     assert controller.state.session_id is None
 
 
-def test_sign_in_stays_signed_out_when_device_authorization_is_denied(
+def test_legacy_device_denial_does_not_create_a_local_permanent_machine_lock(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
@@ -176,13 +199,21 @@ def test_sign_in_stays_signed_out_when_device_authorization_is_denied(
     with pytest.raises(DeviceAuthorizationDenied):
         service.sign_in("testuser", "password123")
 
-    assert gateway.signed_out is True
-    assert gateway.local_session_cleared is True
-    assert controller.state.user_id is None
-    assert controller.state.auth_status.value == "signed_out"
+    assert gateway.signed_out is False
+    assert gateway.local_session_cleared is False
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id is None
+
+    gateway.claim_error = None
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
+    assert gateway.claimed_installations == ["a" * 64, "a" * 64]
 
 
-def test_restore_session_stays_signed_out_when_device_authorization_is_denied(
+def test_restore_with_legacy_device_denial_stays_fail_closed_without_local_lock(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
@@ -192,10 +223,10 @@ def test_restore_session_stays_signed_out_when_device_authorization_is_denied(
 
     assert service.restore_session() is False
 
-    assert gateway.signed_out is True
-    assert gateway.local_session_cleared is True
-    assert controller.state.user_id is None
-    assert controller.state.auth_status.value == "signed_out"
+    assert gateway.signed_out is False
+    assert gateway.local_session_cleared is False
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller.state.session_id is None
 
 
 def test_sign_up_normalizes_username_and_uses_only_username_and_password(
@@ -222,6 +253,20 @@ def test_redeem_coupon_refreshes_entitlement_and_claims_session(
     assert controller.state.session_id == "session-id"
 
 
+def test_successful_sign_in_claims_session_with_stable_installation_identity(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+
+    service.sign_in("testuser", "password123")
+
+    assert gateway.claimed_installations == ["a" * 64]
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
+    assert controller.state.entitlement is not None
+
+
 def test_failed_heartbeat_revokes_launcher_session(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
@@ -231,13 +276,44 @@ def test_failed_heartbeat_revokes_launcher_session(
     gateway.heartbeat_alive = False
 
     assert service.heartbeat() is False
-    assert gateway.signed_out is True
+    assert gateway.signed_out is False
     assert gateway.local_session_cleared is True
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
     assert controller.state.user_id is None
     assert controller.state.session_id is None
     assert controller.state.entitlement is None
     assert "เซสชัน" in (controller.state.last_error or "")
+
+
+def test_valid_session_heartbeat_remains_authenticated(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+
+    assert service.heartbeat() is True
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
+    assert gateway.signed_out is False
+
+
+def test_stale_heartbeat_result_cannot_sign_out_a_newer_local_session(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+    gateway.before_heartbeat = lambda: controller.dispatch(
+        SessionClaimed("newer-session")
+    )
+
+    assert service.heartbeat() is True
+
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "newer-session"
+    assert gateway.signed_out is False
 
 
 def test_rejected_heartbeat_invalidates_authorization_before_reason_lookup(
@@ -258,6 +334,29 @@ def test_rejected_heartbeat_invalidates_authorization_before_reason_lookup(
     assert observed.session_id is None
     assert observed.entitlement is None
     assert observed.proxy_status.value == "stopped"
+
+
+def test_reason_lookup_cannot_sign_out_a_session_claimed_after_invalidation(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+
+    def claim_newer_session() -> None:
+        claim = gateway.claim_session("neko-family-proxy", "a" * 64, "Test PC")
+        controller.dispatch(EntitlementLoaded(claim.entitlement))
+        controller.dispatch(SessionClaimed("newer-session"))
+
+    gateway.before_termination_lookup = claim_newer_session
+
+    assert service.heartbeat() is True
+
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "newer-session"
+    assert controller.state.entitlement is not None
+    assert gateway.signed_out is False
 
 
 def test_failed_reason_lookup_signs_out_with_generic_revoked_message(
@@ -304,9 +403,9 @@ def test_rejected_heartbeat_never_defers_invalidation_for_running_game(
 @pytest.mark.parametrize(
     ("termination_reason", "expected_message"),
     [
-        (SessionTerminationReason.REPLACED, "การเข้าสู่ระบบใหม่กว่า"),
+        (SessionTerminationReason.REPLACED, "เข้าสู่ระบบจากเครื่องอื่น"),
         (SessionTerminationReason.REVOKED, "ใช้งานไม่ได้แล้ว"),
-        (SessionTerminationReason.INSTALLATION_REVOKED, "เครื่องนี้"),
+        (SessionTerminationReason.INSTALLATION_REVOKED, "ใช้งานไม่ได้แล้ว"),
         (SessionTerminationReason.LICENSE_UNAVAILABLE, "สิทธิ์ใช้งาน"),
         (SessionTerminationReason.ACCOUNT_RESTRICTED, "บัญชี"),
     ],
@@ -327,33 +426,102 @@ def test_failed_heartbeat_explains_the_safe_termination_reason(
     assert expected_message in (controller.state.last_error or "")
 
 
-def test_failed_heartbeat_clears_local_session_when_remote_sign_out_fails(
+def test_replaced_session_stops_proxy_and_uses_required_message(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    controller.dispatch(GameProcessStateChanged(True))
+    service.start_proxy()
+    assert gateway.proxy_running is True
+    gateway.heartbeat_alive = False
+    gateway.termination_reason = SessionTerminationReason.REPLACED
+
+    assert service.heartbeat() is False
+
+    assert gateway.proxy_running is False
+    assert gateway.proxy_stop_count >= 1
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller.state.session_id is None
+    assert controller.state.entitlement is None
+    assert controller.state.last_error == (
+        "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น "
+        "กรุณาเข้าสู่ระบบอีกครั้ง"
+    )
+
+
+def test_same_installation_can_sign_in_again_after_replacement(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
     gateway.has_access = True
     service.sign_in("testuser", "password123")
     gateway.heartbeat_alive = False
-    gateway.sign_out_error = True
+    gateway.termination_reason = SessionTerminationReason.REPLACED
 
     assert service.heartbeat() is False
-
-    assert gateway.local_session_cleared is True
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
 
+    gateway.heartbeat_alive = True
+    service.sign_in("testuser", "password123")
 
-def test_device_denial_preserves_typed_error_when_remote_sign_out_fails(
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
+    assert gateway.claimed_installations == ["a" * 64, "a" * 64]
+
+
+def test_a_b_c_a_sequence_has_no_local_permanent_installation_lock(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
-    gateway.claim_error = DeviceAuthorizationDenied("installation_revoked")
-    gateway.sign_out_error = True
+    gateway.has_access = True
 
-    with pytest.raises(DeviceAuthorizationDenied, match="installation_revoked"):
+    for _machine in ("A", "B", "C"):
         service.sign_in("testuser", "password123")
+        assert controller.state.session_id == "session-id"
+        gateway.heartbeat_alive = False
+        gateway.termination_reason = SessionTerminationReason.REPLACED
+        assert service.heartbeat() is False
+        assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+        gateway.heartbeat_alive = True
 
+    service.sign_in("testuser", "password123")
+
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
+    assert gateway.claimed_installations == ["a" * 64] * 4
+
+
+def test_failed_heartbeat_uses_local_cleanup_without_global_auth_sign_out(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+
+    assert service.heartbeat() is False
+
+    assert gateway.signed_out is False
     assert gateway.local_session_cleared is True
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+
+
+def test_failed_heartbeat_still_resets_controller_if_local_cleanup_errors(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+    gateway.clear_local_session_error = True
+
+    assert service.heartbeat() is False
+
+    assert gateway.signed_out is False
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller.state.session_id is None
 
 
 def test_transient_heartbeat_errors_need_three_failures_before_revocation(
@@ -393,6 +561,27 @@ def test_heartbeat_failure_counter_resets_for_a_new_session(
     assert service.heartbeat() is True
     assert service.heartbeat() is True
     assert controller.state.session_id == "session-id"
+
+
+def test_account_restriction_and_entitlement_failure_remain_fail_closed(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.claim_error = LauncherServiceError(
+        "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"
+    )
+
+    with pytest.raises(LauncherServiceError, match="ระงับ"):
+        service.sign_in("testuser", "password123")
+
+    assert controller.state.session_id is None
+    assert controller.state.entitlement is None
+
+    gateway.claim_error = EntitlementUnavailable("สิทธิ์ใช้งานหมดอายุ")
+    service.sign_in("testuser", "password123")
+
+    assert controller.state.session_id is None
+    assert controller.state.entitlement is None
 
 
 def test_sign_out_releases_launcher_session_and_auth_session(

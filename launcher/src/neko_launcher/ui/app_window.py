@@ -47,6 +47,9 @@ from .views.dashboard_view import DashboardView, open_password_dialog
 from .views.recovery_view import RecoveryView
 
 
+HEARTBEAT_INTERVAL_MS = 30_000
+
+
 class AppWindow:
     """Two-stage customer UI: account access first, launcher tools after login."""
 
@@ -138,7 +141,7 @@ class AppWindow:
         self.root.after(100, lambda: drain_tray_actions(
             self._tray_actions, self.root, self.close,
         ))
-        self.root.after(30_000, self._heartbeat)
+        self.root.after(HEARTBEAT_INTERVAL_MS, self._heartbeat)
         self.root.after(3_000, self._poll_game_process)
         self._submit(self._service.restore_session, self._restore_completed)
 
@@ -992,7 +995,7 @@ class AppWindow:
         if self._controller.state.session_id:
             self._submit(self._service.heartbeat)
         if self.root.winfo_exists():
-            self.root.after(30_000, self._heartbeat)
+            self.root.after(HEARTBEAT_INTERVAL_MS, self._heartbeat)
 
     @staticmethod
     def _add_heading(frame: ctk.CTkBaseClass) -> None:

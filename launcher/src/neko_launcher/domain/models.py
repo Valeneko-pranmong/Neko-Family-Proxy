@@ -90,6 +90,8 @@ class RecoverySession:
 class SessionClaim:
     session_id: str
     entitlement: Entitlement
+    installation_id: str = ""
+    license_id: str = ""
 
 
 @dataclass(frozen=True)

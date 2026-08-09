@@ -10,7 +10,7 @@ from neko_launcher.domain.models import (
     GameStatus,
     ProxyStatus,
 )
-from neko_launcher.ui.app_window import AppWindow
+from neko_launcher.ui.app_window import AppWindow, HEARTBEAT_INTERVAL_MS
 from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.ui.theme import PALETTE
 
@@ -277,7 +277,8 @@ def test_error_notification_shows_complete_actionable_toast(monkeypatch: Any) ->
     window._header_message = FakeLabel()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._error = FakeVariable(
-        "เซสชันถูกแทนที่ด้วยการเข้าสู่ระบบใหม่กว่า กรุณาเข้าสู่ระบบอีกครั้ง"
+        "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น "
+        "กรุณาเข้าสู่ระบบอีกครั้ง"
     )  # type: ignore[assignment]
 
     toast_calls: list[tuple[str, bool]] = []
@@ -294,6 +295,10 @@ def test_error_notification_shows_complete_actionable_toast(monkeypatch: Any) ->
         "text": "High Performance & Low Latency",
         "text_color": PALETTE.text_muted,
     }
+
+
+def test_session_heartbeat_polling_interval_is_bounded_to_thirty_seconds() -> None:
+    assert HEARTBEAT_INTERVAL_MS == 30_000
 
 
 def test_empty_notification_restores_default_header_subtitle(monkeypatch: Any) -> None:

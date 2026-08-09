@@ -1,6 +1,8 @@
 # AI Implementation Prompt: Allow multiple installations but only one active session
 
-> **Status: IMPLEMENTATION HANDOFF**  
+> **Status: SUPERSEDED 9 AUGUST 2026** — This historical handoff still describes
+> explicit installation revocation. The current product policy removes permanent
+> machine locking; see `supabase/migrations/20260809133000_remove_permanent_installation_lock.sql`.
 > **Target team:** Backend / Supabase / Admin Web  
 > **Consumer:** Neko Family Launcher desktop client  
 > **Repository context:** Verify all paths and deployed database definitions before editing.  

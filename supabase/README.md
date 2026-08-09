@@ -69,14 +69,14 @@ The coupon replay case runs only when a fresh `NEKO_INTEGRATION_COUPON` secret
 is supplied and consumes that coupon.
 
 The forward migration
-`20260808143000_harden_session_policy_admin_operations.sql` keeps the
-multiple-installation/one-active-session policy backward compatible while
-binding heartbeat validity to the license stored on the session. It also adds
-the trusted, service-role-only `launcher.admin_revoke_installation(uuid, uuid)`
-operation so installation revocation, session invalidation, and audit logging
-are one transaction. Apply it to staging first and compare the live function
-definitions and unique partial session index before production approval; this
-repository change does not modify production.
+`20260809133000_remove_permanent_installation_lock.sql` completes the transition
+to remembered installation history plus one active Launcher session. It clears
+legacy `installations.revoked_at` values without changing accounts, licenses, or
+historical sessions; removes installation revocation from `claim_session`; and
+removes the obsolete Admin installation-revocation RPC. Apply it to staging
+first and compare the live function definitions, grants, RLS, and unique partial
+session index before production approval; this repository change does not
+modify production.
 
 ## Auth and database cleanup
 

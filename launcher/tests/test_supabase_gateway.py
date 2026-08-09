@@ -2,10 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from neko_launcher.application.errors import (
-    DeviceAuthorizationDenied,
-    LauncherServiceError,
-)
+from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.domain.models import SessionTerminationReason
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 
@@ -57,6 +54,7 @@ class FakeAuth:
         self.sign_up_payload: dict[str, object] | None = None
         self.sign_in_payload: dict[str, str] | None = None
         self.updated_password: str | None = None
+        self.sign_out_options: dict[str, str] | None = None
 
     def sign_up(self, payload: dict[str, object]) -> SimpleNamespace:
         self.sign_up_payload = payload
@@ -84,6 +82,9 @@ class FakeAuth:
     def update_user(self, payload: dict[str, str]) -> SimpleNamespace:
         self.updated_password = payload["password"]
         return SimpleNamespace(user=SimpleNamespace(id="user-id"))
+
+    def sign_out(self, options: dict[str, str]) -> None:
+        self.sign_out_options = options
 
 
 class FakeTableQuery:
@@ -158,10 +159,21 @@ def test_clear_local_session_removes_persisted_supabase_auth() -> None:
     assert store.read("supabase.auth.token") is None
 
 
+def test_sign_out_revokes_only_this_installations_auth_session() -> None:
+    client = FakeRpcClient(None)
+    gateway = build_gateway(client)
+
+    gateway.sign_out()
+
+    assert client.auth.sign_out_options == {"scope": "local"}
+
+
 def test_claim_session_calls_launcher_schema_and_parses_entitlement() -> None:
     client = FakeRpcClient(
         {
             "session_id": "session-id",
+            "installation_id": "installation-id",
+            "license_id": "license-id",
             "product_code": "neko-family-proxy",
             "valid_until": "2026-08-24T12:00:00+00:00",
             "max_devices": 1,
@@ -178,19 +190,27 @@ def test_claim_session_calls_launcher_schema_and_parses_entitlement() -> None:
     assert client.function_name == "claim_session"
     assert client.parameters["p_installation_key_hash"] == "a" * 64
     assert result.session_id == "session-id"
+    assert result.installation_id == "installation-id"
+    assert result.license_id == "license-id"
     assert result.entitlement.valid_until is not None
 
 
 @pytest.mark.parametrize("code", ["device_limit_reached", "installation_revoked"])
-def test_claim_session_raises_typed_device_authorization_error(code: str) -> None:
+def test_legacy_device_policy_errors_do_not_create_permanent_device_denial(
+    code: str,
+) -> None:
     client = FakeRpcClient(None, error=RuntimeError(code))
 
-    with pytest.raises(DeviceAuthorizationDenied):
+    with pytest.raises(LauncherServiceError) as raised:
         build_gateway(client).claim_session(
             "neko-family-proxy",
             "a" * 64,
             "Test PC",
         )
+
+    assert raised.type is LauncherServiceError
+    assert "เครื่องนี้" not in str(raised.value)
+    assert "อุปกรณ์" not in str(raised.value)
 
 
 def test_auth_identifier_is_derived_without_a_launcher_lookup() -> None:
@@ -295,6 +315,32 @@ def test_current_session_is_not_classified_as_its_own_replacement() -> None:
     reason = build_gateway(client).session_termination_reason("current-session")  # type: ignore[arg-type]
 
     assert reason is SessionTerminationReason.REVOKED
+
+
+def test_newer_active_session_takes_priority_over_legacy_installation_state() -> None:
+    client = termination_client(
+        sessions=[
+            {
+                "id": "replaced-session",
+                "user_id": "user-id",
+                "installation_id": "installation-id",
+                "license_id": "license-id",
+                "revoked_at": "2026-08-09T00:00:00+00:00",
+            },
+            {
+                "id": "new-session",
+                "user_id": "user-id",
+                "installation_id": "other-installation-id",
+                "license_id": "license-id",
+                "revoked_at": None,
+            },
+        ]
+    )
+    client.tables["installations"][0]["revoked_at"] = "2026-08-09T00:00:00+00:00"
+
+    reason = build_gateway(client).session_termination_reason("replaced-session")  # type: ignore[arg-type]
+
+    assert reason is SessionTerminationReason.REPLACED
 
 
 def test_future_license_is_classified_as_unavailable() -> None:
