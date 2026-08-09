@@ -91,10 +91,13 @@ The migration contract enforces approximately five-minute, one-active,
 single-use Recovery Codes with attempt lockout and approximately ten-minute
 Recovery Sessions scoped to `change_password`. Completion revokes existing
 Launcher sessions. Email reset is neither required nor a current product
-recovery authority. Legacy `docs/reset-password/` browser artifacts and hosted
-`reset-password` version 4 remain preserved, but no current Launcher call or
-live database RPC initiates that flow; this reconciliation did not modify or
-deploy them.
+recovery authority. A follow-up review found that the legacy
+`docs/reset-password/` browser flow was still deployable and reachable even
+though no current Launcher call or live database RPC initiated it. The route
+and browser assets were removed, and repository safety now rejects deployable
+Supabase email-link recovery implementations. Hosted `reset-password` version 4
+remains preserved and was not modified or redeployed by this repository-only
+follow-up.
 
 ## Verification results
 
@@ -113,11 +116,15 @@ deploy them.
   official `db push --dry-run` listed only:
   - `20260809150000_bind_permits_to_auth_sessions.sql`
   - `20260809233000_bind_session_controls_and_bound_permit_ledgers.sql`
+- Sanitized linked list/dry-run evidence is retained at
+  `phase-2-5-linked-parity.json`; it contains only safe project, version, count,
+  filename, and exit-status data.
 - Backend permit/migration/runtime tests passed 42/42; Deno check and format
   validation passed. Focused Launcher migration/recovery tests passed 14/14.
-- Repository safety and Ruff passed. The canonical Launcher non-integration
-  suite passed 281 tests with three integration tests deselected in a clean
-  disposable Python 3.11.15 environment.
+- Repository safety and Ruff passed. After adding the legacy email-recovery
+  deployment guard, the canonical Launcher non-integration suite passed 282
+  tests with three integration tests deselected in a clean disposable Python
+  3.11.15 environment.
 - `git diff --check` and the changed-content secret scan passed.
 
 No hosted apply, migration repair, schema mutation, Edge Function deployment,

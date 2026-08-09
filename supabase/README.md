@@ -41,7 +41,7 @@ it serializes license updates across concurrent coupon redemptions, removes
 direct client table-write privileges, and adds the missing coupon-attempt
 foreign-key index.
 The legacy coupon RPC access revocation
-`20260725160000_revoke_legacy_coupon_rpc_access.sql` removes authenticated
+`20260725142015_revoke_legacy_coupon_rpc_access.sql` removes authenticated
 client access to the superseded Admin functions; the Admin console uses only
 the actor-checked `admin_*` RPCs.
 The recovery email column from

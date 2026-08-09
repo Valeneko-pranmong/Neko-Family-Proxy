@@ -4,7 +4,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 BLOCKED_DIRECTORY_NAMES = {
     ".next",
@@ -27,6 +26,11 @@ SECRET_PATTERNS = {
     "Supabase service-role JWT": re.compile(
         r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b"
     ),
+}
+LEGACY_EMAIL_RECOVERY_PATTERNS = {
+    "PASSWORD_RECOVERY": re.compile(r"\bPASSWORD_RECOVERY\b"),
+    "Supabase recovery-code exchange": re.compile(r"\bexchangeCodeForSession\b"),
+    "Supabase email reset sender": re.compile(r"\bresetPasswordForEmail\b"),
 }
 
 
@@ -78,11 +82,47 @@ def validate_content(path: Path) -> list[str]:
     ]
 
 
+def validate_repository_contracts() -> list[str]:
+    errors: list[str] = []
+    deployable_docs = REPOSITORY_ROOT / "docs"
+    legacy_route = deployable_docs / "reset-password"
+    if legacy_route.exists():
+        errors.append(
+            "deployable legacy email recovery directory is present: "
+            "docs/reset-password"
+        )
+
+    vercel_config = deployable_docs / "vercel.json"
+    if vercel_config.exists() and "/reset-password/" in vercel_config.read_text(
+        encoding="utf-8"
+    ):
+        errors.append(
+            "deployable legacy email recovery route is configured: docs/vercel.json"
+        )
+
+    for path in deployable_docs.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".html", ".js", ".json"}:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        relative = path.relative_to(REPOSITORY_ROOT)
+        for label, pattern in LEGACY_EMAIL_RECOVERY_PATTERNS.items():
+            if pattern.search(content):
+                errors.append(
+                    f"deployable legacy email recovery implementation ({label}): "
+                    f"{relative}"
+                )
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     for path in repository_files():
         errors.extend(validate_path(path))
         errors.extend(validate_content(path))
+    errors.extend(validate_repository_contracts())
     if errors:
         print("Repository safety check failed:")
         for error in errors:

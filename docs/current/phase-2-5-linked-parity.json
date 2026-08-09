@@ -1,0 +1,51 @@
+{
+  "project_ref": "miikoutrnxsunbndecqh",
+  "commands": {
+    "migration_list": "supabase migration list --linked",
+    "dry_run": "supabase db push --linked --dry-run"
+  },
+  "sanitization": "Credentials, connection metadata, and raw SQL are omitted.",
+  "migration_list_exit": 0,
+  "dry_run_exit": 0,
+  "hosted_applied_count": 28,
+  "hosted_head": "20260809133000",
+  "migration_list_versions": [
+    "20260725081525",
+    "20260725081549",
+    "20260725081603",
+    "20260725081636",
+    "20260725081929",
+    "20260725110225",
+    "20260725130737",
+    "20260725131024",
+    "20260725134935",
+    "20260725142015",
+    "20260726090011",
+    "20260726090127",
+    "20260726090357",
+    "20260726091945",
+    "20260726093019",
+    "20260726093232",
+    "20260726101947",
+    "20260727132751",
+    "20260728145033",
+    "20260728145651",
+    "20260728150821",
+    "20260729053740",
+    "20260729065703",
+    "20260808120000",
+    "20260808143000",
+    "20260809120000",
+    "20260809124500",
+    "20260809133000",
+    "20260809150000",
+    "20260809233000"
+  ],
+  "pending_filenames": [
+    "20260809150000_bind_permits_to_auth_sessions.sql",
+    "20260809233000_bind_session_controls_and_bound_permit_ledgers.sql"
+  ],
+  "expected_pending_exact": true,
+  "remote_only_count": 0,
+  "false_local_only_count": 0
+}
