@@ -45,12 +45,10 @@ The legacy coupon RPC access revocation
 client access to the superseded Admin functions; the Admin console uses only
 the actor-checked `admin_*` RPCs.
 The recovery email column from
-`20260726112000_add_recovery_email_auth_lookup.sql` exists in the historical
+`20260726101947_add_recovery_email_auth_lookup.sql` exists in the historical
 schema. The local forward-fix
-`20260729120000_secure_option_a_recovery_flow.sql` removes the unsafe lookup
-functions and canonicalizes the trigger for internal Auth identifiers. It was
-applied to hosted production as
-`20260729053740_secure_option_a_recovery_flow`. The
+`20260729053740_secure_option_a_recovery_flow.sql` removes the unsafe lookup
+functions and canonicalizes the trigger for internal Auth identifiers. The
 intermediate migration is archived at
 `supabase/blocked_migrations/20260729002946_restore_recovery_email_auth_flow.sql.blocked`.
 It is intentionally outside the active migration directory and must not be
@@ -83,10 +81,14 @@ modify production.
 For local Supabase, `config.toml` disables email confirmation. For the hosted
 `miikoutrnxsunbndecqh` project, **Confirm email** is disabled under
 Authentication → Sign In / Providers because the launcher does not require
-email confirmation during signup. Forgotten passwords use the server-side
-Admin-assisted reset flow. The Admin API revokes active Launcher sessions,
-updates Supabase Auth with a server-generated temporary password, and writes an
-`admin_password_reset` audit event without recording the password.
+email confirmation during signup. Forgotten passwords use the server-side,
+Admin-generated temporary Recovery Code flow from
+`20260809120000_account_recovery_codes.sql`. Recovery Codes are
+single-use, expire after approximately five minutes, enforce failed-attempt
+lockout, and create a temporary `change_password` Recovery Session. Completing
+recovery revokes active Launcher sessions. The historical recovery-email column
+is not recovery authority, and password-reset email is not an active product
+flow.
 
 The live schema audit on 2026-07-26 found nine public tables. Every table is
 referenced by an Auth trigger, an entitlement/session RPC, a coupon RPC, or a

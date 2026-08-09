@@ -1,4 +1,3 @@
--- Keep trigger normalization aligned with the username format constraint.
 create or replace function launcher.handle_new_user()
 returns trigger
 language plpgsql

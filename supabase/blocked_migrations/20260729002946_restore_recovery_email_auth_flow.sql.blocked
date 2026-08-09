@@ -1,6 +1,8 @@
 -- BLOCKED ARCHIVE: never apply or rename into the active migrations folder.
--- Restore the username-to-Auth-email flow removed by
--- 20260727141009_remove_recovery_email.sql and harden its privileges.
+-- Historical rejected experiment to restore the username-to-Auth-email flow.
+-- The local-only 20260727141009_remove_recovery_email.sql was never applied to
+-- the hosted project; hosted 20260729053740_secure_option_a_recovery_flow.sql
+-- independently removed the unsafe lookup functions.
 --
 -- This migration changes schema/functions only. Existing Auth emails must be
 -- migrated separately through the Supabase Auth Admin API so user UUIDs,

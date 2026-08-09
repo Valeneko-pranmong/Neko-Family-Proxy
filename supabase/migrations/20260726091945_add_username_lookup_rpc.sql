@@ -1,5 +1,5 @@
 -- Let the launcher ask the API whether a username exists before attempting
--- password authentication.  Only a boolean is returned; no profile data is
+-- password authentication. Only a boolean is returned; no profile data is
 -- exposed to the client.
 
 create or replace function launcher.user_exists(p_username text)

@@ -1,12 +1,4 @@
--- Forward-fix for the approved Option A architecture (internal Auth identifier
--- + Send Email Hook). Applied to hosted production as migration
--- 20260729053740_secure_option_a_recovery_flow.
---
--- The desktop client derives username@<project-host> locally. The real
--- recovery address is carried only in signup metadata and stored in
--- public.profiles for the trusted email hook. No client-callable RPC returns
--- an Auth email or account-existence bit.
-
+-- Apply the approved Option A forward-fix to the hosted project.
 create or replace function launcher.handle_new_user()
 returns trigger
 language plpgsql
@@ -36,9 +28,6 @@ begin
     v_username := 'user_' || left(replace(new.id::text, '-', ''), 27);
   end if;
 
-  -- Under Option A, new.email is synthetic and must never overwrite the
-  -- real recovery address. Only explicit signup metadata may populate this
-  -- field; existing values are preserved by the conflict clause below.
   v_recovery_email := lower(
     trim(nullif(new.raw_user_meta_data ->> 'recovery_email', ''))
   );

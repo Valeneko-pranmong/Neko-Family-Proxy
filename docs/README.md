@@ -40,6 +40,7 @@ plans or historical evidence.
 | [`../supabase/README.md`](../supabase/README.md) | Current | Database architecture and migration status |
 | [`../supabase/coupon-workflow.md`](../supabase/coupon-workflow.md) | Current | Coupon roles, flows, and security behavior |
 | [`../supabase/security-test-plan.md`](../supabase/security-test-plan.md) | Current | Disposable-environment security and concurrency checks |
+| [`current/phase-2-5-migration-history-reconciliation.md`](current/phase-2-5-migration-history-reconciliation.md) | Current forensic record | Hosted-to-repository migration history reconciliation and recovery architecture evidence |
 | [`../supabase/blocked_migrations/README.md`](../supabase/blocked_migrations/README.md) | Current warning | Files that must never enter the active migration path |
 | [`../supabase/functions/issue_launch_permit/README.md`](../supabase/functions/issue_launch_permit/README.md) | Experimental; production-blocked | Prototype Edge Function notes and explicit security limitations |
 

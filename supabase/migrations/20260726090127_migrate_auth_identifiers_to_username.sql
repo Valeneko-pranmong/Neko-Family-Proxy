@@ -1,10 +1,6 @@
--- Existing accounts in this dedicated project must continue to work after
--- emailless registration is enabled. Replace their Auth email-shaped
--- identifier with the same synthetic identifier used for new accounts.
-
 update auth.users u
 set
-  email = p.username || '@miikoutrnxsunbndecqh.supabase.co',
+  email = p.username || '@auth.neko.local',
   raw_user_meta_data = coalesce(u.raw_user_meta_data, '{}'::jsonb)
     || jsonb_build_object(
       'username', p.username,

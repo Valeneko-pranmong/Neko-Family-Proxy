@@ -1,7 +1,4 @@
--- User-facing authentication uses a username. Supabase Auth still needs an
--- email-shaped identifier internally, so the client stores a deterministic
--- synthetic address and never asks the user for an email address.
-
+-- User-facing authentication uses a username.
 alter table public.profiles
   add column if not exists username text;
 
@@ -14,7 +11,7 @@ set username = lower(
         split_part(coalesce(u.email, ''), '@', 1),
         'user_' || replace(p.id::text, '-', '')
       ),
-      '[^a-zA-Z0-9_]',
+      '[^a-zA-Z0-9_-]',
       '_',
       'g'
     ),
@@ -53,7 +50,7 @@ begin
           new.raw_user_meta_data ->> 'display_name',
           split_part(coalesce(new.email, ''), '@', 1)
         ),
-        '[^a-zA-Z0-9_]',
+        '[^a-zA-Z0-9_-]',
         '_',
         'g'
       ),
