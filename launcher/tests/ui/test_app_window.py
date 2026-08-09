@@ -127,6 +127,11 @@ class FakeService:
         self.started: list[str] = []
         self.proxy_started = 0
         self.tweaker_started = 0
+        self.sign_ins: list[tuple[str, str]] = []
+
+    def sign_in(self, username: str, password: str) -> None:
+        self.sign_ins.append((username, password))
+
     def launch_tweaker(self, executable: str) -> None:
         self.started.append(executable)
         self.tweaker_started += 1
@@ -409,6 +414,31 @@ def test_successful_login_auto_launches_checked_tweaker(tmp_path: Path) -> None:
 
     assert window._login_password.get() == ""
     assert window._service.started == [str(tweaker.resolve())]  # type: ignore[attr-defined]
+
+
+def test_authenticated_login_without_entitlement_clears_password(tmp_path: Path) -> None:
+    window = build_tweaker_window(tmp_path / "missing" / "Tweaker.exe")
+    window._controller.state = AppState(  # type: ignore[assignment]
+        auth_status=AuthStatus.AUTHENTICATED,
+        entitlement=None,
+        session_id=None,
+    )
+    window._login_email = FakeVariable("testuser")  # type: ignore[assignment]
+    window._login_password = FakeVariable("password123")  # type: ignore[assignment]
+
+    def submit(work: Any, on_success: Any = None) -> None:
+        result = work()
+        if on_success is not None:
+            on_success(result)
+
+    window._submit = submit  # type: ignore[method-assign]
+
+    window._login()
+
+    assert window._service.sign_ins == [  # type: ignore[attr-defined]
+        ("testuser", "password123")
+    ]
+    assert window._login_password.get() == ""
 
 
 def test_successful_login_does_not_launch_when_checkbox_is_off(

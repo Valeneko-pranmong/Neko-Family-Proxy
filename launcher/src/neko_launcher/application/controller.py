@@ -128,6 +128,10 @@ class ApplicationController:
             last_error=None,
         )
 
+    def invalidate_session(self, reason: str) -> None:
+        """Immediately remove local authorization after a rejected heartbeat."""
+        self._revoke_session(reason, allow_defer=False)
+
     def shutdown(self) -> None:
         """Stop only the child processes created by this launcher."""
         self._stop_proxy()

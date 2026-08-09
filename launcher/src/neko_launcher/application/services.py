@@ -101,12 +101,16 @@ class LauncherService:
             self._controller.dispatch(AuthFailed(message))
             raise LauncherServiceError(message) from exc
         try:
-            self._claim_session(allow_missing=True)
+            claimed = self._claim_session(allow_missing=True)
         except LauncherServiceError:
             if self._controller.state.auth_status is not AuthStatus.SIGNED_OUT:
                 self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
             raise
         self._controller.dispatch(AuthSucceeded(user.user_id, user.username))
+        if not claimed:
+            self._controller.dispatch(
+                ErrorOccurred("ยังไม่มีสิทธิ์ใช้งาน กรุณาเติมวันด้วยคูปอง")
+            )
 
     def change_password(self, password: str) -> None:
         """Change the password for the currently authenticated user."""
@@ -228,6 +232,13 @@ class LauncherService:
         else:
             self._heartbeat_failures = 0
         if not alive:
+            generic_reason = (
+                "เซสชันปัจจุบันใช้งานไม่ได้แล้ว กรุณาเข้าสู่ระบบใหม่"
+            )
+            # The heartbeat decision is authoritative. Revoke local access before
+            # making any best-effort diagnostic request, while the authenticated
+            # client is still available for owner-scoped RLS reads.
+            self._controller.invalidate_session(generic_reason)
             try:
                 termination = self._entitlement_gateway.session_termination_reason(
                     session_id
@@ -239,9 +250,7 @@ class LauncherService:
                     "เซสชันถูกแทนที่ด้วยการเข้าสู่ระบบใหม่กว่า "
                     "กรุณาเข้าสู่ระบบอีกครั้ง"
                 ),
-                SessionTerminationReason.REVOKED: (
-                    "เซสชันปัจจุบันใช้งานไม่ได้แล้ว กรุณาเข้าสู่ระบบใหม่"
-                ),
+                SessionTerminationReason.REVOKED: generic_reason,
                 SessionTerminationReason.INSTALLATION_REVOKED: (
                     "เครื่องนี้ไม่ได้รับอนุญาตให้ใช้งานบัญชีนี้ "
                     "กรุณาติดต่อฝ่ายบริการ"
@@ -291,7 +300,7 @@ class LauncherService:
         except Exception:
             pass
 
-    def _claim_session(self, *, allow_missing: bool) -> None:
+    def _claim_session(self, *, allow_missing: bool) -> bool:
         try:
             claim = self._entitlement_gateway.claim_session(
                 self._product_code,
@@ -300,6 +309,8 @@ class LauncherService:
             )
         except EntitlementUnavailable:
             self._controller.dispatch(EntitlementLoaded(None))
+            if allow_missing:
+                return False
             raise
         except DeviceAuthorizationDenied:
             self._force_sign_out_safely()
@@ -310,6 +321,7 @@ class LauncherService:
             self._heartbeat_failures = 0
             self._controller.dispatch(EntitlementLoaded(claim.entitlement))
             self._controller.dispatch(SessionClaimed(claim.session_id))
+            return True
 
     def _force_sign_out_safely(self) -> None:
         try:
