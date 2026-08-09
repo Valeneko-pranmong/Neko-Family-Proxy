@@ -1,8 +1,16 @@
 from types import SimpleNamespace
+import json
 
+import httpx
 import pytest
+from supabase import ClientOptions, create_client
 
 from neko_launcher.application.errors import LauncherServiceError
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreError,
+    CoreChallenge,
+    PermitDiagnosticCode,
+)
 from neko_launcher.domain.models import SessionTerminationReason
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 
@@ -85,6 +93,34 @@ class FakeAuth:
 
     def sign_out(self, options: dict[str, str]) -> None:
         self.sign_out_options = options
+
+    def get_session(self) -> SimpleNamespace:
+        return SimpleNamespace(access_token="test-session-value")
+
+
+class FakeFunctions:
+    def __init__(self) -> None:
+        self.access_token: str | None = None
+        self.function_name = ""
+        self.invoke_options: dict[str, object] = {}
+        self._client = SimpleNamespace(timeout=httpx.Timeout(10.0))
+
+    def set_auth(self, access_token: str) -> None:
+        self.access_token = access_token
+
+    def invoke(self, function_name: str, invoke_options: dict[str, object]) -> object:
+        self.function_name = function_name
+        self.invoke_options = invoke_options
+        body = invoke_options.get("body")
+        correlation_id = body.get("correlationId") if isinstance(body, dict) else None
+        return {
+            "version": 1,
+            "contractRevision": "s0-rc1",
+            "correlationId": correlation_id,
+            "succeeded": True,
+            "permit": "opaque-permit",
+            "expiresInSeconds": 30,
+        }
 
 
 class FakeTableQuery:
@@ -262,6 +298,209 @@ def test_change_password_uses_authenticated_auth_client() -> None:
     build_gateway(client).change_password("new-password")
 
     assert client.auth.updated_password == "new-password"
+
+
+def test_permit_uses_same_authenticated_client_as_session_claim() -> None:
+    client = FakeRpcClient(None)
+    client.functions = FakeFunctions()
+    gateway = build_gateway(client)
+
+    permit = gateway.issue_launch_permit(
+        gateway,
+        "0123456789abcdef0123456789abcdef",
+        CoreChallenge("a" * 43),
+        "b" * 64,
+        "pso2.exe",
+        4242,
+        "ProcessMode",
+        "neko-family-proxy",
+        "proxy:start",
+        10.0,
+    )
+
+    assert permit.reveal_for_transport() == "opaque-permit"
+    assert client.functions.access_token == "test-session-value"
+    assert client.functions.function_name == "issue_launch_permit"
+
+
+def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["authorization"] = request.headers.get("Authorization")
+        observed["body"] = json.loads(request.content)
+        observed["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(
+            200,
+            json={
+                "version": 1,
+                "contractRevision": "s0-rc1",
+                "correlationId": "0123456789abcdef0123456789abcdef",
+                "succeeded": True,
+                "permit": "opaque-sdk-permit",
+                "expiresInSeconds": 30,
+            },
+        )
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        timeout=10.0,
+    )
+    client = create_client(
+        "https://project.supabase.co",
+        "sb_publishable_test",
+        options=ClientOptions(httpx_client=http_client),
+    )
+    monkeypatch.setattr(
+        client.auth,
+        "get_session",
+        lambda: SimpleNamespace(access_token="current-access-token"),
+    )
+    gateway = SupabaseGateway(
+        "https://project.supabase.co",
+        "sb_publishable_test",
+        MemoryStore(),
+        client=client,
+    )
+
+    permit = gateway.issue_launch_permit(
+        gateway,
+        "0123456789abcdef0123456789abcdef",
+        CoreChallenge("a" * 43),
+        "b" * 64,
+        "pso2.exe",
+        4242,
+        "ProcessMode",
+        "neko-family-proxy",
+        "proxy:start",
+        10.0,
+    )
+
+    assert observed["path"] == "/functions/v1/issue_launch_permit"
+    assert observed["authorization"] == "Bearer current-access-token"
+    assert observed["timeout"] == {
+        "connect": 10.0,
+        "read": 10.0,
+        "write": 10.0,
+        "pool": 10.0,
+    }
+    assert observed["body"] == {
+        "version": 1,
+        "contractRevision": "s0-rc1",
+        "correlationId": "0123456789abcdef0123456789abcdef",
+        "challenge": "a" * 43,
+        "configurationDigest": "b" * 64,
+        "processName": "pso2.exe",
+        "targetPid": 4242,
+        "mode": "ProcessMode",
+        "product": "neko-family-proxy",
+        "scope": "proxy:start",
+    }
+    assert permit.reveal_for_transport() == "opaque-sdk-permit"
+
+
+def test_current_session_heartbeat_applies_requested_http_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json=True)
+
+    client = create_client(
+        "https://project.supabase.co",
+        "sb_publishable_test",
+        options=ClientOptions(
+            schema="launcher",
+            httpx_client=httpx.Client(
+                transport=httpx.MockTransport(handler),
+                timeout=2.5,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        client.auth,
+        "get_session",
+        lambda: SimpleNamespace(access_token="current-access-token"),
+    )
+    gateway = SupabaseGateway(
+        "https://project.supabase.co",
+        "sb_publishable_test",
+        MemoryStore(),
+        client=client,
+    )
+
+    alive = gateway.heartbeat_session_with_timeout("current-session", 2.5)
+
+    assert alive is True
+    assert observed["path"] == "/rest/v1/rpc/heartbeat_session"
+    assert observed["timeout"] == {
+        "connect": 2.5,
+        "read": 2.5,
+        "write": 2.5,
+        "pool": 2.5,
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (401, PermitDiagnosticCode.PERMIT_HTTP_401),
+        (403, PermitDiagnosticCode.PERMIT_HTTP_403),
+        (404, PermitDiagnosticCode.PERMIT_FUNCTION_NOT_FOUND),
+        (500, PermitDiagnosticCode.PERMIT_HTTP_500),
+    ],
+)
+def test_pinned_supabase_sdk_http_failures_are_classified_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    expected: PermitDiagnosticCode,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": "sensitive backend detail"})
+
+    client = create_client(
+        "https://project.supabase.co",
+        "sb_publishable_test",
+        options=ClientOptions(
+            httpx_client=httpx.Client(transport=httpx.MockTransport(handler))
+        ),
+    )
+    monkeypatch.setattr(
+        client.auth,
+        "get_session",
+        lambda: SimpleNamespace(access_token="current-access-token"),
+    )
+    gateway = SupabaseGateway(
+        "https://project.supabase.co",
+        "sb_publishable_test",
+        MemoryStore(),
+        client=client,
+    )
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        gateway.issue_launch_permit(
+            gateway,
+            "0123456789abcdef0123456789abcdef",
+            CoreChallenge("a" * 43),
+            "b" * 64,
+            "pso2.exe",
+            4242,
+            "ProcessMode",
+            "neko-family-proxy",
+            "proxy:start",
+            10.0,
+        )
+
+    assert raised.value.diagnostic_code is expected
+    assert raised.value.diagnostic_context["http_status"] == status
+    assert str(raised.value) == "authorization permit is unavailable"
+    assert "sensitive backend detail" not in str(raised.value)
 
 
 def test_redeem_coupon_maps_safe_server_error() -> None:

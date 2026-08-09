@@ -52,6 +52,8 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 storage=self._auth_storage,
                 auto_refresh_token=True,
                 persist_session=True,
+                postgrest_client_timeout=10.0,
+                function_client_timeout=10,
             ),
         )
 
@@ -188,14 +190,25 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
 
     def heartbeat_session(self, session_id: str) -> bool:
         try:
-            response = (
-                self._client.schema("launcher")
-                .rpc("heartbeat_session", {"p_session_id": session_id})
-                .execute()
-            )
+            response = self._client.rpc(
+                "heartbeat_session", {"p_session_id": session_id}
+            ).execute()
         except Exception as exc:
             raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
         return response.data is True
+
+    def heartbeat_session_with_timeout(self, session_id: str, timeout: float) -> bool:
+        from neko_launcher.infrastructure.core.launch_permit_gateway import (
+            IssueLaunchPermitGateway,
+        )
+
+        postgrest = getattr(self._client, "postgrest", None)
+        http_client = getattr(postgrest, "session", None)
+        if not IssueLaunchPermitGateway.timeout_is_bounded(http_client, timeout):
+            raise LauncherServiceError(
+                "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่"
+            )
+        return self.heartbeat_session(session_id)
 
     def session_termination_reason(
         self, session_id: str
@@ -294,39 +307,38 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         verifier.  The authenticated Supabase session provides the Bearer
         token automatically.
         """
-        from neko_launcher.application.authorized_core import (
-            AuthorizedCoreError,
-            AuthorizedCoreErrorCode,
-            OpaquePermit,
+        from neko_launcher.infrastructure.core.launch_permit_gateway import (
+            IssueLaunchPermitGateway,
         )
 
-        try:
-            response = self._client.functions.invoke(
-                "issue_launch_permit",
-                invoke_options={
-                    "body": {
-                        "challenge": challenge.value,
-                        "configuration_digest": configuration_digest,
-                        "process_name": process_name,
-                        "target_pid": target_pid,
-                        "mode": mode,
-                        "product": product,
-                        "scope": scope,
-                    },
+        if authenticated_transport is not self:
+            from neko_launcher.application.authorized_core import (
+                AuthorizedCoreError,
+                AuthorizedCoreErrorCode,
+                PermitDiagnosticCode,
+            )
+
+            raise AuthorizedCoreError(
+                AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
+                diagnostic_code=PermitDiagnosticCode.PERMIT_AUTH_SESSION_UNAVAILABLE,
+                diagnostic_context={
+                    "function": "issue_launch_permit",
+                    "stage": "PERMIT_REQUEST",
+                    "correlation_id": correlation_id,
                 },
             )
-        except Exception:
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE)
-        try:
-            import json
-
-            data = json.loads(response) if isinstance(response, (str, bytes)) else response
-            permit_value = data.get("permit") if isinstance(data, dict) else None
-        except Exception:
-            permit_value = None
-        if not permit_value or not isinstance(permit_value, str):
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE)
-        return OpaquePermit(permit_value)
+        return IssueLaunchPermitGateway().issue_launch_permit(
+            self._client,
+            correlation_id,
+            challenge,
+            configuration_digest,
+            process_name,
+            target_pid,
+            mode,
+            product,
+            scope,
+            timeout,
+        )
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
         try:

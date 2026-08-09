@@ -1,8 +1,26 @@
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreError,
+    AuthorizedCoreErrorCode,
+    PermitDiagnosticCode,
+)
 from neko_launcher.application.diagnostics import (
     sanitize_diagnostic_text,
     CoreDiagnosticsRecorder,
     NoopDiagnosticsSink,
 )
+from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
+
+
+class DiagnosticSpoofError(RuntimeError):
+    diagnostic_code = "ACCESS_TOKEN=RAW_JWT_SENTINEL"
+    diagnostic_context = {
+        "function": "RAW_FUNCTION_SENTINEL",
+        "stage": "RAW_STAGE_SENTINEL",
+        "http_status": "RAW_STATUS_SENTINEL",
+        "correlation_id": "RAW_CORRELATION_SENTINEL",
+        "elapsed_ms": "RAW_ELAPSED_SENTINEL",
+        "exception_class": "RAW_EXCEPTION_SENTINEL",
+    }
 
 
 def test_sanitize_diagnostic_text():
@@ -65,3 +83,85 @@ def test_core_diagnostics_recorder_state():
     snapshot = recorder.snapshot()
     assert snapshot.stage == "CONTROL_CHANNEL_WAIT"
     assert "Exception" in snapshot.last_diagnostic
+
+
+def permit_not_found_error() -> AuthorizedCoreError:
+    return AuthorizedCoreError(
+        AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
+        diagnostic_code=PermitDiagnosticCode.PERMIT_FUNCTION_NOT_FOUND,
+        diagnostic_context={
+            "function": "issue_launch_permit",
+            "stage": "PERMIT_REQUEST",
+            "http_status": 404,
+            "correlation_id": "0123456789abcdef0123456789abcdef",
+            "elapsed_ms": 12,
+            "exception_class": "FunctionsHttpError",
+            "access_token": "sentinel-secret",
+        },
+    )
+
+
+def test_permit_diagnostic_snapshot_contains_only_sanitized_context():
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    recorder.begin_attempt("DBG-123")
+
+    recorder.record_exception(permit_not_found_error(), "PERMIT_REQUEST")
+
+    diagnostic = recorder.snapshot().last_diagnostic or ""
+    assert "PERMIT_FUNCTION_NOT_FOUND" in diagnostic
+    assert "http_status=404" in diagnostic
+    assert "function=issue_launch_permit" in diagnostic
+    assert "sentinel-secret" not in diagnostic
+    assert "access_token" not in diagnostic
+
+
+def test_permit_diagnostic_logs_only_sanitized_category_and_context(tmp_path):
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("DBG-123")
+    error = permit_not_found_error()
+
+    logger.record_exception(error, "PERMIT_REQUEST")
+
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "PERMIT_FUNCTION_NOT_FOUND" in log_text
+    assert "http_status=404" in log_text
+    assert "function=issue_launch_permit" in log_text
+    assert "correlation_id=0123456789abcdef0123456789abcdef" in log_text
+    assert "sentinel-secret" not in log_text
+    assert "access_token" not in log_text
+
+
+def test_permit_diagnostic_rejects_untrusted_allow_list_values(tmp_path):
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("DBG-123")
+    error = AuthorizedCoreError(
+        AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
+        diagnostic_code=PermitDiagnosticCode.PERMIT_UNAVAILABLE,
+        diagnostic_context={
+            "function": "RAW_JWT_SENTINEL_XYZ",
+            "stage": "RAW_REFRESH_TOKEN_SENTINEL",
+            "http_status": "RAW_STATUS_SENTINEL",
+            "correlation_id": "RAW_CORRELATION_SENTINEL",
+            "elapsed_ms": "RAW_ELAPSED_SENTINEL",
+            "exception_class": "RAW_EXCEPTION_SENTINEL",
+        },
+    )
+
+    logger.record_exception(error, "PERMIT_REQUEST")
+
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "PERMIT_UNAVAILABLE" in log_text
+    assert "RAW_" not in log_text
+    assert error.diagnostic_context == {}
+
+
+def test_diagnostic_formatter_rejects_spoofed_exception_metadata(tmp_path):
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("DBG-123")
+
+    logger.record_exception(DiagnosticSpoofError("customer-safe failure"), "PERMIT_REQUEST")
+
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "customer-safe failure" in log_text
+    assert "RAW_" not in log_text
+    assert "ACCESS_TOKEN" not in log_text

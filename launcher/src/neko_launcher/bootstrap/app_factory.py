@@ -28,6 +28,7 @@ from neko_launcher.application.authorized_core import (
     AuthorizedCoreOrchestrator,
     LaunchAccessContext,
     OpaqueStartCommand,
+    OnlineHeartbeatLaunchPrecondition,
     OrchestrationTimeouts,
 )
 
@@ -74,6 +75,11 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         )
         core_channel = NamedPipeCoreControlChannel("NekoProxyCore.s0-rc1")
         detector = ExactPso2TargetDetector()
+        precondition = OnlineHeartbeatLaunchPrecondition(
+            lambda session_id, _installation_key_hash, timeout: (
+                gateway.heartbeat_session_with_timeout(session_id, timeout)
+            )
+        )
         timeouts = OrchestrationTimeouts(
             target=30.0,
             control_channel=10.0,
@@ -85,6 +91,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             process=core_process,
             channel=core_channel,
             permits=gateway,
+            precondition=precondition,
             detector=detector,
             timeouts=timeouts,
             diagnostics=diagnostics_recorder,

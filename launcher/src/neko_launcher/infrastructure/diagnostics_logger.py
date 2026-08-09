@@ -5,7 +5,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from neko_launcher.application.diagnostics import sanitize_diagnostic_text
+from neko_launcher.application.diagnostics import (
+    format_safe_diagnostic_metadata,
+    sanitize_diagnostic_text,
+)
 
 
 class DevelopmentLogger:
@@ -43,6 +46,9 @@ class DevelopmentLogger:
         exc_type = type(exc).__name__
         sanitized_msg = sanitize_diagnostic_text(str(exc))
         msg = f"[CORE] [{stage}] FAILED - {exc_type}: {sanitized_msg}"
+        metadata = format_safe_diagnostic_metadata(exc)
+        if metadata:
+            msg += f" {metadata}"
         winerror = getattr(exc, "winerror", None)
         if winerror is not None:
             msg += f" (WinError {winerror})"

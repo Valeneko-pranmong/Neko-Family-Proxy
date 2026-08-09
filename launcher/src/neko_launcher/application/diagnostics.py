@@ -24,6 +24,64 @@ def sanitize_diagnostic_text(text: str) -> str:
     return pattern.sub(r"\1<redacted>", text)
 
 
+def format_safe_diagnostic_metadata(exc: Exception) -> str:
+    """Render only allow-listed metadata attached to a sanitized failure."""
+    parts: list[str] = []
+    diagnostic_code = getattr(exc, "diagnostic_code", None)
+    code_value = getattr(diagnostic_code, "value", diagnostic_code)
+    safe_diagnostic_codes = {
+        "PERMIT_FUNCTION_NOT_FOUND",
+        "PERMIT_HTTP_401",
+        "PERMIT_HTTP_403",
+        "PERMIT_HTTP_500",
+        "PERMIT_INVALID_RESPONSE",
+        "PERMIT_MISSING_FIELD",
+        "PERMIT_TIMEOUT",
+        "PERMIT_AUTH_SESSION_UNAVAILABLE",
+        "PERMIT_UNAVAILABLE",
+    }
+    if code_value in safe_diagnostic_codes:
+        parts.append(f"diagnostic_code={code_value}")
+    diagnostic_context = getattr(exc, "diagnostic_context", None)
+    if isinstance(diagnostic_context, dict):
+        if diagnostic_context.get("function") == "issue_launch_permit":
+            parts.append("function=issue_launch_permit")
+        if diagnostic_context.get("stage") == "PERMIT_REQUEST":
+            parts.append("stage=PERMIT_REQUEST")
+
+        http_status = diagnostic_context.get("http_status")
+        if isinstance(http_status, int) and 100 <= http_status <= 599:
+            parts.append(f"http_status={http_status}")
+
+        correlation_id = diagnostic_context.get("correlation_id")
+        if isinstance(correlation_id, str) and re.fullmatch(
+            r"[0-9a-f]{32}", correlation_id
+        ):
+            parts.append(f"correlation_id={correlation_id}")
+
+        elapsed_ms = diagnostic_context.get("elapsed_ms")
+        if isinstance(elapsed_ms, int) and 0 <= elapsed_ms <= 600_000:
+            parts.append(f"elapsed_ms={elapsed_ms}")
+
+        exception_class = diagnostic_context.get("exception_class")
+        safe_exception_classes = {
+            "ConnectError",
+            "ConnectTimeout",
+            "FunctionsFetchError",
+            "FunctionsHttpError",
+            "FunctionsRelayError",
+            "NetworkError",
+            "PoolTimeout",
+            "ReadTimeout",
+            "RemoteProtocolError",
+            "TimeoutError",
+            "WriteTimeout",
+        }
+        if exception_class in safe_exception_classes:
+            parts.append(f"exception_class={exception_class}")
+    return ", ".join(parts)
+
+
 @dataclass(frozen=True)
 class CoreDiagnosticsSnapshot:
     attempt_id: str | None
@@ -129,6 +187,9 @@ class CoreDiagnosticsRecorder:
             message = sanitize_diagnostic_text(str(exc))
             
             diagnostic_msg = f"{exc_type}: {message}"
+            metadata = format_safe_diagnostic_metadata(exc)
+            if metadata:
+                diagnostic_msg += f" [{metadata}]"
             if winerror is not None:
                 diagnostic_msg += f" (WinError {winerror})"
             

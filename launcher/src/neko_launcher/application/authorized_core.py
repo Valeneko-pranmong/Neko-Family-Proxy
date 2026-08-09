@@ -24,6 +24,20 @@ class AuthorizedCoreErrorCode(str, Enum):
     CHALLENGE_UNAVAILABLE = "ChallengeUnavailable"
 
 
+class PermitDiagnosticCode(str, Enum):
+    """Development-only categories that never contain credential material."""
+
+    PERMIT_FUNCTION_NOT_FOUND = "PERMIT_FUNCTION_NOT_FOUND"
+    PERMIT_HTTP_401 = "PERMIT_HTTP_401"
+    PERMIT_HTTP_403 = "PERMIT_HTTP_403"
+    PERMIT_HTTP_500 = "PERMIT_HTTP_500"
+    PERMIT_INVALID_RESPONSE = "PERMIT_INVALID_RESPONSE"
+    PERMIT_MISSING_FIELD = "PERMIT_MISSING_FIELD"
+    PERMIT_TIMEOUT = "PERMIT_TIMEOUT"
+    PERMIT_AUTH_SESSION_UNAVAILABLE = "PERMIT_AUTH_SESSION_UNAVAILABLE"
+    PERMIT_UNAVAILABLE = "PERMIT_UNAVAILABLE"
+
+
 _PUBLIC_ERROR_MESSAGES = {
     AuthorizedCoreErrorCode.ADAPTER_FAILURE: "authorized start failed",
     AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE: (
@@ -54,6 +68,9 @@ class AuthorizedCoreError(RuntimeError):
         self,
         code: AuthorizedCoreErrorCode | str,
         private_detail: str | None = None,
+        *,
+        diagnostic_code: PermitDiagnosticCode | None = None,
+        diagnostic_context: dict[str, object] | None = None,
     ) -> None:
         # Legacy/adapter-owned text is never treated as a public condition.
         self.code = (
@@ -61,7 +78,57 @@ class AuthorizedCoreError(RuntimeError):
             if isinstance(code, AuthorizedCoreErrorCode)
             else AuthorizedCoreErrorCode.ADAPTER_FAILURE
         )
+        self.diagnostic_code = (
+            diagnostic_code
+            if isinstance(diagnostic_code, PermitDiagnosticCode)
+            else None
+        )
+        self.diagnostic_context = self._validated_diagnostic_context(
+            diagnostic_context or {}
+        )
         super().__init__(_PUBLIC_ERROR_MESSAGES[self.code])
+
+    @staticmethod
+    def _validated_diagnostic_context(
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        validated: dict[str, object] = {}
+        if context.get("function") == "issue_launch_permit":
+            validated["function"] = "issue_launch_permit"
+        if context.get("stage") == "PERMIT_REQUEST":
+            validated["stage"] = "PERMIT_REQUEST"
+
+        http_status = context.get("http_status")
+        if isinstance(http_status, int) and 100 <= http_status <= 599:
+            validated["http_status"] = http_status
+
+        correlation_id = context.get("correlation_id")
+        if isinstance(correlation_id, str) and fullmatch(
+            r"[0-9a-f]{32}", correlation_id
+        ):
+            validated["correlation_id"] = correlation_id
+
+        elapsed_ms = context.get("elapsed_ms")
+        if isinstance(elapsed_ms, int) and 0 <= elapsed_ms <= 600_000:
+            validated["elapsed_ms"] = elapsed_ms
+
+        exception_class = context.get("exception_class")
+        safe_exception_classes = {
+            "ConnectError",
+            "ConnectTimeout",
+            "FunctionsFetchError",
+            "FunctionsHttpError",
+            "FunctionsRelayError",
+            "NetworkError",
+            "PoolTimeout",
+            "ReadTimeout",
+            "RemoteProtocolError",
+            "TimeoutError",
+            "WriteTimeout",
+        }
+        if exception_class in safe_exception_classes:
+            validated["exception_class"] = exception_class
+        return validated
 
 
 class OpaquePermit:
@@ -302,6 +369,7 @@ class AuthorizedCoreOrchestrator:
         process: CoreProcessAdapter,
         channel: CoreControlChannel,
         permits: LaunchPermitGateway,
+        precondition: LaunchPrecondition,
         detector: ProcessTargetDetector[object],
         timeouts: OrchestrationTimeouts,
         diagnostics: Any = None,
@@ -309,6 +377,7 @@ class AuthorizedCoreOrchestrator:
         self._process = process
         self._channel = channel
         self._permits = permits
+        self._precondition = precondition
         self._detector = detector
         self._timeouts = timeouts
         self._single_flight = Lock()
@@ -354,6 +423,18 @@ class AuthorizedCoreOrchestrator:
                 if target is None:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_UNAVAILABLE)
                 self._require_not_cancelled(cancellation)
+
+                self._invoke_adapter(
+                    lambda: self._precondition.require_fresh(
+                        access_context.session_id,
+                        access_context.installation_key_hash,
+                        self._timeouts.permit,
+                    ),
+                    AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE,
+                    stage="ACCESS_CONTEXT_VALIDATE",
+                )
+                self._require_not_cancelled(cancellation)
+                self._require_target(target)
 
                 # Cleanup is safe for an unowned/no-process state and must run even
                 # when an adapter creates the host and then reports a failure.
@@ -438,7 +519,11 @@ class AuthorizedCoreOrchestrator:
                 if status.kind is not CoreStatusKind.RUNNING:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.RUNNING_NOT_REACHED)
             except AuthorizedCoreError as exc:
-                failure = AuthorizedCoreError(exc.code)
+                failure = AuthorizedCoreError(
+                    exc.code,
+                    diagnostic_code=exc.diagnostic_code,
+                    diagnostic_context=exc.diagnostic_context,
+                )
             except Exception as exc:
                 if self._diagnostics:
                     self._diagnostics.record_exception(exc, "UNKNOWN_STAGE")
@@ -479,16 +564,28 @@ class AuthorizedCoreOrchestrator:
         failure_code: AuthorizedCoreErrorCode,
         stage: str | None = None,
     ) -> AdapterResultT:
-        failed = False
+        failure: AuthorizedCoreError | None = None
         result: object = None
         try:
             result = operation()
         except Exception as exc:
-            failed = True
             if self._diagnostics and stage:
                 self._diagnostics.record_exception(exc, stage)
-        if failed:
-            raise AuthorizedCoreError(failure_code)
+            if (
+                stage == "PERMIT_REQUEST"
+                and isinstance(exc, AuthorizedCoreError)
+                and exc.code is AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE
+                and isinstance(exc.diagnostic_code, PermitDiagnosticCode)
+            ):
+                failure = AuthorizedCoreError(
+                    AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
+                    diagnostic_code=exc.diagnostic_code,
+                    diagnostic_context=exc.diagnostic_context,
+                )
+            else:
+                failure = AuthorizedCoreError(failure_code)
+        if failure is not None:
+            raise failure
         return cast(AdapterResultT, result)
 
     @staticmethod

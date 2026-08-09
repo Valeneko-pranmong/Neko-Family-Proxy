@@ -18,6 +18,7 @@ from neko_launcher.application.authorized_core import (
     OpaqueStartCommand,
     OnlineHeartbeatLaunchPrecondition,
     OrchestrationTimeouts,
+    PermitDiagnosticCode,
     TargetBoundStartCommand,
 )
 
@@ -182,10 +183,12 @@ def build_orchestrator(
     calls: list[str] = []
     actual_detector = detector or FakeDetector()
     channel = FakeChannel(calls)
+    precondition = FakeLaunchPrecondition(calls)
     orchestrator = AuthorizedCoreOrchestrator(
         process=FakeProcess(calls),
         channel=channel,
         permits=FakePermitGateway(calls),
+        precondition=precondition,
         detector=actual_detector,
         timeouts=OrchestrationTimeouts(1, 1, 1, 1, 1),
     )
@@ -244,6 +247,32 @@ def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
         )
     )
     assert "sentinel-backend-token" not in rendered
+
+
+def test_permit_failure_preserves_only_sanitized_development_diagnostics() -> None:
+    orchestrator, _, _, _ = build_orchestrator()
+
+    def unavailable(*args: object, **kwargs: object) -> OpaquePermit:
+        raise AuthorizedCoreError(
+            AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
+            diagnostic_code=PermitDiagnosticCode.PERMIT_FUNCTION_NOT_FOUND,
+            diagnostic_context={
+                "function": "issue_launch_permit",
+                "http_status": 404,
+                "access_token": "sentinel-secret",
+            },
+        )
+
+    orchestrator._permits.issue_launch_permit = unavailable  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE
+    assert raised.value.diagnostic_code is PermitDiagnosticCode.PERMIT_FUNCTION_NOT_FOUND
+    assert raised.value.diagnostic_context["http_status"] == 404
+    assert str(raised.value) == "authorization permit is unavailable"
+    assert "sentinel-secret" not in str(raised.value)
 
 
 def test_permit_adapter_cannot_spoof_a_public_condition_by_typed_code() -> None:
@@ -371,12 +400,40 @@ def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> 
 
     assert status.kind is CoreStatusKind.RUNNING
     assert calls == [
+        "backend.heartbeat",
         "host.start",
         "host.ready",
         "core.challenge",
         "backend.permit",
         "core.start",
     ]
+
+
+def test_replaced_session_fails_before_core_host_start() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator._precondition.available = False  # type: ignore[attr-defined]
+
+    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert calls == ["backend.heartbeat"]
+
+
+def test_cancellation_during_heartbeat_fails_before_core_host_start() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    cancellation = Event()
+    original_require_fresh = orchestrator._precondition.require_fresh
+
+    def cancel_after_heartbeat(*args: object, **kwargs: object) -> None:
+        original_require_fresh(*args, **kwargs)
+        cancellation.set()
+
+    orchestrator._precondition.require_fresh = cancel_after_heartbeat  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError, match="authorized start was cancelled"):
+        orchestrator.start(valid_command(), valid_access_context(), cancellation)
+
+    assert calls == ["backend.heartbeat"]
 
 
 def test_authority_request_uses_target_binding_without_server_owned_identity_fields() -> None:
