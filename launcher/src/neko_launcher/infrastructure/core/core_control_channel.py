@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
-import struct
 import time
+from collections.abc import Callable
 from typing import Any
 
 from neko_launcher.application.authorized_core import (
@@ -16,17 +16,14 @@ from neko_launcher.application.authorized_core import (
     OpaquePermit,
 )
 
-
 _STATUS_MAP: dict[str, CoreStatusKind] = {
     "Running": CoreStatusKind.RUNNING,
     "Stopped": CoreStatusKind.STOPPED,
     "Failed": CoreStatusKind.FAILED,
 }
-_CHALLENGE_FIELDS = frozenset(
-    {"version", "kind", "correlationId", "succeeded", "challenge"}
-)
+_CHALLENGE_FIELDS = frozenset({"type", "correlationId", "challenge"})
 _RESULT_SUCCESS_FIELDS = frozenset(
-    {"version", "kind", "correlationId", "succeeded", "status"}
+    {"type", "correlationId", "succeeded", "status"}
 )
 _RESULT_FAILURE_FIELDS = _RESULT_SUCCESS_FIELDS | {"errorCode"}
 
@@ -48,11 +45,14 @@ _ERROR_CODES = frozenset(
         "AuthorizationReplay",
         "AuthorizationUnavailable",
         "SessionInactive",
+        "EntitlementInactive",
+        "HeartbeatStale",
         "ProcessNotFound",
         "ProcessExited",
+        "ConfigurationMismatch",
         "AlreadyRunning",
         "ProtocolInvalid",
-        "Timeout",
+        "StartTimeout",
         "Cancelled",
         "StartFailed",
         "StopFailed",
@@ -61,18 +61,24 @@ _ERROR_CODES = frozenset(
 
 
 class NamedPipeCoreControlChannel:
-    """Protocol v2, length-prefixed JSON over Windows Named Pipes.
+    """Protocol v2, newline-delimited JSON over Windows Named Pipes.
 
-    Pipe name: ``NekoProxyCore.s0-rc1`` (Core = server, Launcher = client).
+    Pipe name: ``NekoProxyCoreControl`` (Core = server, Launcher = client).
     The permit is serialized *only* inside the ``start`` frame and is never
     logged, cached, or stored.
     """
 
     _MAX_PAYLOAD_BYTES = 8192
 
-    def __init__(self, pipe_name: str = "NekoProxyCore.s0-rc1") -> None:
+    def __init__(
+        self,
+        pipe_name: str,
+        *,
+        expected_server_pid: Callable[[], int | None],
+    ) -> None:
         self._pipe_name = pipe_name
         self._pipe_path = rf"\\.\pipe\{pipe_name}"
+        self._expected_server_pid = expected_server_pid
 
     # ------------------------------------------------------------------
     # Wire helpers
@@ -99,20 +105,44 @@ class NamedPipeCoreControlChannel:
         ):
             raise OSError(ctypes.get_last_error(), "cannot bound named pipe I/O")
 
+    @staticmethod
+    def _get_server_process_id(handle: Any) -> int:
+        if os.name != "nt":
+            raise OSError("named-pipe server identity is Windows-only")
+        import ctypes
+        import msvcrt
+
+        native_handle = msvcrt.get_osfhandle(handle.fileno())
+        server_pid = ctypes.c_uint32()
+        if not ctypes.windll.kernel32.GetNamedPipeServerProcessId(
+            ctypes.c_void_p(native_handle), ctypes.byref(server_pid)
+        ):
+            raise OSError(ctypes.get_last_error(), "cannot identify named-pipe server")
+        return int(server_pid.value)
+
+    def _require_owned_server(self, handle: Any) -> None:
+        expected_pid = self._expected_server_pid()
+        if expected_pid is None or self._get_server_process_id(handle) != expected_pid:
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+
     @classmethod
-    def _read_exact(cls, handle: Any, size: int, deadline: float) -> bytes:
-        chunks = bytearray()
-        while len(chunks) < size:
+    def _read_frame(cls, handle: Any, deadline: float) -> bytes:
+        payload = bytearray()
+        while len(payload) <= cls._MAX_PAYLOAD_BYTES:
             cls._remaining(deadline)
             try:
-                chunk = handle.read(size - len(chunks))
+                chunk = handle.read(1)
             except (BlockingIOError, OSError):
                 time.sleep(min(0.01, cls._remaining(deadline)))
                 continue
             if not chunk:
                 raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
-            chunks.extend(chunk)
-        return bytes(chunks)
+            if chunk == b"\n":
+                if not payload:
+                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                return bytes(payload)
+            payload.extend(chunk)
+        raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
     @classmethod
     def _write_all(cls, handle: Any, payload: bytes, deadline: float) -> None:
@@ -152,21 +182,15 @@ class NamedPipeCoreControlChannel:
 
             with handle:
                 self._configure_nonblocking(handle)
+                self._require_owned_server(handle)
                 payload = json.dumps(
                     message, separators=(",", ":"), ensure_ascii=True
                 ).encode("utf-8")
                 if not 1 <= len(payload) <= self._MAX_PAYLOAD_BYTES:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
-                self._write_all(
-                    handle, struct.pack(">I", len(payload)) + payload, deadline
-                )
+                self._write_all(handle, payload + b"\n", deadline)
 
-                response_size = struct.unpack(
-                    ">I", self._read_exact(handle, 4, deadline)
-                )[0]
-                if not 1 <= response_size <= self._MAX_PAYLOAD_BYTES:
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
-                response_bytes = self._read_exact(handle, response_size, deadline)
+                response_bytes = self._read_frame(handle, deadline)
 
                 try:
                     response = json.loads(
@@ -196,18 +220,14 @@ class NamedPipeCoreControlChannel:
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
         msg = {
-            "version": 2,
-            "command": "challenge",
+            "type": "challenge",
             "correlationId": correlation_id,
         }
         res = self._send_and_receive(msg, timeout)
 
         if (
             frozenset(res) != _CHALLENGE_FIELDS
-            or type(res.get("version")) is not int
-            or res.get("version") != 2
-            or res.get("kind") != "challenge"
-            or res.get("succeeded") is not True
+            or res.get("type") != "challengeResponse"
         ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
@@ -232,9 +252,9 @@ class NamedPipeCoreControlChannel:
         if not hasattr(command, "mode"):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         msg = {
-            "version": 2,
-            "command": "start",
+            "type": "start",
             "correlationId": correlation_id,
+            "protocolVersion": 2,
             "mode": command.mode,  # type: ignore[attr-defined]
             "processName": command.process_name,  # type: ignore[attr-defined]
             "targetPid": command.target_pid,  # type: ignore[attr-defined]
@@ -245,25 +265,17 @@ class NamedPipeCoreControlChannel:
 
         res = self._send_and_receive(msg, timeout)
 
-        if (
-            type(res.get("version")) is not int
-            or res.get("version") != 2
-            or res.get("kind") != "result"
-        ):
+        if res.get("type") != "startResponse":
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 
         return self._parse_status(res)
 
     def stop(self, correlation_id: str, timeout: float) -> CoreStatus:
-        msg = {"version": 2, "command": "stop", "correlationId": correlation_id}
+        msg = {"type": "stop", "correlationId": correlation_id}
         res = self._send_and_receive(msg, timeout)
 
-        if (
-            type(res.get("version")) is not int
-            or res.get("version") != 2
-            or res.get("kind") != "result"
-        ):
+        if res.get("type") != "stopResponse":
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 

@@ -28,6 +28,7 @@ plans or historical evidence.
 | [`current/debug-console.md`](current/debug-console.md) | Current | Operate the live Launcher/Core debug console and interpret startup failures |
 | [`current/repository-layout.md`](current/repository-layout.md) | Current | Tracked source, local inputs, and generated output |
 | [`current/runtime-distribution.md`](current/runtime-distribution.md) | Current policy | Controlled NekoProxyCore runtime delivery policy |
+| [`current/phase-2-production-deployment-plan.md`](current/phase-2-production-deployment-plan.md) | Current; Phase 3 approval required | Exact production migration, verification, canary, and forward-only rollback sequence |
 | [`current/backend-single-active-session-ai-prompt.md`](current/backend-single-active-session-ai-prompt.md) | Current implementation handoff | Backend/Admin Web policy for multiple installations and one active session |
 | [`current/launcher-single-active-session-ai-prompt.md`](current/launcher-single-active-session-ai-prompt.md) | Current implementation handoff | Desktop Launcher behavior for latest-login-wins session replacement |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |
@@ -49,6 +50,7 @@ of them authorizes production Core startup.
 
 | Document | Status | Purpose |
 | --- | --- | --- |
+| [`blocked/phase-2-integration-verification-report.md`](blocked/phase-2-integration-verification-report.md) | Blocked evidence | Phase 2 database, Core, Launcher, review, and remaining hosted/crypto/E2E gates |
 | [`blocked/neko-auth-s0-production-handoff.md`](blocked/neko-auth-s0-production-handoff.md) | Blocked | Central `NEKO-AUTH-S0` baseline and release gates |
 | [`blocked/launcher-production-adapters.md`](blocked/launcher-production-adapters.md) | Blocked | Launcher responsibilities pinned to the S0 baseline |
 | [`blocked/launcher-minimal-launch-authorization-plan.md`](blocked/launcher-minimal-launch-authorization-plan.md) | Draft; approval required | Reduced-scope Launcher execution plan |

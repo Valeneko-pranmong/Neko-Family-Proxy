@@ -3,12 +3,10 @@ from __future__ import annotations
 import builtins
 import json
 import os
-import struct
 import threading
 import time
 import uuid
 from multiprocessing.connection import Listener
-
 from typing import Any
 
 import pytest
@@ -16,6 +14,8 @@ import pytest
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    CoreStatusKind,
+    OpaquePermit,
 )
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 
@@ -31,6 +31,11 @@ def _stub_windows_nonblocking_configuration(
         "_configure_nonblocking",
         staticmethod(lambda _: None),
     )
+    monkeypatch.setattr(
+        NamedPipeCoreControlChannel,
+        "_get_server_process_id",
+        staticmethod(lambda _: 1234),
+    )
 
 
 class _PipeHandle:
@@ -40,7 +45,7 @@ class _PipeHandle:
             if isinstance(response, bytes)
             else json.dumps(response, separators=(",", ":")).encode("utf-8")
         )
-        self._response = struct.pack(">I", len(payload)) + payload
+        self._response = payload + b"\n"
         self._read_offset = 0
         self.written = b""
 
@@ -60,12 +65,41 @@ class _PipeHandle:
         return chunk
 
 
+def _channel(
+    pipe_name: str = "NekoProxyCoreControl",
+    expected_server_pid: int = 1234,
+) -> NamedPipeCoreControlChannel:
+    return NamedPipeCoreControlChannel(
+        pipe_name,
+        expected_server_pid=lambda: expected_server_pid,
+    )
+
+
+def test_pipe_server_pid_is_verified_before_any_request_bytes_are_written(
+    monkeypatch: Any,
+) -> None:
+    handle = _PipeHandle(_challenge_response())
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+    monkeypatch.setattr(
+        NamedPipeCoreControlChannel,
+        "_get_server_process_id",
+        staticmethod(lambda _: 9999),
+    )
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        _channel().request_challenge(
+            "0123456789abcdef0123456789abcdef",
+            1.0,
+        )
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+    assert handle.written == b""
+
+
 def _challenge_response(**overrides: Any) -> dict[str, Any]:
     response: dict[str, Any] = {
-        "version": 2,
-        "kind": "challenge",
+        "type": "challengeResponse",
         "correlationId": "0123456789abcdef0123456789abcdef",
-        "succeeded": True,
         "challenge": "0123456789012345678901234567890123456789012",
     }
     response.update(overrides)
@@ -77,21 +111,22 @@ def test_challenge_rejects_unknown_fields(monkeypatch: Any) -> None:
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(Exception):
-        NamedPipeCoreControlChannel().request_challenge(
+        _channel().request_challenge(
             "0123456789abcdef0123456789abcdef", 1.0
         )
 
 
 def test_challenge_rejects_duplicate_json_fields(monkeypatch: Any) -> None:
     payload = (
-        b'{"version":2,"version":2,"kind":"challenge",'
+        b'{"type":"challengeResponse",'
         b'"correlationId":"0123456789abcdef0123456789abcdef",'
-        b'"succeeded":true,"challenge":"0123456789012345678901234567890123456789012"}'
+        b'"challenge":"0123456789012345678901234567890123456789012",'
+        b'"challenge":"0123456789012345678901234567890123456789012"}'
     )
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: _PipeHandle(payload))
 
     with pytest.raises(Exception):
-        NamedPipeCoreControlChannel().request_challenge(
+        _channel().request_challenge(
             "0123456789abcdef0123456789abcdef", 1.0
         )
 
@@ -101,7 +136,7 @@ def test_challenge_rejects_numeric_non_integer_version(monkeypatch: Any) -> None
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(AuthorizedCoreError):
-        NamedPipeCoreControlChannel().request_challenge(
+        _channel().request_challenge(
             "0123456789abcdef0123456789abcdef", 1.0
         )
 
@@ -111,7 +146,7 @@ def test_challenge_rejects_non_exact_base64url_length(monkeypatch: Any) -> None:
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(Exception):
-        NamedPipeCoreControlChannel().request_challenge(
+        _channel().request_challenge(
             "0123456789abcdef0123456789abcdef", 1.0
         )
 
@@ -125,19 +160,19 @@ def test_result_rejects_numeric_non_integer_version(monkeypatch: Any) -> None:
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(AuthorizedCoreError):
-        NamedPipeCoreControlChannel().stop(
+        _channel().stop(
             "0123456789abcdef0123456789abcdef", 1.0
         )
 
 
 def test_result_rejects_contradictory_success_fields(monkeypatch: Any) -> None:
     handle = _PipeHandle({
-        "version": 2, "kind": "result",
+        "type": "stopResponse",
         "correlationId": "0123456789abcdef0123456789abcdef",
         "succeeded": True, "status": "Failed", "errorCode": "AuthorizationInvalid",
     })
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
-    channel = NamedPipeCoreControlChannel()
+    channel = _channel()
     with pytest.raises(Exception):
         channel.stop("0123456789abcdef0123456789abcdef", 1.0)
 
@@ -167,7 +202,7 @@ def test_read_timeout_uses_one_total_operation_deadline(monkeypatch: Any) -> Non
         lambda _: None,
     )
     with pytest.raises(Exception):
-        NamedPipeCoreControlChannel().request_challenge(
+        _channel().request_challenge(
             "0123456789abcdef0123456789abcdef", 0.02
         )
     assert handle.reads == 1
@@ -177,10 +212,8 @@ def test_pipe_open_retries_transient_os_error(monkeypatch: Any) -> None:
     attempts = 0
     handle = _PipeHandle(
         {
-            "version": 2,
-            "kind": "challenge",
+            "type": "challengeResponse",
             "correlationId": "0123456789abcdef0123456789abcdef",
-            "succeeded": True,
             "challenge": "0123456789012345678901234567890123456789012",
         }
     )
@@ -195,26 +228,151 @@ def test_pipe_open_retries_transient_os_error(monkeypatch: Any) -> None:
         return handle
 
     monkeypatch.setattr(builtins, "open", transient_open)
-    monkeypatch.setattr("neko_launcher.infrastructure.core.core_control_channel.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "neko_launcher.infrastructure.core.core_control_channel.time.sleep",
+        lambda _: None,
+    )
 
-    challenge = NamedPipeCoreControlChannel().request_challenge(
+    challenge = _channel().request_challenge(
         "0123456789abcdef0123456789abcdef",
         1.0,
     )
 
     assert attempts == 2
     assert opened_paths == [
-        r"\\.\pipe\NekoProxyCore.s0-rc1",
-        r"\\.\pipe\NekoProxyCore.s0-rc1",
+        r"\\.\pipe\NekoProxyCoreControl",
+        r"\\.\pipe\NekoProxyCoreControl",
     ]
     assert len(challenge.value) == 43
-    payload_size = struct.unpack(">I", handle.written[:4])[0]
-    payload = json.loads(handle.written[4:].decode("utf-8"))
-    assert payload_size == len(handle.written[4:])
+    payload = json.loads(handle.written.decode("utf-8").removesuffix("\n"))
     assert payload == {
-        "version": 2,
-        "command": "challenge",
+        "type": "challenge",
         "correlationId": "0123456789abcdef0123456789abcdef",
+    }
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "AuthorizationRequired",
+        "AuthorizationInvalid",
+        "AuthorizationExpired",
+        "AuthorizationReplay",
+        "AuthorizationUnavailable",
+        "SessionInactive",
+        "EntitlementInactive",
+        "HeartbeatStale",
+        "ProcessNotFound",
+        "ProcessExited",
+        "ConfigurationMismatch",
+        "AlreadyRunning",
+        "ProtocolInvalid",
+        "StartTimeout",
+        "Cancelled",
+        "StartFailed",
+        "StopFailed",
+    ],
+)
+def test_start_accepts_every_released_core_failure_code(
+    monkeypatch: Any,
+    error_code: str,
+) -> None:
+    handle = _PipeHandle(
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Failed",
+            "succeeded": False,
+            "errorCode": error_code,
+        }
+    )
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    status = _channel().start_authorized(
+        Command(),
+        OpaquePermit("header.payload.signature"),
+        "0123456789abcdef0123456789abcdef",
+        1.0,
+    )
+
+    assert status.kind is CoreStatusKind.FAILED
+    assert status.error_code == error_code
+
+
+def test_start_rejects_removed_timeout_error_code(monkeypatch: Any) -> None:
+    handle = _PipeHandle(
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Failed",
+            "succeeded": False,
+            "errorCode": "Timeout",
+        }
+    )
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        _channel().start_authorized(
+            Command(),
+            OpaquePermit("header.payload.signature"),
+            "0123456789abcdef0123456789abcdef",
+            1.0,
+        )
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+
+
+def test_start_uses_released_core_wire_contract(monkeypatch: Any) -> None:
+    handle = _PipeHandle(
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Running",
+            "succeeded": True,
+        }
+    )
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    status = _channel().start_authorized(
+        Command(),
+        OpaquePermit("header.payload.signature"),
+        "0123456789abcdef0123456789abcdef",
+        1.0,
+    )
+
+    assert status.kind is CoreStatusKind.RUNNING
+    payload = json.loads(handle.written.decode("utf-8").removesuffix("\n"))
+    assert payload == {
+        "type": "start",
+        "correlationId": "0123456789abcdef0123456789abcdef",
+        "protocolVersion": 2,
+        "mode": "ProcessMode",
+        "processName": "pso2.exe",
+        "targetPid": 1234,
+        "profileReference": "profile-0",
+        "serverReference": "server-0",
+        "permit": "header.payload.signature",
     }
 
 
@@ -236,7 +394,7 @@ def test_pipe_open_retry_sleep_is_clamped_to_total_deadline(monkeypatch: Any) ->
     )
 
     with pytest.raises(Exception):
-        NamedPipeCoreControlChannel().request_challenge(
+        _channel().request_challenge(
             "0123456789abcdef0123456789abcdef", 1.0
         )
 
@@ -272,7 +430,7 @@ def test_real_windows_pipe_read_is_bounded_by_deadline() -> None:
     started = time.monotonic()
     try:
         with pytest.raises(AuthorizedCoreError) as raised:
-            NamedPipeCoreControlChannel(pipe_name).request_challenge(
+            _channel(pipe_name, expected_server_pid=os.getpid()).request_challenge(
                 "0123456789abcdef0123456789abcdef", 0.2
             )
         assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE

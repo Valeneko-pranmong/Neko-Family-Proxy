@@ -20,7 +20,7 @@ class WindowsCoreProcessAdapter:
     def __init__(
         self,
         executable: Path,
-        pipe_name: str = "NekoProxyCore.s0-rc1",
+        pipe_name: str = "NekoProxyCoreControl",
         diagnostics: CoreDiagnosticsRecorder | None = None,
         debug_log_dir: Path | None = None,
     ) -> None:
@@ -131,6 +131,12 @@ class WindowsCoreProcessAdapter:
                 self._diagnostics.record_exception(exc, "HOST_START")
             raise
 
+    def owned_process_id(self) -> int | None:
+        """Return the live Core child PID, never a stale process identifier."""
+        if self._process is None or self._process.poll() is not None:
+            return None
+        return self._process.pid
+
     def wait_for_control_channel(self, timeout: float) -> None:
         """Block until the bundled Core's approved Named Pipe is available."""
         if self._diagnostics:
@@ -144,21 +150,25 @@ class WindowsCoreProcessAdapter:
         pipe_path = rf"\\.\pipe\{self._pipe_name}"
         start_time = time.monotonic()
         deadline = start_time + timeout
-        
+
         while time.monotonic() < deadline:
             # Observation only - do not alter the loop's natural timeout behavior
             if self._process is not None:
                 return_code = self._process.poll()
-                if return_code is not None and not self._early_exit_observed:
-                    self._early_exit_observed = True
-                    if self._diagnostics and self._process_started_at is not None:
-                        runtime = time.monotonic() - self._process_started_at
-                        self._diagnostics.record_process_event(
-                            "PROCESS_EXITED_EARLY",
-                            exit_code=return_code,
-                            runtime=runtime,
-                        )
-            
+                if return_code is not None:
+                    if not self._early_exit_observed:
+                        self._early_exit_observed = True
+                        if self._diagnostics and self._process_started_at is not None:
+                            runtime = time.monotonic() - self._process_started_at
+                            self._diagnostics.record_process_event(
+                                "PROCESS_EXITED_EARLY",
+                                exit_code=return_code,
+                                runtime=runtime,
+                            )
+                    raise RuntimeError(
+                        f"Core exited before opening its control channel ({return_code})"
+                    )
+
             if Path(pipe_path).exists():
                 if self._diagnostics:
                     self._diagnostics.record_stage("CONTROL_CHANNEL_WAIT", success=True)
@@ -200,5 +210,5 @@ class WindowsCoreProcessAdapter:
             )
         else:
             self._process.kill()
-        
+
         self._close_debug_streams()

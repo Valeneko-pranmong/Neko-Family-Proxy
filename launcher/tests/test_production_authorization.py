@@ -12,7 +12,7 @@ def test_current_release_pins_the_same_s0_contract_as_core() -> None:
     gate = CURRENT_PRODUCTION_AUTHORIZATION
 
     assert gate.contract_id == "NEKO-AUTH-S0"
-    assert gate.contract_revision == "minimal-v1"
+    assert gate.contract_revision == "s0-rc1"
     assert gate.contract_package_sha256 == (
         "6697351b6b280afc566fedaaa1a6cfe207b1ea1d803c2eb613b4c1a891e192df"
     )

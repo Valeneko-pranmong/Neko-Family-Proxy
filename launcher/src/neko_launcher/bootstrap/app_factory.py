@@ -3,6 +3,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreOrchestrator,
+    LaunchAccessContext,
+    OnlineHeartbeatLaunchPrecondition,
+    OpaqueStartCommand,
+    OrchestrationTimeouts,
+)
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.production_authorization import (
     CURRENT_PRODUCTION_AUTHORIZATION,
@@ -10,27 +17,20 @@ from neko_launcher.application.production_authorization import (
 )
 from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.models import AuthStatus, EntitlementStatus
-from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
-from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
-from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 from neko_launcher.infrastructure.account_recovery_gateway import (
     HttpAccountRecoveryGateway,
 )
+from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.config import LauncherConfig
+from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
+from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
-from neko_launcher.infrastructure.config import LauncherConfig
-from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
+from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
 from neko_launcher.ui.app_window import AppWindow
-from neko_launcher.application.authorized_core import (
-    AuthorizedCoreOrchestrator,
-    LaunchAccessContext,
-    OpaqueStartCommand,
-    OnlineHeartbeatLaunchPrecondition,
-    OrchestrationTimeouts,
-)
 
 
 def application_root() -> Path:
@@ -73,7 +73,10 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             diagnostics=diagnostics_recorder,
             debug_log_dir=config.debug_log_dir if config.debug_mode else None,
         )
-        core_channel = NamedPipeCoreControlChannel("NekoProxyCore.s0-rc1")
+        core_channel = NamedPipeCoreControlChannel(
+            "NekoProxyCoreControl",
+            expected_server_pid=core_process.owned_process_id,
+        )
         detector = ExactPso2TargetDetector()
         precondition = OnlineHeartbeatLaunchPrecondition(
             lambda session_id, _installation_key_hash, timeout: (

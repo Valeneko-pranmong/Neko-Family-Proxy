@@ -47,6 +47,18 @@ missing identity binding:
 This prevents an old Machine A Auth token from being relabeled with Machine B's
 new authoritative Launcher session after replacement.
 
+Forward migration
+`20260809233000_bind_session_controls_and_bound_permit_ledgers.sql` also:
+
+- requires `heartbeat_session` and `release_session` to use the exact live Auth
+  session that claimed the Launcher session;
+- keeps both controls fail closed for missing, malformed, expired, or other-session
+  JWT `session_id` values;
+- prunes only the current user's replay/rate rows older than ten minutes while
+  holding the issuance transaction lock; and
+- adds global `issued_at` indexes for controlled retention maintenance without
+  granting clients direct ledger access.
+
 ## Permit
 
 Header is exactly `alg=RS256`, `typ=neko-launch+jwt`, and server-configured
@@ -81,6 +93,8 @@ new Core challenge rather than retrying the old request. Core separately
 atomically consumes its one-use challenge and permit `jti`. A successfully
 issued JWT is an intentionally short 30-second authority snapshot; later
 revocation cannot retroactively retract an already signed capability.
+The ten-minute retention boundary is intentionally longer than both the
+30-second challenge/permit lifetime and the one-minute rate window.
 
 ## Errors and secrecy
 

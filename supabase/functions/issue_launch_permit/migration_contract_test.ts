@@ -6,9 +6,85 @@ const migrationUrl = new URL(
   "../../migrations/20260809150000_bind_permits_to_auth_sessions.sql",
   import.meta.url,
 );
+const sessionControlHardeningUrl = new URL(
+  "../../migrations/20260809233000_bind_session_controls_and_bound_permit_ledgers.sql",
+  import.meta.url,
+);
 
 async function migration(): Promise<string> {
   return readFile(migrationUrl, "utf8");
+}
+
+async function sessionControlHardening(): Promise<string> {
+  return readFile(sessionControlHardeningUrl, "utf8");
+}
+
+type SessionControlName = "heartbeat_session" | "release_session";
+
+function sessionControlDefinition(
+  sql: string,
+  functionName: SessionControlName,
+): string {
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = sql.match(
+    new RegExp(
+      `create or replace function launcher\\.${escapedName}\\(p_session_id uuid\\)[\\s\\S]*?\\n\\$\\$;`,
+      "i",
+    ),
+  );
+  assert.ok(match, `${functionName}: definition missing`);
+  return match[0];
+}
+
+function assertSessionControl(
+  sql: string,
+  functionName: SessionControlName,
+): void {
+  const definition = sessionControlDefinition(sql, functionName);
+  assert.ok(
+    /security definer\s+set search_path = ''/is.test(definition),
+    `${functionName}: fixed SECURITY DEFINER search_path missing`,
+  );
+  assert.ok(
+    /auth\.jwt\(\)\s*->>\s*'session_id'/i.test(definition),
+    `${functionName}: JWT session_id parsing missing`,
+  );
+  assert.ok(
+    /when invalid_text_representation then\s+return false/is.test(definition),
+    `${functionName}: malformed session_id fail-closed guard missing`,
+  );
+  assert.ok(
+    /v_user_id is null or v_auth_session_id is null or p_session_id is null/is
+      .test(
+        definition,
+      ),
+    `${functionName}: missing-claim fail-closed guard missing`,
+  );
+  assert.ok(
+    /s\.auth_session_id = v_auth_session_id/i.test(definition),
+    `${functionName}: auth-session binding missing`,
+  );
+  assert.ok(
+    /a\.id = v_auth_session_id[\s\S]*a\.user_id = v_user_id[\s\S]*a\.not_after is null or a\.not_after > now\(\)/i
+      .test(
+        definition,
+      ),
+    `${functionName}: live Auth-session predicate missing`,
+  );
+  assert.match(
+    sql,
+    new RegExp(
+      `revoke all on function launcher\\.${functionName}\\(uuid\\) from public, anon;`,
+      "i",
+    ),
+  );
+  assert.match(
+    sql,
+    new RegExp(
+      `grant execute on function launcher\\.${functionName}\\(uuid\\) to authenticated;`,
+      "i",
+    ),
+  );
 }
 
 test("migration binds Launcher sessions to validated Supabase Auth sessions", async () => {
@@ -101,5 +177,42 @@ test("migration text declares Auth checks, serialized replay reservation, and du
   assert.match(
     sql,
     /insert into launcher\.launch_permit_rate_events\(user_id\)/i,
+  );
+});
+
+test("session controls require the exact live Auth session that claimed the Launcher session", async () => {
+  const sql = await sessionControlHardening();
+  assertSessionControl(sql, "heartbeat_session");
+  assertSessionControl(sql, "release_session");
+});
+
+test("each session-control guard is checked independently", async () => {
+  const sql = await sessionControlHardening();
+  const releaseWithoutBinding = sql.replace(
+    /(?<=create or replace function launcher\.release_session\(p_session_id uuid\)[\s\S]*?)\n    and s\.auth_session_id = v_auth_session_id/i,
+    "",
+  );
+
+  assert.throws(
+    () => assertSessionControl(releaseWithoutBinding, "release_session"),
+    /release_session.*auth-session binding/i,
+  );
+});
+
+test("permit ledgers are pruned outside a conservative ten-minute retention window", async () => {
+  const sql = await sessionControlHardening();
+  assert.match(
+    sql,
+    /delete from launcher\.launch_permit_reservations[\s\S]*user_id = v_user_id[\s\S]*issued_at < now\(\) - interval '10 minutes'/i,
+  );
+  assert.match(
+    sql,
+    /delete from launcher\.launch_permit_rate_events[\s\S]*user_id = v_user_id[\s\S]*issued_at < now\(\) - interval '10 minutes'/i,
+  );
+  assert.match(sql, /launch_permit_reservations_issued_at_idx/i);
+  assert.match(sql, /launch_permit_rate_events_issued_at_idx/i);
+  assert.doesNotMatch(
+    sql,
+    /grant\s+(select|insert|update|delete|all).*launch_permit_(reservations|rate_events)/is,
   );
 });
