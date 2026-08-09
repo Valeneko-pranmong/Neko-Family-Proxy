@@ -7,6 +7,7 @@ from neko_launcher.domain.events import Event
 from neko_launcher.domain.models import (
     AuthenticatedUser,
     CouponRedemption,
+    RecoverySession,
     RegistrationResult,
     SessionClaim,
     SessionTerminationReason,
@@ -58,6 +59,16 @@ class AuthGateway(Protocol):
         ...
 
     def clear_local_session(self) -> None:
+        ...
+
+
+class AccountRecoveryGateway(Protocol):
+    def verify_recovery_code(
+        self, username: str, recovery_code: str
+    ) -> RecoverySession:
+        ...
+
+    def change_password(self, recovery_session: str, new_password: str) -> None:
         ...
 
 

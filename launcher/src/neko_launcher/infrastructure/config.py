@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .defaults import (
+    ACCOUNT_RECOVERY_API_URL,
     PRODUCT_CODE,
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
@@ -21,6 +22,7 @@ class LauncherConfig:
     proxy_core_path: Path
     supabase_url: str
     supabase_publishable_key: str
+    account_recovery_api_url: str
     debug_mode: bool
     debug_log_dir: Path
 
@@ -63,6 +65,7 @@ class LauncherConfig:
             proxy_core_path=proxy_path,
             supabase_url=SUPABASE_URL,
             supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
+            account_recovery_api_url=ACCOUNT_RECOVERY_API_URL,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )

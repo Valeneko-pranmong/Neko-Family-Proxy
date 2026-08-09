@@ -10,6 +10,9 @@ class AuthStatus(str, Enum):
     AUTHENTICATING = "authenticating"
     AUTHENTICATED = "authenticated"
     FAILED = "failed"
+    RECOVERY_CODE_ENTRY = "recovery_code_entry"
+    RECOVERY_VERIFYING = "recovery_verifying"
+    RECOVERY_PASSWORD_CHANGE = "recovery_password_change"
 
 
 class EntitlementStatus(str, Enum):
@@ -72,6 +75,15 @@ class RegistrationResult:
     def username(self) -> str:
         """User-facing identifier (kept in the legacy email slot)."""
         return self.email
+
+
+@dataclass(frozen=True)
+class RecoverySession:
+    """Opaque, memory-only credential scoped exclusively to password recovery."""
+
+    session_id: str
+    token: str
+    expires_at: datetime
 
 
 @dataclass(frozen=True)

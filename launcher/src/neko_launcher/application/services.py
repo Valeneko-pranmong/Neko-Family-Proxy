@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from threading import Thread
+import re
+from threading import RLock, Thread
 
 from neko_launcher.domain.events import (
     AuthFailed,
@@ -29,12 +30,23 @@ from .errors import (
     DeviceAuthorizationDenied,
     EntitlementUnavailable,
     LauncherServiceError,
+    RecoveryRetryRequired,
+    RecoverySessionInvalid,
 )
-from .ports import AuthGateway, EntitlementGateway, InstallationIdentity
+from .ports import (
+    AccountRecoveryGateway,
+    AuthGateway,
+    EntitlementGateway,
+    InstallationIdentity,
+)
 
 
 class LauncherService:
     """Coordinates authentication, entitlement, session, and proxy workflows."""
+
+    _RECOVERY_CODE_PATTERN = re.compile(
+        r"^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){4}-[A-HJ-NP-Z2-9]{6}$"
+    )
 
     def __init__(
         self,
@@ -43,12 +55,18 @@ class LauncherService:
         entitlement_gateway: EntitlementGateway,
         installation: InstallationIdentity,
         product_code: str,
+        recovery_gateway: AccountRecoveryGateway | None = None,
     ) -> None:
         self._controller = controller
         self._auth_gateway = auth_gateway
         self._entitlement_gateway = entitlement_gateway
         self._installation = installation
         self._product_code = product_code
+        self._recovery_gateway = recovery_gateway
+        self._recovery_session: str | None = None
+        self._recovery_bound_password: str | None = None
+        self._recovery_generation = 0
+        self._recovery_lock = RLock()
         self._heartbeat_failures = 0
 
     def sign_up(
@@ -56,6 +74,7 @@ class LauncherService:
         username: str,
         password: str,
     ) -> RegistrationResult:
+        self._clear_recovery_session()
         username = username.strip().lower()
         self._validate_username(username, password)
         self._controller.dispatch(AuthStarted(username))
@@ -88,6 +107,7 @@ class LauncherService:
         return result
 
     def sign_in(self, username: str, password: str) -> None:
+        self._clear_recovery_session()
         username = username.strip().lower()
         self._validate_login_identifier(username, password)
         self._controller.dispatch(AuthStarted(username))
@@ -126,11 +146,112 @@ class LauncherService:
                 "เปลี่ยนรหัสผ่านไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"
             ) from exc
 
+    @property
+    def has_recovery_session(self) -> bool:
+        return self._recovery_session is not None
+
+    def begin_account_recovery(self) -> None:
+        self._clear_recovery_session()
+        self._controller.begin_account_recovery()
+
+    def cancel_account_recovery(self) -> None:
+        self._clear_recovery_session()
+        self._controller.sign_out()
+
+    def verify_recovery_code(self, username: str, recovery_code: str) -> None:
+        if self._recovery_gateway is None:
+            raise LauncherServiceError("ระบบกู้บัญชียังไม่พร้อมใช้งาน")
+        if self._controller.state.auth_status is not AuthStatus.RECOVERY_CODE_ENTRY:
+            raise LauncherServiceError("กำลังตรวจสอบรหัสกู้บัญชี กรุณารอสักครู่")
+        username = username.strip().lower()
+        recovery_code = recovery_code.strip().upper()
+        self._validate_username_format(username)
+        if not self._RECOVERY_CODE_PATTERN.fullmatch(recovery_code):
+            raise LauncherServiceError("รหัสกู้บัญชีไม่ถูกต้องหรือหมดอายุแล้ว")
+        with self._recovery_lock:
+            generation = self._recovery_generation
+        self._controller.recovery_verification_started()
+        try:
+            session = self._recovery_gateway.verify_recovery_code(
+                username, recovery_code
+            )
+        except LauncherServiceError as exc:
+            if self._recovery_verification_is_current(generation):
+                self._clear_recovery_session()
+                self._controller.recovery_code_entry_required(str(exc))
+            raise
+        except Exception as exc:
+            message = "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองอีกครั้ง"
+            if self._recovery_verification_is_current(generation):
+                self._clear_recovery_session()
+                self._controller.recovery_code_entry_required(message)
+            raise LauncherServiceError(message) from exc
+        with self._recovery_lock:
+            if (
+                generation != self._recovery_generation
+                or self._controller.state.auth_status
+                is not AuthStatus.RECOVERY_VERIFYING
+            ):
+                raise LauncherServiceError("ยกเลิกการกู้บัญชีแล้ว")
+            self._recovery_session = session.token
+        self._controller.recovery_password_change_required()
+
+    def change_recovery_password(self, password: str, confirmation: str) -> None:
+        if (
+            self._controller.state.auth_status
+            is not AuthStatus.RECOVERY_PASSWORD_CHANGE
+            or self._recovery_session is None
+            or self._recovery_gateway is None
+        ):
+            raise LauncherServiceError("กรุณาเริ่มการกู้บัญชีใหม่")
+        if password != confirmation:
+            raise LauncherServiceError("รหัสผ่านใหม่และการยืนยันไม่ตรงกัน")
+        self._validate_recovery_password(password)
+        with self._recovery_lock:
+            if (
+                self._recovery_bound_password is not None
+                and password != self._recovery_bound_password
+            ):
+                raise RecoveryRetryRequired(
+                    "คำขอก่อนหน้ายังไม่ทราบผล กรุณาลองส่งรหัสผ่านเดิมอีกครั้ง"
+                )
+            generation = self._recovery_generation
+            recovery_session = self._recovery_session
+            self._recovery_bound_password = password
+        try:
+            self._recovery_gateway.change_password(recovery_session, password)
+        except RecoverySessionInvalid as exc:
+            if self._recovery_request_is_current(generation, recovery_session):
+                self._clear_recovery_session()
+                self._controller.recovery_code_entry_required(str(exc))
+            raise
+        except RecoveryRetryRequired:
+            raise
+        except LauncherServiceError:
+            if self._recovery_request_is_current(generation, recovery_session):
+                with self._recovery_lock:
+                    self._recovery_bound_password = None
+            raise
+        except Exception as exc:
+            raise LauncherServiceError(
+                "ไม่สามารถยืนยันผลการเปลี่ยนรหัสผ่านได้ "
+                "กรุณาลองส่งรหัสผ่านเดิมอีกครั้ง"
+            ) from exc
+        if not self._recovery_request_is_current(generation, recovery_session):
+            raise LauncherServiceError("ยกเลิกการกู้บัญชีแล้ว")
+        self._clear_recovery_session()
+        self._controller.sign_out()
+
     def restore_session(self) -> bool:
+        with self._recovery_lock:
+            generation = self._recovery_generation
         try:
             user = self._auth_gateway.restore_session()
         except Exception:
             return False
+        with self._recovery_lock:
+            if generation != self._recovery_generation:
+                return False
         if user is None:
             return False
         try:
@@ -146,6 +267,7 @@ class LauncherService:
         return True
 
     def sign_out(self) -> None:
+        self._clear_recovery_session()
         if self._controller.state.proxy_status in {
             ProxyStatus.STARTING,
             ProxyStatus.RUNNING,
@@ -167,6 +289,8 @@ class LauncherService:
                 self._controller.sign_out()
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
+        if self._controller.state.auth_status is not AuthStatus.AUTHENTICATED:
+            raise LauncherServiceError("กรุณาเข้าสู่ระบบก่อนใช้คูปอง")
         if not code.strip():
             raise LauncherServiceError("กรุณากรอกรหัสคูปอง")
         try:
@@ -275,6 +399,13 @@ class LauncherService:
         self._controller.dispatch(LaunchTweakerRequested(executable))
 
     def shutdown(self, *, remote_release_grace: float = 0.75) -> None:
+        self._clear_recovery_session()
+        if self._controller.state.auth_status in {
+            AuthStatus.RECOVERY_CODE_ENTRY,
+            AuthStatus.RECOVERY_VERIFYING,
+            AuthStatus.RECOVERY_PASSWORD_CHANGE,
+        }:
+            self._controller.sign_out()
         # Closing the launcher is explicit: clean up only child processes
         # that this launcher started, including Tweaker and ProxyCore.
         self._controller.shutdown()
@@ -330,6 +461,32 @@ class LauncherService:
             # Local cleanup and controller reset run in sign_out() finally blocks.
             pass
 
+    def _clear_recovery_session(self) -> None:
+        with self._recovery_lock:
+            self._recovery_generation += 1
+            self._recovery_session = None
+            self._recovery_bound_password = None
+
+    def _recovery_request_is_current(
+        self, generation: int, recovery_session: str | None
+    ) -> bool:
+        with self._recovery_lock:
+            return (
+                generation == self._recovery_generation
+                and recovery_session is not None
+                and recovery_session == self._recovery_session
+                and self._controller.state.auth_status
+                is AuthStatus.RECOVERY_PASSWORD_CHANGE
+            )
+
+    def _recovery_verification_is_current(self, generation: int) -> bool:
+        with self._recovery_lock:
+            return (
+                generation == self._recovery_generation
+                and self._controller.state.auth_status
+                is AuthStatus.RECOVERY_VERIFYING
+            )
+
     @staticmethod
     def _validate_username(username: str, password: str) -> None:
         LauncherService._validate_username_format(username)
@@ -358,3 +515,18 @@ class LauncherService:
     def _validate_password(password: str) -> None:
         if len(password) < 8:
             raise LauncherServiceError("รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร")
+
+    @staticmethod
+    def _validate_recovery_password(password: str) -> None:
+        valid = (
+            12 <= len(password) <= 128
+            and any("A" <= char <= "Z" for char in password)
+            and any("a" <= char <= "z" for char in password)
+            and any("0" <= char <= "9" for char in password)
+            and any(not char.isalnum() for char in password)
+        )
+        if not valid:
+            raise LauncherServiceError(
+                "รหัสผ่านต้องมี 12-128 ตัวอักษร และมีตัวพิมพ์ใหญ่ "
+                "ตัวพิมพ์เล็ก ตัวเลข และสัญลักษณ์"
+            )

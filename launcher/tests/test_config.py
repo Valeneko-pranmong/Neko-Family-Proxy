@@ -21,6 +21,7 @@ def test_packaged_runtime_defaults_to_local_app_data(
     )
     assert config.supabase_url == "https://miikoutrnxsunbndecqh.supabase.co"
     assert config.supabase_publishable_key.startswith("sb_publishable_")
+    assert config.account_recovery_api_url == "https://neko-control-room.vercel.app"
 
 
 def test_packaged_runtime_uses_bundled_neko_proxy_core(tmp_path: Path) -> None:

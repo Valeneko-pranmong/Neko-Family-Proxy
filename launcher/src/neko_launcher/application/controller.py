@@ -128,6 +128,44 @@ class ApplicationController:
             last_error=None,
         )
 
+    def begin_account_recovery(self) -> None:
+        """Enter recovery without creating normal user/session authorization."""
+        self._stop_proxy()
+        self._update(
+            auth_status=AuthStatus.RECOVERY_CODE_ENTRY,
+            user_id=None,
+            user_email=None,
+            entitlement=None,
+            session_id=None,
+            game_status=GameStatus.STOPPED,
+            game_process_running=False,
+            deferred_session_revocation_reason=None,
+            last_error=None,
+        )
+
+    def recovery_verification_started(self) -> None:
+        self._update(auth_status=AuthStatus.RECOVERY_VERIFYING, last_error=None)
+
+    def recovery_code_entry_required(self, message: str | None = None) -> None:
+        self._update(
+            auth_status=AuthStatus.RECOVERY_CODE_ENTRY,
+            user_id=None,
+            user_email=None,
+            entitlement=None,
+            session_id=None,
+            last_error=message,
+        )
+
+    def recovery_password_change_required(self) -> None:
+        self._update(
+            auth_status=AuthStatus.RECOVERY_PASSWORD_CHANGE,
+            user_id=None,
+            user_email=None,
+            entitlement=None,
+            session_id=None,
+            last_error=None,
+        )
+
     def invalidate_session(self, reason: str) -> None:
         """Immediately remove local authorization after a rejected heartbeat."""
         self._revoke_session(reason, allow_defer=False)

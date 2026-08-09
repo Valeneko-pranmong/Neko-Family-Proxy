@@ -140,7 +140,7 @@ class AuthView:
 
         forgot_pw = ctk.CTkLabel(
             options_row,
-            text="ลืมรหัสผ่าน?",
+            text="ลืมรหัสผ่าน? ใช้รหัสกู้บัญชี",
             text_color=PALETTE.primary_dark,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             cursor="hand2",

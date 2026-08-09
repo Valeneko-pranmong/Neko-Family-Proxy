@@ -106,6 +106,9 @@ class FakeView:
     def pack_forget(self) -> None:
         self.pack_forget_calls += 1
 
+    def show_code_entry(self) -> None:
+        self.manager = "recovery_code_entry"
+
 
 class FakeDialog:
     def __init__(self) -> None:
@@ -138,6 +141,14 @@ class FakeService:
 
     def start_proxy(self) -> None:
         self.proxy_started += 1
+
+
+class FakeRecoveryService:
+    def __init__(self) -> None:
+        self.cancelled = 0
+
+    def cancel_account_recovery(self) -> None:
+        self.cancelled += 1
 
 
 class FakeDiagnostics:
@@ -217,6 +228,48 @@ def test_auth_controls_update_without_removed_reset_password_button() -> None:
 
     assert window._auth_view.login_button_state == "disabled"
     assert window._auth_view.register_button_state == "disabled"
+
+
+def test_recovery_link_wording_is_visible_from_login_source() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "neko_launcher"
+        / "ui"
+        / "views"
+        / "auth_view.py"
+    ).read_text(encoding="utf-8")
+    assert "ลืมรหัสผ่าน? ใช้รหัสกู้บัญชี" in source
+
+
+def test_back_to_login_clears_recovery_fields_and_cancels_flow() -> None:
+    window = object.__new__(AppWindow)
+    window._service = FakeRecoveryService()  # type: ignore[assignment]
+    window._recovery_username = FakeVariable("testuser")  # type: ignore[assignment]
+    window._recovery_code = FakeVariable("sensitive")  # type: ignore[assignment]
+    window._recovery_password = FakeVariable("password")  # type: ignore[assignment]
+    window._recovery_password_confirm = FakeVariable("password")  # type: ignore[assignment]
+
+    window._cancel_account_recovery()
+
+    assert window._service.cancelled == 1  # type: ignore[attr-defined]
+    assert window._recovery_username.get() == ""
+    assert window._recovery_code.get() == ""
+    assert window._recovery_password.get() == ""
+    assert window._recovery_password_confirm.get() == ""
+
+
+def test_show_recovery_code_entry_clears_hidden_password_fields() -> None:
+    window = object.__new__(AppWindow)
+    window._recovery_password = FakeVariable("sensitive")  # type: ignore[assignment]
+    window._recovery_password_confirm = FakeVariable("sensitive")  # type: ignore[assignment]
+    window._recovery_view = FakeView()  # type: ignore[assignment]
+
+    window._show_recovery_code_entry()
+
+    assert window._recovery_password.get() == ""
+    assert window._recovery_password_confirm.get() == ""
+    assert window._recovery_view.manager == "recovery_code_entry"
 
 
 def test_error_notification_shows_complete_actionable_toast(monkeypatch: Any) -> None:

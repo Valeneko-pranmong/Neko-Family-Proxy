@@ -44,6 +44,7 @@ from .components.toast import ToastNotification
 from .components.buttons import secondary_button
 from .views.auth_view import AuthView
 from .views.dashboard_view import DashboardView, open_password_dialog
+from .views.recovery_view import RecoveryView
 
 
 class AppWindow:
@@ -111,6 +112,10 @@ class AppWindow:
         self._notice.trace_add("write", self._update_message_visibility)
         self._login_email = tk.StringVar()
         self._login_password = tk.StringVar()
+        self._recovery_username = tk.StringVar()
+        self._recovery_code = tk.StringVar()
+        self._recovery_password = tk.StringVar()
+        self._recovery_password_confirm = tk.StringVar()
         self._register_username = tk.StringVar()
         self._register_password = tk.StringVar()
         self._register_password_confirm = tk.StringVar()
@@ -220,9 +225,17 @@ class AppWindow:
             register_password_confirm_var=self._register_password_confirm,
             on_login=self._login,
             on_register=self._register,
-            on_forgot_password=lambda: self._notice.set(
-                "กรุณาติดต่อแอดมินเพื่อรีเซ็ตรหัสผ่าน"
-            ),
+            on_forgot_password=self._begin_account_recovery,
+        )
+        self._recovery_view = RecoveryView(
+            self._content,
+            username_var=self._recovery_username,
+            recovery_code_var=self._recovery_code,
+            new_password_var=self._recovery_password,
+            confirm_password_var=self._recovery_password_confirm,
+            on_verify=self._verify_recovery_code,
+            on_change_password=self._change_recovery_password,
+            on_cancel=self._cancel_account_recovery,
         )
         self._dashboard_view = DashboardView(
             self._content,
@@ -319,10 +332,28 @@ class AppWindow:
     # ------------------------------------------------------------------
     def _show_auth_view(self) -> None:
         self._dashboard_view.frame.pack_forget()
+        recovery_view = getattr(self, "_recovery_view", None)
+        if recovery_view is not None:
+            recovery_view.frame.pack_forget()
         self._auth_view.frame.pack(fill="both", expand=True, padx=8, pady=(0, 3))
+
+    def _show_recovery_view(self) -> None:
+        self._auth_view.frame.pack_forget()
+        self._dashboard_view.frame.pack_forget()
+        self._recovery_view.frame.pack(
+            fill="both", expand=True, padx=8, pady=(0, 3)
+        )
+
+    def _show_recovery_code_entry(self) -> None:
+        self._recovery_password.set("")
+        self._recovery_password_confirm.set("")
+        self._recovery_view.show_code_entry()
 
     def _show_program_view(self) -> None:
         self._auth_view.frame.pack_forget()
+        recovery_view = getattr(self, "_recovery_view", None)
+        if recovery_view is not None:
+            recovery_view.frame.pack_forget()
         self._dashboard_view.frame.pack(fill="both", expand=True, padx=8, pady=(2, 6))
 
     # ------------------------------------------------------------------
@@ -527,6 +558,59 @@ class AppWindow:
             self._login_succeeded,
         )
 
+    def _begin_account_recovery(self) -> None:
+        self._error.set("")
+        self._notice.set("")
+        self._recovery_username.set(self._login_email.get().strip())
+        self._clear_recovery_sensitive_fields()
+        self._service.begin_account_recovery()
+
+    def _verify_recovery_code(self) -> None:
+        username = self._recovery_username.get()
+        recovery_code = self._recovery_code.get()
+        self._recovery_code.set("")
+        self._submit(
+            lambda: self._service.verify_recovery_code(
+                username, recovery_code
+            ),
+            self._recovery_verified,
+        )
+
+    def _recovery_verified(self, _: Any) -> None:
+        self._recovery_code.set("")
+        self._notice.set("ยืนยันรหัสกู้บัญชีแล้ว กรุณาตั้งรหัสผ่านใหม่")
+
+    def _change_recovery_password(self) -> None:
+        self._submit(
+            lambda: self._service.change_recovery_password(
+                self._recovery_password.get(),
+                self._recovery_password_confirm.get(),
+            ),
+            self._recovery_password_changed,
+        )
+
+    def _recovery_password_changed(self, _: Any) -> None:
+        self._clear_recovery_sensitive_fields()
+        self._recovery_username.set("")
+        self._notice.set(
+            "เปลี่ยนรหัสผ่านเรียบร้อย กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่"
+        )
+
+    def _cancel_account_recovery(self) -> None:
+        self._service.cancel_account_recovery()
+        self._clear_recovery_sensitive_fields()
+        self._recovery_username.set("")
+
+    def _clear_recovery_sensitive_fields(self) -> None:
+        for name in (
+            "_recovery_code",
+            "_recovery_password",
+            "_recovery_password_confirm",
+        ):
+            variable = getattr(self, name, None)
+            if variable is not None:
+                variable.set("")
+
     def _restore_completed(self, restored: bool) -> None:
         if restored:
             self._notice.set("กู้คืนการเข้าสู่ระบบสำเร็จ")
@@ -722,18 +806,35 @@ class AppWindow:
                 AuthStatus.AUTHENTICATING: "กำลังเข้าสู่ระบบ…",
                 AuthStatus.AUTHENTICATED: "เข้าสู่ระบบแล้ว",
                 AuthStatus.FAILED: "เข้าสู่ระบบไม่สำเร็จ",
+                AuthStatus.RECOVERY_CODE_ENTRY: "กู้บัญชี",
+                AuthStatus.RECOVERY_VERIFYING: "กำลังตรวจสอบรหัสกู้บัญชี…",
+                AuthStatus.RECOVERY_PASSWORD_CHANGE: "กรุณาตั้งรหัสผ่านใหม่",
             }[state.auth_status]
         )
         self._account.set(state.user_email or "")
         self._auth_view.set_status_signed_in(signed_in)
         self._render_entitlement(state)
 
+        recovery = state.auth_status in {
+            AuthStatus.RECOVERY_CODE_ENTRY,
+            AuthStatus.RECOVERY_VERIFYING,
+            AuthStatus.RECOVERY_PASSWORD_CHANGE,
+        }
         if signed_in:
             self._show_program_view()
+        elif recovery:
+            self._show_recovery_view()
+            if state.auth_status is AuthStatus.RECOVERY_PASSWORD_CHANGE:
+                self._recovery_view.show_password_change()
+            else:
+                self._show_recovery_code_entry()
         else:
             if self._password_dialog is not None:
                 self._close_password_dialog()
             self._show_auth_view()
+        self._recovery_view.set_busy(
+            state.auth_status is AuthStatus.RECOVERY_VERIFYING
+        )
 
         self._set_auth_enabled(
             signed_in=signed_in,
@@ -909,6 +1010,7 @@ class AppWindow:
         if self._closing:
             return
         self._closing = True
+        self._clear_recovery_sensitive_fields()
         try:
             self._service.shutdown()
         except Exception:

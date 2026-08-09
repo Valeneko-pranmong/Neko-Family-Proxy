@@ -13,6 +13,9 @@ from neko_launcher.domain.models import AuthStatus, EntitlementStatus
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.account_recovery_gateway import (
+    HttpAccountRecoveryGateway,
+)
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
@@ -51,6 +54,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config.supabase_publishable_key,
         secure_store,
     )
+    recovery_gateway = HttpAccountRecoveryGateway(config.account_recovery_api_url)
 
     if config.debug_mode:
         from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
@@ -121,6 +125,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         gateway,
         installation,
         config.product_code,
+        recovery_gateway=recovery_gateway,
     )
     logo_path = root / "image_11.png"
     icon_path = root / "icon_app.ico"
