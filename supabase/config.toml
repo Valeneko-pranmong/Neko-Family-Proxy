@@ -6,3 +6,8 @@ enable_signup = true
 
 [auth.email]
 enable_confirmations = false
+
+[functions.issue_launch_permit]
+# Gateway verification is defense in depth; the function also validates the
+# access token with Supabase Auth before resolving authorization state.
+verify_jwt = true

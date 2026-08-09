@@ -1,54 +1,101 @@
-# `issue_launch_permit` prototype
+# `issue_launch_permit` production candidate
 
-> **Status: EXPERIMENTAL / PRODUCTION BLOCKED — reviewed 8 August 2026.**
-> Do not deploy this function as a production permit issuer. Production Core
-> startup must remain fail closed under the
-> [`NEKO-AUTH-S0` release gates](../../../docs/blocked/neko-auth-s0-production-handoff.md).
+> **Status: LOCAL CANDIDATE / NOT DEPLOYED — reviewed 9 August 2026.**
+> Production remains blocked until the forward migration is reviewed/applied in
+> staging, the configured signing private key is proven to match Core's approved
+> bundled public key, and cross-repository integration/security review passes.
 
-The adjacent [`index.ts`](index.ts) is a development prototype for constructing
-and signing an RS256 launch permit. It is kept beside the function so its
-limitations cannot be separated from the code.
+The function validates the caller's Supabase access token with Supabase Auth,
+resolves the authoritative Launcher session/license state through a narrow
+authenticated RPC, and returns a 30-second RS256 compact JWT. It never accepts
+identity, session, installation, license, issuer, audience, expiry, or key ID
+from the request body.
 
-## What the prototype demonstrates
+## Request
 
-- Reading an RS256 private key and key ID from environment variables.
-- Parsing a launch-permit request.
-- Producing a compact RS256-signed JWT response.
-- Returning sanitized HTTP errors for basic malformed requests.
+Exact JSON fields (unknown, missing, wrong-case, and wrong-type fields fail):
 
-## Security work still required
+- `version`: integer `1`
+- `contractRevision`: `s0-rc1`
+- `correlationId`: 32 lowercase hexadecimal characters
+- `challenge`: 43-character unpadded base64url (Core CSPRNG 32-byte challenge)
+- `configurationDigest`: 64-character lowercase hexadecimal SHA-256
+- `processName`: `pso2.exe`
+- `targetPid`: integer `1..4294967295` (boolean/float invalid)
+- `mode`: `ProcessMode`
+- `product`: `neko-family-proxy`
+- `scope`: `proxy:start`
 
-The current function checks only that the `Authorization` header starts with
-`Bearer `. It does **not** validate the Supabase access token or derive trusted
-identity, session, installation, license, product, scope, target process, or
-configuration claims from authoritative server-side state.
+The `Authorization` header must contain a valid non-anonymous Supabase access
+token. Gateway JWT verification remains enabled and the function independently
+calls Supabase Auth `getUser`.
 
-Before production use, the implementation must satisfy the approved contract
-and at minimum:
+## Authoritative state
 
-1. Verify the Supabase access token and reject expired, malformed, or wrong-
-   project tokens.
-2. Derive every security-sensitive claim from trusted server-side data instead
-   of accepting it from the request body.
-3. Validate entitlement, active launcher session, installation binding,
-   challenge format, target process rules, and configuration digest.
-4. Enforce permit lifetime, issuer, audience, key rotation, replay controls,
-   rate limits, and sanitized audit logging.
-5. Add negative-path, integration, and cross-repository tests against the exact
-   Core verifier contract.
-6. Complete Security, Launcher, Core, and Release acceptance gates.
+Migration `20260809150000_bind_permits_to_auth_sessions.sql` adds the minimum
+missing identity binding:
 
-## Development-only execution
+- a trigger stores the validated `auth.jwt().session_id` on every new
+  `launcher_sessions` row;
+- historical unbound rows fail closed and require a fresh normal session claim;
+- `launcher.authorize_launch_permit(text, text)` reserves the challenge and returns identity only when the caller's
+  Auth session owns the one active, heartbeat-fresh Launcher session and its
+  profile, product, installation relationship, and selected license are valid;
+- existing RLS and the one-active-session unique partial index remain unchanged;
+- remembered installations are not a permanent authorization lock.
 
-Run the function only against a disposable local Supabase environment:
+This prevents an old Machine A Auth token from being relabeled with Machine B's
+new authoritative Launcher session after replacement.
 
-```powershell
-Set-Location supabase
-supabase start
-supabase functions serve issue_launch_permit --env-file .env.local
+## Permit
+
+Header is exactly `alg=RS256`, `typ=neko-launch+jwt`, and server-configured
+`kid`. Claims are exactly `iss`, `aud`, `sub`, `sid`, `iid`, `lid`, `product`,
+`scope`, `cfg`, `challenge`, `target_pid`, `mode`, `jti`, `iat`, `nbf`, and
+`exp`. Identity claims come only from the RPC. `iat=nbf`, `exp=iat+30`, and
+`jti` is a cryptographic UUID.
+
+Required server-only configuration:
+
+- `RS256_PRIVATE_KEY`: PKCS#8 PEM private key
+- `RS256_KID`: exact key ID accepted by Core
+- standard Supabase `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+
+Core source currently pins `kid=neko-prod-key-1` and an immutable bundled RSA
+public key. Do not generate, rotate, or provision production signing material
+until custody review proves the backend private key matches that public key.
+
+## Replay, replacement, and rate policy
+
+The permit RPC is the issuance linearization point. It takes the same per-user
+transaction advisory lock as `claim_session`, checks that the JWT `session_id`
+still exists in `auth.sessions`, evaluates the current Launcher/profile/license
+state, and reserves the challenge before returning trusted signing claims.
+Session replacement therefore cannot interleave with that decision.
+
+Reservations reject reuse of the same `(auth_session_id, challenge)`. A separate
+per-user rate-event ledger survives Auth-session deletion and limits each user
+to 10 issuance reservations per rolling minute. A reservation is
+committed before signing; an ambiguous/signing failure must start again with a
+new Core challenge rather than retrying the old request. Core separately
+atomically consumes its one-use challenge and permit `jti`. A successfully
+issued JWT is an intentionally short 30-second authority snapshot; later
+revocation cannot retroactively retract an already signed capability.
+
+## Errors and secrecy
+
+Responses use sanitized HTTP classes: `400` protocol, `401` authentication,
+`403` session/authorization, `500` signing configuration, and `503` dependency
+failure. No raw token, permit, key, SQL error, or stack trace is logged/returned.
+
+## Local validation
+
+```bash
+npx --yes tsx --test service_test.ts migration_contract_test.ts runtime_contract_test.ts
+npx --yes deno check index.ts service.ts local_verifier.ts
+npx --yes deno fmt --check index.ts service.ts local_verifier.ts *_test.ts
 ```
 
-Keep `.env.local`, private keys, access tokens, and generated permits out of
-Git, terminal transcripts, screenshots, and documentation. Use synthetic test
-identities and keys only. Secret provisioning and production deployment are
-intentionally omitted until the release gates are approved.
+Tests use a generated in-memory test keypair only. They do not use production
+credentials, mutate hosted Supabase, deploy a function, or validate the real
+production private/public key pairing.
