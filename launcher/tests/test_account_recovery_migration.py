@@ -7,10 +7,20 @@ MIGRATION = (
     / "migrations"
     / "20260809120000_account_recovery_codes.sql"
 )
+VERIFY_FIX_MIGRATION = (
+    Path(__file__).parents[2]
+    / "supabase"
+    / "migrations"
+    / "20260809124500_fix_recovery_verify_column_ambiguity.sql"
+)
 
 
 def migration_sql() -> str:
     return MIGRATION.read_text(encoding="utf-8").lower()
+
+
+def verify_fix_sql() -> str:
+    return VERIFY_FIX_MIGRATION.read_text(encoding="utf-8").lower()
 
 
 def test_recovery_schema_stores_only_verifiers_and_server_timestamps() -> None:
@@ -169,3 +179,17 @@ def test_audit_constraint_preserves_history_and_adds_recovery_events() -> None:
         assert f"'{event}'" in sql
     assert "function launcher.admin_password_reset" not in sql
     assert "function launcher.reset_user_password" not in sql
+
+
+def test_verify_forward_fix_qualifies_columns_that_conflict_with_output_names() -> None:
+    sql = verify_fix_sql()
+    assert "create or replace function launcher.verify_recovery_code" in sql
+    assert "from public.profiles as profile" in sql
+    assert "select profile.id into v_user_id" in sql
+    assert "from public.account_recovery_codes as recovery_code" in sql
+    assert "where recovery_code.user_id = v_user_id" in sql
+    assert "where user_id = v_user_id" not in sql
+    assert "security definer" in sql
+    assert "set search_path = ''" in sql
+    assert "from public, anon, authenticated" in sql
+    assert "to service_role" in sql
