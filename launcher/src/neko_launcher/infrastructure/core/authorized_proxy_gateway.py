@@ -41,10 +41,5 @@ class AuthorizedProxyGateway:
             raise AuthorizedCoreError("authorized start did not reach Running")
 
     def stop(self) -> None:
-        """Best-effort cleanup of owned Core process."""
-        try:
-            self._orchestrator._process.stop_gracefully(
-                self._orchestrator._timeouts.start
-            )
-        except Exception:
-            pass
+        """Send typed stop and clean up only the Launcher-owned Core host."""
+        self._orchestrator.stop()

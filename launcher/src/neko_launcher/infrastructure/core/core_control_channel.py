@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import struct
 import time
 from typing import Any
@@ -20,6 +22,42 @@ _STATUS_MAP: dict[str, CoreStatusKind] = {
     "Stopped": CoreStatusKind.STOPPED,
     "Failed": CoreStatusKind.FAILED,
 }
+_CHALLENGE_FIELDS = frozenset(
+    {"version", "kind", "correlationId", "succeeded", "challenge"}
+)
+_RESULT_SUCCESS_FIELDS = frozenset(
+    {"version", "kind", "correlationId", "succeeded", "status"}
+)
+_RESULT_FAILURE_FIELDS = _RESULT_SUCCESS_FIELDS | {"errorCode"}
+
+
+def _reject_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON field")
+        result[key] = value
+    return result
+
+
+_ERROR_CODES = frozenset(
+    {
+        "AuthorizationRequired",
+        "AuthorizationInvalid",
+        "AuthorizationExpired",
+        "AuthorizationReplay",
+        "AuthorizationUnavailable",
+        "SessionInactive",
+        "ProcessNotFound",
+        "ProcessExited",
+        "AlreadyRunning",
+        "ProtocolInvalid",
+        "Timeout",
+        "Cancelled",
+        "StartFailed",
+        "StopFailed",
+    }
+)
 
 
 class NamedPipeCoreControlChannel:
@@ -41,20 +79,51 @@ class NamedPipeCoreControlChannel:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _read_exact(handle: Any, size: int) -> bytes:
+    def _remaining(deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        return remaining
+
+    @staticmethod
+    def _configure_nonblocking(handle: Any) -> None:
+        if os.name != "nt":
+            return
+        import ctypes
+        import msvcrt
+
+        pipe_nowait = ctypes.c_uint32(0x00000001)
+        native_handle = msvcrt.get_osfhandle(handle.fileno())
+        if not ctypes.windll.kernel32.SetNamedPipeHandleState(
+            ctypes.c_void_p(native_handle), ctypes.byref(pipe_nowait), None, None
+        ):
+            raise OSError(ctypes.get_last_error(), "cannot bound named pipe I/O")
+
+    @classmethod
+    def _read_exact(cls, handle: Any, size: int, deadline: float) -> bytes:
         chunks = bytearray()
         while len(chunks) < size:
-            chunk = handle.read(size - len(chunks))
+            cls._remaining(deadline)
+            try:
+                chunk = handle.read(size - len(chunks))
+            except (BlockingIOError, OSError):
+                time.sleep(min(0.01, cls._remaining(deadline)))
+                continue
             if not chunk:
                 raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
             chunks.extend(chunk)
         return bytes(chunks)
 
-    @staticmethod
-    def _write_all(handle: Any, payload: bytes) -> None:
+    @classmethod
+    def _write_all(cls, handle: Any, payload: bytes, deadline: float) -> None:
         offset = 0
         while offset < len(payload):
-            written = handle.write(payload[offset:])
+            cls._remaining(deadline)
+            try:
+                written = handle.write(payload[offset:])
+            except (BlockingIOError, OSError):
+                time.sleep(min(0.01, cls._remaining(deadline)))
+                continue
             if written is None:
                 # Buffered Python file objects conventionally return the count,
                 # while lightweight/test pipe handles may consume all bytes.
@@ -66,37 +135,45 @@ class NamedPipeCoreControlChannel:
     def _send_and_receive(
         self, message: dict[str, Any], timeout: float,
     ) -> dict[str, Any]:
-        start_time = time.monotonic()
+        deadline = time.monotonic() + timeout
         try:
             handle = None
-            while time.monotonic() - start_time < timeout:
+            while time.monotonic() < deadline:
                 try:
                     handle = open(self._pipe_path, "r+b", buffering=0)  # noqa: SIM115
                     break
                 except OSError:
                     # Windows may report a transient invalid/busy pipe while the
                     # single-instance Core server is recreating its next handle.
-                    time.sleep(0.05)
+                    time.sleep(min(0.05, self._remaining(deadline)))
 
             if handle is None:
                 raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
             with handle:
+                self._configure_nonblocking(handle)
                 payload = json.dumps(
                     message, separators=(",", ":"), ensure_ascii=True
                 ).encode("utf-8")
                 if not 1 <= len(payload) <= self._MAX_PAYLOAD_BYTES:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
-                self._write_all(handle, struct.pack(">I", len(payload)) + payload)
+                self._write_all(
+                    handle, struct.pack(">I", len(payload)) + payload, deadline
+                )
 
-                response_size = struct.unpack(">I", self._read_exact(handle, 4))[0]
+                response_size = struct.unpack(
+                    ">I", self._read_exact(handle, 4, deadline)
+                )[0]
                 if not 1 <= response_size <= self._MAX_PAYLOAD_BYTES:
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
-                response_bytes = self._read_exact(handle, response_size)
+                response_bytes = self._read_exact(handle, response_size, deadline)
 
                 try:
-                    response = json.loads(response_bytes.decode("utf-8"))
-                except json.JSONDecodeError:
+                    response = json.loads(
+                        response_bytes.decode("utf-8"),
+                        object_pairs_hook=_reject_duplicate_fields,
+                    )
+                except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                     raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
                 if not isinstance(response, dict):
@@ -126,7 +203,9 @@ class NamedPipeCoreControlChannel:
         res = self._send_and_receive(msg, timeout)
 
         if (
-            res.get("version") != 2
+            frozenset(res) != _CHALLENGE_FIELDS
+            or type(res.get("version")) is not int
+            or res.get("version") != 2
             or res.get("kind") != "challenge"
             or res.get("succeeded") is not True
         ):
@@ -134,7 +213,9 @@ class NamedPipeCoreControlChannel:
         self._require_correlation(res, correlation_id)
 
         challenge_val = res.get("challenge")
-        if not isinstance(challenge_val, str):
+        if not isinstance(challenge_val, str) or re.fullmatch(
+            r"[A-Za-z0-9_-]{43}", challenge_val
+        ) is None:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
         return CoreChallenge(value=challenge_val)
@@ -164,7 +245,11 @@ class NamedPipeCoreControlChannel:
 
         res = self._send_and_receive(msg, timeout)
 
-        if res.get("version") != 2 or res.get("kind") != "result":
+        if (
+            type(res.get("version")) is not int
+            or res.get("version") != 2
+            or res.get("kind") != "result"
+        ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 
@@ -174,7 +259,11 @@ class NamedPipeCoreControlChannel:
         msg = {"version": 2, "command": "stop", "correlationId": correlation_id}
         res = self._send_and_receive(msg, timeout)
 
-        if res.get("version") != 2 or res.get("kind") != "result":
+        if (
+            type(res.get("version")) is not int
+            or res.get("version") != 2
+            or res.get("kind") != "result"
+        ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 
@@ -193,7 +282,20 @@ class NamedPipeCoreControlChannel:
         if kind is None:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         error_code = res.get("errorCode")
+        succeeded = res.get("succeeded")
+        if succeeded is True:
+            if frozenset(res) != _RESULT_SUCCESS_FIELDS or kind is CoreStatusKind.FAILED:
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            return CoreStatus(kind=kind)
+        if (
+            succeeded is not False
+            or frozenset(res) != _RESULT_FAILURE_FIELDS
+            or kind is not CoreStatusKind.FAILED
+            or not isinstance(error_code, str)
+            or error_code not in _ERROR_CODES
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         return CoreStatus(
             kind=kind,
-            error_code=str(error_code) if error_code is not None else None,
+            error_code=error_code,
         )

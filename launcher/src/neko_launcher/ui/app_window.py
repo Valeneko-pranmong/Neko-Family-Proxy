@@ -945,9 +945,15 @@ class AppWindow:
         if self.root.winfo_exists():
             self.root.after(3_000, self._poll_game_process)
 
-    def _on_game_detected(self, detected: bool) -> None:
+    def _on_game_detected(self, detected: bool | None) -> None:
         """Callback when process detection finishes."""
         self._process_detection_pending = False
+        if detected is None:
+            self._record_debug_status(
+                "GAME_PROCESS_OBSERVATION_FAILED",
+                reason="preserving last known process state",
+            )
+            return
         state = self._controller.state
         detection_changed = state.game_process_running is not detected
         if detection_changed:
@@ -980,13 +986,20 @@ class AppWindow:
             )
             return
         if self._proxy_start_attempted_for_detected_game:
-            if not self._proxy_retry_suppression_logged:
+            if state.proxy_start_retry_safe:
+                self._proxy_start_attempted_for_detected_game = False
                 self._record_debug_status(
-                    "PROXY_START_NOT_RETRIED",
-                    reason="automatic start already attempted for this game process",
+                    "PROXY_START_RETRY_SAFE",
+                    reason="previous failure occurred before permit issuance",
                 )
-                self._proxy_retry_suppression_logged = True
-            return
+            else:
+                if not self._proxy_retry_suppression_logged:
+                    self._record_debug_status(
+                        "PROXY_START_NOT_RETRIED",
+                        reason="automatic start already attempted for this game process",
+                    )
+                    self._proxy_retry_suppression_logged = True
+                return
         self._proxy_start_attempted_for_detected_game = True
         self._record_debug_status("PROXY_START_REQUESTED", process="pso2.exe")
         self._submit(self._service.start_proxy)

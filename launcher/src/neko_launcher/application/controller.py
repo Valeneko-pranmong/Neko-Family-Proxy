@@ -228,13 +228,14 @@ class ApplicationController:
         self._update(proxy_status=ProxyStatus.STARTING, last_error=None)
         try:
             self._proxy_gateway.start()
-        except Exception:
+        except Exception as exc:
             self._update(
                 proxy_status=ProxyStatus.FAILED,
+                proxy_start_retry_safe=self._is_safe_pre_permit_failure(exc),
                 last_error="เริ่มการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
             )
         else:
-            self._update(proxy_status=ProxyStatus.RUNNING)
+            self._update(proxy_status=ProxyStatus.RUNNING, proxy_start_retry_safe=False)
 
     def _stop_proxy(self) -> None:
         if self._proxy_gateway is None:
@@ -249,7 +250,16 @@ class ApplicationController:
                 last_error="หยุดการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
             )
         else:
-            self._update(proxy_status=ProxyStatus.STOPPED)
+            self._update(proxy_status=ProxyStatus.STOPPED, proxy_start_retry_safe=False)
+
+    def _is_safe_pre_permit_failure(self, error: Exception) -> bool:
+        """Allow automatic retry only for failures before permit issuance."""
+        code = getattr(error, "code", None)
+        return getattr(code, "value", code) in {
+            "TargetUnavailable",
+            "ChallengeUnavailable",
+            "HeartbeatUnavailable",
+        }
 
     def _launch_tweaker(self, executable: str) -> None:
         state = self.state

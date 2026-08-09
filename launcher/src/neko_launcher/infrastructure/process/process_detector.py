@@ -24,6 +24,10 @@ class TargetProcess:
     creation_identity: int
 
 
+class ProcessObservationUnavailable(RuntimeError):
+    """The process table could not be observed; this is not evidence of exit."""
+
+
 class ExactPso2TargetDetector:
     """Bounded, cancellable detector for one exact pso2.exe process identity."""
 
@@ -45,7 +49,11 @@ class ExactPso2TargetDetector:
             raise ValueError("target timeout must be positive")
         deadline = monotonic() + timeout
         while not cancellation.is_set():
-            for process in self._snapshot():
+            try:
+                snapshot = self._snapshot()
+            except ProcessObservationUnavailable:
+                snapshot = ()
+            for process in snapshot:
                 if process.image_name == "pso2.exe":
                     return process
             remaining = deadline - monotonic()
@@ -63,7 +71,9 @@ class ExactPso2TargetDetector:
         )
 
 
-def is_any_process_running(names: Sequence[str] | FrozenSet[str] = PSO2_PROCESS_NAMES) -> bool:
+def is_any_process_running(
+    names: Sequence[str] | FrozenSet[str] = PSO2_PROCESS_NAMES,
+) -> bool | None:
     """Return *True* if any process whose name is in *names* is running.
 
     On Windows this shells out to ``tasklist`` which is available on all
@@ -76,9 +86,9 @@ def is_any_process_running(names: Sequence[str] | FrozenSet[str] = PSO2_PROCESS_
             return _check_windows(lower_names)
         return _check_posix(lower_names)
     except Exception:
-        # If the detection mechanism itself fails we must not crash the
-        # launcher – simply report "not detected".
-        return False
+        # Preserve the previous observation. An observation failure is not
+        # evidence that the game exited and must not stop a healthy runtime.
+        return None
 
 
 def _check_windows(lower_names: set[str]) -> bool:
@@ -89,6 +99,7 @@ def _check_windows(lower_names: set[str]) -> bool:
         timeout=5,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    result.check_returncode()
     for line in result.stdout.splitlines():
         # Each CSV line starts with "\"ImageName.exe\"", ...
         parts = line.split(",", 1)
@@ -107,6 +118,7 @@ def _check_posix(lower_names: set[str]) -> bool:
         text=True,
         timeout=5,
     )
+    result.check_returncode()
     for line in result.stdout.splitlines():
         comm = line.strip().lower()
         if comm in lower_names:
@@ -115,7 +127,7 @@ def _check_posix(lower_names: set[str]) -> bool:
 
 
 def _snapshot_processes() -> tuple[TargetProcess, ...]:
-    """Return a sanitized process identity snapshot; detection errors fail closed."""
+    """Return a sanitized snapshot while preserving observation failures."""
     try:
         if os.name == "nt":
             result = subprocess.run(
@@ -125,6 +137,7 @@ def _snapshot_processes() -> tuple[TargetProcess, ...]:
                 timeout=5,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            result.check_returncode()
             processes: list[TargetProcess] = []
             for row in csv.reader(StringIO(result.stdout)):
                 if len(row) < 2:
@@ -134,8 +147,11 @@ def _snapshot_processes() -> tuple[TargetProcess, ...]:
                 except ValueError:
                     continue
                 creation_identity = _windows_creation_identity(pid)
-                if creation_identity is not None:
-                    processes.append(TargetProcess(pid, row[0], creation_identity))
+                if creation_identity is None:
+                    if row[0].casefold() == "pso2.exe":
+                        raise ProcessObservationUnavailable
+                    continue
+                processes.append(TargetProcess(pid, row[0], creation_identity))
             return tuple(processes)
 
         result = subprocess.run(
@@ -144,6 +160,7 @@ def _snapshot_processes() -> tuple[TargetProcess, ...]:
             text=True,
             timeout=5,
         )
+        result.check_returncode()
         processes = []
         for line in result.stdout.splitlines():
             pid, separator, image = line.strip().partition(" ")
@@ -159,8 +176,8 @@ def _snapshot_processes() -> tuple[TargetProcess, ...]:
                     TargetProcess(numeric_pid, image.strip(), creation_identity)
                 )
         return tuple(processes)
-    except Exception:
-        return ()
+    except Exception as exc:
+        raise ProcessObservationUnavailable from exc
 
 
 def _windows_creation_identity(pid: int) -> int | None:

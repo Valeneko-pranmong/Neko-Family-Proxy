@@ -109,6 +109,7 @@ class AppState:
     entitlement: Entitlement | None = None
     session_id: str | None = None
     proxy_status: ProxyStatus = ProxyStatus.STOPPED
+    proxy_start_retry_safe: bool = False
     game_status: GameStatus = GameStatus.STOPPED
     game_process_running: bool = False
     deferred_session_revocation_reason: str | None = None

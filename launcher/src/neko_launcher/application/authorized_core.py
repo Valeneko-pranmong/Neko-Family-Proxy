@@ -22,6 +22,7 @@ class AuthorizedCoreErrorCode(str, Enum):
     RUNNING_NOT_REACHED = "RunningNotReached"
     PERMIT_UNAVAILABLE = "PermitUnavailable"
     CHALLENGE_UNAVAILABLE = "ChallengeUnavailable"
+    PROCESS_OBSERVATION_UNAVAILABLE = "ProcessObservationUnavailable"
 
 
 class PermitDiagnosticCode(str, Enum):
@@ -57,6 +58,9 @@ _PUBLIC_ERROR_MESSAGES = {
     AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE: "authorization permit is unavailable",
     AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE: (
         "authorization challenge is unavailable"
+    ),
+    AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE: (
+        "target process observation is unavailable"
     ),
 }
 
@@ -468,7 +472,7 @@ class AuthorizedCoreOrchestrator:
                     lambda: self._channel.request_challenge(
                         self._correlation_id(), self._timeouts.challenge
                     ),
-                    AuthorizedCoreErrorCode.ADAPTER_FAILURE,
+                    AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE,
                     stage="CHALLENGE_REQUEST",
                 )
                 self._require_target(target)
@@ -552,7 +556,7 @@ class AuthorizedCoreOrchestrator:
     def _require_target(self, target: object) -> None:
         running = self._invoke_adapter(
             lambda: self._detector.is_same_target_still_running(target),
-            AuthorizedCoreErrorCode.TARGET_EXITED,
+            AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE,
             stage="TARGET_RECHECK",
         )
         if not running:
@@ -592,6 +596,10 @@ class AuthorizedCoreOrchestrator:
     def _require_not_cancelled(cancellation: Event) -> None:
         if cancellation.is_set():
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.CANCELLED)
+
+    def stop(self) -> None:
+        """Best-effort typed stop followed by bounded owned-process cleanup."""
+        self._cleanup()
 
     def _cleanup(self) -> None:
         try:

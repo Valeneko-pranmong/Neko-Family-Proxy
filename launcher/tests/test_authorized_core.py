@@ -409,6 +409,22 @@ def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> 
     ]
 
 
+def test_challenge_transport_failure_is_typed_safe_pre_permit_failure() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+
+    def fail_challenge(*args: object, **kwargs: object) -> CoreChallenge:
+        raise RuntimeError("transient challenge transport failure")
+
+    orchestrator._channel.request_challenge = fail_challenge  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE
+    assert "backend.permit" not in calls
+    assert calls[-2:] == ["core.stop", "host.stop"]
+
+
 def test_replaced_session_fails_before_core_host_start() -> None:
     orchestrator, calls, _, _ = build_orchestrator()
     orchestrator._precondition.available = False  # type: ignore[attr-defined]
@@ -452,6 +468,21 @@ def test_authority_request_uses_target_binding_without_server_owned_identity_fie
     assert request["scope"] == "proxy:start"
     assert request["configuration_digest"] == channel.start_command.configuration_digest
     assert set(request).isdisjoint({"sub", "sid", "iid", "lid", "installation_key_hash"})
+
+
+def test_target_observation_failure_is_not_reported_as_target_exit() -> None:
+    orchestrator, calls, detector, _ = build_orchestrator()
+
+    def fail_observation(target: Target) -> bool:
+        raise RuntimeError("transient process observation failure")
+
+    detector.is_same_target_still_running = fail_observation  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE
+    assert calls == ["backend.heartbeat"]
 
 
 def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
@@ -534,6 +565,15 @@ def test_owned_process_kill_failure_does_not_replace_sanitized_start_error() -> 
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert calls[-2:] == ["host.stop", "host.kill"]
+
+
+def test_public_stop_uses_protocol_then_kills_owned_host_on_graceful_timeout() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator._process.stop_gracefully = lambda timeout: False  # type: ignore[method-assign]
+
+    orchestrator.stop()
+
+    assert calls == ["core.stop", "host.kill"]
 
 
 def test_orchestrator_exposes_no_alternate_unvalidated_start_entry() -> None:

@@ -428,6 +428,21 @@ def test_detected_pso2_starts_proxy_only_when_entitlement_is_valid(
     assert window._controller.state.game_process_running is True  # type: ignore[attr-defined]
 
 
+def test_process_observation_error_preserves_running_game_and_proxy_state(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._on_game_detected(True)
+    submitted_before = len(window._submitted_work)  # type: ignore[attr-defined]
+
+    window._on_game_detected(None)
+
+    assert window._controller.state.game_process_running is True
+    assert len(window._submitted_work) == submitted_before  # type: ignore[attr-defined]
+
+
 def test_detected_pso2_attempts_proxy_only_once_until_game_exits(tmp_path: Path) -> None:
     tweaker = tmp_path / "Tweaker.exe"
     tweaker.touch()
@@ -439,6 +454,22 @@ def test_detected_pso2_attempts_proxy_only_once_until_game_exits(tmp_path: Path)
     assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
 
     window._on_game_detected(False)
+    window._on_game_detected(True)
+
+    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
+
+
+def test_safe_pre_permit_failure_retries_while_same_game_remains(tmp_path: Path) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._on_game_detected(True)
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.FAILED,
+        proxy_start_retry_safe=True,
+    )
+
     window._on_game_detected(True)
 
     assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
