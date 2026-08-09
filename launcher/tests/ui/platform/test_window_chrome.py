@@ -9,10 +9,19 @@ from neko_launcher.ui.platform.window_chrome import (
 
 @pytest.fixture
 def tk_root():
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
+    root = Mock(
+        spec=[
+            "after",
+            "after_cancel",
+            "geometry",
+            "winfo_exists",
+            "winfo_id",
+            "winfo_x",
+            "winfo_y",
+        ]
+    )
+    root.winfo_exists.return_value = True
+    return root
 
 class TestWindowDragHandler:
     @patch("neko_launcher.ui.platform.window_chrome.sys.platform", "win32")
