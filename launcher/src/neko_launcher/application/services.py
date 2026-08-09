@@ -66,9 +66,18 @@ class LauncherService:
         self._recovery_bound_password: str | None = None
         self._recovery_generation = 0
         self._recovery_lock = RLock()
+        self._session_lock = RLock()
         self._heartbeat_failures = 0
 
     def sign_up(
+        self,
+        username: str,
+        password: str,
+    ) -> RegistrationResult:
+        with self._session_lock:
+            return self._sign_up_locked(username, password)
+
+    def _sign_up_locked(
         self,
         username: str,
         password: str,
@@ -106,6 +115,10 @@ class LauncherService:
         return result
 
     def sign_in(self, username: str, password: str) -> None:
+        with self._session_lock:
+            self._sign_in_locked(username, password)
+
+    def _sign_in_locked(self, username: str, password: str) -> None:
         self._clear_recovery_session()
         username = username.strip().lower()
         self._validate_login_identifier(username, password)
@@ -242,6 +255,10 @@ class LauncherService:
         self._controller.sign_out()
 
     def restore_session(self) -> bool:
+        with self._session_lock:
+            return self._restore_session_locked()
+
+    def _restore_session_locked(self) -> bool:
         with self._recovery_lock:
             generation = self._recovery_generation
         try:
@@ -266,6 +283,10 @@ class LauncherService:
         return True
 
     def sign_out(self) -> None:
+        with self._session_lock:
+            self._sign_out_locked()
+
+    def _sign_out_locked(self) -> None:
         self._clear_recovery_session()
         if self._controller.state.proxy_status in {
             ProxyStatus.STARTING,
@@ -335,6 +356,10 @@ class LauncherService:
         return result
 
     def heartbeat(self) -> bool:
+        with self._session_lock:
+            return self._heartbeat_locked()
+
+    def _heartbeat_locked(self) -> bool:
         session_id = self._controller.state.session_id
         if not session_id:
             return False
@@ -390,6 +415,9 @@ class LauncherService:
                     "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"
                 ),
             }[termination]
+            # Claims made through this service are serialized by _session_lock.
+            # Keep this guard for defensive compatibility with direct controller
+            # event dispatchers used by older integrations.
             if self._controller.state.session_id is not None:
                 return True
             self._force_sign_out_safely()
@@ -437,6 +465,10 @@ class LauncherService:
             pass
 
     def _claim_session(self, *, allow_missing: bool) -> bool:
+        with self._session_lock:
+            return self._claim_session_locked(allow_missing=allow_missing)
+
+    def _claim_session_locked(self, *, allow_missing: bool) -> bool:
         try:
             claim = self._entitlement_gateway.claim_session(
                 self._product_code,
@@ -471,9 +503,16 @@ class LauncherService:
             except Exception:
                 pass
         try:
-            self._auth_gateway.clear_local_session()
+            # SupabaseGateway uses scope="local" so this revokes only the stale
+            # installation's refresh token, never the winning machine's tokens.
+            self._auth_gateway.sign_out()
         except Exception:
-            pass
+            try:
+                self._auth_gateway.clear_local_session()
+            except Exception:
+                # The controller must still fail closed and the caller must still
+                # publish the authoritative replacement/revocation message.
+                pass
         finally:
             self._heartbeat_failures = 0
             self._controller.sign_out()

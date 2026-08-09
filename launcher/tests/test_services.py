@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from threading import Event
+from threading import Event, Thread
 
 import pytest
 
@@ -35,6 +35,8 @@ class FakeGateway:
         self.heartbeat_alive = True
         self.heartbeat_error = False
         self.before_heartbeat: Callable[[], None] | None = None
+        self.heartbeat_started: Event | None = None
+        self.heartbeat_continue: Event | None = None
         self.signed_out = False
         self.sign_out_error = False
         self.local_session_cleared = False
@@ -108,6 +110,10 @@ class FakeGateway:
         self.proxy_stop_count += 1
 
     def heartbeat_session(self, session_id: str) -> bool:
+        if self.heartbeat_started is not None:
+            self.heartbeat_started.set()
+        if self.heartbeat_continue is not None:
+            self.heartbeat_continue.wait()
         if self.before_heartbeat is not None:
             self.before_heartbeat()
         if self.heartbeat_error:
@@ -276,8 +282,8 @@ def test_failed_heartbeat_revokes_launcher_session(
     gateway.heartbeat_alive = False
 
     assert service.heartbeat() is False
-    assert gateway.signed_out is False
-    assert gateway.local_session_cleared is True
+    assert gateway.signed_out is True
+    assert gateway.local_session_cleared is False
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
     assert controller.state.user_id is None
     assert controller.state.session_id is None
@@ -357,6 +363,39 @@ def test_reason_lookup_cannot_sign_out_a_session_claimed_after_invalidation(
     assert controller.state.session_id == "newer-session"
     assert controller.state.entitlement is not None
     assert gateway.signed_out is False
+
+
+def test_session_claim_waits_for_in_flight_heartbeat_cleanup(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+    gateway.termination_reason = SessionTerminationReason.REPLACED
+    gateway.heartbeat_started = Event()
+    gateway.heartbeat_continue = Event()
+    heartbeat_thread = Thread(target=service.heartbeat)
+    claim_finished = Event()
+
+    def sign_in_again() -> None:
+        service.sign_in("testuser", "password123")
+        claim_finished.set()
+
+    heartbeat_thread.start()
+    assert gateway.heartbeat_started.wait(timeout=1)
+    claim_thread = Thread(target=sign_in_again)
+    claim_thread.start()
+    assert claim_finished.wait(timeout=0.05) is False
+
+    gateway.heartbeat_continue.set()
+    heartbeat_thread.join(timeout=1)
+    claim_thread.join(timeout=1)
+
+    assert heartbeat_thread.is_alive() is False
+    assert claim_thread.is_alive() is False
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
 
 
 def test_failed_reason_lookup_signs_out_with_generic_revoked_message(
@@ -493,13 +532,29 @@ def test_a_b_c_a_sequence_has_no_local_permanent_installation_lock(
     assert gateway.claimed_installations == ["a" * 64] * 4
 
 
-def test_failed_heartbeat_uses_local_cleanup_without_global_auth_sign_out(
+def test_failed_heartbeat_uses_installation_local_auth_sign_out(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
     gateway.has_access = True
     service.sign_in("testuser", "password123")
     gateway.heartbeat_alive = False
+
+    assert service.heartbeat() is False
+
+    assert gateway.signed_out is True
+    assert gateway.local_session_cleared is False
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+
+
+def test_failed_local_auth_sign_out_falls_back_to_storage_cleanup(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_alive = False
+    gateway.sign_out_error = True
 
     assert service.heartbeat() is False
 
@@ -508,13 +563,15 @@ def test_failed_heartbeat_uses_local_cleanup_without_global_auth_sign_out(
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
 
 
-def test_failed_heartbeat_still_resets_controller_if_local_cleanup_errors(
+def test_failed_heartbeat_still_dispatches_replacement_if_local_cleanup_errors(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
     gateway.has_access = True
     service.sign_in("testuser", "password123")
     gateway.heartbeat_alive = False
+    gateway.termination_reason = SessionTerminationReason.REPLACED
+    gateway.sign_out_error = True
     gateway.clear_local_session_error = True
 
     assert service.heartbeat() is False
@@ -522,6 +579,10 @@ def test_failed_heartbeat_still_resets_controller_if_local_cleanup_errors(
     assert gateway.signed_out is False
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
     assert controller.state.session_id is None
+    assert controller.state.last_error == (
+        "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น "
+        "กรุณาเข้าสู่ระบบอีกครั้ง"
+    )
 
 
 def test_transient_heartbeat_errors_need_three_failures_before_revocation(

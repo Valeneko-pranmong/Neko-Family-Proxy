@@ -301,6 +301,24 @@ def test_session_heartbeat_polling_interval_is_bounded_to_thirty_seconds() -> No
     assert HEARTBEAT_INTERVAL_MS == 30_000
 
 
+def test_login_clears_password_before_background_authentication_finishes() -> None:
+    window = object.__new__(AppWindow)
+    window._service = FakeService()  # type: ignore[assignment]
+    window._login_email = FakeVariable("testuser")  # type: ignore[assignment]
+    window._login_password = FakeVariable("password123")  # type: ignore[assignment]
+    submitted: list[tuple[Any, Any]] = []
+    window._submit = (  # type: ignore[method-assign]
+        lambda work, on_success=None: submitted.append((work, on_success))
+    )
+
+    window._login()
+
+    assert window._login_password.get() == ""
+    assert len(submitted) == 1
+    submitted[0][0]()
+    assert window._service.sign_ins == [("testuser", "password123")]  # type: ignore[attr-defined]
+
+
 def test_empty_notification_restores_default_header_subtitle(monkeypatch: Any) -> None:
     window = object.__new__(AppWindow)
     window._header_message = FakeLabel()  # type: ignore[assignment]

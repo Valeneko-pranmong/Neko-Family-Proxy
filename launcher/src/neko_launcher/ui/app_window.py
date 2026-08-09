@@ -553,11 +553,11 @@ class AppWindow:
     # Auth actions (callbacks → service via _submit)
     # ------------------------------------------------------------------
     def _login(self) -> None:
+        username = self._login_email.get()
+        password = self._login_password.get()
+        self._login_password.set("")
         self._submit(
-            lambda: self._service.sign_in(
-                self._login_email.get(),
-                self._login_password.get(),
-            ),
+            lambda: self._service.sign_in(username, password),
             self._login_succeeded,
         )
 
