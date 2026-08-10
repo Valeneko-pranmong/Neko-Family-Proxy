@@ -45,6 +45,7 @@ const CORRELATION = /^[0-9a-f]{32}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const PERMIT_SECONDS = 30;
+const PRODUCTION_KID = "neko-prod-key-2";
 
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
@@ -123,9 +124,7 @@ async function signPermit(
   state: AuthorizationState,
   deps: Dependencies,
 ): Promise<string> {
-  if (
-    !deps.privateKeyPem || !deps.kid || !/^[\x21-\x7e]{1,128}$/.test(deps.kid)
-  ) {
+  if (!deps.privateKeyPem || deps.kid !== PRODUCTION_KID) {
     throw new Error("missing signing configuration");
   }
   const key = await importPrivateKey(deps.privateKeyPem);

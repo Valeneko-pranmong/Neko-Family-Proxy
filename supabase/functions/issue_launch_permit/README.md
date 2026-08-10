@@ -1,9 +1,7 @@
 # `issue_launch_permit` production candidate
 
-> **Status: LOCAL CANDIDATE / NOT DEPLOYED — reviewed 9 August 2026.**
-> Production remains blocked until the forward migration is reviewed/applied in
-> staging, the configured signing private key is proven to match Core's approved
-> bundled public key, and cross-repository integration/security review passes.
+> **Status: PRODUCTION DEPLOYMENT CANDIDATE — signing generation 2.**
+> Deployment requires secure secret provisioning and exact-artifact crypto proof.
 
 The function validates the caller's Supabase access token with Supabase Auth,
 resolves the authoritative Launcher session/license state through a narrow
@@ -70,12 +68,12 @@ Header is exactly `alg=RS256`, `typ=neko-launch+jwt`, and server-configured
 Required server-only configuration:
 
 - `RS256_PRIVATE_KEY`: PKCS#8 PEM private key
-- `RS256_KID`: exact key ID accepted by Core
+- `RS256_KID`: `neko-prod-key-2`
 - standard Supabase `SUPABASE_URL` and `SUPABASE_ANON_KEY`
 
-Core source currently pins `kid=neko-prod-key-1` and an immutable bundled RSA
-public key. Do not generate, rotate, or provision production signing material
-until custody review proves the backend private key matches that public key.
+Core accepts only `kid=neko-prod-key-2` and its immutable bundled RSA public key.
+`neko-prod-key-1` is PRE-LAUNCH RETIRED and is not an accepted release contract.
+The private key remains only in approved server secret custody.
 
 ## Replay, replacement, and rate policy
 

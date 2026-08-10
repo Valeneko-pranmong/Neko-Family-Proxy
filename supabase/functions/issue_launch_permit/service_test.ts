@@ -92,7 +92,7 @@ async function harness(overrides: Partial<Dependencies> = {}) {
         : null,
     authorize: async () => activeState,
     privateKeyPem: keyPair.privateKeyPem,
-    kid: "test-key-1",
+    kid: "neko-prod-key-2",
     nowSeconds: () => 2_000_000_000,
     randomUUID: () => crypto.randomUUID(),
     log: (message) => logs.push(message),
@@ -242,6 +242,12 @@ test("missing signing configuration returns sanitized server error", async () =>
   assert.deepEqual(json, { error: "AuthorizationUnavailable" });
 });
 
+test("retired production key ID is rejected as signing misconfiguration", async () => {
+  const { result, json } = await response({ kid: "neko-prod-key-1" });
+  assert.equal(result.status, 500);
+  assert.deepEqual(json, { error: "AuthorizationUnavailable" });
+});
+
 test("malformed signing key returns sanitized server error", async () => {
   const { result, json, logs } = await response({
     privateKeyPem: PRIVATE_KEY_SENTINEL,
@@ -262,7 +268,7 @@ test("permit identity and transaction claims are exact and server-derived", asyn
   assert.deepEqual(header, {
     alg: "RS256",
     typ: "neko-launch+jwt",
-    kid: "test-key-1",
+    kid: "neko-prod-key-2",
   });
   assert.equal(payload.sub, USER_ID);
   assert.equal(payload.sid, LAUNCHER_SESSION_ID);
@@ -339,7 +345,7 @@ test("wrong signature, issuer, audience, binding, expiry, and kid are rejected b
     configurationDigest: CFG,
     targetPid: 4242,
     now: 2_000_000_000,
-    kid: "test-key-1",
+    kid: "neko-prod-key-2",
     publicKey: keyPair.publicKey,
   };
   assert.equal(await verifyLocalPermit(permit, expected), true);

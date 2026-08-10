@@ -52,25 +52,23 @@ Inspected `E:\Github\NekoProxyCore` on `feature/neko-headless` at
 - Core validates 43-character unpadded base64url challenges, canonical config
   digest, target PID, exact known `kid`, and atomically consumes JTI replay state.
 - `ProductionPublicKeys.cs` and the bundled manifest pin
-  `kid=neko-prod-key-1` and one immutable RSA public key.
+  `kid=neko-prod-key-2` and one immutable RSA public key. The old
+  `neko-prod-key-1` contract is PRE-LAUNCH RETIRED and rejected.
 
-The remaining signing blocker is operational: no backend private-key custody or
-proof was available showing that configured `RS256_PRIVATE_KEY` matches the
-bundled Core public key. No key was generated, rotated, read, logged, or changed.
+The Phase 1 signing blocker was operational. Phase 2.5-K provisions generation 2
+under approved custody and requires proof that configured `RS256_PRIVATE_KEY`
+matches the bundled Core public key; only public fingerprints may be recorded.
 
 ## Deployment gates
 
 Before production deployment:
 
-1. Review and apply `20260809150000_bind_permits_to_auth_sessions.sql` to a
-   disposable/staging Supabase environment.
-2. Run database integration tests for A→B replacement, old/new heartbeat, RPC
-   denial/acceptance, profile/license transitions, grants, and RLS.
-3. Prove under approved key custody that `RS256_KID=neko-prod-key-1` and the
+1. Preserve the already-closed database migration and authorization gates.
+2. Prove under approved key custody that `RS256_KID=neko-prod-key-2` and the
    backend private key signs a permit accepted by the exact released Core public
    key; do not export the private key as evidence.
-4. Run real Launcher → hosted staging function → released Core integration.
-5. Obtain Backend Security/Core/Launcher review. Continuous renewal and S1 remain
+3. Run real Launcher → hosted function → released Core integration.
+4. Obtain Backend Security/Core/Launcher review. Continuous renewal and S1 remain
    separate release gates documented by the central handoff.
 
 No production database, Edge Function, secret, migration history, Launcher

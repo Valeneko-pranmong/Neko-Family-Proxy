@@ -11,7 +11,7 @@ This plan is ready for controlled execution only after the Phase 2 report has no
 1. Pin Launcher/Backend source and released Core artifacts by full commit and cryptographic hash.
 2. Require clean canonical branches and passing canonical Backend, Launcher, Core, disposable-database, hosted-staging, and Windows E2E evidence.
 3. Reconfirm the exact production project ref before every remote command. Do not rely on a saved link alone.
-4. Verify an approved production signing secret is already in custody and derives the public key pinned by the released Core under KID `neko-prod-key-1`. Record only KID, safe fingerprints, and pass/fail.
+4. Verify an approved production signing secret is already in custody and derives the public key pinned by the released Core under KID `neko-prod-key-2`. `neko-prod-key-1` is PRE-LAUNCH RETIRED and must remain rejected. Record only KID, safe fingerprints, and pass/fail.
 5. Export a production database backup/PITR recovery point and record the pre-change migration list, deployed Edge Function version, configuration, and safe signing-key fingerprints. Do not export secret values.
 6. Establish an operator, independent verifier, observation window, rollback owner, and a change freeze for Launcher session/permit changes.
 
@@ -57,11 +57,11 @@ Stop before Edge deployment on any mismatch, unexpected migration, grant expansi
 
 Inside approved custody, without printing or exporting the private key:
 
-1. Load the existing `RS256_PRIVATE_KEY` secret and derive only its public key/fingerprints.
-2. Compare them to the exact public key embedded in the released Core artifact for KID `neko-prod-key-1`.
+1. Load the approved generation-2 `RS256_PRIVATE_KEY` from custody and derive only its public key/fingerprints.
+2. Compare them to the exact public key embedded in the released Core artifact for KID `neko-prod-key-2`.
 3. Independently sign a synthetic non-production challenge and verify it with the exact released Core verifier when approved.
 4. Record only KID, safe fingerprints, Core build hash, and PASS/FAIL.
-5. Do not rotate, replace, or generate a production key during this deployment.
+5. Do not rotate or replace generation 2 after exact-artifact proof and secret provisioning begin.
 
 Stop if custody, provenance, KID, or fingerprints do not match exactly.
 
