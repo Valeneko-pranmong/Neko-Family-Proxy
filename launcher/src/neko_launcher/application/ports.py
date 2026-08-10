@@ -20,10 +20,16 @@ class EventPublisher(Protocol):
 
 
 class ProxyGateway(Protocol):
+    def has_owned_host(self) -> bool:
+        ...
+
     def start(self) -> None:
         ...
 
     def stop(self) -> None:
+        ...
+
+    def shutdown(self) -> None:
         ...
 
 

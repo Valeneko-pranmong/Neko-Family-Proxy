@@ -40,6 +40,13 @@ class AuthorizedProxyGateway:
         if status.kind is not CoreStatusKind.RUNNING:
             raise AuthorizedCoreError("authorized start did not reach Running")
 
+    def has_owned_host(self) -> bool:
+        return self._orchestrator.has_owned_host()
+
     def stop(self) -> None:
-        """Send typed stop and clean up only the Launcher-owned Core host."""
+        """Stop proxy runtime only while retaining the owned Core host."""
         self._orchestrator.stop()
+
+    def shutdown(self) -> None:
+        """Gracefully close the exact Core host owned by this Launcher."""
+        self._orchestrator.shutdown()

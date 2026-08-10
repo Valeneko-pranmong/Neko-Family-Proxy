@@ -10,6 +10,8 @@ from typing import Any
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    CoreControlError,
+    CoreControlFailureCode,
     CoreChallenge,
     CoreStatus,
     CoreStatusKind,
@@ -88,7 +90,7 @@ class NamedPipeCoreControlChannel:
     def _remaining(deadline: float) -> float:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            raise CoreControlError(CoreControlFailureCode.OPERATION_TIMEOUT)
         return remaining
 
     @staticmethod
@@ -122,8 +124,14 @@ class NamedPipeCoreControlChannel:
 
     def _require_owned_server(self, handle: Any) -> None:
         expected_pid = self._expected_server_pid()
-        if expected_pid is None or self._get_server_process_id(handle) != expected_pid:
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        try:
+            actual_pid = self._get_server_process_id(handle)
+        except OSError:
+            raise CoreControlError(
+                CoreControlFailureCode.PIPE_IDENTITY_MISMATCH
+            ) from None
+        if expected_pid is None or actual_pid != expected_pid:
+            raise CoreControlError(CoreControlFailureCode.PIPE_IDENTITY_MISMATCH)
 
     @classmethod
     def _read_frame(cls, handle: Any, deadline: float) -> bytes:
@@ -136,13 +144,16 @@ class NamedPipeCoreControlChannel:
                 time.sleep(min(0.01, cls._remaining(deadline)))
                 continue
             if not chunk:
-                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                # A PIPE_NOWAIT Windows handle may report an empty read while
+                # the verified server is still preparing its response.
+                time.sleep(min(0.01, cls._remaining(deadline)))
+                continue
             if chunk == b"\n":
                 if not payload:
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                    raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
                 return bytes(payload)
             payload.extend(chunk)
-        raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
 
     @classmethod
     def _write_all(cls, handle: Any, payload: bytes, deadline: float) -> None:
@@ -155,11 +166,12 @@ class NamedPipeCoreControlChannel:
                 time.sleep(min(0.01, cls._remaining(deadline)))
                 continue
             if written is None:
-                # Buffered Python file objects conventionally return the count,
-                # while lightweight/test pipe handles may consume all bytes.
-                return
+                # Raw non-blocking I/O returns None when it would block; no
+                # request bytes have been accepted yet.
+                time.sleep(min(0.01, cls._remaining(deadline)))
+                continue
             if written <= 0:
-                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
             offset += written
 
     def _send_and_receive(
@@ -178,7 +190,7 @@ class NamedPipeCoreControlChannel:
                     time.sleep(min(0.05, self._remaining(deadline)))
 
             if handle is None:
-                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                raise CoreControlError(CoreControlFailureCode.PIPE_UNAVAILABLE)
 
             with handle:
                 self._configure_nonblocking(handle)
@@ -187,7 +199,7 @@ class NamedPipeCoreControlChannel:
                     message, separators=(",", ":"), ensure_ascii=True
                 ).encode("utf-8")
                 if not 1 <= len(payload) <= self._MAX_PAYLOAD_BYTES:
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                    raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
                 self._write_all(handle, payload + b"\n", deadline)
 
                 response_bytes = self._read_frame(handle, deadline)
@@ -198,21 +210,21 @@ class NamedPipeCoreControlChannel:
                         object_pairs_hook=_reject_duplicate_fields,
                     )
                 except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                    raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
 
                 if not isinstance(response, dict):
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+                    raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
                 return response
 
         except AuthorizedCoreError:
             raise
         except Exception:
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
 
     @staticmethod
     def _require_correlation(res: dict[str, Any], expected: str) -> None:
         if res.get("correlationId") != expected:
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
 
     # ------------------------------------------------------------------
     # Public protocol
@@ -280,6 +292,31 @@ class NamedPipeCoreControlChannel:
         self._require_correlation(res, correlation_id)
 
         return self._parse_status(res)
+
+    def status(self, correlation_id: str, timeout: float) -> CoreStatus:
+        msg = {"type": "status", "correlationId": correlation_id}
+        res = self._send_and_receive(msg, timeout)
+
+        if res.get("type") != "statusResponse":
+            raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
+        self._require_correlation(res, correlation_id)
+
+        return self._parse_status(res)
+
+    def shutdown(self, correlation_id: str, timeout: float) -> CoreStatus:
+        msg = {"type": "shutdown", "correlationId": correlation_id}
+        res = self._send_and_receive(msg, timeout)
+
+        if res.get("type") != "shutdownResponse":
+            raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
+        self._require_correlation(res, correlation_id)
+        if res.get("succeeded") is not True:
+            raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
+
+        status = self._parse_status(res)
+        if status.kind is not CoreStatusKind.STOPPED:
+            raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
+        return status
 
     # ------------------------------------------------------------------
     # Internal

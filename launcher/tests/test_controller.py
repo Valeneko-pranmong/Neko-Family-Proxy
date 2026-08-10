@@ -23,12 +23,25 @@ from neko_launcher.infrastructure.event_bus import EventBus
 class FakeProxy:
     def __init__(self) -> None:
         self.running = False
+        self.host_owned = False
+        self.stop_count = 0
+        self.shutdown_count = 0
+
+    def has_owned_host(self) -> bool:
+        return self.host_owned
 
     def start(self) -> None:
         self.running = True
+        self.host_owned = True
 
     def stop(self) -> None:
         self.running = False
+        self.stop_count += 1
+
+    def shutdown(self) -> None:
+        self.running = False
+        self.host_owned = False
+        self.shutdown_count += 1
 
 class FakeGame:
     def __init__(self) -> None:
@@ -93,15 +106,40 @@ def test_shutdown_stops_only_launcher_owned_proxy_and_tweaker() -> None:
         )
     )
     controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(GameProcessStateChanged(True))
     controller.dispatch(StartProxyRequested())
     controller.dispatch(LaunchTweakerRequested("C:/Games/Tweaker.exe"))
 
     controller.shutdown()
 
     assert proxy.running is False
+    assert proxy.shutdown_count == 1
+    assert proxy.stop_count == 0
     assert game.running is False
     assert controller.state.proxy_status is ProxyStatus.STOPPED
     assert controller.state.game_status is GameStatus.STOPPED
+
+
+def test_logout_gracefully_shuts_down_owned_core_host() -> None:
+    bus = EventBus()
+    proxy = FakeProxy()
+    controller = ApplicationController(bus, proxy)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(
+            Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE)
+        )
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(GameProcessStateChanged(True))
+    controller.dispatch(StartProxyRequested())
+
+    controller.sign_out()
+
+    assert proxy.shutdown_count == 1
+    assert proxy.stop_count == 0
+    assert proxy.host_owned is False
+    assert controller.state.auth_status.value == "signed_out"
 
 
 def test_proxy_refuses_to_start_without_entitlement_and_session() -> None:
@@ -243,3 +281,6 @@ def test_proxy_stops_when_pso2_exits_while_entitlement_is_still_valid() -> None:
     assert proxy.running is False
     assert controller.state.proxy_status is ProxyStatus.STOPPED
     assert controller.state.session_id == "session-id"
+    assert proxy.stop_count == 1
+    assert proxy.shutdown_count == 0
+    assert proxy.host_owned is True

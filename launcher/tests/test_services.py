@@ -53,6 +53,8 @@ class FakeGateway:
         self.claimed_installations: list[str] = []
         self.proxy_running = False
         self.proxy_stop_count = 0
+        self.proxy_host_owned = False
+        self.proxy_shutdown_count = 0
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -104,10 +106,19 @@ class FakeGateway:
 
     def start(self) -> None:
         self.proxy_running = True
+        self.proxy_host_owned = True
+
+    def has_owned_host(self) -> bool:
+        return self.proxy_host_owned
 
     def stop(self) -> None:
         self.proxy_running = False
         self.proxy_stop_count += 1
+
+    def shutdown(self) -> None:
+        self.proxy_running = False
+        self.proxy_host_owned = False
+        self.proxy_shutdown_count += 1
 
     def heartbeat_session(self, session_id: str) -> bool:
         if self.heartbeat_started is not None:
@@ -480,7 +491,8 @@ def test_replaced_session_stops_proxy_and_uses_required_message(
     assert service.heartbeat() is False
 
     assert gateway.proxy_running is False
-    assert gateway.proxy_stop_count >= 1
+    assert gateway.proxy_shutdown_count == 1
+    assert gateway.proxy_stop_count == 0
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
     assert controller.state.session_id is None
     assert controller.state.entitlement is None

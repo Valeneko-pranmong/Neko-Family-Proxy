@@ -11,16 +11,13 @@ from neko_launcher.domain.events import (
     ErrorOccurred,
     LaunchTweakerRequested,
     SessionClaimed,
-    SessionRevoked,
     StartProxyRequested,
-    StopProxyRequested,
 )
 from neko_launcher.domain.models import (
     AuthStatus,
     CouponRedemption,
     Entitlement,
     EntitlementStatus,
-    ProxyStatus,
     RegistrationResult,
     SessionTerminationReason,
 )
@@ -288,11 +285,6 @@ class LauncherService:
 
     def _sign_out_locked(self) -> None:
         self._clear_recovery_session()
-        if self._controller.state.proxy_status in {
-            ProxyStatus.STARTING,
-            ProxyStatus.RUNNING,
-        }:
-            self._controller.dispatch(StopProxyRequested())
         session_id = self._controller.state.session_id
         if session_id:
             try:
@@ -420,7 +412,7 @@ class LauncherService:
             # event dispatchers used by older integrations.
             if self._controller.state.session_id is not None:
                 return True
-            self._force_sign_out_safely()
+            self._force_sign_out_safely(shutdown_core=False)
             self._controller.dispatch(ErrorOccurred(reason))
         return alive
 
@@ -433,6 +425,7 @@ class LauncherService:
 
     def shutdown(self, *, remote_release_grace: float = 0.75) -> None:
         self._clear_recovery_session()
+        session_id = self._controller.state.session_id
         if self._controller.state.auth_status in {
             AuthStatus.RECOVERY_CODE_ENTRY,
             AuthStatus.RECOVERY_VERIFYING,
@@ -442,8 +435,9 @@ class LauncherService:
         # Closing the launcher is explicit: clean up only child processes
         # that this launcher started, including Tweaker and ProxyCore.
         self._controller.shutdown()
-        session_id = self._controller.state.session_id
-        self._controller.dispatch(SessionRevoked("ปิดโปรแกรมแล้ว"))
+        self._controller.invalidate_session(
+            "ปิดโปรแกรมแล้ว", shutdown_core=False
+        )
         if session_id:
             # Releasing the server session is best-effort. PostgREST may wait
             # for a long network timeout, so never let that request keep a
@@ -488,14 +482,9 @@ class LauncherService:
             self._controller.dispatch(SessionClaimed(claim.session_id))
             return True
 
-    def _force_sign_out_safely(self) -> None:
+    def _force_sign_out_safely(self, *, shutdown_core: bool = True) -> None:
         """Fail closed locally without revoking other Supabase refresh tokens."""
         self._clear_recovery_session()
-        if self._controller.state.proxy_status in {
-            ProxyStatus.STARTING,
-            ProxyStatus.RUNNING,
-        }:
-            self._controller.dispatch(StopProxyRequested())
         session_id = self._controller.state.session_id
         if session_id:
             try:
@@ -515,7 +504,7 @@ class LauncherService:
                 pass
         finally:
             self._heartbeat_failures = 0
-            self._controller.sign_out()
+            self._controller.sign_out(shutdown_core=shutdown_core)
 
     def _clear_recovery_session(self) -> None:
         with self._recovery_lock:

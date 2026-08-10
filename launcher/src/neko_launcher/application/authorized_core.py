@@ -25,6 +25,44 @@ class AuthorizedCoreErrorCode(str, Enum):
     PROCESS_OBSERVATION_UNAVAILABLE = "ProcessObservationUnavailable"
 
 
+class CoreControlFailureCode(str, Enum):
+    """Transport failures that matter to owned-host lifecycle decisions."""
+
+    PIPE_UNAVAILABLE = "PipeUnavailable"
+    PIPE_IDENTITY_MISMATCH = "PipeIdentityMismatch"
+    OPERATION_TIMEOUT = "OperationTimeout"
+    RESPONSE_REJECTED = "ResponseRejected"
+
+
+class CoreShutdownFailureCode(str, Enum):
+    CORE_ALREADY_EXITED = "CORE_ALREADY_EXITED"
+    PIPE_UNAVAILABLE = "PIPE_UNAVAILABLE"
+    PIPE_IDENTITY_MISMATCH = "PIPE_IDENTITY_MISMATCH"
+    SHUTDOWN_REJECTED = "SHUTDOWN_REJECTED"
+    SHUTDOWN_TIMEOUT = "SHUTDOWN_TIMEOUT"
+    PROCESS_EXIT_TIMEOUT = "PROCESS_EXIT_TIMEOUT"
+
+
+class CoreShutdownError(RuntimeError):
+    """Exact failure from an owned Core host shutdown attempt."""
+
+    def __init__(
+        self,
+        code: CoreShutdownFailureCode,
+        *,
+        emergency_fallback_used: bool = False,
+    ) -> None:
+        self.code = code
+        self.emergency_fallback_used = emergency_fallback_used
+        super().__init__(code.value)
+
+
+@dataclass(frozen=True)
+class CoreShutdownResult:
+    exit_code: int
+    emergency_fallback_used: bool = False
+
+
 class PermitDiagnosticCode(str, Enum):
     """Development-only categories that never contain credential material."""
 
@@ -133,6 +171,14 @@ class AuthorizedCoreError(RuntimeError):
         if exception_class in safe_exception_classes:
             validated["exception_class"] = exception_class
         return validated
+
+
+class CoreControlError(AuthorizedCoreError):
+    """Sanitized control-channel failure with a stable internal category."""
+
+    def __init__(self, control_code: CoreControlFailureCode) -> None:
+        self.control_code = control_code
+        super().__init__(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
 
 class OpaquePermit:
@@ -278,9 +324,13 @@ class CoreProcessAdapter(Protocol):
 
     def wait_for_control_channel(self, timeout: float) -> None: ...
 
-    def stop_gracefully(self, timeout: float) -> bool: ...
+    def owned_process_id(self) -> int | None: ...
 
-    def kill_owned_process_after_timeout(self) -> None: ...
+    def wait_for_owned_process_exit(self, expected_pid: int, timeout: float) -> int: ...
+
+    def terminate_owned_process_after_timeout(
+        self, expected_pid: int, timeout: float
+    ) -> int: ...
 
 
 class CoreControlChannel(Protocol):
@@ -295,6 +345,10 @@ class CoreControlChannel(Protocol):
     ) -> CoreStatus: ...
 
     def stop(self, correlation_id: str, timeout: float) -> CoreStatus: ...
+
+    def status(self, correlation_id: str, timeout: float) -> CoreStatus: ...
+
+    def shutdown(self, correlation_id: str, timeout: float) -> CoreStatus: ...
 
 
 class LaunchPermitGateway(Protocol):
@@ -536,7 +590,7 @@ class AuthorizedCoreOrchestrator:
             if failure is not None and host_start_attempted:
                 if self._diagnostics:
                     self._diagnostics.record_stage("CLEANUP")
-                self._cleanup()
+                self._cleanup_owned_host_safely()
         finally:
             self._single_flight.release()
 
@@ -598,23 +652,104 @@ class AuthorizedCoreOrchestrator:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.CANCELLED)
 
     def stop(self) -> None:
-        """Best-effort typed stop followed by bounded owned-process cleanup."""
-        self._cleanup()
+        """Stop the proxy runtime only; keep the exact owned Core host alive."""
+        status = self._channel.stop(self._correlation_id(), self._timeouts.start)
+        if status.kind is not CoreStatusKind.STOPPED:
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
-    def _cleanup(self) -> None:
+    def has_owned_host(self) -> bool:
+        return self._process.owned_process_id() is not None
+
+    def shutdown(self) -> CoreShutdownResult:
+        """Gracefully close the exact owned Core host using its trusted pipe."""
+        expected_pid = self._process.owned_process_id()
+        if expected_pid is None:
+            raise CoreShutdownError(CoreShutdownFailureCode.CORE_ALREADY_EXITED)
+
         try:
-            self._channel.stop(self._correlation_id(), self._timeouts.start)
+            status = self._channel.shutdown(
+                self._correlation_id(), self._timeouts.start
+            )
+        except CoreControlError as exc:
+            code = {
+                CoreControlFailureCode.PIPE_UNAVAILABLE: (
+                    CoreShutdownFailureCode.PIPE_UNAVAILABLE
+                ),
+                CoreControlFailureCode.PIPE_IDENTITY_MISMATCH: (
+                    CoreShutdownFailureCode.PIPE_IDENTITY_MISMATCH
+                ),
+                CoreControlFailureCode.OPERATION_TIMEOUT: (
+                    CoreShutdownFailureCode.SHUTDOWN_TIMEOUT
+                ),
+                CoreControlFailureCode.RESPONSE_REJECTED: (
+                    CoreShutdownFailureCode.SHUTDOWN_REJECTED
+                ),
+            }[exc.control_code]
+            fallback_used = self._emergency_terminate_exact_child(expected_pid)
+            raise CoreShutdownError(
+                code, emergency_fallback_used=fallback_used
+            ) from None
         except Exception:
+            fallback_used = self._emergency_terminate_exact_child(expected_pid)
+            raise CoreShutdownError(
+                CoreShutdownFailureCode.SHUTDOWN_REJECTED,
+                emergency_fallback_used=fallback_used,
+            ) from None
+
+        if status.kind is not CoreStatusKind.STOPPED:
+            fallback_used = self._emergency_terminate_exact_child(expected_pid)
+            raise CoreShutdownError(
+                CoreShutdownFailureCode.SHUTDOWN_REJECTED,
+                emergency_fallback_used=fallback_used,
+            )
+
+        try:
+            exit_code = self._process.wait_for_owned_process_exit(
+                expected_pid, self._timeouts.start
+            )
+        except Exception:
+            fallback_used = self._emergency_terminate_exact_child(
+                expected_pid, timeout_already_expired=True
+            )
+            raise CoreShutdownError(
+                CoreShutdownFailureCode.PROCESS_EXIT_TIMEOUT,
+                emergency_fallback_used=fallback_used,
+            ) from None
+
+        if exit_code != 0:
+            raise CoreShutdownError(CoreShutdownFailureCode.SHUTDOWN_REJECTED)
+        return CoreShutdownResult(exit_code=exit_code)
+
+    def _cleanup_owned_host_safely(self) -> None:
+        try:
+            self.shutdown()
+        except CoreShutdownError:
+            # The original start error remains authoritative. shutdown() has
+            # already applied the exact-child emergency cleanup policy.
             pass
-        try:
-            stopped = self._process.stop_gracefully(self._timeouts.start)
-        except Exception:
-            stopped = False
-        if not stopped:
+
+    def _emergency_terminate_exact_child(
+        self,
+        expected_pid: int,
+        *,
+        timeout_already_expired: bool = False,
+    ) -> bool:
+        if not timeout_already_expired:
             try:
-                self._process.kill_owned_process_after_timeout()
+                self._process.wait_for_owned_process_exit(
+                    expected_pid, self._timeouts.start
+                )
             except Exception:
                 pass
+            else:
+                return False
+        try:
+            self._process.terminate_owned_process_after_timeout(
+                expected_pid, self._timeouts.start
+            )
+        except Exception:
+            return False
+        return True
 
     @staticmethod
     def _correlation_id() -> str:

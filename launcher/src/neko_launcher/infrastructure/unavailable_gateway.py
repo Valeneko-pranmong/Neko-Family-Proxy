@@ -14,10 +14,16 @@ from neko_launcher.domain.models import (
 class AuthorizationPendingProxyGateway:
     """Fail closed until the approved Backend/Core protocol is wired."""
 
+    def has_owned_host(self) -> bool:
+        return False
+
     def start(self) -> None:
         raise RuntimeError("authorization integration is unavailable")
 
     def stop(self) -> None:
+        return
+
+    def shutdown(self) -> None:
         return
 
 

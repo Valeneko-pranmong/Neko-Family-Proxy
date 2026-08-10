@@ -9,6 +9,10 @@ import pytest
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    CoreControlError,
+    CoreControlFailureCode,
+    CoreShutdownError,
+    CoreShutdownFailureCode,
     AuthorizedCoreOrchestrator,
     CoreChallenge,
     CoreStatus,
@@ -80,19 +84,35 @@ class FakeDetector:
 class FakeProcess:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
+        self.live = False
+        self.exit_code = 0
+        self.exit_timeout = False
 
     def start_host_without_secrets(self) -> None:
         self.calls.append("host.start")
+        self.live = True
 
     def wait_for_control_channel(self, timeout: float) -> None:
         self.calls.append("host.ready")
 
-    def stop_gracefully(self, timeout: float) -> bool:
-        self.calls.append("host.stop")
-        return True
+    def owned_process_id(self) -> int | None:
+        return 4321 if self.live else None
 
-    def kill_owned_process_after_timeout(self) -> None:
+    def wait_for_owned_process_exit(self, expected_pid: int, timeout: float) -> int:
+        assert expected_pid == 4321
+        self.calls.append("host.wait")
+        if self.exit_timeout:
+            raise TimeoutError
+        self.live = False
+        return self.exit_code
+
+    def terminate_owned_process_after_timeout(
+        self, expected_pid: int, timeout: float
+    ) -> int:
+        assert expected_pid == 4321
         self.calls.append("host.kill")
+        self.live = False
+        return 1
 
 
 class FakeChannel:
@@ -119,6 +139,10 @@ class FakeChannel:
 
     def stop(self, correlation_id: str, timeout: float) -> CoreStatus:
         self.calls.append("core.stop")
+        return CoreStatus(CoreStatusKind.STOPPED)
+
+    def shutdown(self, correlation_id: str, timeout: float) -> CoreStatus:
+        self.calls.append("core.shutdown")
         return CoreStatus(CoreStatusKind.STOPPED)
 
 
@@ -422,7 +446,7 @@ def test_challenge_transport_failure_is_typed_safe_pre_permit_failure() -> None:
 
     assert raised.value.code is AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE
     assert "backend.permit" not in calls
-    assert calls[-2:] == ["core.stop", "host.stop"]
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
 
 
 def test_replaced_session_fails_before_core_host_start() -> None:
@@ -500,7 +524,7 @@ def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert "core.start" not in calls
-    assert calls[-2:] == ["core.stop", "host.stop"]
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
 
 
 def test_non_running_start_response_fails_and_cleans_up() -> None:
@@ -510,18 +534,18 @@ def test_non_running_start_response_fails_and_cleans_up() -> None:
     with pytest.raises(AuthorizedCoreError, match="authorized start did not reach Running"):
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
-    assert calls[-2:] == ["core.stop", "host.stop"]
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
 
 
-def test_cleanup_kills_only_owned_host_when_graceful_stop_fails() -> None:
+def test_cleanup_kills_only_owned_host_after_graceful_exit_timeout() -> None:
     orchestrator, calls, _, channel = build_orchestrator()
     channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
-    orchestrator._process.stop_gracefully = lambda timeout: False  # type: ignore[method-assign]
+    orchestrator._process.exit_timeout = True  # type: ignore[attr-defined]
 
     with pytest.raises(AuthorizedCoreError):
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
-    assert calls[-2:] == ["core.stop", "host.kill"]
+    assert calls[-3:] == ["core.shutdown", "host.wait", "host.kill"]
 
 
 def test_partial_host_start_failure_triggers_owned_process_cleanup() -> None:
@@ -529,6 +553,7 @@ def test_partial_host_start_failure_triggers_owned_process_cleanup() -> None:
 
     def partially_start_then_fail() -> None:
         calls.append("host.start")
+        orchestrator._process.live = True  # type: ignore[attr-defined]
         raise RuntimeError("sentinel-partial-start-detail")
 
     orchestrator._process.start_host_without_secrets = partially_start_then_fail  # type: ignore[method-assign]
@@ -539,24 +564,20 @@ def test_partial_host_start_failure_triggers_owned_process_cleanup() -> None:
     assert str(raised.value) == "authorized start failed"
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
-    assert calls[-2:] == ["core.stop", "host.stop"]
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
 
 
 def test_owned_process_kill_failure_does_not_replace_sanitized_start_error() -> None:
     orchestrator, calls, _, channel = build_orchestrator()
     channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
 
-    def fail_gracefully(timeout: float) -> bool:
-        calls.append("host.stop")
-        return False
+    orchestrator._process.exit_timeout = True  # type: ignore[attr-defined]
 
-    orchestrator._process.stop_gracefully = fail_gracefully  # type: ignore[method-assign]
-
-    def fail_kill() -> None:
+    def fail_kill(expected_pid: int, timeout: float) -> int:
         calls.append("host.kill")
         raise RuntimeError("sentinel-kill-detail")
 
-    orchestrator._process.kill_owned_process_after_timeout = fail_kill  # type: ignore[method-assign]
+    orchestrator._process.terminate_owned_process_after_timeout = fail_kill  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -564,16 +585,105 @@ def test_owned_process_kill_failure_does_not_replace_sanitized_start_error() -> 
     assert str(raised.value) == "authorized start did not reach Running"
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
-    assert calls[-2:] == ["host.stop", "host.kill"]
+    assert calls[-2:] == ["host.wait", "host.kill"]
 
 
-def test_public_stop_uses_protocol_then_kills_owned_host_on_graceful_timeout() -> None:
+def test_public_stop_is_runtime_only_and_does_not_wait_for_host_exit() -> None:
     orchestrator, calls, _, _ = build_orchestrator()
-    orchestrator._process.stop_gracefully = lambda timeout: False  # type: ignore[method-assign]
 
     orchestrator.stop()
 
-    assert calls == ["core.stop", "host.kill"]
+    assert calls == ["core.stop"]
+
+
+def test_shutdown_waits_for_exact_owned_host_normal_exit() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator._process.live = True  # type: ignore[attr-defined]
+
+    result = orchestrator.shutdown()
+
+    assert result.exit_code == 0
+    assert result.emergency_fallback_used is False
+    assert calls == ["core.shutdown", "host.wait"]
+
+
+def test_shutdown_rejects_unowned_or_already_exited_core() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+
+    with pytest.raises(CoreShutdownError) as raised:
+        orchestrator.shutdown()
+
+    assert raised.value.code is CoreShutdownFailureCode.CORE_ALREADY_EXITED
+    assert calls == []
+
+
+def test_shutdown_classifies_pipe_identity_mismatch_and_fallback() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator._process.live = True  # type: ignore[attr-defined]
+    orchestrator._process.exit_timeout = True  # type: ignore[attr-defined]
+
+    def mismatch(*args: object, **kwargs: object) -> CoreStatus:
+        raise CoreControlError(CoreControlFailureCode.PIPE_IDENTITY_MISMATCH)
+
+    orchestrator._channel.shutdown = mismatch  # type: ignore[method-assign]
+
+    with pytest.raises(CoreShutdownError) as raised:
+        orchestrator.shutdown()
+
+    assert raised.value.code is CoreShutdownFailureCode.PIPE_IDENTITY_MISMATCH
+    assert raised.value.emergency_fallback_used is True
+    assert calls == ["host.wait", "host.kill"]
+
+
+@pytest.mark.parametrize(
+    ("control_code", "shutdown_code"),
+    [
+        (
+            CoreControlFailureCode.PIPE_UNAVAILABLE,
+            CoreShutdownFailureCode.PIPE_UNAVAILABLE,
+        ),
+        (
+            CoreControlFailureCode.OPERATION_TIMEOUT,
+            CoreShutdownFailureCode.SHUTDOWN_TIMEOUT,
+        ),
+        (
+            CoreControlFailureCode.RESPONSE_REJECTED,
+            CoreShutdownFailureCode.SHUTDOWN_REJECTED,
+        ),
+    ],
+)
+def test_shutdown_maps_exact_control_failure_categories(
+    control_code: CoreControlFailureCode,
+    shutdown_code: CoreShutdownFailureCode,
+) -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator._process.live = True  # type: ignore[attr-defined]
+    orchestrator._process.exit_timeout = True  # type: ignore[attr-defined]
+
+    def fail(*args: object, **kwargs: object) -> CoreStatus:
+        raise CoreControlError(control_code)
+
+    orchestrator._channel.shutdown = fail  # type: ignore[method-assign]
+
+    with pytest.raises(CoreShutdownError) as raised:
+        orchestrator.shutdown()
+
+    assert raised.value.code is shutdown_code
+    assert raised.value.emergency_fallback_used is True
+    assert calls == ["host.wait", "host.kill"]
+
+
+def test_shutdown_classifies_process_exit_timeout_and_fallback() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+    orchestrator._process.live = True  # type: ignore[attr-defined]
+    orchestrator._process.exit_timeout = True  # type: ignore[attr-defined]
+
+    with pytest.raises(CoreShutdownError) as raised:
+        orchestrator.shutdown()
+
+    assert raised.value.code is CoreShutdownFailureCode.PROCESS_EXIT_TIMEOUT
+    assert raised.value.emergency_fallback_used is True
+    assert calls == ["core.shutdown", "host.wait", "host.kill"]
 
 
 def test_orchestrator_exposes_no_alternate_unvalidated_start_entry() -> None:

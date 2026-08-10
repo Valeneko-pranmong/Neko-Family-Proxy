@@ -69,7 +69,12 @@ class WindowsCoreProcessAdapter:
 
         No secrets appear in *argv* or *env*.
         """
+        if self._process is not None and self._process.poll() is None:
+            # A runtime-only STOP intentionally keeps this exact owned host.
+            # Reuse it instead of spawning a competing singleton instance.
+            return
         self._close_debug_streams()
+        self._process = None
         if self._diagnostics:
             self._diagnostics.record_stage(
                 "HOST_START",
@@ -169,46 +174,56 @@ class WindowsCoreProcessAdapter:
                         f"Core exited before opening its control channel ({return_code})"
                     )
 
-            if Path(pipe_path).exists():
+            if self._wait_named_pipe(pipe_path, 100):
                 if self._diagnostics:
                     self._diagnostics.record_stage("CONTROL_CHANNEL_WAIT", success=True)
                 return
-            time.sleep(0.1)
+            time.sleep(0.05)
 
         exc = TimeoutError(f"Timeout waiting for control channel pipe {self._pipe_name}")
         if self._diagnostics:
             self._diagnostics.record_exception(exc, "CONTROL_CHANNEL_WAIT")
         raise exc
 
-    def stop_gracefully(self, timeout: float) -> bool:
-        """Terminate the process and wait up to *timeout* seconds.
+    @staticmethod
+    def _wait_named_pipe(pipe_path: str, timeout_ms: int) -> bool:
+        """Observe Windows pipe readiness without opening an unverified channel."""
+        import ctypes
 
-        Returns ``True`` if the process exited, ``False`` on timeout.
-        """
-        if self._process is None or self._process.poll() is not None:
-            self._close_debug_streams()
-            return True
-
-        try:
-            self._process.terminate()
-            self._process.wait(timeout=timeout)
-            self._close_debug_streams()
-            return True
-        except subprocess.TimeoutExpired:
-            return False
-
-    def kill_owned_process_after_timeout(self) -> None:
-        """Force-kill the owned process tree (Windows: ``taskkill /T /F``)."""
-        if self._process is None or self._process.poll() is not None:
-            self._close_debug_streams()
-            return
-
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
-                check=False,
+        return bool(
+            ctypes.windll.kernel32.WaitNamedPipeW(
+                ctypes.c_wchar_p(pipe_path),
+                ctypes.c_uint32(timeout_ms),
             )
-        else:
-            self._process.kill()
+        )
 
+    def wait_for_owned_process_exit(self, expected_pid: int, timeout: float) -> int:
+        """Wait on the retained exact child handle and return its exit code."""
+        process = self._require_exact_owned_process(expected_pid)
+        try:
+            exit_code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError("owned Core process did not exit in time") from exc
+        self._process = None
         self._close_debug_streams()
+        return int(exit_code)
+
+    def terminate_owned_process_after_timeout(
+        self, expected_pid: int, timeout: float
+    ) -> int:
+        """Emergency fallback using only the exact retained child handle."""
+        process = self._require_exact_owned_process(expected_pid)
+        process.kill()
+        try:
+            exit_code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError("owned Core process resisted termination") from exc
+        self._process = None
+        self._close_debug_streams()
+        return int(exit_code)
+
+    def _require_exact_owned_process(self, expected_pid: int) -> subprocess.Popen[Any]:
+        process = self._process
+        if process is None or process.pid != expected_pid:
+            raise RuntimeError("exact owned Core process is unavailable")
+        return process

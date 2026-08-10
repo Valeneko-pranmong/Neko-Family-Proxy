@@ -60,3 +60,60 @@ def test_windows_core_process_adapter_handles(mock_popen, tmp_path):
 
     assert adapter._stdout_handle is None
     assert adapter._stderr_handle is None
+
+
+@patch("subprocess.Popen")
+def test_live_owned_host_is_reused_after_runtime_stop(mock_popen, tmp_path):
+    process = MagicMock()
+    process.pid = 1234
+    process.poll.return_value = None
+    mock_popen.return_value = process
+    executable = tmp_path / "NekoProxyCore.exe"
+    executable.touch()
+    adapter = WindowsCoreProcessAdapter(executable)
+
+    adapter.start_host_without_secrets()
+    adapter.start_host_without_secrets()
+
+    mock_popen.assert_called_once()
+    assert adapter.owned_process_id() == 1234
+
+
+@patch("subprocess.Popen")
+def test_wait_uses_exact_owned_child_handle_and_releases_it(mock_popen, tmp_path):
+    process = MagicMock()
+    process.pid = 1234
+    process.poll.return_value = None
+    process.wait.return_value = 0
+    mock_popen.return_value = process
+    executable = tmp_path / "NekoProxyCore.exe"
+    executable.touch()
+    adapter = WindowsCoreProcessAdapter(executable)
+    adapter.start_host_without_secrets()
+
+    with pytest.raises(RuntimeError):
+        adapter.wait_for_owned_process_exit(9999, 1.0)
+    assert adapter.wait_for_owned_process_exit(1234, 1.0) == 0
+
+    process.wait.assert_called_once_with(timeout=1.0)
+    assert adapter.owned_process_id() is None
+
+
+@patch("subprocess.Popen")
+def test_emergency_fallback_targets_only_exact_retained_child_handle(
+    mock_popen, tmp_path
+):
+    process = MagicMock()
+    process.pid = 1234
+    process.poll.return_value = None
+    process.wait.return_value = 1
+    mock_popen.return_value = process
+    executable = tmp_path / "NekoProxyCore.exe"
+    executable.touch()
+    adapter = WindowsCoreProcessAdapter(executable)
+    adapter.start_host_without_secrets()
+
+    assert adapter.terminate_owned_process_after_timeout(1234, 1.0) == 1
+
+    process.kill.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=1.0)

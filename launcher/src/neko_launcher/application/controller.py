@@ -113,24 +113,26 @@ class ApplicationController:
         elif isinstance(event, ErrorOccurred):
             self._update(last_error=event.message)
 
-    def sign_out(self) -> None:
-        self._stop_proxy()
+    def sign_out(self, *, shutdown_core: bool = True) -> None:
+        shutdown_error = self._shutdown_proxy_host() if shutdown_core else None
         self._update(
             auth_status=AuthStatus.SIGNED_OUT,
             user_id=None,
             user_email=None,
             entitlement=None,
             session_id=None,
-            proxy_status=ProxyStatus.STOPPED,
+            proxy_status=(
+                ProxyStatus.FAILED if shutdown_error else ProxyStatus.STOPPED
+            ),
             game_status=GameStatus.STOPPED,
             game_process_running=False,
             deferred_session_revocation_reason=None,
-            last_error=None,
+            last_error=shutdown_error,
         )
 
     def begin_account_recovery(self) -> None:
         """Enter recovery without creating normal user/session authorization."""
-        self._stop_proxy()
+        shutdown_error = self._shutdown_proxy_host()
         self._update(
             auth_status=AuthStatus.RECOVERY_CODE_ENTRY,
             user_id=None,
@@ -140,7 +142,10 @@ class ApplicationController:
             game_status=GameStatus.STOPPED,
             game_process_running=False,
             deferred_session_revocation_reason=None,
-            last_error=None,
+            proxy_status=(
+                ProxyStatus.FAILED if shutdown_error else ProxyStatus.STOPPED
+            ),
+            last_error=shutdown_error,
         )
 
     def recovery_verification_started(self) -> None:
@@ -166,16 +171,26 @@ class ApplicationController:
             last_error=None,
         )
 
-    def invalidate_session(self, reason: str) -> None:
+    def invalidate_session(self, reason: str, *, shutdown_core: bool = True) -> None:
         """Immediately remove local authorization after a rejected heartbeat."""
-        self._revoke_session(reason, allow_defer=False)
+        self._revoke_session(
+            reason,
+            allow_defer=False,
+            shutdown_core=shutdown_core,
+        )
 
     def shutdown(self) -> None:
         """Stop only the child processes created by this launcher."""
-        self._stop_proxy()
+        self._shutdown_proxy_host()
         self._stop_game()
 
-    def _revoke_session(self, reason: str, *, allow_defer: bool = True) -> None:
+    def _revoke_session(
+        self,
+        reason: str,
+        *,
+        allow_defer: bool = True,
+        shutdown_core: bool = True,
+    ) -> None:
         """End a session, delaying only an expiry while PSO2 is in progress."""
         state = self.state
         if (
@@ -188,7 +203,8 @@ class ApplicationController:
                 last_error=None,
             )
             return
-        self._stop_proxy()
+        if shutdown_core:
+            self._shutdown_proxy_host()
         self._update(
             session_id=None,
             entitlement=None,
@@ -251,6 +267,25 @@ class ApplicationController:
             )
         else:
             self._update(proxy_status=ProxyStatus.STOPPED, proxy_start_retry_safe=False)
+
+    def _shutdown_proxy_host(self) -> str | None:
+        if self._proxy_gateway is None:
+            self._update(proxy_status=ProxyStatus.STOPPED)
+            return None
+        try:
+            if not self._proxy_gateway.has_owned_host():
+                self._update(proxy_status=ProxyStatus.STOPPED)
+                return None
+            self._update(proxy_status=ProxyStatus.STOPPING)
+            self._proxy_gateway.shutdown()
+        except Exception as exc:
+            code = getattr(getattr(exc, "code", None), "value", None)
+            safe_code = code if isinstance(code, str) else "SHUTDOWN_REJECTED"
+            message = f"ปิด ProxyCore ไม่สมบูรณ์ ({safe_code})"
+            self._update(proxy_status=ProxyStatus.FAILED, last_error=message)
+            return message
+        self._update(proxy_status=ProxyStatus.STOPPED, proxy_start_retry_safe=False)
+        return None
 
     def _is_safe_pre_permit_failure(self, error: Exception) -> bool:
         """Allow automatic retry only for failures before permit issuance."""

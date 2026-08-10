@@ -56,8 +56,9 @@ class _PipeHandle:
         return None
 
 
-    def write(self, payload: bytes) -> None:
+    def write(self, payload: bytes) -> int:
         self.written += payload
+        return len(payload)
 
     def read(self, size: int) -> bytes:
         chunk = self._response[self._read_offset : self._read_offset + size]
@@ -175,6 +176,95 @@ def test_result_rejects_contradictory_success_fields(monkeypatch: Any) -> None:
     channel = _channel()
     with pytest.raises(Exception):
         channel.stop("0123456789abcdef0123456789abcdef", 1.0)
+
+
+def test_stop_sends_runtime_only_wire_request(monkeypatch: Any) -> None:
+    handle = _PipeHandle(
+        {
+            "type": "stopResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "succeeded": True,
+            "status": "Stopped",
+        }
+    )
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    status = _channel().stop(
+        "0123456789abcdef0123456789abcdef", 1.0
+    )
+
+    assert status.kind is CoreStatusKind.STOPPED
+    assert json.loads(handle.written.decode("utf-8").removesuffix("\n")) == {
+        "type": "stop",
+        "correlationId": "0123456789abcdef0123456789abcdef",
+    }
+
+
+def _shutdown_response(**overrides: Any) -> dict[str, Any]:
+    response: dict[str, Any] = {
+        "type": "shutdownResponse",
+        "correlationId": "0123456789abcdef0123456789abcdef",
+        "succeeded": True,
+        "status": "Stopped",
+    }
+    response.update(overrides)
+    return response
+
+
+def test_shutdown_uses_exact_released_wire_contract(monkeypatch: Any) -> None:
+    handle = _PipeHandle(_shutdown_response())
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    status = _channel().shutdown(
+        "0123456789abcdef0123456789abcdef", 1.0
+    )
+
+    assert status.kind is CoreStatusKind.STOPPED
+    assert json.loads(handle.written.decode("utf-8").removesuffix("\n")) == {
+        "type": "shutdown",
+        "correlationId": "0123456789abcdef0123456789abcdef",
+    }
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"type": "stopResponse"},
+        {"correlationId": "fedcba9876543210fedcba9876543210"},
+        {"succeeded": False, "status": "Failed", "errorCode": "StopFailed"},
+        {"status": "Running"},
+        {"extra": "rejected"},
+    ],
+)
+def test_shutdown_rejects_non_exact_response(
+    monkeypatch: Any, overrides: dict[str, Any]
+) -> None:
+    handle = _PipeHandle(_shutdown_response(**overrides))
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    with pytest.raises(AuthorizedCoreError):
+        _channel().shutdown(
+            "0123456789abcdef0123456789abcdef", 1.0
+        )
+
+
+def test_shutdown_pipe_pid_mismatch_is_rejected_before_write(
+    monkeypatch: Any,
+) -> None:
+    handle = _PipeHandle(_shutdown_response())
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+    monkeypatch.setattr(
+        NamedPipeCoreControlChannel,
+        "_get_server_process_id",
+        staticmethod(lambda _: 9999),
+    )
+
+    with pytest.raises(AuthorizedCoreError):
+        _channel().shutdown(
+            "0123456789abcdef0123456789abcdef", 1.0
+        )
+
+    assert handle.written == b""
 
 
 def test_read_timeout_uses_one_total_operation_deadline(monkeypatch: Any) -> None:
