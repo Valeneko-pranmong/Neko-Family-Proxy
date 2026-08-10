@@ -14,6 +14,8 @@ import pytest
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    CoreControlError,
+    CoreControlFailureCode,
     CoreStatusKind,
     OpaquePermit,
 )
@@ -54,7 +56,6 @@ class _PipeHandle:
 
     def __exit__(self, *_args: object) -> None:
         return None
-
 
     def write(self, payload: bytes) -> int:
         self.written += payload
@@ -112,9 +113,7 @@ def test_challenge_rejects_unknown_fields(monkeypatch: Any) -> None:
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(Exception):
-        _channel().request_challenge(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 1.0)
 
 
 def test_challenge_rejects_duplicate_json_fields(monkeypatch: Any) -> None:
@@ -127,9 +126,7 @@ def test_challenge_rejects_duplicate_json_fields(monkeypatch: Any) -> None:
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: _PipeHandle(payload))
 
     with pytest.raises(Exception):
-        _channel().request_challenge(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 1.0)
 
 
 def test_challenge_rejects_numeric_non_integer_version(monkeypatch: Any) -> None:
@@ -137,9 +134,7 @@ def test_challenge_rejects_numeric_non_integer_version(monkeypatch: Any) -> None
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(AuthorizedCoreError):
-        _channel().request_challenge(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 1.0)
 
 
 def test_challenge_rejects_non_exact_base64url_length(monkeypatch: Any) -> None:
@@ -147,31 +142,35 @@ def test_challenge_rejects_non_exact_base64url_length(monkeypatch: Any) -> None:
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(Exception):
-        _channel().request_challenge(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 1.0)
 
 
 def test_result_rejects_numeric_non_integer_version(monkeypatch: Any) -> None:
-    handle = _PipeHandle({
-        "version": 2.0, "kind": "result",
-        "correlationId": "0123456789abcdef0123456789abcdef",
-        "succeeded": True, "status": "Stopped",
-    })
+    handle = _PipeHandle(
+        {
+            "version": 2.0,
+            "kind": "result",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "succeeded": True,
+            "status": "Stopped",
+        }
+    )
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(AuthorizedCoreError):
-        _channel().stop(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().stop("0123456789abcdef0123456789abcdef", 1.0)
 
 
 def test_result_rejects_contradictory_success_fields(monkeypatch: Any) -> None:
-    handle = _PipeHandle({
-        "type": "stopResponse",
-        "correlationId": "0123456789abcdef0123456789abcdef",
-        "succeeded": True, "status": "Failed", "errorCode": "AuthorizationInvalid",
-    })
+    handle = _PipeHandle(
+        {
+            "type": "stopResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "succeeded": True,
+            "status": "Failed",
+            "errorCode": "AuthorizationInvalid",
+        }
+    )
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
     channel = _channel()
     with pytest.raises(Exception):
@@ -189,9 +188,7 @@ def test_stop_sends_runtime_only_wire_request(monkeypatch: Any) -> None:
     )
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
-    status = _channel().stop(
-        "0123456789abcdef0123456789abcdef", 1.0
-    )
+    status = _channel().stop("0123456789abcdef0123456789abcdef", 1.0)
 
     assert status.kind is CoreStatusKind.STOPPED
     assert json.loads(handle.written.decode("utf-8").removesuffix("\n")) == {
@@ -215,9 +212,7 @@ def test_shutdown_uses_exact_released_wire_contract(monkeypatch: Any) -> None:
     handle = _PipeHandle(_shutdown_response())
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
-    status = _channel().shutdown(
-        "0123456789abcdef0123456789abcdef", 1.0
-    )
+    status = _channel().shutdown("0123456789abcdef0123456789abcdef", 1.0)
 
     assert status.kind is CoreStatusKind.STOPPED
     assert json.loads(handle.written.decode("utf-8").removesuffix("\n")) == {
@@ -236,16 +231,12 @@ def test_shutdown_uses_exact_released_wire_contract(monkeypatch: Any) -> None:
         {"extra": "rejected"},
     ],
 )
-def test_shutdown_rejects_non_exact_response(
-    monkeypatch: Any, overrides: dict[str, Any]
-) -> None:
+def test_shutdown_rejects_non_exact_response(monkeypatch: Any, overrides: dict[str, Any]) -> None:
     handle = _PipeHandle(_shutdown_response(**overrides))
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
 
     with pytest.raises(AuthorizedCoreError):
-        _channel().shutdown(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().shutdown("0123456789abcdef0123456789abcdef", 1.0)
 
 
 def test_shutdown_pipe_pid_mismatch_is_rejected_before_write(
@@ -260,9 +251,7 @@ def test_shutdown_pipe_pid_mismatch_is_rejected_before_write(
     )
 
     with pytest.raises(AuthorizedCoreError):
-        _channel().shutdown(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().shutdown("0123456789abcdef0123456789abcdef", 1.0)
 
     assert handle.written == b""
 
@@ -292,10 +281,22 @@ def test_read_timeout_uses_one_total_operation_deadline(monkeypatch: Any) -> Non
         lambda _: None,
     )
     with pytest.raises(Exception):
-        _channel().request_challenge(
-            "0123456789abcdef0123456789abcdef", 0.02
-        )
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 0.02)
     assert handle.reads == 1
+
+
+def test_closed_pipe_is_distinct_from_response_timeout(monkeypatch: Any) -> None:
+    class ClosedPipeHandle(_PipeHandle):
+        def read(self, size: int) -> bytes:
+            raise OSError(109, "pipe has ended")
+
+    handle = ClosedPipeHandle(_challenge_response())
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    with pytest.raises(CoreControlError) as raised:
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 1.0)
+
+    assert raised.value.control_code is CoreControlFailureCode.PIPE_CLOSED
 
 
 def test_pipe_open_retries_transient_os_error(monkeypatch: Any) -> None:
@@ -484,9 +485,7 @@ def test_pipe_open_retry_sleep_is_clamped_to_total_deadline(monkeypatch: Any) ->
     )
 
     with pytest.raises(Exception):
-        _channel().request_challenge(
-            "0123456789abcdef0123456789abcdef", 1.0
-        )
+        _channel().request_challenge("0123456789abcdef0123456789abcdef", 1.0)
 
     assert sleeps == [pytest.approx(0.01)]
 

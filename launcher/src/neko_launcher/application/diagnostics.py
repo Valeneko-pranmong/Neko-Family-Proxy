@@ -7,6 +7,46 @@ from threading import RLock
 from typing import Any, Protocol
 
 
+AUTHORIZED_START_CLASSIFICATIONS = frozenset(
+    {
+        "START_TYPED_SUCCESS",
+        "START_TYPED_FAILURE",
+        "START_RESPONSE_TIMEOUT",
+        "START_RESPONSE_REJECTED",
+        "PIPE_IDENTITY_MISMATCH",
+        "PIPE_CLOSED",
+        "CORE_EXITED",
+        "CORE_ALIVE_NO_RESPONSE",
+    }
+)
+
+
+def safe_authorized_start_details(details: dict[str, Any]) -> dict[str, object]:
+    """Allow only non-secret, bounded fields for AUTHORIZED_START diagnostics."""
+    safe: dict[str, object] = {}
+    elapsed_ms = details.get("elapsed_ms")
+    if isinstance(elapsed_ms, int) and not isinstance(elapsed_ms, bool):
+        if 0 <= elapsed_ms <= 600_000:
+            safe["elapsed_ms"] = elapsed_ms
+
+    failure_category = details.get("failure_category")
+    if failure_category in AUTHORIZED_START_CLASSIFICATIONS:
+        safe["failure_category"] = failure_category
+
+    core_pid = details.get("core_pid")
+    if isinstance(core_pid, int) and not isinstance(core_pid, bool) and core_pid > 0:
+        safe["core_pid"] = core_pid
+
+    core_alive = details.get("core_alive")
+    if isinstance(core_alive, bool):
+        safe["core_alive"] = core_alive
+
+    transport_outcome = details.get("transport_outcome")
+    if transport_outcome in AUTHORIZED_START_CLASSIFICATIONS:
+        safe["transport_outcome"] = transport_outcome
+    return safe
+
+
 def sanitize_diagnostic_text(text: str) -> str:
     """Redact sensitive patterns like tokens and passwords."""
     if not text:
@@ -19,7 +59,7 @@ def sanitize_diagnostic_text(text: str) -> str:
     # service_role=abc
     pattern = re.compile(
         r"((?:authorization\s*:\s*bearer|access_token|refresh_token|password|passwd|secret|service_role)['\"]?\s*(?:[:=]\s*)?['\"]?)([^'\"\s]+)",
-        re.IGNORECASE
+        re.IGNORECASE,
     )
     return pattern.sub(r"\1<redacted>", text)
 
@@ -54,9 +94,7 @@ def format_safe_diagnostic_metadata(exc: Exception) -> str:
             parts.append(f"http_status={http_status}")
 
         correlation_id = diagnostic_context.get("correlation_id")
-        if isinstance(correlation_id, str) and re.fullmatch(
-            r"[0-9a-f]{32}", correlation_id
-        ):
+        if isinstance(correlation_id, str) and re.fullmatch(r"[0-9a-f]{32}", correlation_id):
             parts.append(f"correlation_id={correlation_id}")
 
         elapsed_ms = diagnostic_context.get("elapsed_ms")
@@ -93,6 +131,10 @@ class CoreDiagnosticsSnapshot:
     exit_code: int | None
     winerror: int | None
     last_diagnostic: str | None
+    authorized_start_elapsed_ms: int | None = None
+    authorized_start_failure_category: str | None = None
+    authorized_start_core_alive: bool | None = None
+    authorized_start_transport_outcome: str | None = None
 
 
 class DiagnosticsSink(Protocol):
@@ -120,6 +162,10 @@ class CoreDiagnosticsRecorder:
         self._exit_code: int | None = None
         self._winerror: int | None = None
         self._last_diagnostic: str | None = None
+        self._authorized_start_elapsed_ms: int | None = None
+        self._authorized_start_failure_category: str | None = None
+        self._authorized_start_core_alive: bool | None = None
+        self._authorized_start_transport_outcome: str | None = None
 
     def snapshot(self) -> CoreDiagnosticsSnapshot:
         with self._lock:
@@ -133,6 +179,10 @@ class CoreDiagnosticsRecorder:
                 exit_code=self._exit_code,
                 winerror=self._winerror,
                 last_diagnostic=self._last_diagnostic,
+                authorized_start_elapsed_ms=self._authorized_start_elapsed_ms,
+                authorized_start_failure_category=(self._authorized_start_failure_category),
+                authorized_start_core_alive=self._authorized_start_core_alive,
+                authorized_start_transport_outcome=(self._authorized_start_transport_outcome),
             )
 
     @property
@@ -151,15 +201,35 @@ class CoreDiagnosticsRecorder:
             self._exit_code = None
             self._winerror = None
             self._last_diagnostic = None
+            self._authorized_start_elapsed_ms = None
+            self._authorized_start_failure_category = None
+            self._authorized_start_core_alive = None
+            self._authorized_start_transport_outcome = None
             self._sink.begin_attempt(attempt_id)
 
     def record_stage(self, stage: str, **kwargs: Any) -> None:
         with self._lock:
             self._stage = stage
+            if stage == "AUTHORIZED_START_RESULT":
+                kwargs = safe_authorized_start_details(kwargs)
+                self._authorized_start_elapsed_ms = kwargs.get(  # type: ignore[assignment]
+                    "elapsed_ms"
+                )
+                self._authorized_start_failure_category = kwargs.get(  # type: ignore[assignment]
+                    "failure_category"
+                )
+                self._authorized_start_core_alive = kwargs.get(  # type: ignore[assignment]
+                    "core_alive"
+                )
+                self._authorized_start_transport_outcome = kwargs.get(  # type: ignore[assignment]
+                    "transport_outcome"
+                )
             if "core_path" in kwargs:
                 self._core_path = kwargs["core_path"]
             if "pid" in kwargs:
                 self._pid = kwargs["pid"]
+            if "core_pid" in kwargs:
+                self._pid = kwargs["core_pid"]  # type: ignore[assignment]
             if "runtime" in kwargs:
                 self._runtime = kwargs["runtime"]
             if "exit_code" in kwargs:
@@ -185,23 +255,30 @@ class CoreDiagnosticsRecorder:
 
             exc_type = type(exc).__name__
             message = sanitize_diagnostic_text(str(exc))
-            
+
             diagnostic_msg = f"{exc_type}: {message}"
             metadata = format_safe_diagnostic_metadata(exc)
             if metadata:
                 diagnostic_msg += f" [{metadata}]"
             if winerror is not None:
                 diagnostic_msg += f" (WinError {winerror})"
-            
+
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             sanitized_tb = sanitize_diagnostic_text(tb)
             self._last_diagnostic = f"{diagnostic_msg}\n{sanitized_tb}"
-            
+
             self._sink.record_exception(exc, stage)
 
 
 class NoopDiagnosticsSink:
-    def begin_attempt(self, attempt_id: str) -> None: pass
-    def record_stage(self, stage: str, **kwargs: Any) -> None: pass
-    def record_process_event(self, event: str, **kwargs: Any) -> None: pass
-    def record_exception(self, exc: Exception, stage: str) -> None: pass
+    def begin_attempt(self, attempt_id: str) -> None:
+        pass
+
+    def record_stage(self, stage: str, **kwargs: Any) -> None:
+        pass
+
+    def record_process_event(self, event: str, **kwargs: Any) -> None:
+        pass
+
+    def record_exception(self, exc: Exception, stage: str) -> None:
+        pass

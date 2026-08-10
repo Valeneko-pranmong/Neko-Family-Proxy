@@ -59,12 +59,15 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
 
     if config.debug_mode:
         from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
+
         diagnostics_sink = DevelopmentLogger(config.debug_log_dir)
     else:
         from neko_launcher.application.diagnostics import NoopDiagnosticsSink
+
         diagnostics_sink = NoopDiagnosticsSink()
 
     from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
+
     diagnostics_recorder = CoreDiagnosticsRecorder(diagnostics_sink)
 
     if CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
@@ -88,7 +91,12 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             control_channel=10.0,
             challenge=5.0,
             permit=10.0,
-            start=10.0,
+            # Launcher bounds include scheduling/transport margin beyond the
+            # frozen Core's 30-second START and 15-second STOP contracts.
+            start_response=40.0,
+            stop_response=20.0,
+            shutdown_response=20.0,
+            process_exit=10.0,
         )
         orchestrator = AuthorizedCoreOrchestrator(
             process=core_process,

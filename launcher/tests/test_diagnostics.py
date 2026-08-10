@@ -26,9 +26,12 @@ class DiagnosticSpoofError(RuntimeError):
 def test_sanitize_diagnostic_text():
     # Ordinary text
     assert sanitize_diagnostic_text("normal error") == "normal error"
-    
+
     # Redaction
-    assert sanitize_diagnostic_text("Authorization: Bearer mytoken123") == "Authorization: Bearer <redacted>"
+    assert (
+        sanitize_diagnostic_text("Authorization: Bearer mytoken123")
+        == "Authorization: Bearer <redacted>"
+    )
     assert sanitize_diagnostic_text("authorization:bearer 123") == "authorization:bearer <redacted>"
     assert sanitize_diagnostic_text("access_token=secret123") == "access_token=<redacted>"
     assert sanitize_diagnostic_text("access_token: secret123") == "access_token: <redacted>"
@@ -165,3 +168,30 @@ def test_diagnostic_formatter_rejects_spoofed_exception_metadata(tmp_path):
     assert "customer-safe failure" in log_text
     assert "RAW_" not in log_text
     assert "ACCESS_TOKEN" not in log_text
+
+
+def test_authorized_start_stage_logs_only_allow_listed_fields(tmp_path):
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("DBG-123")
+
+    logger.record_stage(
+        "AUTHORIZED_START_RESULT",
+        elapsed_ms=31_234,
+        failure_category="START_RESPONSE_TIMEOUT",
+        core_pid=4321,
+        core_alive=True,
+        transport_outcome="CORE_ALIVE_NO_RESPONSE",
+        permit="RAW_PERMIT_SENTINEL",
+        challenge="RAW_CHALLENGE_SENTINEL",
+        access_token="RAW_TOKEN_SENTINEL",
+    )
+
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "elapsed_ms=31234" in log_text
+    assert "failure_category=START_RESPONSE_TIMEOUT" in log_text
+    assert "core_pid=4321" in log_text
+    assert "core_alive=True" in log_text
+    assert "transport_outcome=CORE_ALIVE_NO_RESPONSE" in log_text
+    assert "RAW_" not in log_text
+    assert "permit" not in log_text.lower()
+    assert "challenge" not in log_text.lower()

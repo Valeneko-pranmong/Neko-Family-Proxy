@@ -30,6 +30,7 @@ class CoreControlFailureCode(str, Enum):
 
     PIPE_UNAVAILABLE = "PipeUnavailable"
     PIPE_IDENTITY_MISMATCH = "PipeIdentityMismatch"
+    PIPE_CLOSED = "PipeClosed"
     OPERATION_TIMEOUT = "OperationTimeout"
     RESPONSE_REJECTED = "ResponseRejected"
 
@@ -82,21 +83,15 @@ _PUBLIC_ERROR_MESSAGES = {
     AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE: (
         "authorization context is unavailable"
     ),
-    AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE: (
-        "start configuration is unavailable"
-    ),
+    AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE: ("start configuration is unavailable"),
     AuthorizedCoreErrorCode.DUPLICATE_START: "authorized start is already in progress",
     AuthorizedCoreErrorCode.CANCELLED: "authorized start was cancelled",
     AuthorizedCoreErrorCode.TARGET_UNAVAILABLE: "target process is unavailable",
     AuthorizedCoreErrorCode.TARGET_EXITED: "target process exited",
     AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE: "fresh heartbeat is unavailable",
-    AuthorizedCoreErrorCode.RUNNING_NOT_REACHED: (
-        "authorized start did not reach Running"
-    ),
+    AuthorizedCoreErrorCode.RUNNING_NOT_REACHED: ("authorized start did not reach Running"),
     AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE: "authorization permit is unavailable",
-    AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE: (
-        "authorization challenge is unavailable"
-    ),
+    AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE: ("authorization challenge is unavailable"),
     AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE: (
         "target process observation is unavailable"
     ),
@@ -121,13 +116,9 @@ class AuthorizedCoreError(RuntimeError):
             else AuthorizedCoreErrorCode.ADAPTER_FAILURE
         )
         self.diagnostic_code = (
-            diagnostic_code
-            if isinstance(diagnostic_code, PermitDiagnosticCode)
-            else None
+            diagnostic_code if isinstance(diagnostic_code, PermitDiagnosticCode) else None
         )
-        self.diagnostic_context = self._validated_diagnostic_context(
-            diagnostic_context or {}
-        )
+        self.diagnostic_context = self._validated_diagnostic_context(diagnostic_context or {})
         super().__init__(_PUBLIC_ERROR_MESSAGES[self.code])
 
     @staticmethod
@@ -145,9 +136,7 @@ class AuthorizedCoreError(RuntimeError):
             validated["http_status"] = http_status
 
         correlation_id = context.get("correlation_id")
-        if isinstance(correlation_id, str) and fullmatch(
-            r"[0-9a-f]{32}", correlation_id
-        ):
+        if isinstance(correlation_id, str) and fullmatch(r"[0-9a-f]{32}", correlation_id):
             validated["correlation_id"] = correlation_id
 
         elapsed_ms = context.get("elapsed_ms")
@@ -228,7 +217,10 @@ class OrchestrationTimeouts:
     control_channel: float
     challenge: float
     permit: float
-    start: float
+    start_response: float
+    stop_response: float
+    shutdown_response: float
+    process_exit: float
 
     def __post_init__(self) -> None:
         if any(value <= 0 for value in self.__dict__.values()):
@@ -253,9 +245,7 @@ class LaunchAccessContext:
             and self.installation_key_hash
             and self.authenticated_transport is not None
         ):
-            raise AuthorizedCoreError(
-                AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE
-            )
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE)
 
 
 @dataclass(frozen=True)
@@ -328,9 +318,7 @@ class CoreProcessAdapter(Protocol):
 
     def wait_for_owned_process_exit(self, expected_pid: int, timeout: float) -> int: ...
 
-    def terminate_owned_process_after_timeout(
-        self, expected_pid: int, timeout: float
-    ) -> int: ...
+    def terminate_owned_process_after_timeout(self, expected_pid: int, timeout: float) -> int: ...
 
 
 class CoreControlChannel(Protocol):
@@ -411,9 +399,7 @@ class OnlineHeartbeatLaunchPrecondition:
 
 
 class ProcessTargetDetector(Protocol[TargetT]):
-    def wait_for_exact_pso2(
-        self, timeout: float, cancellation: Event
-    ) -> TargetT | None: ...
+    def wait_for_exact_pso2(self, timeout: float, cancellation: Event) -> TargetT | None: ...
 
     def is_same_target_still_running(self, target: TargetT) -> bool: ...
 
@@ -449,16 +435,17 @@ class AuthorizedCoreOrchestrator:
     ) -> CoreStatus:
         if self._diagnostics:
             from uuid import uuid4
+
             self._diagnostics.begin_attempt(f"DBG-{uuid4().hex[:6]}")
 
         if self._diagnostics:
             self._diagnostics.record_stage("COMMAND_VALIDATE")
         command.require_available()
-        
+
         if self._diagnostics:
             self._diagnostics.record_stage("ACCESS_CONTEXT_VALIDATE")
         access_context.require_available()
-        
+
         if not self._single_flight.acquire(blocking=False):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.DUPLICATE_START)
 
@@ -468,13 +455,11 @@ class AuthorizedCoreOrchestrator:
         try:
             try:
                 self._require_not_cancelled(cancellation)
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("TARGET_WAIT")
                 target = self._invoke_adapter(
-                    lambda: self._detector.wait_for_exact_pso2(
-                        self._timeouts.target, cancellation
-                    ),
+                    lambda: self._detector.wait_for_exact_pso2(self._timeouts.target, cancellation),
                     AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
                     stage="TARGET_WAIT",
                 )
@@ -497,7 +482,7 @@ class AuthorizedCoreOrchestrator:
                 # Cleanup is safe for an unowned/no-process state and must run even
                 # when an adapter creates the host and then reports a failure.
                 host_start_attempted = True
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("HOST_START")
                 self._invoke_adapter(
@@ -505,17 +490,15 @@ class AuthorizedCoreOrchestrator:
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                     stage="HOST_START",
                 )
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("CONTROL_CHANNEL_WAIT")
                 self._invoke_adapter(
-                    lambda: self._process.wait_for_control_channel(
-                        self._timeouts.control_channel
-                    ),
+                    lambda: self._process.wait_for_control_channel(self._timeouts.control_channel),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                     stage="CONTROL_CHANNEL_WAIT",
                 )
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("TARGET_RECHECK")
                 self._require_target(target)
@@ -530,14 +513,14 @@ class AuthorizedCoreOrchestrator:
                     stage="CHALLENGE_REQUEST",
                 )
                 self._require_target(target)
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("TARGET_BIND")
                 target_bound_command = TargetBoundStartCommand.from_opaque(
                     command,
                     target_pid=self._target_pid(target),
                 )
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("PERMIT_REQUEST")
                 permit = self._invoke_adapter(
@@ -562,16 +545,15 @@ class AuthorizedCoreOrchestrator:
                 if self._diagnostics:
                     self._diagnostics.record_stage("AUTHORIZED_START")
                 status = self._invoke_adapter(
-                    lambda: self._channel.start_authorized(
+                    lambda: self._start_authorized_with_diagnostics(
                         target_bound_command,
                         permit,
                         self._correlation_id(),
-                        self._timeouts.start,
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                     stage="AUTHORIZED_START",
                 )
-                
+
                 if self._diagnostics:
                     self._diagnostics.record_stage("RUNNING_VERIFY")
                 if status.kind is not CoreStatusKind.RUNNING:
@@ -646,6 +628,85 @@ class AuthorizedCoreOrchestrator:
             raise failure
         return cast(AdapterResultT, result)
 
+    def _start_authorized_with_diagnostics(
+        self,
+        command: TargetBoundStartCommand,
+        permit: OpaquePermit,
+        correlation_id: str,
+    ) -> CoreStatus:
+        started_at = monotonic()
+        owned_pid = self._process.owned_process_id()
+        try:
+            status = self._channel.start_authorized(
+                command,
+                permit,
+                correlation_id,
+                self._timeouts.start_response,
+            )
+        except Exception as exc:
+            alive = self._process.owned_process_id() == owned_pid and owned_pid is not None
+            failure_category = "START_RESPONSE_REJECTED"
+            transport_outcome = "START_RESPONSE_REJECTED"
+            if not alive:
+                failure_category = "CORE_EXITED"
+                transport_outcome = "CORE_EXITED"
+            elif isinstance(exc, CoreControlError):
+                if exc.control_code is CoreControlFailureCode.OPERATION_TIMEOUT:
+                    failure_category = "START_RESPONSE_TIMEOUT"
+                    transport_outcome = "CORE_ALIVE_NO_RESPONSE"
+                elif exc.control_code is CoreControlFailureCode.PIPE_IDENTITY_MISMATCH:
+                    failure_category = "PIPE_IDENTITY_MISMATCH"
+                    transport_outcome = "PIPE_IDENTITY_MISMATCH"
+                elif exc.control_code in {
+                    CoreControlFailureCode.PIPE_CLOSED,
+                    CoreControlFailureCode.PIPE_UNAVAILABLE,
+                }:
+                    failure_category = "PIPE_CLOSED"
+                    transport_outcome = "PIPE_CLOSED"
+            self._record_authorized_start_result(
+                started_at=started_at,
+                failure_category=failure_category,
+                core_pid=owned_pid,
+                core_alive=alive,
+                transport_outcome=transport_outcome,
+            )
+            raise
+
+        classification = (
+            "START_TYPED_SUCCESS"
+            if status.kind is CoreStatusKind.RUNNING
+            else "START_TYPED_FAILURE"
+        )
+        self._record_authorized_start_result(
+            started_at=started_at,
+            failure_category=classification,
+            core_pid=owned_pid,
+            core_alive=(self._process.owned_process_id() == owned_pid and owned_pid is not None),
+            transport_outcome=classification,
+        )
+        return status
+
+    def _record_authorized_start_result(
+        self,
+        *,
+        started_at: float,
+        failure_category: str,
+        core_pid: int | None,
+        core_alive: bool,
+        transport_outcome: str,
+    ) -> None:
+        if not self._diagnostics:
+            return
+        elapsed_ms = max(0, int((monotonic() - started_at) * 1000))
+        self._diagnostics.record_stage(
+            "AUTHORIZED_START_RESULT",
+            elapsed_ms=elapsed_ms,
+            failure_category=failure_category,
+            core_pid=core_pid,
+            core_alive=core_alive,
+            transport_outcome=transport_outcome,
+        )
+
     @staticmethod
     def _require_not_cancelled(cancellation: Event) -> None:
         if cancellation.is_set():
@@ -653,7 +714,7 @@ class AuthorizedCoreOrchestrator:
 
     def stop(self) -> None:
         """Stop the proxy runtime only; keep the exact owned Core host alive."""
-        status = self._channel.stop(self._correlation_id(), self._timeouts.start)
+        status = self._channel.stop(self._correlation_id(), self._timeouts.stop_response)
         if status.kind is not CoreStatusKind.STOPPED:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
@@ -668,16 +729,15 @@ class AuthorizedCoreOrchestrator:
 
         try:
             status = self._channel.shutdown(
-                self._correlation_id(), self._timeouts.start
+                self._correlation_id(), self._timeouts.shutdown_response
             )
         except CoreControlError as exc:
             code = {
-                CoreControlFailureCode.PIPE_UNAVAILABLE: (
-                    CoreShutdownFailureCode.PIPE_UNAVAILABLE
-                ),
+                CoreControlFailureCode.PIPE_UNAVAILABLE: (CoreShutdownFailureCode.PIPE_UNAVAILABLE),
                 CoreControlFailureCode.PIPE_IDENTITY_MISMATCH: (
                     CoreShutdownFailureCode.PIPE_IDENTITY_MISMATCH
                 ),
+                CoreControlFailureCode.PIPE_CLOSED: (CoreShutdownFailureCode.SHUTDOWN_REJECTED),
                 CoreControlFailureCode.OPERATION_TIMEOUT: (
                     CoreShutdownFailureCode.SHUTDOWN_TIMEOUT
                 ),
@@ -686,9 +746,7 @@ class AuthorizedCoreOrchestrator:
                 ),
             }[exc.control_code]
             fallback_used = self._emergency_terminate_exact_child(expected_pid)
-            raise CoreShutdownError(
-                code, emergency_fallback_used=fallback_used
-            ) from None
+            raise CoreShutdownError(code, emergency_fallback_used=fallback_used) from None
         except Exception:
             fallback_used = self._emergency_terminate_exact_child(expected_pid)
             raise CoreShutdownError(
@@ -705,7 +763,7 @@ class AuthorizedCoreOrchestrator:
 
         try:
             exit_code = self._process.wait_for_owned_process_exit(
-                expected_pid, self._timeouts.start
+                expected_pid, self._timeouts.process_exit
             )
         except Exception:
             fallback_used = self._emergency_terminate_exact_child(
@@ -736,16 +794,14 @@ class AuthorizedCoreOrchestrator:
     ) -> bool:
         if not timeout_already_expired:
             try:
-                self._process.wait_for_owned_process_exit(
-                    expected_pid, self._timeouts.start
-                )
+                self._process.wait_for_owned_process_exit(expected_pid, self._timeouts.process_exit)
             except Exception:
                 pass
             else:
                 return False
         try:
             self._process.terminate_owned_process_after_timeout(
-                expected_pid, self._timeouts.start
+                expected_pid, self._timeouts.process_exit
             )
         except Exception:
             return False

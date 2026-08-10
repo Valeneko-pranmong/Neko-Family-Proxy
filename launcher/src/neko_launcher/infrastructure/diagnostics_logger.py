@@ -7,6 +7,7 @@ from typing import Any
 
 from neko_launcher.application.diagnostics import (
     format_safe_diagnostic_metadata,
+    safe_authorized_start_details,
     sanitize_diagnostic_text,
 )
 
@@ -17,7 +18,7 @@ class DevelopmentLogger:
         self._log_file = self._log_dir / "debug.log"
         self._attempt_id: str | None = None
         self._lock = RLock()
-        
+
         try:
             self._log_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -30,6 +31,8 @@ class DevelopmentLogger:
 
     def record_stage(self, stage: str, **kwargs: Any) -> None:
         msg = f"[CORE] [{stage}]"
+        if stage == "AUTHORIZED_START_RESULT":
+            kwargs = safe_authorized_start_details(kwargs)
         if kwargs:
             details = ", ".join(f"{k}={v}" for k, v in kwargs.items())
             msg += f" {details}"
@@ -62,11 +65,10 @@ class DevelopmentLogger:
         now = datetime.datetime.now()
         ts = now.strftime("%H:%M:%S.%f")[:-3]
         attempt = f"[{self._attempt_id}]" if self._attempt_id else "[]"
-        
+
         log_line = f"[{ts}] {attempt} {message}\n"
         try:
             with open(self._log_file, "a", encoding="utf-8") as f:
                 f.write(log_line)
         except OSError:
             pass
-

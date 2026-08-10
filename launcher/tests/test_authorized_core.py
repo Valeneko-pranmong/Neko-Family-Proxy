@@ -72,9 +72,11 @@ class FakeDetector:
         self.target = target
         self.running = True
         self.wait_calls = 0
+        self.timeout: float | None = None
 
     def wait_for_exact_pso2(self, timeout: float, cancellation: Event) -> Target | None:
         self.wait_calls += 1
+        self.timeout = timeout
         return self.target
 
     def is_same_target_still_running(self, target: Target) -> bool:
@@ -87,12 +89,16 @@ class FakeProcess:
         self.live = False
         self.exit_code = 0
         self.exit_timeout = False
+        self.control_channel_timeout: float | None = None
+        self.process_exit_timeout: float | None = None
+        self.terminate_timeout: float | None = None
 
     def start_host_without_secrets(self) -> None:
         self.calls.append("host.start")
         self.live = True
 
     def wait_for_control_channel(self, timeout: float) -> None:
+        self.control_channel_timeout = timeout
         self.calls.append("host.ready")
 
     def owned_process_id(self) -> int | None:
@@ -100,16 +106,16 @@ class FakeProcess:
 
     def wait_for_owned_process_exit(self, expected_pid: int, timeout: float) -> int:
         assert expected_pid == 4321
+        self.process_exit_timeout = timeout
         self.calls.append("host.wait")
         if self.exit_timeout:
             raise TimeoutError
         self.live = False
         return self.exit_code
 
-    def terminate_owned_process_after_timeout(
-        self, expected_pid: int, timeout: float
-    ) -> int:
+    def terminate_owned_process_after_timeout(self, expected_pid: int, timeout: float) -> int:
         assert expected_pid == 4321
+        self.terminate_timeout = timeout
         self.calls.append("host.kill")
         self.live = False
         return 1
@@ -120,8 +126,13 @@ class FakeChannel:
         self.calls = calls
         self.status = CoreStatus(CoreStatusKind.RUNNING)
         self.start_command: object | None = None
+        self.challenge_timeout: float | None = None
+        self.start_timeout: float | None = None
+        self.stop_timeout: float | None = None
+        self.shutdown_timeout: float | None = None
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
+        self.challenge_timeout = timeout
         self.calls.append("core.challenge")
         return CoreChallenge("challenge-value")
 
@@ -134,14 +145,17 @@ class FakeChannel:
     ) -> CoreStatus:
         assert "sentinel-permit" not in repr(permit)
         self.start_command = command
+        self.start_timeout = timeout
         self.calls.append("core.start")
         return self.status
 
     def stop(self, correlation_id: str, timeout: float) -> CoreStatus:
+        self.stop_timeout = timeout
         self.calls.append("core.stop")
         return CoreStatus(CoreStatusKind.STOPPED)
 
     def shutdown(self, correlation_id: str, timeout: float) -> CoreStatus:
+        self.shutdown_timeout = timeout
         self.calls.append("core.shutdown")
         return CoreStatus(CoreStatusKind.STOPPED)
 
@@ -150,6 +164,7 @@ class FakeLaunchPrecondition:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
         self.available = True
+        self.timeout: float | None = None
 
     def require_fresh(
         self,
@@ -157,6 +172,7 @@ class FakeLaunchPrecondition:
         installation_key_hash: str,
         timeout: float,
     ) -> None:
+        self.timeout = timeout
         self.calls.append("backend.heartbeat")
         if not self.available:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE)
@@ -214,7 +230,16 @@ def build_orchestrator(
         permits=FakePermitGateway(calls),
         precondition=precondition,
         detector=actual_detector,
-        timeouts=OrchestrationTimeouts(1, 1, 1, 1, 1),
+        timeouts=OrchestrationTimeouts(
+            target=1.0,
+            control_channel=2.0,
+            challenge=3.0,
+            permit=4.0,
+            start_response=5.0,
+            stop_response=6.0,
+            shutdown_response=7.0,
+            process_exit=8.0,
+        ),
     )
     return orchestrator, calls, actual_detector, channel
 
@@ -266,9 +291,7 @@ def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
     rendered = "".join(
-        traceback.format_exception(
-            type(raised.value), raised.value, raised.value.__traceback__
-        )
+        traceback.format_exception(type(raised.value), raised.value, raised.value.__traceback__)
     )
     assert "sentinel-backend-token" not in rendered
 
@@ -314,15 +337,6 @@ def test_permit_adapter_cannot_spoof_a_public_condition_by_typed_code() -> None:
     assert str(raised.value) == "authorized start failed"
 
 
-
-
-
-
-
-
-
-
-
 def test_no_target_never_starts_core_or_requests_permit() -> None:
     orchestrator, calls, _, _ = build_orchestrator(detector=FakeDetector(target=None))
 
@@ -352,9 +366,6 @@ def test_invalid_local_access_context_has_no_activation_side_effects(
 
     assert detector.wait_calls == 0
     assert calls == []
-
-
-
 
 
 def test_online_heartbeat_precondition_records_only_a_successful_fresh_result() -> None:
@@ -411,12 +422,6 @@ def test_failed_heartbeat_does_not_advance_previous_success_timestamp() -> None:
     assert precondition.last_success_monotonic == 123.0
 
 
-
-
-
-
-
-
 def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> None:
     orchestrator, calls, _, _ = build_orchestrator()
 
@@ -430,6 +435,139 @@ def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> 
         "core.challenge",
         "backend.permit",
         "core.start",
+    ]
+
+
+def test_each_operation_uses_its_independent_timeout() -> None:
+    orchestrator, _, detector, channel = build_orchestrator()
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    process = orchestrator._process
+    permits = orchestrator._permits
+    assert detector.timeout == 1.0
+    assert process.control_channel_timeout == 2.0  # type: ignore[attr-defined]
+    assert channel.challenge_timeout == 3.0
+    assert permits.request is not None  # type: ignore[attr-defined]
+    assert permits.request["timeout"] == 4.0  # type: ignore[attr-defined]
+    assert channel.start_timeout == 5.0
+
+    orchestrator.stop()
+    assert channel.stop_timeout == 6.0
+
+    orchestrator.shutdown()
+    assert channel.shutdown_timeout == 7.0
+    assert process.process_exit_timeout == 8.0  # type: ignore[attr-defined]
+
+
+def test_start_past_old_boundary_does_not_trigger_busy_shutdown_cleanup() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    old_generic_boundary = 1.0
+    simulated_core_elapsed = 2.0
+    orchestrator._timeouts = OrchestrationTimeouts(
+        target=1.0,
+        control_channel=1.0,
+        challenge=1.0,
+        permit=1.0,
+        start_response=4.0,
+        stop_response=2.0,
+        shutdown_response=2.0,
+        process_exit=1.0,
+    )
+
+    original_start = channel.start_authorized
+
+    def controlled_slow_start(*args: object, **kwargs: object) -> CoreStatus:
+        timeout = args[-1]
+        assert isinstance(timeout, float)
+        assert simulated_core_elapsed > old_generic_boundary
+        assert simulated_core_elapsed < timeout
+        return original_start(*args, **kwargs)  # type: ignore[arg-type]
+
+    channel.start_authorized = controlled_slow_start  # type: ignore[method-assign]
+
+    status = orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert status.kind is CoreStatusKind.RUNNING
+    assert "core.shutdown" not in calls
+    assert "host.wait" not in calls
+    assert "host.kill" not in calls
+
+
+def test_authorized_start_diagnostics_capture_only_safe_typed_result() -> None:
+    from neko_launcher.application.diagnostics import (
+        CoreDiagnosticsRecorder,
+        NoopDiagnosticsSink,
+    )
+
+    orchestrator, _, _, _ = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator._diagnostics = recorder
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    snapshot = recorder.snapshot()
+    assert snapshot.pid == 4321
+    assert snapshot.authorized_start_elapsed_ms is not None
+    assert snapshot.authorized_start_failure_category == "START_TYPED_SUCCESS"
+    assert snapshot.authorized_start_core_alive is True
+    assert snapshot.authorized_start_transport_outcome == "START_TYPED_SUCCESS"
+
+
+def test_start_timeout_diagnostics_distinguish_live_core_without_response() -> None:
+    from neko_launcher.application.diagnostics import (
+        CoreDiagnosticsRecorder,
+        NoopDiagnosticsSink,
+    )
+
+    orchestrator, calls, _, _ = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator._diagnostics = recorder
+
+    def time_out(*args: object, **kwargs: object) -> CoreStatus:
+        raise CoreControlError(CoreControlFailureCode.OPERATION_TIMEOUT)
+
+    orchestrator._channel.start_authorized = time_out  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError):
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_failure_category == "START_RESPONSE_TIMEOUT"
+    assert snapshot.authorized_start_core_alive is True
+    assert snapshot.authorized_start_transport_outcome == "CORE_ALIVE_NO_RESPONSE"
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+
+
+def test_authorized_start_diagnostics_distinguish_owned_core_exit() -> None:
+    from neko_launcher.application.diagnostics import (
+        CoreDiagnosticsRecorder,
+        NoopDiagnosticsSink,
+    )
+
+    orchestrator, calls, _, _ = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator._diagnostics = recorder
+
+    def exit_during_start(*args: object, **kwargs: object) -> CoreStatus:
+        orchestrator._process.live = False  # type: ignore[attr-defined]
+        raise CoreControlError(CoreControlFailureCode.PIPE_CLOSED)
+
+    orchestrator._channel.start_authorized = exit_during_start  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError):
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_failure_category == "CORE_EXITED"
+    assert snapshot.authorized_start_core_alive is False
+    assert snapshot.authorized_start_transport_outcome == "CORE_EXITED"
+    assert calls == [
+        "backend.heartbeat",
+        "host.start",
+        "host.ready",
+        "core.challenge",
+        "backend.permit",
     ]
 
 
@@ -650,6 +788,10 @@ def test_shutdown_classifies_pipe_identity_mismatch_and_fallback() -> None:
             CoreControlFailureCode.RESPONSE_REJECTED,
             CoreShutdownFailureCode.SHUTDOWN_REJECTED,
         ),
+        (
+            CoreControlFailureCode.PIPE_CLOSED,
+            CoreShutdownFailureCode.SHUTDOWN_REJECTED,
+        ),
     ],
 )
 def test_shutdown_maps_exact_control_failure_categories(
@@ -717,23 +859,27 @@ def test_cancelled_attempt_does_not_start_host() -> None:
 
 def test_debug_mode_equivalence_on_failure() -> None:
     from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder, NoopDiagnosticsSink
-    
+
     # Test OFF
     orchestrator_off, _, _, _ = build_orchestrator()
+
     def leak_off(*args: object, **kwargs: object) -> OpaquePermit:
         raise RuntimeError("backend_error")
+
     orchestrator_off._permits.issue_launch_permit = leak_off  # type: ignore
     with pytest.raises(AuthorizedCoreError) as raised_off:
         orchestrator_off.start(valid_command(), valid_access_context(), Event())
-    
+
     # Test ON
     orchestrator_on, _, _, _ = build_orchestrator()
     recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
     orchestrator_on._diagnostics = recorder
+
     def leak_on(*args: object, **kwargs: object) -> OpaquePermit:
         raise RuntimeError("backend_error")
+
     orchestrator_on._permits.issue_launch_permit = leak_on  # type: ignore
     with pytest.raises(AuthorizedCoreError) as raised_on:
         orchestrator_on.start(valid_command(), valid_access_context(), Event())
-        
+
     assert raised_off.value.code == raised_on.value.code

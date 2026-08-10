@@ -518,6 +518,18 @@ class AppWindow:
             content += f"Exit Code:  {snapshot.exit_code} (Hex: {hex_exit})\n"
         else:
             content += "Exit Code:  None\n"
+
+        if snapshot.authorized_start_elapsed_ms is not None:
+            content += (
+                "START ms:   "
+                f"{snapshot.authorized_start_elapsed_ms}\n"
+                "START kind: "
+                f"{snapshot.authorized_start_failure_category}\n"
+                "Core alive: "
+                f"{snapshot.authorized_start_core_alive}\n"
+                "Transport:  "
+                f"{snapshot.authorized_start_transport_outcome}\n"
+            )
             
         content += (
             f"WinError:   {snapshot.winerror}\n"

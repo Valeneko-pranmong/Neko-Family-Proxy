@@ -24,9 +24,7 @@ _STATUS_MAP: dict[str, CoreStatusKind] = {
     "Failed": CoreStatusKind.FAILED,
 }
 _CHALLENGE_FIELDS = frozenset({"type", "correlationId", "challenge"})
-_RESULT_SUCCESS_FIELDS = frozenset(
-    {"type", "correlationId", "succeeded", "status"}
-)
+_RESULT_SUCCESS_FIELDS = frozenset({"type", "correlationId", "succeeded", "status"})
 _RESULT_FAILURE_FIELDS = _RESULT_SUCCESS_FIELDS | {"errorCode"}
 
 
@@ -71,6 +69,7 @@ class NamedPipeCoreControlChannel:
     """
 
     _MAX_PAYLOAD_BYTES = 8192
+    _CLOSED_PIPE_ERRORS = frozenset({109, 233})
 
     def __init__(
         self,
@@ -127,9 +126,7 @@ class NamedPipeCoreControlChannel:
         try:
             actual_pid = self._get_server_process_id(handle)
         except OSError:
-            raise CoreControlError(
-                CoreControlFailureCode.PIPE_IDENTITY_MISMATCH
-            ) from None
+            raise CoreControlError(CoreControlFailureCode.PIPE_IDENTITY_MISMATCH) from None
         if expected_pid is None or actual_pid != expected_pid:
             raise CoreControlError(CoreControlFailureCode.PIPE_IDENTITY_MISMATCH)
 
@@ -140,7 +137,13 @@ class NamedPipeCoreControlChannel:
             cls._remaining(deadline)
             try:
                 chunk = handle.read(1)
-            except (BlockingIOError, OSError):
+            except BlockingIOError:
+                time.sleep(min(0.01, cls._remaining(deadline)))
+                continue
+            except OSError as exc:
+                error_code = getattr(exc, "winerror", None) or exc.errno
+                if error_code in cls._CLOSED_PIPE_ERRORS:
+                    raise CoreControlError(CoreControlFailureCode.PIPE_CLOSED) from None
                 time.sleep(min(0.01, cls._remaining(deadline)))
                 continue
             if not chunk:
@@ -162,7 +165,13 @@ class NamedPipeCoreControlChannel:
             cls._remaining(deadline)
             try:
                 written = handle.write(payload[offset:])
-            except (BlockingIOError, OSError):
+            except BlockingIOError:
+                time.sleep(min(0.01, cls._remaining(deadline)))
+                continue
+            except OSError as exc:
+                error_code = getattr(exc, "winerror", None) or exc.errno
+                if error_code in cls._CLOSED_PIPE_ERRORS:
+                    raise CoreControlError(CoreControlFailureCode.PIPE_CLOSED) from None
                 time.sleep(min(0.01, cls._remaining(deadline)))
                 continue
             if written is None:
@@ -175,7 +184,9 @@ class NamedPipeCoreControlChannel:
             offset += written
 
     def _send_and_receive(
-        self, message: dict[str, Any], timeout: float,
+        self,
+        message: dict[str, Any],
+        timeout: float,
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
         try:
@@ -195,9 +206,9 @@ class NamedPipeCoreControlChannel:
             with handle:
                 self._configure_nonblocking(handle)
                 self._require_owned_server(handle)
-                payload = json.dumps(
-                    message, separators=(",", ":"), ensure_ascii=True
-                ).encode("utf-8")
+                payload = json.dumps(message, separators=(",", ":"), ensure_ascii=True).encode(
+                    "utf-8"
+                )
                 if not 1 <= len(payload) <= self._MAX_PAYLOAD_BYTES:
                     raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
                 self._write_all(handle, payload + b"\n", deadline)
@@ -237,17 +248,15 @@ class NamedPipeCoreControlChannel:
         }
         res = self._send_and_receive(msg, timeout)
 
-        if (
-            frozenset(res) != _CHALLENGE_FIELDS
-            or res.get("type") != "challengeResponse"
-        ):
+        if frozenset(res) != _CHALLENGE_FIELDS or res.get("type") != "challengeResponse":
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
 
         challenge_val = res.get("challenge")
-        if not isinstance(challenge_val, str) or re.fullmatch(
-            r"[A-Za-z0-9_-]{43}", challenge_val
-        ) is None:
+        if (
+            not isinstance(challenge_val, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43}", challenge_val) is None
+        ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
 
         return CoreChallenge(value=challenge_val)
