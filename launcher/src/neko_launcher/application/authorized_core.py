@@ -750,6 +750,10 @@ class AuthorizedCoreOrchestrator:
                 if self._diagnostics:
                     self._diagnostics.record_stage("RUNNING_VERIFY")
                 require_core_start_running(status)
+                if self._diagnostics:
+                    self._diagnostics.record_stage(
+                        "CORE_STATUS", status="CoreStatus.RUNNING"
+                    )
             except AuthorizedCoreError as exc:
                 failure = AuthorizedCoreError(
                     exc.code,

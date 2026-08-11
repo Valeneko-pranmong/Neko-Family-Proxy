@@ -536,6 +536,37 @@ def test_authorized_start_diagnostics_capture_only_safe_typed_result() -> None:
     assert snapshot.authorized_start_transport_outcome == "START_TYPED_SUCCESS"
 
 
+def test_successful_start_records_terminal_typed_running_stage() -> None:
+    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
+
+    class RecordingSink:
+        def __init__(self) -> None:
+            self.stages: list[tuple[str, dict[str, object]]] = []
+
+        def begin_attempt(self, attempt_id: str) -> None:
+            pass
+
+        def record_stage(self, stage: str, **kwargs: object) -> None:
+            self.stages.append((stage, kwargs))
+
+        def record_process_event(self, event: str, **kwargs: object) -> None:
+            pass
+
+        def record_exception(self, exc: Exception, stage: str) -> None:
+            pass
+
+    orchestrator, _, _, _ = build_orchestrator()
+    sink = RecordingSink()
+    orchestrator._diagnostics = CoreDiagnosticsRecorder(sink)
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert sink.stages[-2:] == [
+        ("RUNNING_VERIFY", {}),
+        ("CORE_STATUS", {"status": "CoreStatus.RUNNING"}),
+    ]
+
+
 def test_start_timeout_diagnostics_distinguish_live_core_without_response() -> None:
     from neko_launcher.application.diagnostics import (
         CoreDiagnosticsRecorder,

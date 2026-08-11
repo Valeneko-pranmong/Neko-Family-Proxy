@@ -31,6 +31,7 @@ plans or historical evidence.
 | [`current/phase-2-production-deployment-plan.md`](current/phase-2-production-deployment-plan.md) | Current; Phase 3 approval required | Exact production migration, verification, canary, and forward-only rollback sequence |
 | [`current/backend-single-active-session-ai-prompt.md`](current/backend-single-active-session-ai-prompt.md) | Current implementation handoff | Backend/Admin Web policy for multiple installations and one active session |
 | [`current/launcher-single-active-session-ai-prompt.md`](current/launcher-single-active-session-ai-prompt.md) | Current implementation handoff | Desktop Launcher behavior for latest-login-wins session replacement |
+| [`current/final-windows-e2e-harness.md`](current/final-windows-e2e-harness.md) | Current preparation runbook | Gate-bound A → B → C → A Windows harness, evidence, topology, and cleanup contract |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |
 
 ## Component documentation
