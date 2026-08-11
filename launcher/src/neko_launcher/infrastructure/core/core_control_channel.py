@@ -16,6 +16,7 @@ from neko_launcher.application.authorized_core import (
     CoreStatus,
     CoreStatusKind,
     OpaquePermit,
+    RuntimeConfigurationCandidate,
 )
 
 _STATUS_MAP: dict[str, CoreStatusKind] = {
@@ -26,6 +27,28 @@ _STATUS_MAP: dict[str, CoreStatusKind] = {
 _CHALLENGE_FIELDS = frozenset({"type", "correlationId", "challenge"})
 _RESULT_SUCCESS_FIELDS = frozenset({"type", "correlationId", "succeeded", "status"})
 _RESULT_FAILURE_FIELDS = _RESULT_SUCCESS_FIELDS | {"errorCode"}
+_CATALOG_FIELDS = frozenset({"type", "correlationId", "succeeded", "candidateCount", "candidates"})
+_CATALOG_FAILURE_FIELDS = frozenset({"type", "correlationId", "succeeded", "errorCode"})
+_CATALOG_FAILURE_CODES = frozenset({"CatalogUnavailable", "CatalogTooLarge"})
+_CANDIDATE_FIELDS = frozenset(
+    {
+        "profileReference",
+        "serverReference",
+        "relationshipValid",
+        "processModeMatchCount",
+    }
+)
+_VALIDATE_FIELDS = frozenset(
+    {
+        "type",
+        "correlationId",
+        "profileReference",
+        "serverReference",
+        "relationshipValid",
+        "processModeMatchCount",
+        "valid",
+    }
+)
 
 
 def _reject_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -237,9 +260,109 @@ class NamedPipeCoreControlChannel:
         if res.get("correlationId") != expected:
             raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
 
+    @staticmethod
+    def _require_request_correlation(correlation_id: str) -> None:
+        if (
+            not isinstance(correlation_id, str)
+            or re.fullmatch(r"[0-9a-f]{32}", correlation_id) is None
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+
     # ------------------------------------------------------------------
     # Public protocol
     # ------------------------------------------------------------------
+
+    def runtime_config_catalog(
+        self, correlation_id: str, timeout: float
+    ) -> tuple[RuntimeConfigurationCandidate, ...]:
+        self._require_request_correlation(correlation_id)
+        res = self._send_and_receive(
+            {
+                "type": "runtimeConfigCatalog",
+                "correlationId": correlation_id,
+            },
+            timeout,
+        )
+        self._require_correlation(res, correlation_id)
+        if frozenset(res) == _CATALOG_FAILURE_FIELDS:
+            if (
+                res.get("type") == "runtimeConfigCatalogResponse"
+                and res.get("succeeded") is False
+                and res.get("errorCode") in _CATALOG_FAILURE_CODES
+            ):
+                raise AuthorizedCoreError(
+                    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE,
+                    retry_safe=res.get("errorCode") == "CatalogUnavailable",
+                )
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        if (
+            frozenset(res) != _CATALOG_FIELDS
+            or res.get("type") != "runtimeConfigCatalogResponse"
+            or res.get("succeeded") is not True
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        count = res.get("candidateCount")
+        values = res.get("candidates")
+        if (
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or not 0 <= count <= 32
+            or not isinstance(values, list)
+            or len(values) != count
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        candidates: list[RuntimeConfigurationCandidate] = []
+        for value in values:
+            if not isinstance(value, dict) or frozenset(value) != _CANDIDATE_FIELDS:
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            if (
+                value.get("relationshipValid") is not True
+                or isinstance(value.get("processModeMatchCount"), bool)
+                or value.get("processModeMatchCount") != 1
+            ):
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            try:
+                candidate = RuntimeConfigurationCandidate(
+                    value["profileReference"], value["serverReference"]
+                )
+            except (KeyError, AuthorizedCoreError):
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE) from None
+            if candidate in candidates:
+                raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+            candidates.append(candidate)
+        return tuple(candidates)
+
+    def runtime_config_validate(
+        self,
+        candidate: RuntimeConfigurationCandidate,
+        correlation_id: str,
+        timeout: float,
+    ) -> RuntimeConfigurationCandidate:
+        if not isinstance(candidate, RuntimeConfigurationCandidate):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        self._require_request_correlation(correlation_id)
+        res = self._send_and_receive(
+            {
+                "type": "runtimeConfigValidate",
+                "correlationId": correlation_id,
+                "profileReference": candidate.profile_reference,
+                "serverReference": candidate.server_reference,
+            },
+            timeout,
+        )
+        if frozenset(res) != _VALIDATE_FIELDS or res.get("type") != "runtimeConfigValidateResponse":
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        self._require_correlation(res, correlation_id)
+        if (
+            res.get("profileReference") != candidate.profile_reference
+            or res.get("serverReference") != candidate.server_reference
+            or res.get("relationshipValid") is not True
+            or isinstance(res.get("processModeMatchCount"), bool)
+            or res.get("processModeMatchCount") != 1
+            or res.get("valid") is not True
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        return candidate
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
         msg = {

@@ -24,6 +24,7 @@ from neko_launcher.application.authorized_core import (
     OnlineHeartbeatLaunchPrecondition,
     OrchestrationTimeouts,
     PermitDiagnosticCode,
+    RuntimeConfigurationCandidate,
     TargetBoundStartCommand,
 )
 
@@ -131,6 +132,25 @@ class FakeChannel:
         self.start_timeout: float | None = None
         self.stop_timeout: float | None = None
         self.shutdown_timeout: float | None = None
+        self.candidates = (RuntimeConfigurationCandidate("profile-17", "server-42"),)
+        self.validated_candidate: RuntimeConfigurationCandidate | None = None
+        self.discovery_calls: list[str] = []
+
+    def runtime_config_catalog(
+        self, correlation_id: str, timeout: float
+    ) -> tuple[RuntimeConfigurationCandidate, ...]:
+        self.discovery_calls.append("catalog")
+        return self.candidates
+
+    def runtime_config_validate(
+        self,
+        candidate: RuntimeConfigurationCandidate,
+        correlation_id: str,
+        timeout: float,
+    ) -> RuntimeConfigurationCandidate:
+        self.discovery_calls.append("validate")
+        self.validated_candidate = candidate
+        return candidate
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
         self.challenge_timeout = timeout
@@ -634,6 +654,71 @@ def test_authority_request_uses_target_binding_without_server_owned_identity_fie
     assert request["scope"] == "proxy:start"
     assert request["configuration_digest"] == channel.start_command.configuration_digest
     assert set(request).isdisjoint({"sub", "sid", "iid", "lid", "installation_key_hash"})
+
+
+def test_unique_runtime_configuration_identity_is_frozen_through_permit_and_start() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    command = channel.start_command
+    assert isinstance(command, TargetBoundStartCommand)
+    assert (command.profile_reference, command.server_reference) == ("profile-17", "server-42")
+    assert command.canonical_bytes == (
+        b"protocolVersion=2\nmode=ProcessMode\nprocessName=pso2.exe\n"
+        b"targetPid=42\nprofileReference=profile-17\nserverReference=server-42\n"
+    )
+    assert (
+        command.configuration_digest
+        == "ef428b54b3fcd87ff219e3d2ed45b9160bfad1f247de7c04e9cf9f7a4fd3f115"
+    )
+    assert channel.validated_candidate == RuntimeConfigurationCandidate("profile-17", "server-42")
+    assert orchestrator._permits.request["configuration_digest"] == command.configuration_digest  # type: ignore[attr-defined,index]
+    assert channel.discovery_calls == ["catalog", "validate"]
+    assert calls.index("backend.permit") < calls.index("core.start")
+
+
+@pytest.mark.parametrize(
+    ("candidates", "expected_code"),
+    [
+        ((), AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE),
+        (
+            (
+                RuntimeConfigurationCandidate("profile-17", "server-42"),
+                RuntimeConfigurationCandidate("profile-18", "server-43"),
+            ),
+            AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_SELECTION_REQUIRED,
+        ),
+    ],
+)
+def test_non_unique_runtime_catalog_fails_typed_before_permit(
+    candidates: tuple[RuntimeConfigurationCandidate, ...],
+    expected_code: AuthorizedCoreErrorCode,
+) -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    channel.candidates = candidates
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is expected_code
+    assert raised.value.domain is AuthorizedCoreFailureDomain.CONFIGURATION
+    assert "core.challenge" not in calls
+    assert "backend.permit" not in calls
+
+
+def test_runtime_configuration_validation_failure_is_unavailable_before_permit() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+
+    def reject(*_args: object) -> RuntimeConfigurationCandidate:
+        raise RuntimeError("invalid catalog attestation")
+
+    channel.runtime_config_validate = reject  # type: ignore[method-assign]
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE
+    assert "backend.permit" not in calls
 
 
 def test_target_observation_failure_is_not_reported_as_target_exit() -> None:

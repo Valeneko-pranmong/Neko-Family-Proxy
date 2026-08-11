@@ -9,7 +9,6 @@ from neko_launcher.application.authorized_core import (
     CoreStatus,
     CoreStatusKind,
     LaunchAccessContext,
-    OpaqueStartCommand,
 )
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import (
     AuthorizedProxyGateway,
@@ -22,7 +21,7 @@ class StatusReturningOrchestrator:
 
     def start(
         self,
-        command: OpaqueStartCommand,
+        command: None,
         context: LaunchAccessContext,
         cancellation: Event,
     ) -> CoreStatus:
@@ -45,7 +44,6 @@ def gateway_for(status: CoreStatus) -> AuthorizedProxyGateway:
         access_context_provider=lambda: LaunchAccessContext(
             True, True, "session", "installation", object()
         ),
-        command_provider=lambda: OpaqueStartCommand("profile-17", "server-42"),
     )
 
 

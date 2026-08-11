@@ -7,7 +7,6 @@ from neko_launcher.application.authorized_core import (
     AuthorizedCoreOrchestrator,
     LaunchAccessContext,
     OnlineHeartbeatLaunchPrecondition,
-    OpaqueStartCommand,
     OrchestrationTimeouts,
 )
 from neko_launcher.application.controller import ApplicationController
@@ -121,17 +120,9 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
                 authenticated_transport=gateway,
             )
 
-        def command_provider() -> OpaqueStartCommand:
-            # Minimal V1 uses a hardcoded profile reference
-            return OpaqueStartCommand(
-                profile_reference="profile-0",
-                server_reference="server-0",
-            )
-
         proxy_manager = AuthorizedProxyGateway(
             orchestrator=orchestrator,
             access_context_provider=access_context_provider,
-            command_provider=command_provider,
         )
     else:
         proxy_manager = create_production_proxy_gateway()

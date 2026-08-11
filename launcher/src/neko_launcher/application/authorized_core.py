@@ -37,6 +37,8 @@ class AuthorizedCoreErrorCode(str, Enum):
     PERMIT_UNAVAILABLE = "PermitUnavailable"
     CHALLENGE_UNAVAILABLE = "ChallengeUnavailable"
     PROCESS_OBSERVATION_UNAVAILABLE = "ProcessObservationUnavailable"
+    RUNTIME_CONFIGURATION_UNAVAILABLE = "RUNTIME_CONFIGURATION_UNAVAILABLE"
+    RUNTIME_CONFIGURATION_SELECTION_REQUIRED = "RUNTIME_CONFIGURATION_SELECTION_REQUIRED"
 
 
 class AuthorizedCoreFailureDomain(str, Enum):
@@ -133,6 +135,12 @@ _PUBLIC_ERROR_MESSAGES = {
     AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE: (
         "target process observation is unavailable"
     ),
+    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE: (
+        "runtime configuration is unavailable"
+    ),
+    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_SELECTION_REQUIRED: (
+        "runtime configuration selection is required"
+    ),
 }
 
 _FAILURE_DOMAINS = {
@@ -152,6 +160,12 @@ _FAILURE_DOMAINS = {
     AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE: AuthorizedCoreFailureDomain.AUTHORITY,
     AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE: AuthorizedCoreFailureDomain.CONFIGURATION,
     AuthorizedCoreErrorCode.CONFIGURATION_MISMATCH: AuthorizedCoreFailureDomain.CONFIGURATION,
+    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE: (
+        AuthorizedCoreFailureDomain.CONFIGURATION
+    ),
+    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_SELECTION_REQUIRED: (
+        AuthorizedCoreFailureDomain.CONFIGURATION
+    ),
     AuthorizedCoreErrorCode.TARGET_UNAVAILABLE: AuthorizedCoreFailureDomain.TARGET,
     AuthorizedCoreErrorCode.TARGET_EXITED: AuthorizedCoreFailureDomain.TARGET,
     AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE: AuthorizedCoreFailureDomain.TARGET,
@@ -291,6 +305,23 @@ class CoreChallenge:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE)
 
 
+@dataclass(frozen=True)
+class RuntimeConfigurationCandidate:
+    """Opaque Core-owned runtime configuration identity; never server details."""
+
+    profile_reference: str
+    server_reference: str
+
+    def __post_init__(self) -> None:
+        if not (
+            isinstance(self.profile_reference, str)
+            and isinstance(self.server_reference, str)
+            and fullmatch(r"profile-[0-9]{1,6}", self.profile_reference)
+            and fullmatch(r"server-[0-9]{1,6}", self.server_reference)
+        ):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE)
+
+
 class CoreStatusKind(str, Enum):
     RUNNING = "Running"
     STOPPED = "Stopped"
@@ -425,6 +456,17 @@ class CoreProcessAdapter(Protocol):
 
 
 class CoreControlChannel(Protocol):
+    def runtime_config_catalog(
+        self, correlation_id: str, timeout: float
+    ) -> tuple[RuntimeConfigurationCandidate, ...]: ...
+
+    def runtime_config_validate(
+        self,
+        candidate: RuntimeConfigurationCandidate,
+        correlation_id: str,
+        timeout: float,
+    ) -> RuntimeConfigurationCandidate: ...
+
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge: ...
 
     def start_authorized(
@@ -532,7 +574,7 @@ class AuthorizedCoreOrchestrator:
 
     def start(
         self,
-        command: OpaqueStartCommand,
+        command: OpaqueStartCommand | None,
         access_context: LaunchAccessContext,
         cancellation: Event,
     ) -> CoreStatus:
@@ -543,7 +585,10 @@ class AuthorizedCoreOrchestrator:
 
         if self._diagnostics:
             self._diagnostics.record_stage("COMMAND_VALIDATE")
-        command.require_available()
+        # Legacy callers may still pass a command, but it is never an identity
+        # source. Production passes None and Core discovery is authoritative.
+        if command is not None:
+            command.require_available()
 
         if self._diagnostics:
             self._diagnostics.record_stage("ACCESS_CONTEXT_VALIDATE")
@@ -608,6 +653,42 @@ class AuthorizedCoreOrchestrator:
                 )
 
                 if self._diagnostics:
+                    self._diagnostics.record_stage("RUNTIME_CONFIG_CATALOG")
+                candidates = self._invoke_adapter(
+                    lambda: self._channel.runtime_config_catalog(
+                        self._correlation_id(), self._timeouts.challenge
+                    ),
+                    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE,
+                    stage="RUNTIME_CONFIG_CATALOG",
+                    retry_safe=True,
+                )
+                if len(candidates) == 0:
+                    raise AuthorizedCoreError(
+                        AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE,
+                        retry_safe=True,
+                    )
+                if len(candidates) != 1:
+                    raise AuthorizedCoreError(
+                        AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_SELECTION_REQUIRED
+                    )
+                selected = candidates[0]
+                if self._diagnostics:
+                    self._diagnostics.record_stage("RUNTIME_CONFIG_VALIDATE")
+                frozen_configuration = self._invoke_adapter(
+                    lambda: self._channel.runtime_config_validate(
+                        selected, self._correlation_id(), self._timeouts.challenge
+                    ),
+                    AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE,
+                    stage="RUNTIME_CONFIG_VALIDATE",
+                    retry_safe=True,
+                )
+                if frozen_configuration is not selected:
+                    raise AuthorizedCoreError(
+                        AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE,
+                        retry_safe=True,
+                    )
+
+                if self._diagnostics:
                     self._diagnostics.record_stage("TARGET_RECHECK")
                 self._require_target(target)
 
@@ -626,7 +707,10 @@ class AuthorizedCoreOrchestrator:
                 if self._diagnostics:
                     self._diagnostics.record_stage("TARGET_BIND")
                 target_bound_command = TargetBoundStartCommand.from_opaque(
-                    command,
+                    OpaqueStartCommand(
+                        frozen_configuration.profile_reference,
+                        frozen_configuration.server_reference,
+                    ),
                     target_pid=self._target_pid(target),
                 )
 
