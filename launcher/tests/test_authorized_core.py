@@ -341,9 +341,10 @@ def test_permit_adapter_cannot_spoof_a_public_condition_by_typed_code() -> None:
 def test_no_target_never_starts_core_or_requests_permit() -> None:
     orchestrator, calls, _, _ = build_orchestrator(detector=FakeDetector(target=None))
 
-    with pytest.raises(AuthorizedCoreError, match="target process is unavailable"):
+    with pytest.raises(AuthorizedCoreError, match="target process is unavailable") as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
+    assert raised.value.retry_safe is True
     assert calls == []
 
 
@@ -584,6 +585,7 @@ def test_challenge_transport_failure_is_typed_safe_pre_permit_failure() -> None:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
     assert raised.value.code is AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE
+    assert raised.value.retry_safe is True
     assert "backend.permit" not in calls
     assert calls[-2:] == ["core.shutdown", "host.wait"]
 
@@ -592,9 +594,10 @@ def test_replaced_session_fails_before_core_host_start() -> None:
     orchestrator, calls, _, _ = build_orchestrator()
     orchestrator._precondition.available = False  # type: ignore[attr-defined]
 
-    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable") as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
+    assert raised.value.retry_safe is True
     assert calls == ["backend.heartbeat"]
 
 
@@ -769,6 +772,7 @@ def test_typed_core_start_failure_preserves_safe_classification_and_cleans_up(
 
     assert raised.value.code is launcher_code
     assert raised.value.domain is domain
+    assert raised.value.retry_safe is False
     assert raised.value.code is not AuthorizedCoreErrorCode.RUNNING_NOT_REACHED
     assert calls[-2:] == ["core.shutdown", "host.wait"]
 
@@ -849,6 +853,30 @@ def test_owned_process_kill_failure_does_not_replace_sanitized_start_error() -> 
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert calls[-2:] == ["host.wait", "host.kill"]
+
+
+def test_unexpected_cleanup_adapter_failure_does_not_replace_typed_start_error() -> None:
+    orchestrator, _, _, channel = build_orchestrator()
+    channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
+    owned_pid_calls = 0
+    original_owned_process_id = orchestrator._process.owned_process_id
+
+    def fail_during_cleanup() -> int | None:
+        nonlocal owned_pid_calls
+        owned_pid_calls += 1
+        if owned_pid_calls == 3:
+            raise RuntimeError("sentinel-cleanup-owned-pid-failure")
+        return original_owned_process_id()
+
+    orchestrator._process.owned_process_id = fail_during_cleanup  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+    assert raised.value.domain is AuthorizedCoreFailureDomain.AUTHORIZATION
+    assert "sentinel-cleanup-owned-pid-failure" not in str(raised.value)
+    assert owned_pid_calls == 3
 
 
 def test_public_stop_is_runtime_only_and_does_not_wait_for_host_exit() -> None:

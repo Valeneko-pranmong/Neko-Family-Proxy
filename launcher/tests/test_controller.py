@@ -144,6 +144,28 @@ def test_authority_start_failure_does_not_lock_or_revoke_local_session(
     assert error_code.value not in state.last_error
 
 
+def test_post_permit_target_unavailable_does_not_enable_automatic_retry() -> None:
+    bus = EventBus()
+    proxy = FailingStartProxy(
+        AuthorizedCoreError(
+            AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
+            retry_safe=False,
+        )
+    )
+    controller = ApplicationController(bus, proxy)
+    controller.dispatch(AuthSucceeded("user-id", "user@example.com"))
+    controller.dispatch(
+        EntitlementLoaded(Entitlement("neko-family-proxy", EntitlementStatus.ACTIVE))
+    )
+    controller.dispatch(SessionClaimed("session-id"))
+    controller.dispatch(GameProcessStateChanged(True))
+
+    controller.dispatch(StartProxyRequested())
+
+    assert controller.state.proxy_status is ProxyStatus.FAILED
+    assert controller.state.proxy_start_retry_safe is False
+
+
 def test_shutdown_stops_only_launcher_owned_proxy_and_tweaker() -> None:
     bus = EventBus()
     proxy = FakeProxy()

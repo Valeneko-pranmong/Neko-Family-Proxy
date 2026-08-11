@@ -289,12 +289,7 @@ class ApplicationController:
 
     def _is_safe_pre_permit_failure(self, error: Exception) -> bool:
         """Allow automatic retry only for failures before permit issuance."""
-        code = getattr(error, "code", None)
-        return getattr(code, "value", code) in {
-            "TargetUnavailable",
-            "ChallengeUnavailable",
-            "HeartbeatUnavailable",
-        }
+        return getattr(error, "retry_safe", False) is True
 
     def _launch_tweaker(self, executable: str) -> None:
         state = self.state

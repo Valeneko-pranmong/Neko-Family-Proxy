@@ -197,6 +197,7 @@ class AuthorizedCoreError(RuntimeError):
         *,
         diagnostic_code: PermitDiagnosticCode | None = None,
         diagnostic_context: dict[str, object] | None = None,
+        retry_safe: bool = False,
     ) -> None:
         # Legacy/adapter-owned text is never treated as a public condition.
         self.code = (
@@ -205,6 +206,7 @@ class AuthorizedCoreError(RuntimeError):
             else AuthorizedCoreErrorCode.ADAPTER_FAILURE
         )
         self.domain = _FAILURE_DOMAINS[self.code]
+        self.retry_safe = retry_safe is True
         self.diagnostic_code = (
             diagnostic_code if isinstance(diagnostic_code, PermitDiagnosticCode) else None
         )
@@ -563,9 +565,13 @@ class AuthorizedCoreOrchestrator:
                     lambda: self._detector.wait_for_exact_pso2(self._timeouts.target, cancellation),
                     AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
                     stage="TARGET_WAIT",
+                    retry_safe=True,
                 )
                 if target is None:
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_UNAVAILABLE)
+                    raise AuthorizedCoreError(
+                        AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
+                        retry_safe=True,
+                    )
                 self._require_not_cancelled(cancellation)
 
                 self._invoke_adapter(
@@ -576,6 +582,7 @@ class AuthorizedCoreOrchestrator:
                     ),
                     AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE,
                     stage="ACCESS_CONTEXT_VALIDATE",
+                    retry_safe=True,
                 )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
@@ -612,6 +619,7 @@ class AuthorizedCoreOrchestrator:
                     ),
                     AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE,
                     stage="CHALLENGE_REQUEST",
+                    retry_safe=True,
                 )
                 self._require_target(target)
 
@@ -663,6 +671,7 @@ class AuthorizedCoreOrchestrator:
                     exc.code,
                     diagnostic_code=exc.diagnostic_code,
                     diagnostic_context=exc.diagnostic_context,
+                    retry_safe=exc.retry_safe,
                 )
             except Exception as exc:
                 if self._diagnostics:
@@ -703,6 +712,7 @@ class AuthorizedCoreOrchestrator:
         operation: Callable[[], AdapterResultT],
         failure_code: AuthorizedCoreErrorCode,
         stage: str | None = None,
+        retry_safe: bool = False,
     ) -> AdapterResultT:
         failure: AuthorizedCoreError | None = None
         result: object = None
@@ -723,7 +733,7 @@ class AuthorizedCoreOrchestrator:
                     diagnostic_context=exc.diagnostic_context,
                 )
             else:
-                failure = AuthorizedCoreError(failure_code)
+                failure = AuthorizedCoreError(failure_code, retry_safe=retry_safe)
         if failure is not None:
             raise failure
         return cast(AdapterResultT, result)
@@ -881,9 +891,9 @@ class AuthorizedCoreOrchestrator:
     def _cleanup_owned_host_safely(self) -> None:
         try:
             self.shutdown()
-        except CoreShutdownError:
-            # The original start error remains authoritative. shutdown() has
-            # already applied the exact-child emergency cleanup policy.
+        except Exception:
+            # The original start error remains authoritative even if an
+            # unexpected adapter failure interrupts best-effort cleanup.
             pass
 
     def _emergency_terminate_exact_child(
