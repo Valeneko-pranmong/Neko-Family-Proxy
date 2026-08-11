@@ -4,11 +4,10 @@ from threading import Event
 from typing import Callable
 
 from neko_launcher.application.authorized_core import (
-    AuthorizedCoreError,
     AuthorizedCoreOrchestrator,
-    CoreStatusKind,
     LaunchAccessContext,
     OpaqueStartCommand,
+    require_core_start_running,
 )
 
 
@@ -37,8 +36,7 @@ class AuthorizedProxyGateway:
         command = self._command_provider()
         cancellation = Event()
         status = self._orchestrator.start(command, context, cancellation)
-        if status.kind is not CoreStatusKind.RUNNING:
-            raise AuthorizedCoreError("authorized start did not reach Running")
+        require_core_start_running(status)
 
     def has_owned_host(self) -> bool:
         return self._orchestrator.has_owned_host()

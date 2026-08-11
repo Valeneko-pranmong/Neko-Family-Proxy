@@ -9,6 +9,7 @@ import pytest
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    AuthorizedCoreFailureDomain,
     CoreControlError,
     CoreControlFailureCode,
     CoreShutdownError,
@@ -665,13 +666,136 @@ def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
     assert calls[-2:] == ["core.shutdown", "host.wait"]
 
 
-def test_non_running_start_response_fails_and_cleans_up() -> None:
+@pytest.mark.parametrize(
+    ("core_error", "launcher_code", "domain"),
+    [
+        (
+            "AuthorizationRequired",
+            AuthorizedCoreErrorCode.AUTHORIZATION_REQUIRED,
+            AuthorizedCoreFailureDomain.AUTHORIZATION,
+        ),
+        (
+            "AuthorizationInvalid",
+            AuthorizedCoreErrorCode.AUTHORIZATION_INVALID,
+            AuthorizedCoreFailureDomain.AUTHORIZATION,
+        ),
+        (
+            "AuthorizationExpired",
+            AuthorizedCoreErrorCode.AUTHORIZATION_EXPIRED,
+            AuthorizedCoreFailureDomain.AUTHORIZATION,
+        ),
+        (
+            "AuthorizationReplay",
+            AuthorizedCoreErrorCode.AUTHORIZATION_REPLAY,
+            AuthorizedCoreFailureDomain.AUTHORIZATION,
+        ),
+        (
+            "AuthorizationUnavailable",
+            AuthorizedCoreErrorCode.AUTHORIZATION_UNAVAILABLE,
+            AuthorizedCoreFailureDomain.AUTHORIZATION,
+        ),
+        (
+            "SessionInactive",
+            AuthorizedCoreErrorCode.SESSION_INACTIVE,
+            AuthorizedCoreFailureDomain.AUTHORITY,
+        ),
+        (
+            "EntitlementInactive",
+            AuthorizedCoreErrorCode.ENTITLEMENT_INACTIVE,
+            AuthorizedCoreFailureDomain.AUTHORITY,
+        ),
+        (
+            "HeartbeatStale",
+            AuthorizedCoreErrorCode.HEARTBEAT_STALE,
+            AuthorizedCoreFailureDomain.AUTHORITY,
+        ),
+        (
+            "ConfigurationMismatch",
+            AuthorizedCoreErrorCode.CONFIGURATION_MISMATCH,
+            AuthorizedCoreFailureDomain.CONFIGURATION,
+        ),
+        (
+            "ProcessNotFound",
+            AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
+            AuthorizedCoreFailureDomain.TARGET,
+        ),
+        (
+            "ProcessExited",
+            AuthorizedCoreErrorCode.TARGET_EXITED,
+            AuthorizedCoreFailureDomain.TARGET,
+        ),
+        (
+            "AlreadyRunning",
+            AuthorizedCoreErrorCode.ALREADY_RUNNING,
+            AuthorizedCoreFailureDomain.RUNTIME,
+        ),
+        (
+            "ProtocolInvalid",
+            AuthorizedCoreErrorCode.PROTOCOL_INVALID,
+            AuthorizedCoreFailureDomain.PROTOCOL,
+        ),
+        (
+            "StartTimeout",
+            AuthorizedCoreErrorCode.START_TIMEOUT,
+            AuthorizedCoreFailureDomain.RUNTIME,
+        ),
+        (
+            "Cancelled",
+            AuthorizedCoreErrorCode.CANCELLED,
+            AuthorizedCoreFailureDomain.RUNTIME,
+        ),
+        (
+            "StartFailed",
+            AuthorizedCoreErrorCode.START_FAILED,
+            AuthorizedCoreFailureDomain.RUNTIME,
+        ),
+        (
+            "StopFailed",
+            AuthorizedCoreErrorCode.STOP_FAILED,
+            AuthorizedCoreFailureDomain.RUNTIME,
+        ),
+    ],
+)
+def test_typed_core_start_failure_preserves_safe_classification_and_cleans_up(
+    core_error: str,
+    launcher_code: AuthorizedCoreErrorCode,
+    domain: AuthorizedCoreFailureDomain,
+) -> None:
     orchestrator, calls, _, channel = build_orchestrator()
-    channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
+    channel.status = CoreStatus(CoreStatusKind.FAILED, core_error)
 
-    with pytest.raises(AuthorizedCoreError, match="authorized start did not reach Running"):
+    with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
+    assert raised.value.code is launcher_code
+    assert raised.value.domain is domain
+    assert raised.value.code is not AuthorizedCoreErrorCode.RUNNING_NOT_REACHED
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+
+
+@pytest.mark.parametrize("error_code", [None, "UnknownCoreError", "raw secret detail"])
+def test_missing_or_unknown_core_start_failure_fails_closed(
+    error_code: str | None,
+) -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    channel.status = CoreStatus(CoreStatusKind.FAILED, error_code)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+    assert error_code is None or error_code not in str(raised.value)
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+
+
+def test_running_not_reached_remains_only_for_non_failed_generic_status() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    channel.status = CoreStatus(CoreStatusKind.STOPPED)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.RUNNING_NOT_REACHED
     assert calls[-2:] == ["core.shutdown", "host.wait"]
 
 
@@ -720,7 +844,8 @@ def test_owned_process_kill_failure_does_not_replace_sanitized_start_error() -> 
     with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
 
-    assert str(raised.value) == "authorized start did not reach Running"
+    assert raised.value.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+    assert raised.value.domain is AuthorizedCoreFailureDomain.AUTHORIZATION
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert calls[-2:] == ["host.wait", "host.kill"]

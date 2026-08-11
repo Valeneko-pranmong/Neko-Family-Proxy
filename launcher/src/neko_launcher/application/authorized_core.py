@@ -13,16 +13,40 @@ from uuid import uuid4
 class AuthorizedCoreErrorCode(str, Enum):
     ADAPTER_FAILURE = "AdapterFailure"
     AUTHORIZATION_CONTEXT_UNAVAILABLE = "AuthorizationContextUnavailable"
+    AUTHORIZATION_REQUIRED = "AuthorizationRequired"
+    AUTHORIZATION_INVALID = "AuthorizationInvalid"
+    AUTHORIZATION_EXPIRED = "AuthorizationExpired"
+    AUTHORIZATION_REPLAY = "AuthorizationReplay"
+    AUTHORIZATION_UNAVAILABLE = "AuthorizationUnavailable"
+    SESSION_INACTIVE = "SessionInactive"
+    ENTITLEMENT_INACTIVE = "EntitlementInactive"
+    HEARTBEAT_STALE = "HeartbeatStale"
     CONFIGURATION_UNAVAILABLE = "ConfigurationUnavailable"
+    CONFIGURATION_MISMATCH = "ConfigurationMismatch"
     DUPLICATE_START = "DuplicateStart"
     CANCELLED = "Cancelled"
     TARGET_UNAVAILABLE = "TargetUnavailable"
     TARGET_EXITED = "TargetExited"
     HEARTBEAT_UNAVAILABLE = "HeartbeatUnavailable"
+    ALREADY_RUNNING = "AlreadyRunning"
+    PROTOCOL_INVALID = "ProtocolInvalid"
+    START_TIMEOUT = "StartTimeout"
+    START_FAILED = "StartFailed"
+    STOP_FAILED = "StopFailed"
     RUNNING_NOT_REACHED = "RunningNotReached"
     PERMIT_UNAVAILABLE = "PermitUnavailable"
     CHALLENGE_UNAVAILABLE = "ChallengeUnavailable"
     PROCESS_OBSERVATION_UNAVAILABLE = "ProcessObservationUnavailable"
+
+
+class AuthorizedCoreFailureDomain(str, Enum):
+    ADAPTER = "Adapter"
+    AUTHORIZATION = "Authorization"
+    AUTHORITY = "Authority"
+    CONFIGURATION = "Configuration"
+    TARGET = "Target"
+    PROTOCOL = "Protocol"
+    RUNTIME = "Runtime"
 
 
 class CoreControlFailureCode(str, Enum):
@@ -83,18 +107,83 @@ _PUBLIC_ERROR_MESSAGES = {
     AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE: (
         "authorization context is unavailable"
     ),
+    AuthorizedCoreErrorCode.AUTHORIZATION_REQUIRED: "start authorization is required",
+    AuthorizedCoreErrorCode.AUTHORIZATION_INVALID: "start authorization is invalid",
+    AuthorizedCoreErrorCode.AUTHORIZATION_EXPIRED: "start authorization expired",
+    AuthorizedCoreErrorCode.AUTHORIZATION_REPLAY: "start authorization was already used",
+    AuthorizedCoreErrorCode.AUTHORIZATION_UNAVAILABLE: "start authorization is unavailable",
+    AuthorizedCoreErrorCode.SESSION_INACTIVE: "launcher session is inactive",
+    AuthorizedCoreErrorCode.ENTITLEMENT_INACTIVE: "launcher entitlement is inactive",
+    AuthorizedCoreErrorCode.HEARTBEAT_STALE: "launcher heartbeat is stale",
     AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE: ("start configuration is unavailable"),
+    AuthorizedCoreErrorCode.CONFIGURATION_MISMATCH: "start configuration does not match",
     AuthorizedCoreErrorCode.DUPLICATE_START: "authorized start is already in progress",
     AuthorizedCoreErrorCode.CANCELLED: "authorized start was cancelled",
     AuthorizedCoreErrorCode.TARGET_UNAVAILABLE: "target process is unavailable",
     AuthorizedCoreErrorCode.TARGET_EXITED: "target process exited",
     AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE: "fresh heartbeat is unavailable",
+    AuthorizedCoreErrorCode.ALREADY_RUNNING: "Core runtime is already running",
+    AuthorizedCoreErrorCode.PROTOCOL_INVALID: "Core start protocol is invalid",
+    AuthorizedCoreErrorCode.START_TIMEOUT: "Core start timed out",
+    AuthorizedCoreErrorCode.START_FAILED: "Core start failed",
+    AuthorizedCoreErrorCode.STOP_FAILED: "Core stop failed during start",
     AuthorizedCoreErrorCode.RUNNING_NOT_REACHED: ("authorized start did not reach Running"),
     AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE: "authorization permit is unavailable",
     AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE: ("authorization challenge is unavailable"),
     AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE: (
         "target process observation is unavailable"
     ),
+}
+
+_FAILURE_DOMAINS = {
+    AuthorizedCoreErrorCode.ADAPTER_FAILURE: AuthorizedCoreFailureDomain.ADAPTER,
+    AuthorizedCoreErrorCode.AUTHORIZATION_CONTEXT_UNAVAILABLE: (
+        AuthorizedCoreFailureDomain.AUTHORIZATION
+    ),
+    AuthorizedCoreErrorCode.AUTHORIZATION_REQUIRED: AuthorizedCoreFailureDomain.AUTHORIZATION,
+    AuthorizedCoreErrorCode.AUTHORIZATION_INVALID: AuthorizedCoreFailureDomain.AUTHORIZATION,
+    AuthorizedCoreErrorCode.AUTHORIZATION_EXPIRED: AuthorizedCoreFailureDomain.AUTHORIZATION,
+    AuthorizedCoreErrorCode.AUTHORIZATION_REPLAY: AuthorizedCoreFailureDomain.AUTHORIZATION,
+    AuthorizedCoreErrorCode.AUTHORIZATION_UNAVAILABLE: AuthorizedCoreFailureDomain.AUTHORIZATION,
+    AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE: AuthorizedCoreFailureDomain.AUTHORIZATION,
+    AuthorizedCoreErrorCode.SESSION_INACTIVE: AuthorizedCoreFailureDomain.AUTHORITY,
+    AuthorizedCoreErrorCode.ENTITLEMENT_INACTIVE: AuthorizedCoreFailureDomain.AUTHORITY,
+    AuthorizedCoreErrorCode.HEARTBEAT_STALE: AuthorizedCoreFailureDomain.AUTHORITY,
+    AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE: AuthorizedCoreFailureDomain.AUTHORITY,
+    AuthorizedCoreErrorCode.CONFIGURATION_UNAVAILABLE: AuthorizedCoreFailureDomain.CONFIGURATION,
+    AuthorizedCoreErrorCode.CONFIGURATION_MISMATCH: AuthorizedCoreFailureDomain.CONFIGURATION,
+    AuthorizedCoreErrorCode.TARGET_UNAVAILABLE: AuthorizedCoreFailureDomain.TARGET,
+    AuthorizedCoreErrorCode.TARGET_EXITED: AuthorizedCoreFailureDomain.TARGET,
+    AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE: AuthorizedCoreFailureDomain.TARGET,
+    AuthorizedCoreErrorCode.PROTOCOL_INVALID: AuthorizedCoreFailureDomain.PROTOCOL,
+    AuthorizedCoreErrorCode.CHALLENGE_UNAVAILABLE: AuthorizedCoreFailureDomain.PROTOCOL,
+    AuthorizedCoreErrorCode.DUPLICATE_START: AuthorizedCoreFailureDomain.RUNTIME,
+    AuthorizedCoreErrorCode.CANCELLED: AuthorizedCoreFailureDomain.RUNTIME,
+    AuthorizedCoreErrorCode.ALREADY_RUNNING: AuthorizedCoreFailureDomain.RUNTIME,
+    AuthorizedCoreErrorCode.START_TIMEOUT: AuthorizedCoreFailureDomain.RUNTIME,
+    AuthorizedCoreErrorCode.START_FAILED: AuthorizedCoreFailureDomain.RUNTIME,
+    AuthorizedCoreErrorCode.STOP_FAILED: AuthorizedCoreFailureDomain.RUNTIME,
+    AuthorizedCoreErrorCode.RUNNING_NOT_REACHED: AuthorizedCoreFailureDomain.RUNTIME,
+}
+
+_CORE_START_FAILURES = {
+    "AuthorizationRequired": AuthorizedCoreErrorCode.AUTHORIZATION_REQUIRED,
+    "AuthorizationInvalid": AuthorizedCoreErrorCode.AUTHORIZATION_INVALID,
+    "AuthorizationExpired": AuthorizedCoreErrorCode.AUTHORIZATION_EXPIRED,
+    "AuthorizationReplay": AuthorizedCoreErrorCode.AUTHORIZATION_REPLAY,
+    "AuthorizationUnavailable": AuthorizedCoreErrorCode.AUTHORIZATION_UNAVAILABLE,
+    "SessionInactive": AuthorizedCoreErrorCode.SESSION_INACTIVE,
+    "EntitlementInactive": AuthorizedCoreErrorCode.ENTITLEMENT_INACTIVE,
+    "HeartbeatStale": AuthorizedCoreErrorCode.HEARTBEAT_STALE,
+    "ProcessNotFound": AuthorizedCoreErrorCode.TARGET_UNAVAILABLE,
+    "ProcessExited": AuthorizedCoreErrorCode.TARGET_EXITED,
+    "ConfigurationMismatch": AuthorizedCoreErrorCode.CONFIGURATION_MISMATCH,
+    "AlreadyRunning": AuthorizedCoreErrorCode.ALREADY_RUNNING,
+    "ProtocolInvalid": AuthorizedCoreErrorCode.PROTOCOL_INVALID,
+    "StartTimeout": AuthorizedCoreErrorCode.START_TIMEOUT,
+    "Cancelled": AuthorizedCoreErrorCode.CANCELLED,
+    "StartFailed": AuthorizedCoreErrorCode.START_FAILED,
+    "StopFailed": AuthorizedCoreErrorCode.STOP_FAILED,
 }
 
 
@@ -115,6 +204,7 @@ class AuthorizedCoreError(RuntimeError):
             if isinstance(code, AuthorizedCoreErrorCode)
             else AuthorizedCoreErrorCode.ADAPTER_FAILURE
         )
+        self.domain = _FAILURE_DOMAINS[self.code]
         self.diagnostic_code = (
             diagnostic_code if isinstance(diagnostic_code, PermitDiagnosticCode) else None
         )
@@ -209,6 +299,17 @@ class CoreStatusKind(str, Enum):
 class CoreStatus:
     kind: CoreStatusKind
     error_code: str | None = None
+
+
+def require_core_start_running(status: CoreStatus) -> None:
+    """Preserve only allow-listed Core START failures; reject all other outcomes."""
+    if status.kind is CoreStatusKind.FAILED:
+        mapped = _CORE_START_FAILURES.get(status.error_code or "")
+        if mapped is None:
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        raise AuthorizedCoreError(mapped)
+    if status.kind is not CoreStatusKind.RUNNING:
+        raise AuthorizedCoreError(AuthorizedCoreErrorCode.RUNNING_NOT_REACHED)
 
 
 @dataclass(frozen=True)
@@ -556,8 +657,7 @@ class AuthorizedCoreOrchestrator:
 
                 if self._diagnostics:
                     self._diagnostics.record_stage("RUNNING_VERIFY")
-                if status.kind is not CoreStatusKind.RUNNING:
-                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.RUNNING_NOT_REACHED)
+                require_core_start_running(status)
             except AuthorizedCoreError as exc:
                 failure = AuthorizedCoreError(
                     exc.code,

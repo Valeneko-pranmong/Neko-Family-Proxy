@@ -427,6 +427,89 @@ def test_start_rejects_removed_timeout_error_code(monkeypatch: Any) -> None:
     assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Failed",
+            "succeeded": False,
+        },
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Failed",
+            "succeeded": False,
+            "errorCode": "UnknownCoreError",
+        },
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Failed",
+            "succeeded": False,
+            "errorCode": "AuthorizationInvalid",
+            "extra": "rejected",
+        },
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Running",
+            "succeeded": False,
+            "errorCode": "AuthorizationInvalid",
+        },
+    ],
+)
+def test_start_failure_response_fails_closed_when_not_exact(
+    monkeypatch: Any,
+    response: dict[str, Any],
+) -> None:
+    handle = _PipeHandle(response)
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        _channel().start_authorized(
+            Command(),
+            OpaquePermit("header.payload.signature"),
+            "0123456789abcdef0123456789abcdef",
+            1.0,
+        )
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+
+
+def test_start_rejects_malformed_json_response(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        builtins,
+        "open",
+        lambda *_args, **_kwargs: _PipeHandle(b'{"type":"startResponse"'),
+    )
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        _channel().start_authorized(
+            Command(),
+            OpaquePermit("header.payload.signature"),
+            "0123456789abcdef0123456789abcdef",
+            1.0,
+        )
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+
+
 def test_start_uses_released_core_wire_contract(monkeypatch: Any) -> None:
     handle = _PipeHandle(
         {
