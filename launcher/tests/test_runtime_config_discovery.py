@@ -10,9 +10,7 @@ from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     RuntimeConfigurationCandidate,
 )
-
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
-
 
 CORRELATION = "0123456789abcdef0123456789abcdef"
 

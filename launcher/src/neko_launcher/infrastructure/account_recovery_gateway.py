@@ -15,7 +15,6 @@ from neko_launcher.application.errors import (
 )
 from neko_launcher.domain.models import RecoverySession
 
-
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{40,200}$")
 _RFC3339_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"

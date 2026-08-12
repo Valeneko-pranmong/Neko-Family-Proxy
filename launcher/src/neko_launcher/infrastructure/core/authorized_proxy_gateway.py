@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from threading import Event
-from typing import Callable
 
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreOrchestrator,

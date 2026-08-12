@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import threading
-from queue import Empty, SimpleQueue
-from typing import Any, Callable
-
 import tkinter as tk
+from collections.abc import Callable
+from queue import Empty, SimpleQueue
+from typing import Any
 
 
 class SystemTrayManager:

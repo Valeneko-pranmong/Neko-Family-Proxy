@@ -17,8 +17,10 @@ from neko_launcher.domain.models import (
     RegistrationResult,
     SessionTerminationReason,
 )
-from neko_launcher.infrastructure.account_recovery_gateway import HttpAccountRecoveryGateway
-from neko_launcher.infrastructure.account_recovery_gateway import _NoRedirectHandler
+from neko_launcher.infrastructure.account_recovery_gateway import (
+    HttpAccountRecoveryGateway,
+    _NoRedirectHandler,
+)
 from neko_launcher.infrastructure.event_bus import EventBus
 
 

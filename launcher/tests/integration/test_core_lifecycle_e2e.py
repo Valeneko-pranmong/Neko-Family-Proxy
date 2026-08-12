@@ -9,10 +9,10 @@ import pytest
 from neko_launcher.application.authorized_core import CoreStatusKind
 from neko_launcher.e2e.final_windows_harness import (
     FinalExecutionGates,
-    admit_final_core_artifact,
     FinalWindowsE2EHarness,
     RuntimeCatalogState,
     WindowsFinalSequenceDriver,
+    admit_final_core_artifact,
 )
 from neko_launcher.infrastructure.core.core_control_channel import (
     NamedPipeCoreControlChannel,

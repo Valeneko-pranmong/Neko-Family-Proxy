@@ -11,6 +11,11 @@ from neko_launcher.application.errors import (
     LauncherServiceError,
 )
 from neko_launcher.application.services import LauncherService
+from neko_launcher.domain.events import (
+    EntitlementLoaded,
+    GameProcessStateChanged,
+    SessionClaimed,
+)
 from neko_launcher.domain.models import (
     AuthenticatedUser,
     AuthStatus,
@@ -20,11 +25,6 @@ from neko_launcher.domain.models import (
     RegistrationResult,
     SessionClaim,
     SessionTerminationReason,
-)
-from neko_launcher.domain.events import (
-    EntitlementLoaded,
-    GameProcessStateChanged,
-    SessionClaimed,
 )
 from neko_launcher.infrastructure.event_bus import EventBus
 

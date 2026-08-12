@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Callable
+from collections.abc import Callable
 
 import customtkinter as ctk
 
-from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 from neko_launcher.ui.components.buttons import (
     card,
     field_label,
     icon_entry,
     primary_button,
 )
+from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 
 
 class AuthView:

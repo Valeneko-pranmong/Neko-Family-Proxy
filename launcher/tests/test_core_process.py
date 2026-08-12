@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder, NoopDiagnosticsSink
-from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
 from neko_launcher.e2e.final_windows_harness import AdmittedArtifactFile, FinalCoreAdmission
+from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
 
 
 class FakeGuard:
@@ -107,10 +107,9 @@ def test_windows_core_process_adapter_runtime(mock_popen, tmp_path):
     # An exited owned process fails immediately instead of accepting a stale pipe.
     mock_process.poll.return_value = 1
     assert adapter.owned_process_id() is None
-    with patch("time.monotonic", side_effect=[0, 0.1, 0.2]):
-        with patch("time.sleep"):
-            with pytest.raises(RuntimeError):
-                adapter.wait_for_control_channel(0.15)
+    with patch("time.monotonic", side_effect=[0, 0.1, 0.2]), patch("time.sleep"):
+        with pytest.raises(RuntimeError):
+            adapter.wait_for_control_channel(0.15)
 
     snapshot = recorder.snapshot()
     assert snapshot.process_event == "PROCESS_EXITED_EARLY"

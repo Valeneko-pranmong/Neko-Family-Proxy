@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import pytest
 
-from neko_launcher.main import _report_startup_error
 from neko_launcher.bootstrap.single_instance import (
     acquire_instance_mutex,
     release_instance_mutex,
@@ -14,6 +13,7 @@ from neko_launcher.bootstrap.single_instance import (
 from neko_launcher.infrastructure.unavailable_gateway import (
     AuthorizationPendingProxyGateway,
 )
+from neko_launcher.main import _report_startup_error
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows mutex behavior")

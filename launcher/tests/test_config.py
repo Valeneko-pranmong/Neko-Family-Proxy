@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.bootstrap.app_factory import application_root
+from neko_launcher.infrastructure.config import LauncherConfig
 
 
 def test_packaged_runtime_defaults_to_local_app_data(

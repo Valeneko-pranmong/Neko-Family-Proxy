@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import customtkinter as ctk
 
-from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 from neko_launcher.ui.components.buttons import (
     card,
     field_label,
@@ -13,6 +13,7 @@ from neko_launcher.ui.components.buttons import (
     secondary_button,
 )
 from neko_launcher.ui.platform.window_chrome import apply_rounded_window_shape
+from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 
 
 def _entry(

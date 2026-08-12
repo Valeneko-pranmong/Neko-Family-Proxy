@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from re import fullmatch
 from threading import Event, Lock
 from time import monotonic
-from typing import Callable, Protocol, TypeVar, cast, Any
+from typing import Any, Protocol, TypeVar, cast
 from uuid import uuid4
 
 
@@ -432,7 +433,7 @@ class TargetBoundStartCommand:
             f"targetPid={self.target_pid}\n"
             f"profileReference={self.profile_reference}\n"
             f"serverReference={self.server_reference}\n"
-        ).encode("utf-8")
+        ).encode()
 
     @property
     def configuration_digest(self) -> str:

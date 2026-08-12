@@ -7,6 +7,7 @@ from typing import Any
 
 import customtkinter as ctk
 
+
 def _get_window_handle(window: tk.Tk | tk.Toplevel) -> int:
     """
     Safely obtain the top-level native HWND for a Tk window.

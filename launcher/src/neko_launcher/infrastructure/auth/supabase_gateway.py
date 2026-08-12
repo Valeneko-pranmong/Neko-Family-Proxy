@@ -20,7 +20,6 @@ from neko_launcher.domain.models import (
     SessionClaim,
     SessionTerminationReason,
 )
-
 from neko_launcher.infrastructure.storage.secure_store import SupabaseAuthStorage
 
 if TYPE_CHECKING:
@@ -292,7 +291,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         self,
         authenticated_transport: object,
         correlation_id: str,
-        challenge: "CoreChallenge",
+        challenge: CoreChallenge,
         configuration_digest: str,
         process_name: str,
         target_pid: int,
@@ -300,7 +299,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         product: str,
         scope: str,
         timeout: float,
-    ) -> "OpaquePermit":
+    ) -> OpaquePermit:
         """Call Backend Edge Function to obtain an opaque RS256-signed permit.
 
         The Launcher never decodes or verifies the permit; Core is the sole

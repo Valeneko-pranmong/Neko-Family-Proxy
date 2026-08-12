@@ -1,11 +1,13 @@
 import tkinter as tk
 from unittest.mock import Mock, patch
+
 import pytest
 
 from neko_launcher.ui.platform.window_chrome import (
     WindowDragHandler,
     _set_native_window_position,
 )
+
 
 @pytest.fixture
 def tk_root():
