@@ -10,9 +10,9 @@ from typing import Any
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    CoreChallenge,
     CoreControlError,
     CoreControlFailureCode,
-    CoreChallenge,
     CoreStatus,
     CoreStatusKind,
     OpaquePermit,
@@ -27,9 +27,9 @@ _STATUS_MAP: dict[str, CoreStatusKind] = {
 _CHALLENGE_FIELDS = frozenset({"type", "correlationId", "challenge"})
 _RESULT_SUCCESS_FIELDS = frozenset({"type", "correlationId", "succeeded", "status"})
 _RESULT_FAILURE_FIELDS = _RESULT_SUCCESS_FIELDS | {"errorCode"}
-_CATALOG_FIELDS = frozenset({"type", "correlationId", "succeeded", "candidateCount", "candidates"})
-_CATALOG_FAILURE_FIELDS = frozenset({"type", "correlationId", "succeeded", "errorCode"})
-_CATALOG_FAILURE_CODES = frozenset({"CatalogUnavailable", "CatalogTooLarge"})
+_CATALOG_FIELDS = frozenset({"type", "correlationId", "succeeded", "candidates"})
+_CATALOG_FAILURE_FIELDS = frozenset({"type", "correlationId", "succeeded", "reason"})
+_CATALOG_FAILURE_REASONS = frozenset({"CatalogUnavailable", "CatalogTooLarge"})
 _CANDIDATE_FIELDS = frozenset(
     {
         "profileReference",
@@ -42,6 +42,7 @@ _VALIDATE_FIELDS = frozenset(
     {
         "type",
         "correlationId",
+        "succeeded",
         "profileReference",
         "serverReference",
         "relationshipValid",
@@ -288,28 +289,23 @@ class NamedPipeCoreControlChannel:
             if (
                 res.get("type") == "runtimeConfigCatalogResponse"
                 and res.get("succeeded") is False
-                and res.get("errorCode") in _CATALOG_FAILURE_CODES
+                and res.get("reason") in _CATALOG_FAILURE_REASONS
             ):
                 raise AuthorizedCoreError(
                     AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE,
-                    retry_safe=res.get("errorCode") == "CatalogUnavailable",
+                    retry_safe=res.get("reason") == "CatalogUnavailable",
                 )
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         if (
             frozenset(res) != _CATALOG_FIELDS
             or res.get("type") != "runtimeConfigCatalogResponse"
             or res.get("succeeded") is not True
+            or not isinstance(res.get("candidates"), list)
         ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
-        count = res.get("candidateCount")
-        values = res.get("candidates")
-        if (
-            isinstance(count, bool)
-            or not isinstance(count, int)
-            or not 0 <= count <= 32
-            or not isinstance(values, list)
-            or len(values) != count
-        ):
+        values = res["candidates"]
+        candidate_count = len(values)
+        if candidate_count > 32:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         candidates: list[RuntimeConfigurationCandidate] = []
         for value in values:
@@ -354,11 +350,18 @@ class NamedPipeCoreControlChannel:
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
         self._require_correlation(res, correlation_id)
         if (
-            res.get("profileReference") != candidate.profile_reference
+            res.get("succeeded") is not True
+            or res.get("profileReference") != candidate.profile_reference
             or res.get("serverReference") != candidate.server_reference
-            or res.get("relationshipValid") is not True
+            or not isinstance(res.get("relationshipValid"), bool)
+            or not isinstance(res.get("processModeMatchCount"), int)
             or isinstance(res.get("processModeMatchCount"), bool)
-            or res.get("processModeMatchCount") != 1
+            or not isinstance(res.get("valid"), bool)
+            or res.get("valid")
+            != (
+                res.get("relationshipValid") is True
+                and res.get("processModeMatchCount") == 1
+            )
             or res.get("valid") is not True
         ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
