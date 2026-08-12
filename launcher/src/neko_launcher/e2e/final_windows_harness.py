@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 EXPECTED_LAUNCH_STAGES = (
     "GAME_PROCESS_DETECTED",
@@ -198,6 +198,12 @@ def _sha256_file(path: Path) -> str:
 
 
 @dataclass(frozen=True)
+class AdmittedArtifactFile:
+    relative_path: Path
+    sha256: str
+
+
+@dataclass(frozen=True)
 class FinalCoreAdmission:
     source_sha: str
     artifact_path: Path
@@ -207,9 +213,12 @@ class FinalCoreAdmission:
     pso2_mode_sha256: str
     manifest_controlled_file_count: int
     physical_file_count: int
+    guarded_files: tuple[AdmittedArtifactFile, ...] = ()
 
 
-def _manifest_digest(artifact_path: Path) -> str:
+def _manifest_digest(
+    artifact_path: Path,
+) -> tuple[str, tuple[AdmittedArtifactFile, ...]]:
     manifest_path = artifact_path / _FINAL_MANIFEST_RELATIVE_PATH
     if _sha256_file(manifest_path) != FINAL_MANIFEST_SHA256:
         raise ValueError("manifest hash mismatch")
@@ -222,6 +231,7 @@ def _manifest_digest(artifact_path: Path) -> str:
     entries = manifest.get("files")
     if not isinstance(entries, list) or len(entries) != FINAL_MANIFEST_CONTROLLED_FILE_COUNT:
         raise ValueError("manifest verification failed")
+    guarded_files: list[AdmittedArtifactFile] = []
     for entry in entries:
         if not isinstance(entry, dict):
             raise ValueError("manifest verification failed")
@@ -234,7 +244,11 @@ def _manifest_digest(artifact_path: Path) -> str:
             raise ValueError("manifest verification failed")
         if _sha256_file(entry_path) != expected_hash:
             raise ValueError("manifest verification failed")
-    return FINAL_MANIFEST_SHA256
+        guarded_files.append(AdmittedArtifactFile(Path(relative), expected_hash))
+    guarded_files.append(
+        AdmittedArtifactFile(_FINAL_MANIFEST_RELATIVE_PATH, FINAL_MANIFEST_SHA256)
+    )
+    return FINAL_MANIFEST_SHA256, tuple(guarded_files)
 
 
 def admit_final_core_artifact(artifact_path: Path | None = None) -> FinalCoreAdmission:
@@ -258,7 +272,7 @@ def admit_final_core_artifact(artifact_path: Path | None = None) -> FinalCoreAdm
     pso2_hash = _sha256_file(pso2_mode)
     if pso2_hash != FINAL_PSO2_MODE_SHA256:
         raise ValueError("PSO2 mode hash mismatch")
-    manifest_hash = _manifest_digest(selected_path)
+    manifest_hash, guarded_files = _manifest_digest(selected_path)
     physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
     if len(physical_files) != FINAL_PHYSICAL_FILE_COUNT:
         raise ValueError("artifact physical file count mismatch")
@@ -271,6 +285,7 @@ def admit_final_core_artifact(artifact_path: Path | None = None) -> FinalCoreAdm
         pso2_mode_sha256=pso2_hash,
         manifest_controlled_file_count=FINAL_MANIFEST_CONTROLLED_FILE_COUNT,
         physical_file_count=len(physical_files),
+        guarded_files=guarded_files,
     )
 
 
@@ -850,6 +865,81 @@ class FinalSequenceDriver(Protocol):
     def cleanup(self, step: CleanupStep) -> None: ...
 
 
+class WindowsFinalSequenceDriver:
+    """Concrete process-provenance decorator for a real authority driver."""
+
+    def __init__(
+        self,
+        *,
+        authority: FinalSequenceDriver,
+        process: Any,
+        control: Any,
+        control_channel_timeout: float = 10.0,
+        shutdown_timeout: float = 20.0,
+    ) -> None:
+        self._authority = authority
+        self._process = process
+        self._control = control
+        self._control_channel_timeout = control_channel_timeout
+        self._shutdown_timeout = shutdown_timeout
+        self._identity: Any = None
+
+    def verify_core_process(self, admission: FinalCoreAdmission) -> Any:
+        if self._identity is not None:
+            return self._identity
+        try:
+            identity = self._process.start_admitted_core(admission)
+            if getattr(identity, "provenance_verified", False) is not True:
+                raise ValueError("Core process provenance could not be proven")
+            self._identity = identity
+            self._process.wait_for_control_channel(self._control_channel_timeout)
+            if self._control.status(uuid4().hex, self._control_channel_timeout) is None:
+                raise ValueError("Core control-channel status was not verified")
+            return identity
+        except Exception:
+            self._abort_exact_child()
+            raise
+
+    def claim(self, instance: InstanceId, admission: FinalCoreAdmission) -> LiveClaimResult:
+        self.verify_core_process(admission)
+        return self._authority.claim(instance, admission)
+
+    def heartbeat_accepted(self, instance: InstanceId, session_ref: str) -> bool:
+        return self._authority.heartbeat_accepted(instance, session_ref)
+
+    def future_permit_eligible(self, instance: InstanceId, session_ref: str) -> bool:
+        return self._authority.future_permit_eligible(instance, session_ref)
+
+    def cleanup(self, step: CleanupStep) -> None:
+        if step is CleanupStep.SHUTDOWN_EXACT_OWNED_CORES and self._identity is not None:
+            expected_pid = self._process.owned_process_id()
+            if expected_pid is None:
+                raise ValueError("exact owned Core process is unavailable")
+            try:
+                status = self._control.shutdown(uuid4().hex, self._shutdown_timeout)
+                if getattr(getattr(status, "kind", None), "value", None) != "Stopped":
+                    raise ValueError("Core shutdown was not confirmed")
+                if self._process.wait_for_owned_process_exit(expected_pid, self._shutdown_timeout) != 0:
+                    raise ValueError("Core exit code was not zero")
+                self._identity = None
+            except Exception:
+                self._abort_exact_child()
+                raise
+        self._authority.cleanup(step)
+
+    def _abort_exact_child(self) -> None:
+        expected_pid = self._process.owned_process_id()
+        if expected_pid is None:
+            self._identity = None
+            return
+        try:
+            self._process.terminate_owned_process_after_timeout(
+                expected_pid, self._shutdown_timeout
+            )
+        finally:
+            self._identity = None
+
+
 class FinalWindowsE2EHarness:
     """Gate-bound final transition runner; preparation never constructs this."""
 
@@ -863,6 +953,24 @@ class FinalWindowsE2EHarness:
         self._gates = gates
         self._driver = driver
         self._artifact_path = artifact_path
+
+    def verify_core_process_provenance(self) -> Any:
+        """Prove the concrete Windows child without challenge, permit, or START."""
+        admission = admit_final_core_artifact(self._artifact_path)
+        verifier = getattr(self._driver, "verify_core_process", None)
+        if verifier is None:
+            raise ValueError("concrete Windows process driver is required")
+        try:
+            return verifier(admission)
+        finally:
+            cleanup_failed = False
+            for step in CleanupStep:
+                try:
+                    self._driver.cleanup(step)
+                except Exception:
+                    cleanup_failed = True
+            if cleanup_failed:
+                raise ValueError("one or more scoped cleanup steps failed") from None
 
     def run(self) -> LatestLoginWinsResult:
         # Admission is deliberately first: no gate, challenge, permit, or START

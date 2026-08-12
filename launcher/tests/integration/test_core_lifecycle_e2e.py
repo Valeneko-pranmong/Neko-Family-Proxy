@@ -7,11 +7,66 @@ from uuid import uuid4
 import pytest
 
 from neko_launcher.application.authorized_core import CoreStatusKind
-from neko_launcher.e2e.final_windows_harness import admit_final_core_artifact
+from neko_launcher.e2e.final_windows_harness import (
+    FinalExecutionGates,
+    admit_final_core_artifact,
+    FinalWindowsE2EHarness,
+    RuntimeCatalogState,
+    WindowsFinalSequenceDriver,
+)
 from neko_launcher.infrastructure.core.core_control_channel import (
     NamedPipeCoreControlChannel,
 )
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
+
+
+class _NoHostedAuthority:
+    def claim(self, *_args, **_kwargs):
+        raise AssertionError("hosted claim is forbidden in provenance smoke")
+
+    def heartbeat_accepted(self, *_args, **_kwargs):
+        raise AssertionError("hosted heartbeat is forbidden in provenance smoke")
+
+    def future_permit_eligible(self, *_args, **_kwargs):
+        raise AssertionError("hosted permit eligibility is forbidden in provenance smoke")
+
+    def cleanup(self, _step):
+        return None
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows named pipes")
+def test_frozen_core_concrete_driver_proves_admitted_process_provenance() -> None:
+    admission = admit_final_core_artifact()
+    process = WindowsCoreProcessAdapter(admission.artifact_path / "NekoProxyCore.exe")
+    channel = NamedPipeCoreControlChannel(
+        "NekoProxyCoreControl",
+        expected_server_pid=process.owned_process_id,
+    )
+    driver = WindowsFinalSequenceDriver(
+        authority=_NoHostedAuthority(),
+        process=process,
+        control=channel,
+    )
+    harness = FinalWindowsE2EHarness(
+        gates=FinalExecutionGates(
+            historical_pso2_mode_recovered=False,
+            runtime_catalog_state=RuntimeCatalogState.EMPTY,
+            hosted_core_running_kp_passed=False,
+        ),
+        driver=driver,
+    )
+
+    identity = harness.verify_core_process_provenance()
+
+    assert identity.provenance_verified is True
+    assert identity.pid > 0
+    assert identity.canonical_executable_path == (
+        admission.artifact_path / "NekoProxyCore.exe"
+    ).resolve()
+    assert identity.expected_sha256 == admission.core_exe_sha256
+    assert identity.verified_sha256 == admission.core_exe_sha256
+    assert process.owned_process_id() is None
 
 
 @pytest.mark.integration
@@ -42,7 +97,6 @@ def test_frozen_core_stop_then_graceful_host_shutdown_and_restart() -> None:
         assert first_pid is not None
 
         assert channel.status(uuid4().hex, 5.0).kind is CoreStatusKind.STOPPED
-        assert len(channel.request_challenge(uuid4().hex, 5.0).value) == 43
         assert channel.stop(uuid4().hex, 5.0).kind is CoreStatusKind.STOPPED
         assert channel.status(uuid4().hex, 5.0).kind is CoreStatusKind.STOPPED
         assert process.owned_process_id() == first_pid

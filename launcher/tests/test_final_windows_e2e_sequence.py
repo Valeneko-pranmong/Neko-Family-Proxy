@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from neko_launcher.e2e.final_windows_harness import (
     InstanceId,
     LiveClaimResult,
     RuntimeCatalogState,
+    WindowsFinalSequenceDriver,
 )
 
 
@@ -180,3 +182,66 @@ def test_cleanup_failure_runs_every_scoped_cleanup_step_and_fails_the_run() -> N
     assert calls[-len(CleanupStep) :] == [
         f"cleanup:{step.value}" for step in CleanupStep
     ]
+
+
+class ConcreteProcess:
+    def __init__(self, calls):
+        self.calls = calls
+        self.identity = None
+
+    def start_admitted_core(self, admission):
+        self.calls.append(("spawn", admission.artifact_path))
+        self.identity = SimpleNamespace(provenance_verified=True)
+        return self.identity
+
+    def wait_for_control_channel(self, timeout):
+        self.calls.append(("pipe", timeout))
+
+    def owned_process_id(self):
+        return 2468 if self.identity is not None else None
+
+    def wait_for_owned_process_exit(self, expected_pid, timeout):
+        self.calls.append(("wait", expected_pid, timeout))
+        self.identity = None
+        return 0
+
+    def terminate_owned_process_after_timeout(self, expected_pid, timeout):
+        self.calls.append(("kill", expected_pid, timeout))
+        self.identity = None
+        return 1
+
+
+class ConcreteControl:
+    def status(self, correlation_id, timeout):
+        return object()
+
+    def shutdown(self, correlation_id, timeout):
+        return SimpleNamespace(kind=SimpleNamespace(value="Stopped"))
+
+
+def test_final_harness_can_use_concrete_production_composed_driver() -> None:
+    calls = []
+    process = ConcreteProcess(calls)
+    authority = FakeFinalDriver(calls)
+    driver = WindowsFinalSequenceDriver(
+        authority=authority,
+        process=process,
+        control=ConcreteControl(),
+        control_channel_timeout=3.0,
+        shutdown_timeout=4.0,
+    )
+    harness = FinalWindowsE2EHarness(
+        gates=FinalExecutionGates(
+            historical_pso2_mode_recovered=True,
+            runtime_catalog_state=RuntimeCatalogState.UNIQUE,
+            hosted_core_running_kp_passed=True,
+        ),
+        driver=driver,
+    )
+
+    result = harness.run()
+
+    assert result.authoritative_instance is InstanceId.INSTANCE_A
+    assert [kind for kind, *_rest in calls if kind == "spawn"] == ["spawn"]
+    assert any(kind == "pipe" for kind, *_rest in calls)
+    assert any(kind == "wait" for kind, *_rest in calls)

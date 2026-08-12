@@ -210,6 +210,17 @@ run:
 A path or directory name is never artifact identity. Abort if any captured byte
 hash changes.
 
+The concrete provenance boundary is production-composed from
+`WindowsCoreProcessAdapter` and `NamedPipeCoreControlChannel`. Every
+manifest-controlled artifact file is canonicalized, guarded against write/delete
+sharing, and hashed under its guard. The admitted executable is spawned from its
+exact canonical path and then bound through the retained child handle to
+`QueryFullProcessImageNameW`, Windows volume/file identity, and post-spawn hashes
+of the guarded artifact inventory before any claim driver operation can continue.
+The guards remain retained for the exact child lifetime and are released only
+when that child exits or exact-handle cleanup completes; any unavailable or
+mismatched observation fails closed and cleans up only the exact retained child.
+
 ## Packaging classification
 
 `nfdriver.sys` imports `NDIS.SYS`, `fwpkclnt.sys`, and `ntoskrnl.exe`. On the
