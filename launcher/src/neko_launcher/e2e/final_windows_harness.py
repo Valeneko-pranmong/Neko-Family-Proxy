@@ -1244,7 +1244,23 @@ def main(argv: list[str] | None = None) -> int:
             print("Execution completed:", evidence)
             return 0
         except Exception as e:  # noqa: BLE001
-            print(f"Execution failed: {e}")
+            err_str = str(e)
+            allowed_errors = {
+                "AUTH_SESSION_UNAVAILABLE",
+                "ENTITLEMENT_UNAVAILABLE",
+                "CORE_ADMISSION_FAILED",
+                "SESSION_CLAIM_FAILED",
+                "HEARTBEAT_UNAVAILABLE",
+                "TARGET_UNAVAILABLE",
+                "PERMIT_REQUEST_FAILED",
+                "START_DENIED",
+                "KP_ASSERTION_FAILED",
+                "CLEANUP_FAILED",
+            }
+            if err_str in allowed_errors:
+                print(err_str)
+            else:
+                print("UNEXPECTED_E2E_FAILURE")
             return 1
 
     raise AssertionError("unreachable command")

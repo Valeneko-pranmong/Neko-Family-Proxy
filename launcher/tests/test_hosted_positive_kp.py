@@ -110,14 +110,15 @@ def test_execute_hosted_positive_and_kp_success(monkeypatch):
 def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
     monkeypatch.setenv("NEKO_LIVE_HOSTED_EXECUTION", "YES-I-UNDERSTAND")
 
-    gateway = create_autospec(SupabaseGateway)
+    gateway = Mock()
+    gateway.restore_session.return_value = Mock()
     gateway.issue_launch_permit.return_value = OpaquePermit("permit")
     driver = Mock()
     driver.heartbeat_accepted.return_value = True
     from neko_launcher.domain.models import Entitlement, EntitlementStatus
     from datetime import datetime, timezone, timedelta
     driver.claim.return_value.session_ref = "sess"
-    driver.claim.return_value.entitlement = Entitlement(
+    driver.claimed_entitlement.return_value = Entitlement(
         product_code="abc",
         status=EntitlementStatus.ACTIVE,
         valid_until=datetime.now(timezone.utc) + timedelta(days=1),
@@ -166,6 +167,12 @@ def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
     core_channel.shutdown.return_value = CoreStatus(kind=CoreStatusKind.STOPPED)
 
     import time
+    def fake_monotonic():
+        if not hasattr(fake_monotonic, "count"):
+            fake_monotonic.count = 0
+        fake_monotonic.count += 1
+        return 0.0 if fake_monotonic.count == 1 else 35.0
+    monkeypatch.setattr(time, "monotonic", fake_monotonic)
     monkeypatch.setattr(time, "sleep", lambda x: None)
 
     evidence = execute_hosted_positive_and_kp(

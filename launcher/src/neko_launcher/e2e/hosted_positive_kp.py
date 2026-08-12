@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from threading import Event
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from neko_launcher.application.authorized_core import (
@@ -43,6 +43,10 @@ class AttemptIdentity:
     configuration_digest: str
     challenge_correlation: str
 
+class HostedPositiveAuthority(FinalSequenceDriver, Protocol):
+    def claimed_entitlement(self, instance: InstanceId) -> Any: ...
+    def claimed_session(self, instance: InstanceId) -> Any: ...
+
 class ProductionHostedAuthorityDriver(FinalSequenceDriver):
     def __init__(
         self,
@@ -56,6 +60,7 @@ class ProductionHostedAuthorityDriver(FinalSequenceDriver):
         self._product_code = product_code
         self._scope = scope
         self._sessions: dict[InstanceId, str] = {}
+        self._claims: dict[InstanceId, Any] = {}
 
     def claim(self, instance: InstanceId, admission: FinalCoreAdmission) -> LiveClaimResult:
         gateway = self._gateways[instance]
@@ -66,11 +71,18 @@ class ProductionHostedAuthorityDriver(FinalSequenceDriver):
             installation.display_name
         )
         self._sessions[instance] = claim.session_id
+        self._claims[instance] = claim
         return LiveClaimResult(
             instance=instance,
             session_ref=claim.session_id,
             installation_ref=claim.installation_id or installation.key_hash
         )
+
+    def claimed_entitlement(self, instance: InstanceId) -> Any:
+        return self._claims[instance].entitlement
+
+    def claimed_session(self, instance: InstanceId) -> Any:
+        return self._claims[instance]
 
     def heartbeat_accepted(self, instance: InstanceId, session_ref: str) -> bool:
         return self._gateways[instance].heartbeat_session(session_ref)
@@ -199,7 +211,7 @@ def _get_kp_permit_variant(original_permit: OpaquePermit, variant: str) -> Opaqu
 
 def execute_hosted_positive_and_kp(
     gateway: SupabaseGateway,
-    driver: FinalSequenceDriver,
+    driver: HostedPositiveAuthority,
     detector: ProcessTargetDetector,
     core_process: Any,
     core_channel: CoreControlChannel,
@@ -232,7 +244,8 @@ def execute_hosted_positive_and_kp(
 
         try:
             user = gateway.restore_session()
-            if not user:
+            authenticated = user is not None
+            if not authenticated:
                 raise RuntimeError("AUTH_SESSION_UNAVAILABLE")
         except Exception as e:
             if str(e) == "AUTH_SESSION_UNAVAILABLE":
@@ -248,7 +261,8 @@ def execute_hosted_positive_and_kp(
                 raise
             raise RuntimeError("SESSION_CLAIM_FAILED")
 
-        if not entitlement_is_active(claim.entitlement):
+        entitlement_active = entitlement_is_active(driver.claimed_entitlement(InstanceId.INSTANCE_A))
+        if not entitlement_active:
             raise RuntimeError("ENTITLEMENT_UNAVAILABLE")
 
         recording_gateway = RecordingPermitGateway(gateway)
@@ -256,8 +270,8 @@ def execute_hosted_positive_and_kp(
         recording_detector = RecordingTargetDetector(detector)
 
         access_context = LaunchAccessContext(
-            authenticated=True,
-            entitlement_active=True,
+            authenticated=authenticated,
+            entitlement_active=entitlement_active,
             session_id=claim.session_ref,
             installation_key_hash=installation.key_hash,
             authenticated_transport=gateway
@@ -385,7 +399,12 @@ def execute_hosted_positive_and_kp(
         evidence["malformed_rejection_layer"] = "PERMIT_VERIFIER"
 
         # KP-5: Real Expired permit proof
+        start_wait = time.monotonic()
         time.sleep(35)
+        elapsed = time.monotonic() - start_wait
+        if elapsed < 30.0:
+            raise RuntimeError("EXPIRY_WAIT_MONOTONIC_PROVEN FAILED")
+
         recording_channel.request_challenge(uuid4().hex, timeout)
         evidence["challenge_requests"] = recording_channel.challenge_count
         kp5_status = recording_channel.start_authorized(cmd, permit, uuid4().hex, timeout)
@@ -395,28 +414,44 @@ def execute_hosted_positive_and_kp(
             raise RuntimeError("KP_ASSERTION_FAILED")
         evidence["kp_executions"] += 1
         evidence["expired_permit_proof"] = "READY"
+        evidence["EXPIRY_WAIT_MONOTONIC_PROVEN"] = "YES"
 
     finally:
+        core_cleanup_failed = False
+        session_cleanup_failed = False
+
         try:
-            # Emergency cleanup, ONLY the exact retained child
-            if recording_channel:
-                recording_channel.shutdown(uuid4().hex, timeout)
-            else:
-                core_channel.shutdown(uuid4().hex, timeout)
+            expected_pid = core_process.owned_process_id()
+            if expected_pid is not None:
+                channel = recording_channel or core_channel
 
-            pid = core_process.owned_process_id()
-            if pid is not None:
-                code = core_process.wait_for_owned_process_exit(pid, timeout)
+                try:
+                    status = channel.status(uuid4().hex, timeout)
+                    if status and status.kind == CoreStatusKind.RUNNING:
+                        channel.stop(uuid4().hex, timeout)
+                except Exception:
+                    pass
+
+                stop_status = channel.shutdown(uuid4().hex, timeout)
+                if stop_status.kind != CoreStatusKind.STOPPED:
+                    core_cleanup_failed = True
+
+                code = core_process.wait_for_owned_process_exit(expected_pid, timeout)
                 if code != 0:
-                    raise RuntimeError("CLEANUP_FAILED")
-                if core_process.owned_process_id() is not None:
-                    raise RuntimeError("CLEANUP_FAILED")
+                    core_cleanup_failed = True
 
+                if core_process.owned_process_id() is not None:
+                    core_cleanup_failed = True
+        except Exception:
+            core_cleanup_failed = True
+
+        try:
             if claim and claim.session_ref:
                 driver.cleanup(CleanupStep.RELEASE_KNOWN_LAUNCHER_SESSIONS)
-        except Exception as e:
-            if str(e) == "CLEANUP_FAILED":
-                raise
+        except Exception:
+            session_cleanup_failed = True
+
+        if core_cleanup_failed or session_cleanup_failed:
             raise RuntimeError("CLEANUP_FAILED")
 
     return evidence
