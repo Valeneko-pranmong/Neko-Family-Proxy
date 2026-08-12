@@ -10,6 +10,7 @@ from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     RuntimeConfigurationCandidate,
 )
+
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 
 
@@ -62,7 +63,6 @@ def catalog_response(**overrides: Any) -> dict[str, Any]:
         "type": "runtimeConfigCatalogResponse",
         "correlationId": CORRELATION,
         "succeeded": True,
-        "candidateCount": 1,
         "candidates": [
             {
                 "profileReference": "profile-17",
@@ -80,6 +80,7 @@ def validate_response(**overrides: Any) -> dict[str, Any]:
     response = {
         "type": "runtimeConfigValidateResponse",
         "correlationId": CORRELATION,
+        "succeeded": True,
         "profileReference": "profile-17",
         "serverReference": "server-42",
         "relationshipValid": True,
@@ -105,13 +106,20 @@ def test_catalog_client_sends_exact_request_and_returns_only_opaque_candidates(
     }
 
 
+def test_catalog_success_empty_is_accepted(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        builtins, "open", lambda *_args, **_kwargs: PipeHandle(catalog_response(candidates=[]))
+    )
+
+    assert channel().runtime_config_catalog(CORRELATION, 1.0) == ()
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {"type": "wrong"},
         {"correlationId": "f" * 32},
-        {"candidateCount": True},
-        {"candidateCount": 2},
+        {"candidateCount": 1},
         {"extra": "no"},
         {"candidates": [{"profileReference": "profile-17"}]},
         {
@@ -198,7 +206,7 @@ def test_catalog_rejects_duplicate_candidates(monkeypatch: Any) -> None:
         builtins,
         "open",
         lambda *_args, **_kwargs: PipeHandle(
-            catalog_response(candidateCount=2, candidates=[candidate, candidate])
+            catalog_response(candidates=[candidate, candidate])
         ),
     )
     with pytest.raises(AuthorizedCoreError):
@@ -219,7 +227,7 @@ def test_catalog_accepts_exactly_32_distinct_valid_candidates(monkeypatch: Any) 
         builtins,
         "open",
         lambda *_args, **_kwargs: PipeHandle(
-            catalog_response(candidateCount=32, candidates=candidates)
+            catalog_response(candidates=candidates)
         ),
     )
 
@@ -240,7 +248,7 @@ def test_catalog_rejects_more_than_32_candidates(monkeypatch: Any) -> None:
         builtins,
         "open",
         lambda *_args, **_kwargs: PipeHandle(
-            catalog_response(candidateCount=33, candidates=candidates)
+            catalog_response(candidates=candidates)
         ),
     )
 
@@ -248,9 +256,9 @@ def test_catalog_rejects_more_than_32_candidates(monkeypatch: Any) -> None:
         channel().runtime_config_catalog(CORRELATION, 1.0)
 
 
-@pytest.mark.parametrize("error_code", ["CatalogUnavailable", "CatalogTooLarge"])
+@pytest.mark.parametrize("reason", ["CatalogUnavailable", "CatalogTooLarge"])
 def test_catalog_typed_failure_envelope_fails_as_configuration_infrastructure(
-    monkeypatch: Any, error_code: str
+    monkeypatch: Any, reason: str
 ) -> None:
     monkeypatch.setattr(
         builtins,
@@ -260,7 +268,7 @@ def test_catalog_typed_failure_envelope_fails_as_configuration_infrastructure(
                 "type": "runtimeConfigCatalogResponse",
                 "correlationId": CORRELATION,
                 "succeeded": False,
-                "errorCode": error_code,
+                "reason": reason,
             }
         ),
     )
@@ -271,20 +279,44 @@ def test_catalog_typed_failure_envelope_fails_as_configuration_infrastructure(
     assert raised.value.code.value == "RUNTIME_CONFIGURATION_UNAVAILABLE"
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"type": "runtimeConfigCatalogResponse", "correlationId": CORRELATION, "succeeded": False, "reason": "UnknownReason"},
+        {"type": "runtimeConfigCatalogResponse", "correlationId": CORRELATION, "succeeded": False},
+        {"type": "runtimeConfigCatalogResponse", "correlationId": CORRELATION, "succeeded": False, "reason": "CatalogUnavailable", "errorCode": "legacy"},
+    ],
+)
+def test_catalog_failure_rejects_unknown_missing_or_legacy_schema(
+    monkeypatch: Any, response: dict[str, Any]
+) -> None:
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: PipeHandle(response))
+
+    with pytest.raises(AuthorizedCoreError):
+        channel().runtime_config_catalog(CORRELATION, 1.0)
+
+
+def test_catalog_success_rejects_legacy_candidate_count_extra(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        builtins, "open", lambda *_args, **_kwargs: PipeHandle(catalog_response(candidateCount=1))
+    )
+
+    with pytest.raises(AuthorizedCoreError):
+        channel().runtime_config_catalog(CORRELATION, 1.0)
+
+
 def test_catalog_rejects_duplicate_json_fields(monkeypatch: Any) -> None:
     payload = (
         b'{"type":"runtimeConfigCatalogResponse",'
         b'"correlationId":"0123456789abcdef0123456789abcdef",'
-        b'"candidateCount":0,"candidateCount":0,"candidates":[]}'
+        b'"candidates":[],"candidates":[]}'
     )
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: PipeHandle(payload))
     with pytest.raises(AuthorizedCoreError):
         channel().runtime_config_catalog(CORRELATION, 1.0)
 
 
-@pytest.mark.parametrize(
-    "missing", ["type", "correlationId", "succeeded", "candidateCount", "candidates"]
-)
+@pytest.mark.parametrize("missing", ["type", "correlationId", "succeeded", "candidates"])
 def test_catalog_rejects_every_missing_field(monkeypatch: Any, missing: str) -> None:
     response = catalog_response()
     del response[missing]
@@ -307,6 +339,26 @@ def test_validate_client_requires_exact_positive_attestation(monkeypatch: Any) -
         "profileReference": "profile-17",
         "serverReference": "server-42",
     }
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"relationshipValid": False, "valid": False},
+        {"processModeMatchCount": 0, "valid": False},
+        {"succeeded": False},
+        {"valid": False},
+    ],
+)
+def test_validate_rejects_failed_or_invalid_candidate(monkeypatch: Any, overrides: dict[str, Any]) -> None:
+    monkeypatch.setattr(
+        builtins, "open", lambda *_args, **_kwargs: PipeHandle(validate_response(**overrides))
+    )
+
+    with pytest.raises(AuthorizedCoreError):
+        channel().runtime_config_validate(
+            RuntimeConfigurationCandidate("profile-17", "server-42"), CORRELATION, 1.0
+        )
 
 
 @pytest.mark.parametrize(
