@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
+import neko_launcher.e2e.final_windows_harness as harness_module
 from neko_launcher.e2e.final_windows_harness import (
     CleanupStep,
+    FinalCoreAdmission,
     FinalExecutionGates,
     FinalWindowsE2EHarness,
     InstanceId,
@@ -14,10 +17,30 @@ from neko_launcher.e2e.final_windows_harness import (
 )
 
 
+@pytest.fixture(autouse=True)
+def deterministic_artifact_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = FinalCoreAdmission(
+        source_sha="b3c9d0851cff74691500c431c0da1ec30c21927a",
+        artifact_path=Path(r"E:\Temp\admitted-final-core"),
+        core_exe_sha256="1" * 64,
+        protected_payload_sha256="2" * 64,
+        manifest_sha256="3" * 64,
+        pso2_mode_sha256="4" * 64,
+        manifest_controlled_file_count=245,
+        physical_file_count=246,
+    )
+    monkeypatch.setattr(
+        harness_module,
+        "admit_final_core_artifact",
+        lambda _path=None: admission,
+    )
+
+
 @dataclass
 class FakeFinalDriver:
     calls: list[str]
     cleanup_failure: CleanupStep | None = None
+    admitted_paths: list[str] | None = None
 
     def __post_init__(self) -> None:
         self.claim_count = 0
@@ -28,7 +51,13 @@ class FakeFinalDriver:
             InstanceId.INSTANCE_C: "iid_cccccccccccccccc",
         }
 
-    def claim(self, instance: InstanceId) -> LiveClaimResult:
+    def claim(
+        self, instance: InstanceId, admission: FinalCoreAdmission
+    ) -> LiveClaimResult:
+        assert admission.source_sha
+        assert admission.artifact_path.name
+        if self.admitted_paths is not None:
+            self.admitted_paths.append(str(admission.artifact_path))
         self.claim_count += 1
         session_ref = f"sid_{self.claim_count:016x}"
         self.active_session = (instance, session_ref)
@@ -55,7 +84,8 @@ class FakeFinalDriver:
 
 def test_final_sequence_is_gate_bound_and_runs_claim_authority_assertions_in_order() -> None:
     calls: list[str] = []
-    driver = FakeFinalDriver(calls)
+    admitted_paths: list[str] = []
+    driver = FakeFinalDriver(calls, admitted_paths=admitted_paths)
     harness = FinalWindowsE2EHarness(
         gates=FinalExecutionGates(
             historical_pso2_mode_recovered=True,
@@ -69,6 +99,8 @@ def test_final_sequence_is_gate_bound_and_runs_claim_authority_assertions_in_ord
 
     assert result.authoritative_instance is InstanceId.INSTANCE_A
     assert result.remembered_installation_count == 3
+    assert len(set(admitted_paths)) == 1
+    assert len(admitted_paths) == 4
     assert calls[:13] == [
         "claim:INSTANCE_A",
         "heartbeat:INSTANCE_A:sid_0000000000000001",

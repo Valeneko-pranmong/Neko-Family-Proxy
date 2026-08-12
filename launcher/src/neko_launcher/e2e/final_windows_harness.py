@@ -839,7 +839,9 @@ class LiveClaimResult:
 
 
 class FinalSequenceDriver(Protocol):
-    def claim(self, instance: InstanceId) -> LiveClaimResult: ...
+    def claim(
+        self, instance: InstanceId, admission: FinalCoreAdmission
+    ) -> LiveClaimResult: ...
 
     def heartbeat_accepted(self, instance: InstanceId, session_ref: str) -> bool: ...
 
@@ -865,7 +867,7 @@ class FinalWindowsE2EHarness:
     def run(self) -> LatestLoginWinsResult:
         # Admission is deliberately first: no gate, challenge, permit, or START
         # operation may run against an unverified Core artifact.
-        admit_final_core_artifact(self._artifact_path)
+        admission = admit_final_core_artifact(self._artifact_path)
         self._gates.require_final_ready()
         transitions: list[TransitionObservation] = []
         previous: LiveClaimResult | None = None
@@ -876,7 +878,10 @@ class FinalWindowsE2EHarness:
                 InstanceId.INSTANCE_C,
                 InstanceId.INSTANCE_A,
             ):
-                claim = self._driver.claim(instance)
+                # Revalidate immediately before handing the exact identity to
+                # the driver, closing the gap between preflight and spawn.
+                admission = admit_final_core_artifact(self._artifact_path)
+                claim = self._driver.claim(instance, admission)
                 if claim.instance is not instance:
                     raise ValueError("claim result belongs to the wrong Launcher instance")
                 heartbeat_accepted = self._driver.heartbeat_accepted(

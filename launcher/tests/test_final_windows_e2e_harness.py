@@ -447,6 +447,7 @@ def test_final_core_admission_accepts_the_pinned_artifact() -> None:
     [
         ("NekoProxyCore.exe", "Core executable hash mismatch"),
         ("runtime-settings.nkps", "protected payload hash mismatch"),
+        (r"mode\Custom\PSO2.json", "PSO2 mode hash mismatch"),
         ("manifest.json", "manifest hash mismatch"),
     ],
 )
@@ -491,6 +492,32 @@ def test_final_core_admission_rejects_manifest_verification_failure(
 
     with pytest.raises(ValueError, match="manifest verification failed"):
         admit_final_core_artifact()
+
+
+def test_final_core_admission_rejects_real_manifest_controlled_file_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    _copy_writable_artifact(FINAL_CORE_ARTIFACT_PATH, tmp_path / "artifact")
+    controlled = tmp_path / "artifact" / "runtime-settings.nkps"
+    controlled.write_bytes(controlled.read_bytes() + b"changed")
+    manifest_path = tmp_path / "artifact" / "manifest.json"
+    monkeypatch.setattr(
+        harness_module,
+        "FINAL_MANIFEST_SHA256",
+        harness_module._sha256_file(manifest_path),
+    )
+    monkeypatch.setattr(
+        harness_module,
+        "FINAL_PROTECTED_PAYLOAD_SHA256",
+        harness_module._sha256_file(controlled),
+    )
+    assert len(json.loads(manifest_path.read_text(encoding="utf-8"))["files"]) == 245
+
+    with pytest.raises(ValueError, match="manifest verification failed"):
+        admit_final_core_artifact(tmp_path / "artifact")
 
 
 def test_final_core_admission_rejects_superseded_artifact(
