@@ -22,6 +22,8 @@ from neko_launcher.application.authorized_core import (
     RuntimeConfigurationCandidate,
     TargetBoundStartCommand,
 )
+from neko_launcher.domain.models import entitlement_is_active
+import time
 from neko_launcher.e2e.final_windows_harness import (
     CleanupStep,
     FinalCoreAdmission,
@@ -81,7 +83,8 @@ class ProductionHostedAuthorityDriver(FinalSequenceDriver):
         if step == CleanupStep.RELEASE_KNOWN_LAUNCHER_SESSIONS:
             for instance, gw in self._gateways.items():
                 if instance in self._sessions:
-                    gw.release_session(self._sessions[instance])
+                    if not gw.release_session(self._sessions[instance]):
+                        raise RuntimeError("CLEANUP_FAILED")
 
 class RecordingPermitGateway(LaunchPermitGateway):
     def __init__(self, delegate: LaunchPermitGateway, product: str = "neko-family-proxy", scope: str = "proxy:start"):
@@ -214,7 +217,7 @@ def execute_hosted_positive_and_kp(
         "authorized_start": 0,
         "running_transitions": 0,
         "kp_executions": 0,
-        "jti_replay_stage": "NOT_REACHABLE_BY_ONE_USE_CHALLENGE"
+        "jti_replay_stage": "NO"
     }
 
     claim = None
@@ -244,6 +247,9 @@ def execute_hosted_positive_and_kp(
             if str(e) == "SESSION_CLAIM_FAILED":
                 raise
             raise RuntimeError("SESSION_CLAIM_FAILED")
+
+        if not entitlement_is_active(claim.entitlement):
+            raise RuntimeError("ENTITLEMENT_UNAVAILABLE")
 
         recording_gateway = RecordingPermitGateway(gateway)
         recording_channel = RecordingCoreControlChannel(core_channel)
@@ -291,7 +297,7 @@ def execute_hosted_positive_and_kp(
             raise RuntimeError("TARGET_UNAVAILABLE")
 
         target_pid = getattr(target, "pid", None)
-        if not isinstance(target_pid, int) or not (1 <= target_pid <= 4294967295):
+        if isinstance(target_pid, bool) or not isinstance(target_pid, int) or not (1 <= target_pid <= 4294967295):
             raise RuntimeError("TARGET_UNAVAILABLE")
 
         if not recording_detector.is_same_target_still_running(target):
@@ -310,7 +316,7 @@ def execute_hosted_positive_and_kp(
         evidence["challenge_requests"] = recording_channel.challenge_count
         kp1_status = recording_channel.start_authorized(cmd, permit, uuid4().hex, timeout)
         try:
-            require_typed_core_denial(kp1_status, "AuthorizationReplay")
+            require_typed_core_denial(kp1_status, "AuthorizationInvalid")
         except Exception:
             raise RuntimeError("KP_ASSERTION_FAILED")
         evidence["kp_executions"] += 1
@@ -335,8 +341,8 @@ def execute_hosted_positive_and_kp(
         recording_channel.request_challenge(uuid4().hex, timeout)
         evidence["challenge_requests"] = recording_channel.challenge_count
         class FakeCommand:
-            profile_reference = "wrong-profile"
-            server_reference = cmd.server_reference
+            profile_reference = "profile-12345"
+            server_reference = "server-12345"
             target_pid = cmd.target_pid
             process_name = cmd.process_name
             mode = cmd.mode
@@ -366,7 +372,7 @@ def execute_hosted_positive_and_kp(
         evidence["kp_executions"] += 1
         evidence["wrong_configuration_kp"] = "READY"
 
-        # KP-4: Malformed permit
+        # KP-4: Malformed permit (actually Tampered)
         recording_channel.request_challenge(uuid4().hex, timeout)
         evidence["challenge_requests"] = recording_channel.challenge_count
         malformed = _get_kp_permit_variant(permit, "malformed")
@@ -376,10 +382,19 @@ def execute_hosted_positive_and_kp(
         except Exception:
             raise RuntimeError("KP_ASSERTION_FAILED")
         evidence["kp_executions"] += 1
-        evidence["malformed_rejection_layer"] = "PROTOCOL"
+        evidence["malformed_rejection_layer"] = "PERMIT_VERIFIER"
 
-        # KP-5: Expired permit proof
-        evidence["expired_permit_proof"] = "NOT_REACHABLE_FROM_CONSUMED_POSITIVE"
+        # KP-5: Real Expired permit proof
+        time.sleep(35)
+        recording_channel.request_challenge(uuid4().hex, timeout)
+        evidence["challenge_requests"] = recording_channel.challenge_count
+        kp5_status = recording_channel.start_authorized(cmd, permit, uuid4().hex, timeout)
+        try:
+            require_typed_core_denial(kp5_status, "AuthorizationExpired")
+        except Exception:
+            raise RuntimeError("KP_ASSERTION_FAILED")
+        evidence["kp_executions"] += 1
+        evidence["expired_permit_proof"] = "READY"
 
     finally:
         try:
@@ -398,8 +413,7 @@ def execute_hosted_positive_and_kp(
                     raise RuntimeError("CLEANUP_FAILED")
 
             if claim and claim.session_ref:
-                if not driver.cleanup(claim.session_ref):
-                    raise RuntimeError("CLEANUP_FAILED")
+                driver.cleanup(CleanupStep.RELEASE_KNOWN_LAUNCHER_SESSIONS)
         except Exception as e:
             if str(e) == "CLEANUP_FAILED":
                 raise

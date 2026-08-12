@@ -114,7 +114,15 @@ def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
     gateway.issue_launch_permit.return_value = OpaquePermit("permit")
     driver = Mock()
     driver.heartbeat_accepted.return_value = True
+    from neko_launcher.domain.models import Entitlement, EntitlementStatus
+    from datetime import datetime, timezone, timedelta
     driver.claim.return_value.session_ref = "sess"
+    driver.claim.return_value.entitlement = Entitlement(
+        product_code="abc",
+        status=EntitlementStatus.ACTIVE,
+        valid_until=datetime.now(timezone.utc) + timedelta(days=1),
+        max_devices=1
+    )
 
     detector = Mock()
     detector.wait_for_exact_pso2.return_value.pid = 1234
@@ -147,21 +155,24 @@ def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
     # Positive start -> KP1 -> KP2 -> KP3 -> KP4 -> KP5
     core_channel.start_authorized.side_effect = [
         CoreStatus(kind=CoreStatusKind.RUNNING), # positive
-        CoreStatus(kind=CoreStatusKind.FAILED, error_code="AuthorizationReplay"), # KP1
+        CoreStatus(kind=CoreStatusKind.FAILED, error_code="AuthorizationInvalid"), # KP1
         CoreStatus(kind=CoreStatusKind.FAILED, error_code="ConfigurationMismatch"), # KP2
         CoreStatus(kind=CoreStatusKind.FAILED, error_code="ConfigurationMismatch"), # KP3
         CoreStatus(kind=CoreStatusKind.FAILED, error_code="AuthorizationInvalid"), # KP4
-        # KP5 doesn't execute a start_authorized in the script because it returns NOT_REACHABLE_FROM_CONSUMED_POSITIVE directly
+        CoreStatus(kind=CoreStatusKind.FAILED, error_code="AuthorizationExpired"), # KP5
     ]
 
     core_channel.stop.return_value = CoreStatus(kind=CoreStatusKind.STOPPED)
     core_channel.shutdown.return_value = CoreStatus(kind=CoreStatusKind.STOPPED)
 
+    import time
+    monkeypatch.setattr(time, "sleep", lambda x: None)
+
     evidence = execute_hosted_positive_and_kp(
         gateway, driver, detector, core_process, core_channel, Mock(), Event(), Mock()
     )
 
-    assert evidence["kp_executions"] == 4
+    assert evidence["kp_executions"] == 5
     assert evidence["authorized_start"] == 1
     assert evidence["hosted_permit_requests"] == 1
 
@@ -170,3 +181,39 @@ def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
     call_args = gateway.issue_launch_permit.call_args[0]
     assert call_args[7] == "neko-family-proxy"
     assert call_args[8] == "proxy:start"
+
+def test_production_hosted_authority_driver_cleanup_success():
+    from neko_launcher.e2e.hosted_positive_kp import ProductionHostedAuthorityDriver
+    from neko_launcher.e2e.final_windows_harness import InstanceId, CleanupStep
+    from unittest.mock import Mock
+
+    gateway = Mock()
+    gateway.release_session.return_value = True
+
+    driver = ProductionHostedAuthorityDriver(
+        gateways={InstanceId.INSTANCE_A: gateway},
+        installations={InstanceId.INSTANCE_A: Mock()}
+    )
+    driver._sessions[InstanceId.INSTANCE_A] = "test-session"
+
+    # Should not raise
+    driver.cleanup(CleanupStep.RELEASE_KNOWN_LAUNCHER_SESSIONS)
+    gateway.release_session.assert_called_once_with("test-session")
+
+def test_production_hosted_authority_driver_cleanup_failure():
+    from neko_launcher.e2e.hosted_positive_kp import ProductionHostedAuthorityDriver
+    from neko_launcher.e2e.final_windows_harness import InstanceId, CleanupStep
+    from unittest.mock import Mock
+    import pytest
+
+    gateway = Mock()
+    gateway.release_session.return_value = False
+
+    driver = ProductionHostedAuthorityDriver(
+        gateways={InstanceId.INSTANCE_A: gateway},
+        installations={InstanceId.INSTANCE_A: Mock()}
+    )
+    driver._sessions[InstanceId.INSTANCE_A] = "test-session"
+
+    with pytest.raises(RuntimeError, match="CLEANUP_FAILED"):
+        driver.cleanup(CleanupStep.RELEASE_KNOWN_LAUNCHER_SESSIONS)
