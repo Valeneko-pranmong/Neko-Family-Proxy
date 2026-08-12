@@ -1208,18 +1208,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
         from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
-        from neko_launcher.infrastructure.storage.credential_vault import WindowsCredentialVault
+        from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
         from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 
         # Construct actual production components
-        config = LauncherConfig()
-        vault = WindowsCredentialVault(config.vault_service_name, config.vault_account_name)
+        workspace_root = Path.cwd()
+        config = LauncherConfig.from_environment(workspace_root)
+        vault = KeyringSecureStore()
         gateway = SupabaseGateway(config.supabase_url, config.supabase_publishable_key, vault)
         installation = LocalInstallationIdentity(vault)
         detector = ExactPso2TargetDetector()
-        core_process = WindowsCoreProcessAdapter(Path("E:/Temp/neko-phase25-core-final-b3c9d085-FROZEN"))
-        core_channel = NamedPipeCoreControlChannel()
-        admission = admit_final_core_artifact(Path("E:/Temp/neko-phase25-core-final-b3c9d085-FROZEN"))
+        frozen_root = Path("E:/Temp/neko-phase25-core-final-b3c9d085-FROZEN")
+        core_process = WindowsCoreProcessAdapter(frozen_root / "NekoProxyCore.exe")
+        core_channel = NamedPipeCoreControlChannel("NekoProxyCoreControl", expected_server_pid=core_process.owned_process_id)
+        admission = admit_final_core_artifact(frozen_root)
 
         driver = ProductionHostedAuthorityDriver(
             {InstanceId.INSTANCE_A: gateway},
