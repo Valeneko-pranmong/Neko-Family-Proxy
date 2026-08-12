@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from neko_launcher.application.authorized_core import CoreStatusKind
+from neko_launcher.e2e.final_windows_harness import admit_final_core_artifact
 from neko_launcher.infrastructure.core.core_control_channel import (
     NamedPipeCoreControlChannel,
 )
@@ -16,12 +17,12 @@ from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAda
 @pytest.mark.integration
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows named pipes")
 def test_frozen_core_stop_then_graceful_host_shutdown_and_restart() -> None:
-    configured = os.getenv("NEKO_FROZEN_CORE_E2E")
-    if not configured:
-        pytest.skip("set NEKO_FROZEN_CORE_E2E to the frozen Core executable")
-    executable = Path(configured)
-    if not executable.is_file():
-        pytest.fail("configured frozen Core executable is unavailable")
+    configured = os.getenv("NEKO_FINAL_CORE_ARTIFACT_PATH")
+    try:
+        admission = admit_final_core_artifact(Path(configured) if configured else None)
+    except ValueError as exc:
+        pytest.fail(str(exc))
+    executable = admission.artifact_path / "NekoProxyCore.exe"
 
     process = WindowsCoreProcessAdapter(executable)
     channel = NamedPipeCoreControlChannel(

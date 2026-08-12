@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import shutil
 
 import pytest
 
+import neko_launcher.e2e.final_windows_harness as harness_module
 from neko_launcher.e2e.final_windows_harness import (
     FAILURE_MATRIX,
     ArtifactIdentityPlan,
@@ -26,6 +28,12 @@ from neko_launcher.e2e.final_windows_harness import (
     TransitionObservation,
     assert_secret_safe_mapping,
     default_preparation_manifest,
+    admit_final_core_artifact,
+    FINAL_CORE_ARTIFACT_PATH,
+    FINAL_CORE_EXE_SHA256,
+    FINAL_CORE_SOURCE_SHA,
+    FINAL_MANIFEST_SHA256,
+    FINAL_PROTECTED_PAYLOAD_SHA256,
     main,
     validate_failure_matrix,
     validate_latest_login_wins,
@@ -33,6 +41,13 @@ from neko_launcher.e2e.final_windows_harness import (
     validate_topology,
     write_preparation_manifest,
 )
+
+
+def _copy_writable_artifact(source: Path, destination: Path) -> None:
+    shutil.copytree(source, destination)
+    for path in destination.rglob("*"):
+        if path.is_file():
+            path.chmod(path.stat().st_mode | 0o200)
 
 
 def test_a_b_c_a_latest_successful_claim_wins_without_permanent_installation_lock() -> None:
@@ -232,7 +247,7 @@ def test_artifact_identity_requires_exact_commits_manifest_exe_and_five_dll_hash
     plan = ArtifactIdentityPlan.capture(
         launcher_commit="c515141e33245b9fe4182cc4244092f01b286b70",
         launcher_exe=tmp_path / "launcher.exe",
-        core_commit="e146d19d93c4a6bda2383c23d958c0575df28f49",
+        core_commit=FINAL_CORE_SOURCE_SHA,
         core_manifest=tmp_path / "core-manifest.json",
         core_exe=tmp_path / "NekoProxyCore.exe",
         critical_core_dlls=tuple(
@@ -399,3 +414,91 @@ def test_prepare_cli_cannot_call_network_or_spawn_a_process(
     written = output.read_text(encoding="utf-8")
     assert '"permit_calls": 0' in written
     assert '"authorized_core_start_calls": 0' in written
+
+
+def test_final_core_identity_is_pinned_to_the_required_provenance() -> None:
+    assert FINAL_CORE_SOURCE_SHA == "b3c9d0851cff74691500c431c0da1ec30c21927a"
+    assert FINAL_CORE_ARTIFACT_PATH == Path(
+        r"E:\Temp\neko-phase25-core-final-b3c9d085-FROZEN"
+    )
+    assert FINAL_CORE_EXE_SHA256 == (
+        "1b9b0ba313ac1f8c879f07f678a2f01e5b334c29fc17323533017aed2cbffcfe"
+    )
+    assert FINAL_PROTECTED_PAYLOAD_SHA256 == (
+        "3046c165a8d0c2516915a341c9816877c919b0a05353d72953eb3cd3282bc982"
+    )
+    assert FINAL_MANIFEST_SHA256 == (
+        "2826a78a34f4b536c38c9a038c72ed6a4802d3da044f94cd18b895e7193f9841"
+    )
+
+
+def test_final_core_admission_accepts_the_pinned_artifact() -> None:
+    admission = admit_final_core_artifact()
+
+    assert admission.source_sha == FINAL_CORE_SOURCE_SHA
+    assert admission.artifact_path == FINAL_CORE_ARTIFACT_PATH
+    assert admission.core_exe_sha256 == FINAL_CORE_EXE_SHA256
+    assert admission.protected_payload_sha256 == FINAL_PROTECTED_PAYLOAD_SHA256
+    assert admission.manifest_sha256 == FINAL_MANIFEST_SHA256
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_error"),
+    [
+        ("NekoProxyCore.exe", "Core executable hash mismatch"),
+        ("runtime-settings.nkps", "protected payload hash mismatch"),
+        ("manifest.json", "manifest hash mismatch"),
+    ],
+)
+def test_final_core_admission_rejects_changed_pinned_bytes(
+    tmp_path: Path,
+    relative_path: str,
+    expected_error: str,
+) -> None:
+    _copy_writable_artifact(FINAL_CORE_ARTIFACT_PATH, tmp_path / "artifact")
+    changed = tmp_path / "artifact" / relative_path
+    changed.write_bytes(changed.read_bytes() + b"changed")
+
+    with pytest.raises(ValueError, match=expected_error):
+        admit_final_core_artifact(tmp_path / "artifact")
+
+
+def test_final_core_admission_rejects_missing_executable(tmp_path: Path) -> None:
+    _copy_writable_artifact(FINAL_CORE_ARTIFACT_PATH, tmp_path / "artifact")
+    (tmp_path / "artifact" / "NekoProxyCore.exe").unlink()
+
+    with pytest.raises(ValueError, match="artifact is unavailable"):
+        admit_final_core_artifact(tmp_path / "artifact")
+
+
+def test_final_core_admission_accepts_an_alternate_path_with_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    _copy_writable_artifact(FINAL_CORE_ARTIFACT_PATH, tmp_path / "alternate")
+
+    admission = admit_final_core_artifact(tmp_path / "alternate")
+
+    assert admission.core_exe_sha256 == FINAL_CORE_EXE_SHA256
+
+
+def test_final_core_admission_rejects_manifest_verification_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failed_manifest_verification(_artifact_path: Path) -> str:
+        raise ValueError("manifest verification failed")
+
+    monkeypatch.setattr(harness_module, "_manifest_digest", failed_manifest_verification)
+
+    with pytest.raises(ValueError, match="manifest verification failed"):
+        admit_final_core_artifact()
+
+
+def test_final_core_admission_rejects_superseded_artifact(
+    tmp_path: Path,
+) -> None:
+    _copy_writable_artifact(FINAL_CORE_ARTIFACT_PATH, tmp_path / "superseded")
+    exe = tmp_path / "superseded" / "NekoProxyCore.exe"
+    exe.write_bytes(exe.read_bytes() + b"superseded")
+
+    with pytest.raises(ValueError, match="Core executable hash mismatch"):
+        admit_final_core_artifact(tmp_path / "superseded")

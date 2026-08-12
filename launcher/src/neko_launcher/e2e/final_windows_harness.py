@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,6 +39,23 @@ CRITICAL_CORE_DLL_NAMES = frozenset(
         "Netch.dll",
     }
 )
+
+# Final Core provenance is cryptographic identity, not directory naming.
+FINAL_CORE_SOURCE_SHA = "b3c9d0851cff74691500c431c0da1ec30c21927a"
+FINAL_CORE_ARTIFACT_PATH = Path(r"E:\Temp\neko-phase25-core-final-b3c9d085-FROZEN")
+FINAL_CORE_EXE_SHA256 = "1b9b0ba313ac1f8c879f07f678a2f01e5b334c29fc17323533017aed2cbffcfe"
+FINAL_PROTECTED_PAYLOAD_SHA256 = (
+    "3046c165a8d0c2516915a341c9816877c919b0a05353d72953eb3cd3282bc982"
+)
+FINAL_PSO2_MODE_SHA256 = "23b3ea655e5ec96d84e37ac649e6da7f0f9d6090b28c82d48425152110ebc213"
+FINAL_MANIFEST_SHA256 = "2826a78a34f4b536c38c9a038c72ed6a4802d3da044f94cd18b895e7193f9841"
+FINAL_MANIFEST_CONTROLLED_FILE_COUNT = 245
+FINAL_PHYSICAL_FILE_COUNT = 246
+_FINAL_CORE_ARTIFACT_ENV = "NEKO_FINAL_CORE_ARTIFACT_PATH"
+_FINAL_CORE_EXE_RELATIVE_PATH = Path("NekoProxyCore.exe")
+_FINAL_PAYLOAD_RELATIVE_PATH = Path("runtime-settings.nkps")
+_FINAL_PSO2_RELATIVE_PATH = Path("mode") / "Custom" / "PSO2.json"
+_FINAL_MANIFEST_RELATIVE_PATH = Path("manifest.json")
 
 
 class InstanceId(str, Enum):
@@ -177,6 +195,83 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class FinalCoreAdmission:
+    source_sha: str
+    artifact_path: Path
+    core_exe_sha256: str
+    protected_payload_sha256: str
+    manifest_sha256: str
+    pso2_mode_sha256: str
+    manifest_controlled_file_count: int
+    physical_file_count: int
+
+
+def _manifest_digest(artifact_path: Path) -> str:
+    manifest_path = artifact_path / _FINAL_MANIFEST_RELATIVE_PATH
+    if _sha256_file(manifest_path) != FINAL_MANIFEST_SHA256:
+        raise ValueError("manifest hash mismatch")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("manifest verification failed") from exc
+    if not isinstance(manifest, dict) or manifest.get("hash_algorithm") != "SHA-256":
+        raise ValueError("manifest verification failed")
+    entries = manifest.get("files")
+    if not isinstance(entries, list) or len(entries) != FINAL_MANIFEST_CONTROLLED_FILE_COUNT:
+        raise ValueError("manifest verification failed")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("manifest verification failed")
+        relative = entry.get("relative_path")
+        expected_hash = entry.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected_hash, str):
+            raise ValueError("manifest verification failed")
+        entry_path = (artifact_path / Path(relative)).resolve()
+        if artifact_path not in entry_path.parents:
+            raise ValueError("manifest verification failed")
+        if _sha256_file(entry_path) != expected_hash:
+            raise ValueError("manifest verification failed")
+    return FINAL_MANIFEST_SHA256
+
+
+def admit_final_core_artifact(artifact_path: Path | None = None) -> FinalCoreAdmission:
+    selected_path = Path(
+        os.environ.get(_FINAL_CORE_ARTIFACT_ENV, "")
+    ) if artifact_path is None and os.environ.get(_FINAL_CORE_ARTIFACT_ENV) else (
+        artifact_path or FINAL_CORE_ARTIFACT_PATH
+    )
+    selected_path = selected_path.resolve()
+    if not selected_path.is_dir():
+        raise ValueError("artifact directory is unavailable")
+    core_exe = selected_path / _FINAL_CORE_EXE_RELATIVE_PATH
+    payload = selected_path / _FINAL_PAYLOAD_RELATIVE_PATH
+    pso2_mode = selected_path / _FINAL_PSO2_RELATIVE_PATH
+    core_exe_hash = _sha256_file(core_exe)
+    if core_exe_hash != FINAL_CORE_EXE_SHA256:
+        raise ValueError("Core executable hash mismatch")
+    payload_hash = _sha256_file(payload)
+    if payload_hash != FINAL_PROTECTED_PAYLOAD_SHA256:
+        raise ValueError("protected payload hash mismatch")
+    pso2_hash = _sha256_file(pso2_mode)
+    if pso2_hash != FINAL_PSO2_MODE_SHA256:
+        raise ValueError("PSO2 mode hash mismatch")
+    manifest_hash = _manifest_digest(selected_path)
+    physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
+    if len(physical_files) != FINAL_PHYSICAL_FILE_COUNT:
+        raise ValueError("artifact physical file count mismatch")
+    return FinalCoreAdmission(
+        source_sha=FINAL_CORE_SOURCE_SHA,
+        artifact_path=selected_path,
+        core_exe_sha256=core_exe_hash,
+        protected_payload_sha256=payload_hash,
+        manifest_sha256=manifest_hash,
+        pso2_mode_sha256=pso2_hash,
+        manifest_controlled_file_count=FINAL_MANIFEST_CONTROLLED_FILE_COUNT,
+        physical_file_count=len(physical_files),
+    )
 
 
 @dataclass(frozen=True)
@@ -761,11 +856,16 @@ class FinalWindowsE2EHarness:
         *,
         gates: FinalExecutionGates,
         driver: FinalSequenceDriver,
+        artifact_path: Path | None = None,
     ) -> None:
         self._gates = gates
         self._driver = driver
+        self._artifact_path = artifact_path
 
     def run(self) -> LatestLoginWinsResult:
+        # Admission is deliberately first: no gate, challenge, permit, or START
+        # operation may run against an unverified Core artifact.
+        admit_final_core_artifact(self._artifact_path)
         self._gates.require_final_ready()
         transitions: list[TransitionObservation] = []
         previous: LiveClaimResult | None = None

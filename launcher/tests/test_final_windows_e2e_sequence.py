@@ -105,6 +105,29 @@ def test_closed_final_gates_cannot_reach_claim_or_cleanup_driver_calls() -> None
     assert calls == []
 
 
+def test_failed_artifact_admission_cannot_reach_claim_challenge_or_permit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "neko_launcher.e2e.final_windows_harness.admit_final_core_artifact",
+        lambda _path=None: (_ for _ in ()).throw(ValueError("Core executable hash mismatch")),
+    )
+    harness = FinalWindowsE2EHarness(
+        gates=FinalExecutionGates(
+            historical_pso2_mode_recovered=True,
+            runtime_catalog_state=RuntimeCatalogState.UNIQUE,
+            hosted_core_running_kp_passed=True,
+        ),
+        driver=FakeFinalDriver(calls),
+    )
+
+    with pytest.raises(ValueError, match="Core executable hash mismatch"):
+        harness.run()
+
+    assert calls == []
+
+
 def test_cleanup_failure_runs_every_scoped_cleanup_step_and_fails_the_run() -> None:
     calls: list[str] = []
     harness = FinalWindowsE2EHarness(
