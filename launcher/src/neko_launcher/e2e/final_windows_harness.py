@@ -1238,7 +1238,8 @@ def main(argv: list[str] | None = None) -> int:
                 core_process=core_process,
                 core_channel=core_channel,
                 admission=admission,
-                cancellation=cancellation
+                cancellation=cancellation,
+                installation=installation
             )
             print("Execution completed:", evidence)
             return 0

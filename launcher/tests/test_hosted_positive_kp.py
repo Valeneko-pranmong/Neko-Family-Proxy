@@ -57,12 +57,12 @@ def test_driver_cleanup():
 def test_execute_hosted_positive_and_kp_fails_without_env(monkeypatch):
     monkeypatch.delenv("NEKO_LIVE_HOSTED_EXECUTION", raising=False)
     with pytest.raises(RuntimeError, match="Fail-closed"):
-        execute_hosted_positive_and_kp(Mock(), Mock(), Mock(), Mock(), Mock(), Mock(), Event())
+        execute_hosted_positive_and_kp(Mock(), Mock(), Mock(), Mock(), Mock(), Mock(), Event(), Mock())
 
 def test_execute_hosted_positive_and_kp_wrong_env(monkeypatch):
     monkeypatch.setenv("NEKO_LIVE_HOSTED_EXECUTION", "1")
     with pytest.raises(RuntimeError, match="Fail-closed"):
-        execute_hosted_positive_and_kp(Mock(), Mock(), Mock(), Mock(), Mock(), Mock(), Event())
+        execute_hosted_positive_and_kp(Mock(), Mock(), Mock(), Mock(), Mock(), Mock(), Event(), Mock())
 
 def test_recording_permit_gateway_exact_signature():
     # Strict contract test
@@ -158,7 +158,7 @@ def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
     core_channel.shutdown.return_value = CoreStatus(kind=CoreStatusKind.STOPPED)
 
     evidence = execute_hosted_positive_and_kp(
-        gateway, driver, detector, core_process, core_channel, Mock(), Event()
+        gateway, driver, detector, core_process, core_channel, Mock(), Event(), Mock()
     )
 
     assert evidence["kp_executions"] == 4

@@ -133,6 +133,7 @@ class RecordingCoreControlChannel(CoreControlChannel):
         self.delegate = delegate
         self.last_start_command: TargetBoundStartCommand | None = None
         self.start_count = 0
+        self.challenge_count = 0
 
     def runtime_config_catalog(self, correlation_id: str, timeout: float) -> tuple[RuntimeConfigurationCandidate, ...]:
         return self.delegate.runtime_config_catalog(correlation_id, timeout)
@@ -141,6 +142,7 @@ class RecordingCoreControlChannel(CoreControlChannel):
         return self.delegate.runtime_config_validate(candidate, correlation_id, timeout)
 
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
+        self.challenge_count += 1
         return self.delegate.request_challenge(correlation_id, timeout)
 
     def start_authorized(self, command: object, permit: OpaquePermit, correlation_id: str, timeout: float) -> CoreStatus:
@@ -200,6 +202,7 @@ def execute_hosted_positive_and_kp(
     core_channel: CoreControlChannel,
     admission: FinalCoreAdmission,
     cancellation: Event,
+    installation: Any,
     timeout: float = 30.0
 ) -> dict[str, Any]:
     if os.environ.get("NEKO_LIVE_HOSTED_EXECUTION") != "YES-I-UNDERSTAND":
@@ -214,141 +217,192 @@ def execute_hosted_positive_and_kp(
         "jti_replay_stage": "NOT_REACHABLE_BY_ONE_USE_CHALLENGE"
     }
 
-    # Pre-admit exact frozen Core
-    core_process.start_admitted_core(admission)
-    core_process.wait_for_control_channel(timeout)
+    claim = None
+    recording_channel = None
 
-    # Check Auth Session
-    user = gateway.restore_session()
-    if not user:
-        raise RuntimeError("Live execution failed: No authenticated saved session restored")
+    try:
+        try:
+            core_process.start_admitted_core(admission)
+            core_process.wait_for_control_channel(timeout)
+        except Exception:
+            raise RuntimeError("CORE_ADMISSION_FAILED")
 
-    # Claim session (Authority)
-    claim = driver.claim(InstanceId.INSTANCE_A, admission)
-    if not driver.heartbeat_accepted(InstanceId.INSTANCE_A, claim.session_ref):
-        raise RuntimeError("Heartbeat rejected")
+        try:
+            user = gateway.restore_session()
+            if not user:
+                raise RuntimeError("AUTH_SESSION_UNAVAILABLE")
+        except Exception as e:
+            if str(e) == "AUTH_SESSION_UNAVAILABLE":
+                raise
+            raise RuntimeError("AUTH_SESSION_UNAVAILABLE")
 
-    recording_gateway = RecordingPermitGateway(gateway)
-    recording_channel = RecordingCoreControlChannel(core_channel)
-    recording_detector = RecordingTargetDetector(detector)
+        try:
+            claim = driver.claim(InstanceId.INSTANCE_A, admission)
+            if not driver.heartbeat_accepted(InstanceId.INSTANCE_A, claim.session_ref):
+                raise RuntimeError("SESSION_CLAIM_FAILED")
+        except Exception as e:
+            if str(e) == "SESSION_CLAIM_FAILED":
+                raise
+            raise RuntimeError("SESSION_CLAIM_FAILED")
 
-    access_context = LaunchAccessContext(
-        authenticated=True,
-        entitlement_active=True,
-        session_id=claim.session_ref,
-        installation_key_hash=claim.installation_ref,
-        authenticated_transport=gateway
-    )
-    precondition = OnlineHeartbeatLaunchPrecondition(lambda sid, hash, t: driver.heartbeat_accepted(InstanceId.INSTANCE_A, sid))
+        recording_gateway = RecordingPermitGateway(gateway)
+        recording_channel = RecordingCoreControlChannel(core_channel)
+        recording_detector = RecordingTargetDetector(detector)
 
-    timeouts = OrchestrationTimeouts(timeout, timeout, timeout, timeout, timeout, timeout, timeout, timeout)
+        access_context = LaunchAccessContext(
+            authenticated=True,
+            entitlement_active=True,
+            session_id=claim.session_ref,
+            installation_key_hash=installation.key_hash,
+            authenticated_transport=gateway
+        )
+        precondition = OnlineHeartbeatLaunchPrecondition(lambda sid, hash, t: driver.heartbeat_accepted(InstanceId.INSTANCE_A, sid))
+        timeouts = OrchestrationTimeouts(timeout, timeout, timeout, timeout, timeout, timeout, timeout, timeout)
+        orchestrator = AuthorizedCoreOrchestrator(
+            process=core_process,
+            channel=recording_channel,
+            permits=recording_gateway,
+            precondition=precondition,
+            detector=recording_detector,
+            timeouts=timeouts,
+        )
 
-    orchestrator = AuthorizedCoreOrchestrator(
-        process=core_process,
-        channel=recording_channel,
-        permits=recording_gateway,
-        precondition=precondition,
-        detector=recording_detector,
-        timeouts=timeouts,
-    )
+        try:
+            status = orchestrator.start(None, access_context, cancellation)
+            if status.kind != CoreStatusKind.RUNNING:
+                raise RuntimeError("START_DENIED")
+        except Exception as e:
+            if str(e) == "START_DENIED":
+                raise
+            raise RuntimeError("START_DENIED")
 
-    # Positive execution
-    status = orchestrator.start(None, access_context, cancellation)
+        evidence["authorized_start"] = recording_channel.start_count
+        evidence["hosted_permit_requests"] = recording_gateway.issued_count
+        evidence["running_transitions"] = 1
+        evidence["challenge_requests"] = recording_channel.challenge_count
 
-    if status.kind != CoreStatusKind.RUNNING:
-        raise RuntimeError("Core failed to reach Running state")
+        permit = recording_gateway.last_permit
+        cmd = recording_channel.last_start_command
+        if not permit or not cmd:
+            raise RuntimeError("PERMIT_REQUEST_FAILED")
 
-    evidence["authorized_start"] = recording_channel.start_count
-    evidence["hosted_permit_requests"] = recording_gateway.issued_count
-    evidence["running_transitions"] = 1
-    evidence["challenge_requests"] = 1 # Orchestrator did it
+        target = recording_detector.last_target
+        if not target:
+            raise RuntimeError("TARGET_UNAVAILABLE")
 
-    permit = recording_gateway.last_permit
-    cmd = recording_channel.last_start_command
+        target_pid = getattr(target, "pid", None)
+        if not isinstance(target_pid, int) or not (1 <= target_pid <= 4294967295):
+            raise RuntimeError("TARGET_UNAVAILABLE")
 
-    if not permit or not cmd:
-        raise RuntimeError("Failed to capture permit or command from positive flow")
+        if not recording_detector.is_same_target_still_running(target):
+            raise RuntimeError("TARGET_UNAVAILABLE")
 
-    target = recording_detector.last_target
-    if not target:
-        raise RuntimeError("No target recorded")
-    target_pid = getattr(target, "pid", 1)
+        # Must STOP gracefully BEFORE KP execution
+        try:
+            stop_status = recording_channel.stop(uuid4().hex, timeout)
+            if stop_status.kind != CoreStatusKind.STOPPED:
+                raise RuntimeError("CLEANUP_FAILED")
+        except Exception:
+            raise RuntimeError("CLEANUP_FAILED")
 
-    # Recheck target after positive START
-    if not recording_detector.is_same_target_still_running(target):
-        raise RuntimeError("pso2.exe target exited early")
+        # KP-1: Replay same permit
+        recording_channel.request_challenge(uuid4().hex, timeout)
+        evidence["challenge_requests"] = recording_channel.challenge_count
+        kp1_status = recording_channel.start_authorized(cmd, permit, uuid4().hex, timeout)
+        try:
+            require_typed_core_denial(kp1_status, "AuthorizationReplay")
+        except Exception:
+            raise RuntimeError("KP_ASSERTION_FAILED")
+        evidence["kp_executions"] += 1
+        evidence["same_permit_reuse_denied"] = "READY"
+        evidence["jti_replay_stage"] = "NO"
 
-    # KP-1: Replay same permit
-    kp1_status = recording_channel.start_authorized(cmd, permit, uuid4().hex, timeout)
-    require_typed_core_denial(kp1_status, "AuthorizationReplay")
-    evidence["kp_executions"] += 1
-    evidence["same_permit_reuse_denied"] = "READY"
-    evidence["jti_replay_stage"] = "NO"
+        # KP-2: Wrong Target PID
+        recording_channel.request_challenge(uuid4().hex, timeout)
+        evidence["challenge_requests"] = recording_channel.challenge_count
+        cmd_wrong_pid = TargetBoundStartCommand.from_opaque(
+            OpaqueStartCommand(cmd.profile_reference, cmd.server_reference),
+            target_pid=target_pid + 1
+        )
+        kp2_status = recording_channel.start_authorized(cmd_wrong_pid, permit, uuid4().hex, timeout)
+        try:
+            require_typed_core_denial(kp2_status, "ConfigurationMismatch")
+        except Exception:
+            raise RuntimeError("KP_ASSERTION_FAILED")
+        evidence["kp_executions"] += 1
 
-    # KP-2: Wrong Target PID
-    cmd_wrong_pid = TargetBoundStartCommand.from_opaque(
-        OpaqueStartCommand(cmd.profile_reference, cmd.server_reference),
-        target_pid=target_pid + 1
-    )
-    kp2_status = recording_channel.start_authorized(cmd_wrong_pid, permit, uuid4().hex, timeout)
-    require_typed_core_denial(kp2_status, "ConfigurationMismatch")
-    evidence["kp_executions"] += 1
+        # KP-3: Wrong Configuration (digest mismatch)
+        recording_channel.request_challenge(uuid4().hex, timeout)
+        evidence["challenge_requests"] = recording_channel.challenge_count
+        class FakeCommand:
+            profile_reference = "wrong-profile"
+            server_reference = cmd.server_reference
+            target_pid = cmd.target_pid
+            process_name = cmd.process_name
+            mode = cmd.mode
 
-    # KP-3: Wrong Configuration (digest mismatch)
-    class FakeCommand:
-        profile_reference = cmd.profile_reference
-        server_reference = cmd.server_reference
-        target_pid = cmd.target_pid
-        process_name = "wrong.exe"
-        mode = cmd.mode
+            @property
+            def canonical_bytes(self) -> bytes:
+                return (
+                    "protocolVersion=2\n"
+                    f"mode={self.mode}\n"
+                    f"processName={self.process_name}\n"
+                    f"targetPid={self.target_pid}\n"
+                    f"profileReference={self.profile_reference}\n"
+                    f"serverReference={self.server_reference}\n"
+                ).encode("utf-8")
 
-        @property
-        def canonical_bytes(self) -> bytes:
-            return (
-                "protocolVersion=2\n"
-                f"mode={self.mode}\n"
-                f"processName={self.process_name}\n"
-                f"targetPid={self.target_pid}\n"
-                f"profileReference={self.profile_reference}\n"
-                f"serverReference={self.server_reference}\n"
-            ).encode("utf-8")
+            @property
+            def configuration_digest(self) -> str:
+                from hashlib import sha256
+                return sha256(self.canonical_bytes).hexdigest()
 
-        @property
-        def configuration_digest(self) -> str:
-            from hashlib import sha256
-            return sha256(self.canonical_bytes).hexdigest()
+        cmd_wrong_config = FakeCommand()
+        kp3_status = recording_channel.start_authorized(cmd_wrong_config, permit, uuid4().hex, timeout)
+        try:
+            require_typed_core_denial(kp3_status, "ConfigurationMismatch")
+        except Exception:
+            raise RuntimeError("KP_ASSERTION_FAILED")
+        evidence["kp_executions"] += 1
+        evidence["wrong_configuration_kp"] = "READY"
 
-    cmd_wrong_config = FakeCommand()
-    kp3_status = recording_channel.start_authorized(cmd_wrong_config, permit, uuid4().hex, timeout)
-    require_typed_core_denial(kp3_status, "ConfigurationMismatch")
-    evidence["kp_executions"] += 1
-    evidence["wrong_configuration_kp"] = "READY"
+        # KP-4: Malformed permit
+        recording_channel.request_challenge(uuid4().hex, timeout)
+        evidence["challenge_requests"] = recording_channel.challenge_count
+        malformed = _get_kp_permit_variant(permit, "malformed")
+        kp4_status = recording_channel.start_authorized(cmd, malformed, uuid4().hex, timeout)
+        try:
+            require_typed_core_denial(kp4_status, "AuthorizationInvalid")
+        except Exception:
+            raise RuntimeError("KP_ASSERTION_FAILED")
+        evidence["kp_executions"] += 1
+        evidence["malformed_rejection_layer"] = "PROTOCOL"
 
-    # KP-4: Malformed permit
-    malformed = _get_kp_permit_variant(permit, "malformed")
-    kp4_status = recording_channel.start_authorized(cmd, malformed, uuid4().hex, timeout)
-    require_typed_core_denial(kp4_status, "AuthorizationInvalid")
-    evidence["kp_executions"] += 1
+        # KP-5: Expired permit proof
+        evidence["expired_permit_proof"] = "NOT_REACHABLE_FROM_CONSUMED_POSITIVE"
 
-    # KP-5: Expired permit proof
-    # We cannot forge expiration without mutating the signed permit,
-    # and we cannot wait for real expiration because the challenge was already consumed.
-    evidence["expired_permit_proof"] = "NOT_REACHABLE_FROM_CONSUMED_POSITIVE"
+    finally:
+        try:
+            # Emergency cleanup, ONLY the exact retained child
+            if recording_channel:
+                recording_channel.shutdown(uuid4().hex, timeout)
+            else:
+                core_channel.shutdown(uuid4().hex, timeout)
 
-    # Cleanup must fail closed
-    stop_status = recording_channel.stop(uuid4().hex, timeout)
-    if stop_status.kind != CoreStatusKind.STOPPED:
-        raise RuntimeError("Core failed to STOP gracefully")
+            pid = core_process.owned_process_id()
+            if pid is not None:
+                code = core_process.wait_for_owned_process_exit(pid, timeout)
+                if code != 0:
+                    raise RuntimeError("CLEANUP_FAILED")
+                if core_process.owned_process_id() is not None:
+                    raise RuntimeError("CLEANUP_FAILED")
 
-    shutdown_status = recording_channel.shutdown(uuid4().hex, timeout)
-    if shutdown_status.kind != CoreStatusKind.STOPPED:
-        raise RuntimeError("Core failed to SHUTDOWN gracefully")
-
-    code = core_process.wait_for_owned_process_exit(core_process.owned_process_id(), timeout)
-    if code != 0:
-        raise RuntimeError(f"Core exited with non-zero code: {code}")
-
-    if core_process.owned_process_id() is not None:
-        raise RuntimeError("Orphan core process detected")
+            if claim and claim.session_ref:
+                if not driver.cleanup(claim.session_ref):
+                    raise RuntimeError("CLEANUP_FAILED")
+        except Exception as e:
+            if str(e) == "CLEANUP_FAILED":
+                raise
+            raise RuntimeError("CLEANUP_FAILED")
 
     return evidence
