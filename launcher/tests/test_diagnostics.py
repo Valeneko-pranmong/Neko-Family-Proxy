@@ -4,9 +4,9 @@ from neko_launcher.application.authorized_core import (
     PermitDiagnosticCode,
 )
 from neko_launcher.application.diagnostics import (
+    sanitize_diagnostic_text,
     CoreDiagnosticsRecorder,
     NoopDiagnosticsSink,
-    sanitize_diagnostic_text,
 )
 from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
 

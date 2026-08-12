@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 import customtkinter as ctk
 
+
 DESIGN_WIDTH = 480
 DESIGN_HEIGHT = 760
 SCREEN_MARGIN_RATIO = 0.04

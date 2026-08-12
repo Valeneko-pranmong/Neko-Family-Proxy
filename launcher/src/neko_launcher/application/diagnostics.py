@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Protocol
 
+
 AUTHORIZED_START_CLASSIFICATIONS = frozenset(
     {
         "START_TYPED_SUCCESS",

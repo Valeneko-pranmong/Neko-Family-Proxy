@@ -1,11 +1,3 @@
-from datetime import UTC, datetime, timedelta
-
-import pytest
-
-from neko_launcher.application.authorized_core import (
-    AuthorizedCoreError,
-    AuthorizedCoreErrorCode,
-)
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.domain.events import (
     AuthStarted,
@@ -17,6 +9,14 @@ from neko_launcher.domain.events import (
     SessionRevoked,
     StartProxyRequested,
     StateChanged,
+)
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreError,
+    AuthorizedCoreErrorCode,
 )
 from neko_launcher.domain.models import (
     AuthStatus,

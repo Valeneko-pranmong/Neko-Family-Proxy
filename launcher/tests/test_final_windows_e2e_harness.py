@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import shutil
 
 import pytest
 
 import neko_launcher.e2e.final_windows_harness as harness_module
 from neko_launcher.e2e.final_windows_harness import (
     FAILURE_MATRIX,
-    FINAL_CORE_ARTIFACT_PATH,
-    FINAL_CORE_EXE_SHA256,
-    FINAL_CORE_SOURCE_SHA,
-    FINAL_MANIFEST_SHA256,
-    FINAL_PROTECTED_PAYLOAD_SHA256,
     ArtifactIdentityPlan,
     AuthorityLossTimeline,
     ClaimObservation,
@@ -22,8 +17,8 @@ from neko_launcher.e2e.final_windows_harness import (
     DisplacedObservation,
     ExecutionTopology,
     FinalExecutionGates,
-    InstanceId,
     InstanceIsolation,
+    InstanceId,
     PreparationAudit,
     RuntimeCatalogState,
     RuntimeConfigGateObservation,
@@ -31,9 +26,14 @@ from neko_launcher.e2e.final_windows_harness import (
     StageTraceObservation,
     SyntheticDataPlan,
     TransitionObservation,
-    admit_final_core_artifact,
     assert_secret_safe_mapping,
     default_preparation_manifest,
+    admit_final_core_artifact,
+    FINAL_CORE_ARTIFACT_PATH,
+    FINAL_CORE_EXE_SHA256,
+    FINAL_CORE_SOURCE_SHA,
+    FINAL_MANIFEST_SHA256,
+    FINAL_PROTECTED_PAYLOAD_SHA256,
     main,
     validate_failure_matrix,
     validate_latest_login_wins,

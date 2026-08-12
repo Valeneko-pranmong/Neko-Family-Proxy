@@ -1,15 +1,13 @@
 from typing import Any
-
 import customtkinter as ctk
-
 from neko_launcher.ui.platform.window_scaling import (
-    DESIGN_HEIGHT,
-    DESIGN_WIDTH,
-    SCREEN_MARGIN_RATIO,
-    calculate_centered_position,
     calculate_portrait_geometry,
-    center_window,
+    calculate_centered_position,
     fit_portrait_window,
+    center_window,
+    DESIGN_WIDTH,
+    DESIGN_HEIGHT,
+    SCREEN_MARGIN_RATIO,
 )
 
 

@@ -2,7 +2,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.domain.models import (
     AppState,
     AuthStatus,
@@ -11,8 +10,10 @@ from neko_launcher.domain.models import (
     GameStatus,
     ProxyStatus,
 )
-from neko_launcher.ui.app_window import HEARTBEAT_INTERVAL_MS, AppWindow
+from neko_launcher.ui.app_window import AppWindow, HEARTBEAT_INTERVAL_MS
+from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.ui.theme import PALETTE
+
 
 
 class FakeVariable:

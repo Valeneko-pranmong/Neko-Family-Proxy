@@ -1,16 +1,16 @@
-import json
 from types import SimpleNamespace
+import json
 
 import httpx
 import pytest
 from supabase import ClientOptions, create_client
 
+from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     CoreChallenge,
     PermitDiagnosticCode,
 )
-from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.domain.models import SessionTerminationReason
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 

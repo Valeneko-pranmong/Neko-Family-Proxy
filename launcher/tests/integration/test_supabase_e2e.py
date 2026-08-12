@@ -43,7 +43,7 @@ def gateway(url: str, publishable_key: str) -> SupabaseGateway:
 
 def active_sessions(client: SupabaseGateway) -> list[dict[str, object]]:
     response = (
-        client._client.schema("public")
+        client._client.schema("public")  # noqa: SLF001 - live contract assertion
         .table("launcher_sessions")
         .select("id,installation_id,revoked_at")
         .is_("revoked_at", "null")
@@ -57,7 +57,7 @@ def remembered_installations(
     installation_ids: list[str],
 ) -> list[dict[str, object]]:
     response = (
-        client._client.schema("public")
+        client._client.schema("public")  # noqa: SLF001 - live contract assertion
         .table("installations")
         .select("id,revoked_at")
         .in_("id", installation_ids)

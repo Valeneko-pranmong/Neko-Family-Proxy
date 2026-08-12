@@ -6,15 +6,15 @@ import csv
 import ctypes
 import os
 import subprocess
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from threading import Event
 from time import monotonic
+from typing import Callable, FrozenSet, Sequence
 
 # Process names that trigger automatic ProxyCore activation.
-PSO2_PROCESS_NAMES: frozenset[str] = frozenset({"pso2.exe"})
+PSO2_PROCESS_NAMES: FrozenSet[str] = frozenset({"pso2.exe"})
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,7 @@ class ExactPso2TargetDetector:
 
 
 def is_any_process_running(
-    names: Sequence[str] | frozenset[str] = PSO2_PROCESS_NAMES,
+    names: Sequence[str] | FrozenSet[str] = PSO2_PROCESS_NAMES,
 ) -> bool | None:
     """Return *True* if any process whose name is in *names* is running.
 

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-import tkinter as tk
-from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from queue import SimpleQueue
+from typing import Any, Callable
 from tkinter import filedialog
-from typing import Any
 
 import customtkinter as ctk
+import tkinter as tk
 from PIL import Image
 
 from neko_launcher import __version__
@@ -33,19 +32,20 @@ from neko_launcher.domain.models import (
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.process_detector import is_any_process_running
 
-from .components.buttons import secondary_button
-from .components.toast import ToastNotification
-from .platform.system_tray import SystemTrayManager, drain_tray_actions
+from .theme import FONT_FAMILY, PALETTE, apply_theme
 from .platform.window_chrome import (
-    WindowDragHandler,
     apply_rounded_window_shape,
     style_native_title_bar,
+    WindowDragHandler,
 )
-from .platform.window_scaling import center_window, fit_portrait_window
-from .theme import FONT_FAMILY, PALETTE, apply_theme
+from .platform.window_scaling import fit_portrait_window, center_window
+from .platform.system_tray import SystemTrayManager, drain_tray_actions
+from .components.toast import ToastNotification
+from .components.buttons import secondary_button
 from .views.auth_view import AuthView
 from .views.dashboard_view import DashboardView, open_password_dialog
 from .views.recovery_view import RecoveryView
+
 
 HEARTBEAT_INTERVAL_MS = 30_000
 

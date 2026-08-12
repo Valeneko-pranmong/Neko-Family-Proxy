@@ -14,6 +14,7 @@ from neko_launcher.application.authorized_core import (
     PermitDiagnosticCode,
 )
 
+
 _FUNCTION_NAME = "issue_launch_permit"
 _CONTRACT_REVISION = "s0-rc1"
 
@@ -36,7 +37,7 @@ class IssueLaunchPermitGateway:
     ) -> OpaquePermit:
         started_at = monotonic()
         try:
-            auth = authenticated_transport.auth
+            auth = getattr(authenticated_transport, "auth")
             session = auth.get_session()
             access_token = getattr(session, "access_token", None)
             if not isinstance(access_token, str) or not access_token:
@@ -46,7 +47,7 @@ class IssueLaunchPermitGateway:
                     started_at,
                 )
 
-            functions = authenticated_transport.functions
+            functions = getattr(authenticated_transport, "functions")
             function_http_client = getattr(functions, "_client", None)
             if not self.timeout_is_bounded(function_http_client, timeout):
                 raise self._failure(
@@ -54,7 +55,7 @@ class IssueLaunchPermitGateway:
                     correlation_id,
                     started_at,
                 )
-            set_auth = functions.set_auth
+            set_auth = getattr(functions, "set_auth")
             set_auth(access_token)
             response: Any = functions.invoke(
                 _FUNCTION_NAME,

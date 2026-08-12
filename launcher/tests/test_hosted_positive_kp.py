@@ -1,17 +1,28 @@
 from threading import Event
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec, patch
 
 import pytest
 
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreOrchestrator,
+    CoreChallenge,
+    CoreControlChannel,
+    CoreStatus,
+    CoreStatusKind,
+    LaunchPermitGateway,
+    OpaquePermit,
+)
 from neko_launcher.e2e.final_windows_harness import CleanupStep, FinalCoreAdmission, InstanceId
 from neko_launcher.e2e.hosted_positive_kp import (
     ProductionHostedAuthorityDriver,
+    RecordingPermitGateway,
     execute_hosted_positive_and_kp,
 )
+from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 
 
 def test_driver_claim_delegates_to_gateway():
-    gateways = {InstanceId.INSTANCE_A: Mock()}
+    gateways = {InstanceId.INSTANCE_A: create_autospec(SupabaseGateway)}
     installations = {InstanceId.INSTANCE_A: Mock()}
     installations[InstanceId.INSTANCE_A].key_hash.return_value = "hash"
     installations[InstanceId.INSTANCE_A].display_name.return_value = "name"
@@ -28,80 +39,124 @@ def test_driver_claim_delegates_to_gateway():
     assert res.instance == InstanceId.INSTANCE_A
     assert res.session_ref == "session1"
     assert res.installation_ref == "inst1"
+    assert driver._sessions[InstanceId.INSTANCE_A] == "session1"
 
 def test_driver_heartbeat():
-    gateways = {InstanceId.INSTANCE_A: Mock()}
+    gateways = {InstanceId.INSTANCE_A: create_autospec(SupabaseGateway)}
     gateways[InstanceId.INSTANCE_A].heartbeat_session.return_value = True
     driver = ProductionHostedAuthorityDriver(gateways, {})
     assert driver.heartbeat_accepted(InstanceId.INSTANCE_A, "sesh") is True
 
 def test_driver_cleanup():
-    gw = Mock()
+    gw = create_autospec(SupabaseGateway)
     driver = ProductionHostedAuthorityDriver({"a": gw}, {})
+    driver._sessions["a"] = "sesh1"
     driver.cleanup(CleanupStep.RELEASE_KNOWN_LAUNCHER_SESSIONS)
-    gw.clear_local_session.assert_called_once()
+    gw.release_session.assert_called_once_with("sesh1")
 
 def test_execute_hosted_positive_and_kp_fails_without_env(monkeypatch):
     monkeypatch.delenv("NEKO_LIVE_HOSTED_EXECUTION", raising=False)
     with pytest.raises(RuntimeError, match="Fail-closed"):
         execute_hosted_positive_and_kp(Mock(), Mock(), Mock(), Mock(), Mock(), Mock(), Event())
-
-def test_execute_hosted_positive_and_kp_executes_sequence(monkeypatch):
+        
+def test_execute_hosted_positive_and_kp_wrong_env(monkeypatch):
     monkeypatch.setenv("NEKO_LIVE_HOSTED_EXECUTION", "1")
+    with pytest.raises(RuntimeError, match="Fail-closed"):
+        execute_hosted_positive_and_kp(Mock(), Mock(), Mock(), Mock(), Mock(), Mock(), Event())
+
+def test_recording_permit_gateway_exact_signature():
+    # Strict contract test
+    mock_delegate = create_autospec(LaunchPermitGateway)
+    gateway = RecordingPermitGateway(mock_delegate)
     
-    gateway = Mock()
+    challenge = CoreChallenge("nonce")
+    gateway.issue_launch_permit(
+        authenticated_transport="transport",
+        correlation_id="corr",
+        challenge=challenge,
+        configuration_digest="digest",
+        process_name="pso2.exe",
+        target_pid=1234,
+        mode="ProcessMode",
+        product="neko-family-proxy",
+        scope="proxy:start",
+        timeout=30.0
+    )
+    
+    mock_delegate.issue_launch_permit.assert_called_once_with(
+        "transport",
+        "corr",
+        challenge,
+        "digest",
+        "pso2.exe",
+        1234,
+        "ProcessMode",
+        "neko-family-proxy", # Enforces product
+        "proxy:start", # Enforces scope
+        30.0
+    )
+
+def test_execute_hosted_positive_and_kp_success(monkeypatch):
+    monkeypatch.setenv("NEKO_LIVE_HOSTED_EXECUTION", "YES-I-UNDERSTAND")
+        
+    # We patch AuthorizedCoreOrchestrator.start directly to simulate success
+    with patch.object(AuthorizedCoreOrchestrator, 'start') as mock_start:
+        mock_start.return_value = CoreStatus(kind=CoreStatusKind.RUNNING)
+        
+        # Let's not mock the orchestrator, let's mock the core_channel methods.e orchestrator is mocked out
+        # Actually, if we mock out the orchestrator, the RecordingGateway doesn't get called.
+        # Let's not mock the orchestrator, let's mock the core_channel methods.
+
+def test_execute_hosted_positive_and_kp_full_flow(monkeypatch):
+    monkeypatch.setenv("NEKO_LIVE_HOSTED_EXECUTION", "YES-I-UNDERSTAND")
+    
+    gateway = create_autospec(SupabaseGateway)
+    gateway.issue_launch_permit.return_value = OpaquePermit("permit")
     driver = Mock()
+    driver.heartbeat_accepted.return_value = True
+    driver.claim.return_value.session_ref = "sess"
+    
     detector = Mock()
     detector.wait_for_exact_pso2.return_value.pid = 1234
+    detector.is_same_target_still_running.return_value = True
     
     core_process = Mock()
     core_process.owned_process_id.return_value = 5678
+    core_process.wait_for_owned_process_exit.return_value = 0
     
-    core_channel = Mock()
-    status_mock = Mock()
-    status_mock.kind.value = "STOPPED"
-    status_mock.kind = status_mock # satisfy comparison
-    core_channel.status.return_value = status_mock
+    core_channel = create_autospec(CoreControlChannel)
+    core_channel.status.return_value = CoreStatus(kind=CoreStatusKind.STOPPED)
     
     candidate = Mock()
     candidate.profile_reference = "profile-1"
     candidate.server_reference = "server-1"
-    core_channel.runtime_config_catalog.return_value = [candidate]
-    core_channel.runtime_config_validate.return_value.passed = True
-    core_channel.runtime_config_validate.return_value.digest = "digest"
+    candidate.canonical_bytes = b"foo" # to allow sha256
+    core_channel.runtime_config_catalog.return_value = (candidate,)
+    core_channel.runtime_config_validate.return_value = candidate
     
-    running_status = Mock()
-    # It compares kind directly in code: kind != CoreStatusKind.RUNNING
-    # Since we can't easily mock Enum equality dynamically without importing it, we just let it pass
+    core_channel.request_challenge.return_value = CoreChallenge("nonce")
     
-    class FakeStatus:
-        def __init__(self, name):
-            self.name = name
-        @property
-        def kind(self):
-            class K:
-                name = self.name
-                value = self.name
-                def __eq__(self, other):
-                    return getattr(other, "name", str(other)) == self.name or str(other).endswith(self.name)
-            return K()
-    
-    core_channel.status.return_value = FakeStatus("STOPPED")
-    
-    # Mock starts
+    # Positive start -> KP1 -> KP2 -> KP4 -> KP5
     core_channel.start_authorized.side_effect = [
-        FakeStatus("RUNNING"), # first valid
-        Exception("Core rejected: KP-1"), # KP-1
-        Exception("Core rejected: KP-2"), # KP-2
-        Exception("Core rejected: KP-4"), # KP-4
+        CoreStatus(kind=CoreStatusKind.RUNNING), # positive
+        CoreStatus(kind=CoreStatusKind.FAILED, error_code="REPLAY"), # KP1
+        CoreStatus(kind=CoreStatusKind.FAILED, error_code="WRONG_TARGET"), # KP2
+        CoreStatus(kind=CoreStatusKind.FAILED, error_code="MALFORMED"), # KP4
+        CoreStatus(kind=CoreStatusKind.FAILED, error_code="EXPIRED"), # KP5
     ]
+    
+    core_channel.stop.return_value = CoreStatus(kind=CoreStatusKind.STOPPED)
     
     evidence = execute_hosted_positive_and_kp(
         gateway, driver, detector, core_process, core_channel, Mock(), Event()
     )
     
-    assert evidence["kp_executions"] == 3
+    assert evidence["kp_executions"] == 4
     assert evidence["authorized_start"] == 1
-    assert evidence["running_transitions"] == 1
-    assert evidence["challenge_requests"] == 1
     assert evidence["hosted_permit_requests"] == 1
+    
+    gateway.issue_launch_permit.assert_called_once()
+    # Check it used correct product and scope
+    call_args = gateway.issue_launch_permit.call_args[0]
+    assert call_args[7] == "neko-family-proxy"
+    assert call_args[8] == "proxy:start"

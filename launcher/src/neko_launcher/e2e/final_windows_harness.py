@@ -1172,6 +1172,7 @@ def _build_parser() -> argparse.ArgumentParser:
     execute = subparsers.add_parser(
         "execute", help="execute the controlled hosted positive E2E boundary"
     )
+    execute.add_argument("--live", action="store_true", required=True, help="Explicit intent to run live hosted execution")
     return parser
 
 
@@ -1183,15 +1184,65 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "execute":
         import os
-        if not os.environ.get("NEKO_LIVE_HOSTED_EXECUTION"):
-            print("FAIL CLOSED: NEKO_LIVE_HOSTED_EXECUTION missing")
+        from threading import Event
+        
+        if not args.live:
+            print("FAIL CLOSED: --live flag missing")
+            return 1
+            
+        if os.environ.get("NEKO_LIVE_HOSTED_EXECUTION") != "YES-I-UNDERSTAND":
+            print("FAIL CLOSED: NEKO_LIVE_HOSTED_EXECUTION missing or incorrect")
             return 1
 
-        # In a real environment, we would initialize actual production components here
-        # For the scope of this implementation phase, we mock the dependencies for the local test,
-        # or we could construct the real SupabaseGateway if required. The prompt states
-        # "Hosted side effects must remain ZERO."
-        return 0
+        from pathlib import Path
+
+        from neko_launcher.e2e.final_windows_harness import admit_final_core_artifact
+        from neko_launcher.e2e.hosted_positive_kp import (
+            ProductionHostedAuthorityDriver,
+            execute_hosted_positive_and_kp,
+        )
+        from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+        from neko_launcher.infrastructure.config import LauncherConfig
+        from neko_launcher.infrastructure.core.core_control_channel import (
+            NamedPipeCoreControlChannel,
+        )
+        from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
+        from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
+        from neko_launcher.infrastructure.storage.credential_vault import WindowsCredentialVault
+        from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
+
+        # Construct actual production components
+        config = LauncherConfig()
+        vault = WindowsCredentialVault(config.vault_service_name, config.vault_account_name)
+        gateway = SupabaseGateway(config.supabase_url, config.supabase_publishable_key, vault)
+        installation = LocalInstallationIdentity(vault)
+        detector = ExactPso2TargetDetector()
+        core_process = WindowsCoreProcessAdapter(Path("E:/Temp/neko-phase25-core-final-b3c9d085-FROZEN"))
+        core_channel = NamedPipeCoreControlChannel()
+        admission = admit_final_core_artifact(Path("E:/Temp/neko-phase25-core-final-b3c9d085-FROZEN"))
+
+        driver = ProductionHostedAuthorityDriver(
+            {InstanceId.INSTANCE_A: gateway},
+            {InstanceId.INSTANCE_A: installation}
+        )
+
+        cancellation = Event()
+        
+        try:
+            evidence = execute_hosted_positive_and_kp(
+                gateway=gateway,
+                driver=driver,
+                detector=detector,
+                core_process=core_process,
+                core_channel=core_channel,
+                admission=admission,
+                cancellation=cancellation
+            )
+            print("Execution completed:", evidence)
+            return 0
+        except Exception as e:  # noqa: BLE001
+            print(f"Execution failed: {e}")
+            return 1
 
     raise AssertionError("unreachable command")
 
