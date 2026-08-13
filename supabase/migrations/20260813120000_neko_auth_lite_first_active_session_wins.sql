@@ -10,7 +10,7 @@ create or replace function launcher.claim_session(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, launcher, pg_temp
+set search_path = ''
 as $$
 declare
   v_user_id uuid := auth.uid();
@@ -232,6 +232,8 @@ begin
     when invalid_text_representation then return false;
   end;
   if v_user_id is null or v_auth_session_id is null or p_session_id is null then return false; end if;
+  -- Serialize release with claim and permit authorization for this account.
+  perform pg_advisory_xact_lock(hashtextextended(v_user_id::text, 0));
   update public.launcher_sessions s
   set revoked_at = now()
   where s.id = p_session_id

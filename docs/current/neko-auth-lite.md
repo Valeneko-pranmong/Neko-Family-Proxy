@@ -27,6 +27,12 @@ Heartbeat target: 30 seconds. Backend stale timeout: 90 seconds. Heartbeat and
 release require `auth.uid()`, current validated JWT `session_id`, matching
 `launcher_sessions.auth_session_id`, and live `auth.sessions` ownership.
 
+Claim, release, and permit authorization take same per-user advisory transaction
+lock. Their state decision is linearized. A permit already signed before a
+normal release is a 30-second launch-time snapshot; release blocks later permit
+authorization but does not retroactively revoke that signed capability. Lite has
+no continuous authorization or permit renewal.
+
 ## Exact Auth-session binding
 
 Permit authorization requires:

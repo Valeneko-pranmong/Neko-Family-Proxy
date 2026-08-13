@@ -30,6 +30,7 @@ def permit_definition(sql: str) -> str:
 def test_lite_claim_preserves_first_fresh_session_without_mutating_it() -> None:
     claim = claim_definition(migration_sql())
 
+    assert "set search_path = ''" in claim
     assert "pg_advisory_xact_lock(hashtextextended(v_user_id::text, 0))" in claim
     assert "for update" in claim
     assert "last_seen_at > now() - interval '90 seconds'" in claim
@@ -60,6 +61,15 @@ def test_lite_session_controls_bind_exact_live_auth_session_and_keep_stale_timeo
         assert "a.id = v_auth_session_id" in definition
         assert "a.user_id = v_user_id" in definition
     assert "last_seen_at > now() - interval '90 seconds'" in sql
+
+
+def test_lite_release_serializes_with_claim_and_permit_authorization() -> None:
+    sql = migration_sql()
+    start = sql.index("create or replace function launcher.release_session(")
+    end = sql.index("\n$$;", start)
+    release = sql[start:end]
+
+    assert "pg_advisory_xact_lock(hashtextextended(v_user_id::text, 0))" in release
 
 
 def test_lite_permit_rpc_has_one_challenge_input_and_exact_auth_session_binding() -> None:
