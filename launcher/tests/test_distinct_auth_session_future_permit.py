@@ -16,11 +16,24 @@ from neko_launcher.application.authorized_core import (
 )
 from neko_launcher.e2e.distinct_auth_session_future_permit import (
     DistinctAuthSessionFuturePermitProofHarness,
+    PermitRequester,
     ProofFailure,
     _session_id_from_access_token,
     default_preparation_manifest,
     main,
 )
+
+
+def test_permit_requester_uses_lite_signature() -> None:
+    import inspect
+
+    assert tuple(inspect.signature(PermitRequester.issue_launch_permit).parameters) == (
+        "self",
+        "authenticated_transport",
+        "correlation_id",
+        "challenge",
+        "timeout",
+    )
 
 
 def _token_for(session_id: str) -> str:
@@ -144,7 +157,6 @@ def _harness(
         pso2_running=lambda: pso2_running,
         active_session_count=active_session_count,  # type: ignore[arg-type]
         installation_state=installation_state,  # type: ignore[arg-type]
-        target_pid=lambda: 4242,
     )
     return harness, gateways, requester
 

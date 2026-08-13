@@ -30,9 +30,6 @@ _LIVE_INTENT_VALUE = "YES-I-UNDERSTAND"
 _URL_ENV = "NEKO_PHASE25_SUPABASE_URL"
 _PUBLISHABLE_KEY_ENV = "NEKO_PHASE25_SUPABASE_PUBLISHABLE_KEY"
 _PRODUCT = "neko-family-proxy"
-_SCOPE = "proxy:start"
-_PROCESS_NAME = "pso2.exe"
-_MODE = "ProcessMode"
 _PERMIT_TIMEOUT_SECONDS = 10.0
 
 
@@ -69,12 +66,6 @@ class PermitRequester(Protocol):
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
-        configuration_digest: str,
-        process_name: str,
-        target_pid: int,
-        mode: str,
-        product: str,
-        scope: str,
         timeout: float,
     ) -> object: ...
 
@@ -211,14 +202,13 @@ class DistinctAuthSessionFuturePermitProofHarness:
         installation_state: Callable[[SupabaseGateway, tuple[str, ...]], tuple[int, int]] = (
             _default_installation_state
         ),
-        target_pid: Callable[[], int] = os.getpid,
     ) -> None:
         self._gateway_factory = gateway_factory
         self._permit_requester = permit_requester or IssueLaunchPermitGateway()
         self._pso2_running = pso2_running
         self._active_session_count = active_session_count
         self._installation_state = installation_state
-        self._target_pid = target_pid
+
         self._permit_attempts: dict[str, int] = {"A": 0, "B": 0, "C": 0}
         self._successful_permits = 0
         self._backend_edge_session_inactive_denials = 0
@@ -360,20 +350,11 @@ class DistinctAuthSessionFuturePermitProofHarness:
         self._permit_attempts[context.label] += 1
         if self._permit_attempts[context.label] != 1:
             raise ProofFailure("PERMIT_RETRY_FORBIDDEN")
-        target_pid = self._target_pid()
-        if isinstance(target_pid, bool) or not isinstance(target_pid, int) or target_pid < 1:
-            raise ProofFailure("VALID_EDGE_REQUEST_CONSTRUCTION_FAILED")
         try:
             permit = self._permit_requester.issue_launch_permit(
                 _transport_for(context.gateway),
                 uuid4().hex,
                 CoreChallenge(_random_challenge()),
-                hashlib.sha256(b"phase25-future-permit-proof").hexdigest(),
-                _PROCESS_NAME,
-                target_pid,
-                _MODE,
-                _PRODUCT,
-                _SCOPE,
                 _PERMIT_TIMEOUT_SECONDS,
             )
         except AuthorizedCoreError as exc:

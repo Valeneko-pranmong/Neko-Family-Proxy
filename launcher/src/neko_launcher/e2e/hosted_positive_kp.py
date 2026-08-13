@@ -16,7 +16,7 @@ from neko_launcher.application.authorized_core import (
     LaunchPermitGateway,
     OnlineHeartbeatLaunchPrecondition,
     OpaquePermit,
-    OpaqueStartCommand,
+
     OrchestrationTimeouts,
     ProcessTargetDetector,
     RuntimeConfigurationCandidate,
@@ -291,10 +291,6 @@ def execute_hosted_positive_and_kp(
         if not target:
             raise RuntimeError("TARGET_UNAVAILABLE")
 
-        target_pid = getattr(target, "pid", None)
-        if isinstance(target_pid, bool) or not isinstance(target_pid, int) or not (1 <= target_pid <= 4294967295):
-            raise RuntimeError("TARGET_UNAVAILABLE")
-
         if not recording_detector.is_same_target_still_running(target):
             raise RuntimeError("TARGET_UNAVAILABLE")
 
@@ -306,7 +302,8 @@ def execute_hosted_positive_and_kp(
         except Exception:
             raise RuntimeError("CLEANUP_FAILED")
 
-        # KP-1: Replay same permit
+        # Lite negative 1: the old permit is bound to the consumed positive
+        # challenge, so a fresh challenge must reject it before JTI handling.
         recording_channel.request_challenge(uuid4().hex, timeout)
         evidence["challenge_requests"] = recording_channel.challenge_count
         kp1_status = recording_channel.start_authorized(cmd, permit, uuid4().hex, timeout)
@@ -315,59 +312,10 @@ def execute_hosted_positive_and_kp(
         except Exception:
             raise RuntimeError("KP_ASSERTION_FAILED")
         evidence["kp_executions"] += 1
-        evidence["same_permit_reuse_denied"] = "READY"
+        evidence["same_permit_new_challenge_denied"] = "PASS"
         evidence["jti_replay_stage"] = "NO"
 
-        # KP-2: Wrong Target PID
-        recording_channel.request_challenge(uuid4().hex, timeout)
-        evidence["challenge_requests"] = recording_channel.challenge_count
-        cmd_wrong_pid = TargetBoundStartCommand.from_opaque(
-            OpaqueStartCommand(cmd.profile_reference, cmd.server_reference),
-            target_pid=target_pid + 1
-        )
-        kp2_status = recording_channel.start_authorized(cmd_wrong_pid, permit, uuid4().hex, timeout)
-        try:
-            require_typed_core_denial(kp2_status, "ConfigurationMismatch")
-        except Exception:
-            raise RuntimeError("KP_ASSERTION_FAILED")
-        evidence["kp_executions"] += 1
-
-        # KP-3: Wrong Configuration (digest mismatch)
-        recording_channel.request_challenge(uuid4().hex, timeout)
-        evidence["challenge_requests"] = recording_channel.challenge_count
-        class FakeCommand:
-            profile_reference = "profile-12345"
-            server_reference = "server-12345"
-            target_pid = cmd.target_pid
-            process_name = cmd.process_name
-            mode = cmd.mode
-
-            @property
-            def canonical_bytes(self) -> bytes:
-                return (
-                    "protocolVersion=2\n"
-                    f"mode={self.mode}\n"
-                    f"processName={self.process_name}\n"
-                    f"targetPid={self.target_pid}\n"
-                    f"profileReference={self.profile_reference}\n"
-                    f"serverReference={self.server_reference}\n"
-                ).encode("utf-8")
-
-            @property
-            def configuration_digest(self) -> str:
-                from hashlib import sha256
-                return sha256(self.canonical_bytes).hexdigest()
-
-        cmd_wrong_config = FakeCommand()
-        kp3_status = recording_channel.start_authorized(cmd_wrong_config, permit, uuid4().hex, timeout)
-        try:
-            require_typed_core_denial(kp3_status, "ConfigurationMismatch")
-        except Exception:
-            raise RuntimeError("KP_ASSERTION_FAILED")
-        evidence["kp_executions"] += 1
-        evidence["wrong_configuration_kp"] = "READY"
-
-        # KP-4: Malformed permit (actually Tampered)
+        # Lite negative 2: tampering never becomes a valid capability.
         recording_channel.request_challenge(uuid4().hex, timeout)
         evidence["challenge_requests"] = recording_channel.challenge_count
         malformed = _get_kp_permit_variant(permit, "malformed")
@@ -378,8 +326,9 @@ def execute_hosted_positive_and_kp(
             raise RuntimeError("KP_ASSERTION_FAILED")
         evidence["kp_executions"] += 1
         evidence["malformed_rejection_layer"] = "PERMIT_VERIFIER"
+        evidence["tampered_permit_denied"] = "PASS"
 
-        # KP-5: Real Expired permit proof
+        # Lite negative 3: real monotonic expiry proof.
         start_wait = time.monotonic()
         time.sleep(35)
         elapsed = time.monotonic() - start_wait
@@ -394,7 +343,7 @@ def execute_hosted_positive_and_kp(
         except Exception:
             raise RuntimeError("KP_ASSERTION_FAILED")
         evidence["kp_executions"] += 1
-        evidence["expired_permit_proof"] = "READY"
+        evidence["expired_permit_denied"] = "PASS"
         evidence["EXPIRY_WAIT_MONOTONIC_PROVEN"] = "YES"
 
     finally:

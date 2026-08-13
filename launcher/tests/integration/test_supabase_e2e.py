@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
@@ -40,6 +41,52 @@ def required_environment() -> tuple[str, str, str, str]:
 
 def gateway(url: str, publishable_key: str) -> SupabaseGateway:
     return SupabaseGateway(url, publishable_key, MemoryStore())
+
+
+def collect_claim_results(
+    pending: tuple[
+        tuple[SupabaseGateway, Future[tuple[str, SessionClaim | None]]],
+        ...,
+    ],
+) -> tuple[
+    list[tuple[SupabaseGateway, str, SessionClaim | None]],
+    list[BaseException],
+]:
+    observations: list[tuple[SupabaseGateway, str, SessionClaim | None]] = []
+    errors: list[BaseException] = []
+    for client, future in pending:
+        try:
+            outcome, claim = future.result()
+        except BaseException as exc:  # retain every worker result before failing
+            errors.append(exc)
+        else:
+            observations.append((client, outcome, claim))
+    return observations, errors
+
+
+def cleanup_gateways(
+    sessions: tuple[tuple[Any, SessionClaim | Any | None], ...],
+) -> None:
+    release_failed = False
+    try:
+        for client, claim in sessions:
+            if claim is None:
+                continue
+            try:
+                released = client.release_session(claim.session_id)
+            except Exception:
+                release_failed = True
+                continue
+            if released is not True:
+                release_failed = True
+    finally:
+        for client, _claim in sessions:
+            try:
+                client.sign_out()
+            except Exception:
+                release_failed = True
+    if release_failed:
+        raise AssertionError("Launcher Session cleanup failed")
 
 
 def active_sessions(client: SupabaseGateway) -> list[dict[str, object]]:
@@ -95,10 +142,7 @@ def test_fresh_active_session_blocks_later_claim_end_to_end() -> None:
             }
         ]
     finally:
-        if first_claim is not None:
-            first.release_session(first_claim.session_id)
-        first.sign_out()
-        second.sign_out()
+        cleanup_gateways(((first, first_claim), (second, None)))
 
 
 @pytest.mark.integration
@@ -125,6 +169,7 @@ def test_concurrent_claims_leave_exactly_one_live_session() -> None:
 
     first_claim = None
     second_claim = None
+    observations: list[tuple[SupabaseGateway, str, SessionClaim | None]] = []
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
             first_future = executor.submit(
@@ -137,20 +182,31 @@ def test_concurrent_claims_leave_exactly_one_live_session() -> None:
                 second,
                 "d" * 64,
             )
-            first_outcome, first_claim = first_future.result()
-            second_outcome, second_claim = second_future.result()
+            observations, errors = collect_claim_results(
+                ((first, first_future), (second, second_future))
+            )
 
-        outcomes = [first_outcome, second_outcome]
+        claims_by_client = {client: claim for client, _outcome, claim in observations}
+        first_claim = claims_by_client.get(first)
+        second_claim = claims_by_client.get(second)
+        if errors:
+            raise errors[0]
+
+        outcomes = [outcome for _client, outcome, _claim in observations]
         assert outcomes.count("SUCCESS") == 1
         assert outcomes.count("SESSION_ALREADY_ACTIVE") == 1
-        assert len(active_sessions(first)) == 1
+        winner = first_claim or second_claim
+        assert winner is not None
+        active = active_sessions(first)
+        assert active == [
+            {
+                "id": winner.session_id,
+                "installation_id": winner.installation_id,
+                "revoked_at": None,
+            }
+        ]
     finally:
-        if first_claim is not None:
-            first.release_session(first_claim.session_id)
-        if second_claim is not None:
-            second.release_session(second_claim.session_id)
-        first.sign_out()
-        second.sign_out()
+        cleanup_gateways(((first, first_claim), (second, second_claim)))
 
 
 @pytest.mark.integration
