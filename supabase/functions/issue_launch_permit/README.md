@@ -1,113 +1,56 @@
-# `issue_launch_permit` production candidate
+# `issue_launch_permit` — NEKO-AUTH-LITE v1
 
-> **Status: PRODUCTION DEPLOYMENT CANDIDATE — signing generation 2.**
-> Deployment requires secure secret provisioning and exact-artifact crypto proof.
-
-The function validates the caller's Supabase access token with Supabase Auth,
-resolves the authoritative Launcher session/license state through a narrow
-authenticated RPC, and returns a 30-second RS256 compact JWT. It never accepts
-identity, session, installation, license, issuer, audience, expiry, or key ID
-from the request body.
+**Status: branch implementation only.** Do not deploy this function or apply
+Lite migration to hosted production while deployed Core still expects S0.
 
 ## Request
 
-Exact JSON fields (unknown, missing, wrong-case, and wrong-type fields fail):
+`POST` with `Authorization: Bearer <Supabase access token>`.
 
-- `version`: integer `1`
-- `contractRevision`: `s0-rc1`
-- `correlationId`: 32 lowercase hexadecimal characters
-- `challenge`: 43-character unpadded base64url (Core CSPRNG 32-byte challenge)
-- `configurationDigest`: 64-character lowercase hexadecimal SHA-256
-- `processName`: `pso2.exe`
-- `targetPid`: integer `1..4294967295` (boolean/float invalid)
-- `mode`: `ProcessMode`
-- `product`: `neko-family-proxy`
-- `scope`: `proxy:start`
+```json
+{
+  "version": 1,
+  "contractRevision": "lite-v1",
+  "correlationId": "0123456789abcdef0123456789abcdef",
+  "challenge": "<43-character base64url Core challenge>"
+}
+```
 
-The `Authorization` header must contain a valid non-anonymous Supabase access
-token. Gateway JWT verification remains enabled and the function independently
-calls Supabase Auth `getUser`.
+Exact fields only. No client-supplied `userId`, `sessionId`, `licenseId`,
+`installationId`, `configurationDigest`, `processName`, `targetPid`, `mode`,
+`product`, or `scope` is accepted.
 
-## Authoritative state
+## Authority
 
-Migration `20260809150000_bind_permits_to_auth_sessions.sql` adds the minimum
-missing identity binding:
+Function validates bearer with Supabase Auth. Caller-scoped RPC
+`launcher.authorize_launch_permit(text)` then checks active profile,
+entitlement, exact Auth-session ownership, and a fresh 90-second Launcher
+heartbeat under same per-user advisory transaction lock as session claims.
 
-- a trigger stores the validated `auth.jwt().session_id` on every new
-  `launcher_sessions` row;
-- historical unbound rows fail closed and require a fresh normal session claim;
-- `launcher.authorize_launch_permit(text, text)` reserves the challenge and returns identity only when the caller's
-  Auth session owns the one active, heartbeat-fresh Launcher session and its
-  profile, product, installation relationship, and selected license are valid;
-- existing RLS and the one-active-session unique partial index remain unchanged;
-- remembered installations are not a permanent authorization lock.
-
-This prevents an old Machine A Auth token from being relabeled with Machine B's
-new authoritative Launcher session after replacement.
-
-Forward migration
-`20260809233000_bind_session_controls_and_bound_permit_ledgers.sql` also:
-
-- requires `heartbeat_session` and `release_session` to use the exact live Auth
-  session that claimed the Launcher session;
-- keeps both controls fail closed for missing, malformed, expired, or other-session
-  JWT `session_id` values;
-- prunes only the current user's replay/rate rows older than ten minutes while
-  holding the issuance transaction lock; and
-- adds global `issued_at` indexes for controlled retention maintenance without
-  granting clients direct ledger access.
+`JWT session_id == launcher_sessions.auth_session_id` is mandatory. Auth B from
+same account cannot issue a permit owned by Auth A.
 
 ## Permit
 
-Header is exactly `alg=RS256`, `typ=neko-launch+jwt`, and server-configured
-`kid`. Claims are exactly `iss`, `aud`, `sub`, `sid`, `iid`, `lid`, `product`,
-`scope`, `cfg`, `challenge`, `target_pid`, `mode`, `jti`, `iat`, `nbf`, and
-`exp`. Identity claims come only from the RPC. `iat=nbf`, `exp=iat+30`, and
-`jti` is a cryptographic UUID.
-
-Required server-only configuration:
-
-- `RS256_PRIVATE_KEY`: PKCS#8 PEM private key
-- `RS256_KID`: `neko-prod-key-2`
-- standard Supabase `SUPABASE_URL` and `SUPABASE_ANON_KEY`
-
-Core accepts only `kid=neko-prod-key-2` and its immutable bundled RSA public key.
-`neko-prod-key-1` is PRE-LAUNCH RETIRED and is not an accepted release contract.
-The private key remains only in approved server secret custody.
-
-## Replay, replacement, and rate policy
-
-The permit RPC is the issuance linearization point. It takes the same per-user
-transaction advisory lock as `claim_session`, checks that the JWT `session_id`
-still exists in `auth.sessions`, evaluates the current Launcher/profile/license
-state, and reserves the challenge before returning trusted signing claims.
-Session replacement therefore cannot interleave with that decision.
-
-Reservations reject reuse of the same `(auth_session_id, challenge)`. A separate
-per-user rate-event ledger survives Auth-session deletion and limits each user
-to 10 issuance reservations per rolling minute. A reservation is
-committed before signing; an ambiguous/signing failure must start again with a
-new Core challenge rather than retrying the old request. Core separately
-atomically consumes its one-use challenge and permit `jti`. A successfully
-issued JWT is an intentionally short 30-second authority snapshot; later
-revocation cannot retroactively retract an already signed capability.
-The ten-minute retention boundary is intentionally longer than both the
-30-second challenge/permit lifetime and the one-minute rate window.
-
-## Errors and secrecy
-
-Responses use sanitized HTTP classes: `400` protocol, `401` authentication,
-`403` session/authorization, `500` signing configuration, and `503` dependency
-failure. No raw token, permit, key, SQL error, or stack trace is logged/returned.
+Backend private key remains server-only. Header is `RS256`, `neko-launch+jwt`,
+`neko-prod-key-2`. Permit lifetime is 30 seconds. Claims are exactly `iss`,
+`aud`, `sub`, `product`, `scope`, `challenge`, `jti`, `iat`, `exp`, plus retained
+`nbf`. S0 session/install/license/digest/PID/mode claims are absent.
 
 ## Local validation
 
 ```bash
 npx --yes tsx --test service_test.ts migration_contract_test.ts runtime_contract_test.ts
-npx --yes deno check index.ts service.ts local_verifier.ts
-npx --yes deno fmt --check index.ts service.ts local_verifier.ts *_test.ts
+npx --yes deno check index.ts service.ts
+npx --yes deno fmt --check index.ts service.ts *_test.ts
 ```
 
-Tests use a generated in-memory test keypair only. They do not use production
-credentials, mutate hosted Supabase, deploy a function, or validate the real
-production private/public key pairing.
+Tests generate in-memory keys only. No hosted mutation, function deployment,
+or production-key validation occurs.
+
+```text
+HOSTED LITE DEPLOYMENT = NOT PERFORMED
+PRODUCTION CUTOVER = NOT PERFORMED
+CORE LITE MIGRATION = REQUIRED
+LITE CROSS-COMPONENT E2E = NOT YET EXECUTED
+```

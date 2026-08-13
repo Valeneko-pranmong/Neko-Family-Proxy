@@ -58,7 +58,7 @@ def success_response(
 ) -> dict[str, object]:
     response: dict[str, object] = {
         "version": 1,
-        "contractRevision": "s0-rc1",
+        "contractRevision": "lite-v1",
         "correlationId": correlation_id,
         "succeeded": True,
         "permit": permit,
@@ -73,12 +73,6 @@ def issue(transport: object, timeout: float = 10.0) -> object:
         transport,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
-        "b" * 64,
-        "pso2.exe",
-        4242,
-        "ProcessMode",
-        "neko-family-proxy",
-        "proxy:start",
         timeout,
     )
 
@@ -93,15 +87,9 @@ def test_gateway_uses_authenticated_issue_launch_permit_contract_exactly() -> No
     assert functions.invoke_options == {
         "body": {
             "version": 1,
-            "contractRevision": "s0-rc1",
+            "contractRevision": "lite-v1",
             "correlationId": "0123456789abcdef0123456789abcdef",
             "challenge": "a" * 43,
-            "configurationDigest": "b" * 64,
-            "processName": "pso2.exe",
-            "targetPid": 4242,
-            "mode": "ProcessMode",
-            "product": "neko-family-proxy",
-            "scope": "proxy:start",
         },
         "responseType": "json",
     }
@@ -249,7 +237,7 @@ def test_gateway_rejects_function_client_timeout_above_deadline() -> None:
         success_response(permit="x" * 4097),
     ],
 )
-def test_gateway_rejects_response_outside_s0_rc1_schema(
+def test_gateway_rejects_response_outside_lite_v1_schema(
     response: dict[str, object],
 ) -> None:
     with pytest.raises(AuthorizedCoreError) as raised:

@@ -167,6 +167,10 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 .execute()
             )
         except Exception as exc:
+            if self._contains_error(exc, "session_already_active"):
+                from neko_launcher.application.errors import SessionAlreadyActive
+
+                raise SessionAlreadyActive("SESSION_ALREADY_ACTIVE") from exc
             if self._contains_error(exc, "license_invalid"):
                 raise EntitlementUnavailable(
                     "สิทธิ์ใช้งานไม่พร้อม ถูกยกเลิก หรือหมดอายุ "
@@ -293,12 +297,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         authenticated_transport: object,
         correlation_id: str,
         challenge: "CoreChallenge",
-        configuration_digest: str,
-        process_name: str,
-        target_pid: int,
-        mode: str,
-        product: str,
-        scope: str,
         timeout: float,
     ) -> "OpaquePermit":
         """Call Backend Edge Function to obtain an opaque RS256-signed permit.
@@ -331,12 +329,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             self._client,
             correlation_id,
             challenge,
-            configuration_digest,
-            process_name,
-            target_pid,
-            mode,
-            product,
-            scope,
             timeout,
         )
 

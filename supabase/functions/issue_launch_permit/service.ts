@@ -8,16 +8,18 @@ export type AuthorizationState = {
   userId: string;
   authSessionId: string;
   launcherSessionId: string;
-  installationId: string;
-  licenseId: string;
   product: string;
+  error?:
+    | "SessionInactive"
+    | "SessionMismatch"
+    | "EntitlementInactive"
+    | "HeartbeatStale";
 };
 
 export type Dependencies = {
   authenticate: (accessToken: string) => Promise<AuthenticatedCaller | null>;
   authorize: (
     caller: AuthenticatedCaller,
-    product: string,
     challenge: string,
   ) => Promise<AuthorizationState | null>;
   privateKeyPem?: string;
@@ -32,18 +34,11 @@ const REQUEST_FIELDS = new Set([
   "contractRevision",
   "correlationId",
   "challenge",
-  "configurationDigest",
-  "processName",
-  "targetPid",
-  "mode",
-  "product",
-  "scope",
 ]);
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CORRELATION = /^[0-9a-f]{32}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
-const DIGEST = /^[0-9a-f]{64}$/;
 const PERMIT_SECONDS = 30;
 const PRODUCTION_KID = "neko-prod-key-2";
 
@@ -66,7 +61,7 @@ function parseRequest(value: unknown): Record<string, unknown> | null {
     Object.keys(body).some((key) => !REQUEST_FIELDS.has(key)) ||
     Object.keys(body).length !== REQUEST_FIELDS.size
   ) return null;
-  if (body.version !== 1 || body.contractRevision !== "s0-rc1") return null;
+  if (body.version !== 1 || body.contractRevision !== "lite-v1") return null;
   if (
     typeof body.correlationId !== "string" ||
     !CORRELATION.test(body.correlationId)
@@ -74,20 +69,6 @@ function parseRequest(value: unknown): Record<string, unknown> | null {
   if (typeof body.challenge !== "string" || !CHALLENGE.test(body.challenge)) {
     return null;
   }
-  if (
-    typeof body.configurationDigest !== "string" ||
-    !DIGEST.test(body.configurationDigest)
-  ) return null;
-  if (body.processName !== "pso2.exe" || body.mode !== "ProcessMode") {
-    return null;
-  }
-  if (body.product !== "neko-family-proxy" || body.scope !== "proxy:start") {
-    return null;
-  }
-  if (
-    typeof body.targetPid !== "number" || !Number.isInteger(body.targetPid) ||
-    body.targetPid < 1 || body.targetPid > 4_294_967_295
-  ) return null;
   return body;
 }
 
@@ -135,15 +116,9 @@ async function signPermit(
     iss: "neko-backend",
     aud: "neko-proxy-core",
     sub: state.userId,
-    sid: state.launcherSessionId,
-    iid: state.installationId,
-    lid: state.licenseId,
     product: state.product,
-    scope: body.scope,
-    mode: body.mode,
+    scope: "proxy:start",
     challenge: body.challenge,
-    cfg: body.configurationDigest,
-    target_pid: body.targetPid,
     iat: now,
     nbf: now,
     exp: now + PERMIT_SECONDS,
@@ -193,25 +168,25 @@ export function createIssueLaunchPermitHandler(deps: Dependencies) {
     try {
       state = await deps.authorize(
         caller,
-        body.product as string,
         body.challenge as string,
       );
     } catch {
       return json(503, { error: "AuthorizationUnavailable" });
     }
+    if (state?.error) return json(403, { error: state.error });
     if (
       !state || state.userId !== caller.userId ||
       state.authSessionId !== caller.authSessionId ||
-      state.product !== body.product
+      state.product !== "neko-family-proxy"
     ) {
-      return json(403, { error: "SessionInactive" });
+      return json(403, { error: "SessionMismatch" });
     }
 
     try {
       const permit = await signPermit(body, state, deps);
       return json(200, {
         version: 1,
-        contractRevision: "s0-rc1",
+        contractRevision: "lite-v1",
         correlationId: body.correlationId,
         succeeded: true,
         permit,

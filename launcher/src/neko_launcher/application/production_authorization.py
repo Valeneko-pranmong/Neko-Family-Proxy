@@ -10,9 +10,17 @@ from neko_launcher.infrastructure.unavailable_gateway import (
 
 
 class ProductionAuthorizationBlocker(str, Enum):
-    BACKEND_PERMIT_ISSUER_UNAVAILABLE = "BackendPermitIssuerUnavailable"
-    PUBLIC_KEY_RELEASE_UNAVAILABLE = "PublicKeyReleaseUnavailable"
-    PRODUCTION_ADAPTERS_INCOMPLETE = "ProductionAdaptersIncomplete"
+    BACKEND_PERMIT_ISSUER_UNAVAILABLE = "BACKEND_PERMIT_ISSUER_UNAVAILABLE"
+    CORE_PUBLIC_KEY_UNAVAILABLE = "CORE_PUBLIC_KEY_UNAVAILABLE"
+    CORE_AUTHORIZED_START_UNAVAILABLE = "CORE_AUTHORIZED_START_UNAVAILABLE"
+    SINGLE_ACTIVE_SESSION_ENFORCEMENT_UNAVAILABLE = (
+        "SINGLE_ACTIVE_SESSION_ENFORCEMENT_UNAVAILABLE"
+    )
+    SESSION_CONCURRENCY_PROTECTION_UNAVAILABLE = (
+        "SESSION_CONCURRENCY_PROTECTION_UNAVAILABLE"
+    )
+    CORE_CHALLENGE_VERIFICATION_UNAVAILABLE = "CORE_CHALLENGE_VERIFICATION_UNAVAILABLE"
+    LITE_E2E_UNVERIFIED = "LITE_E2E_UNVERIFIED"
 
 
 @dataclass(frozen=True)
@@ -28,12 +36,18 @@ class ProductionAuthorizationGate:
 
 
 CURRENT_PRODUCTION_AUTHORIZATION = ProductionAuthorizationGate(
-    contract_id="NEKO-AUTH-S0",
-    contract_revision="s0-rc1",
-    contract_package_sha256=(
-        "6697351b6b280afc566fedaaa1a6cfe207b1ea1d803c2eb613b4c1a891e192df"
+    contract_id="NEKO-AUTH-LITE",
+    contract_revision="lite-v1",
+    contract_package_sha256="",
+    blockers=(
+        ProductionAuthorizationBlocker.BACKEND_PERMIT_ISSUER_UNAVAILABLE,
+        ProductionAuthorizationBlocker.CORE_PUBLIC_KEY_UNAVAILABLE,
+        ProductionAuthorizationBlocker.CORE_AUTHORIZED_START_UNAVAILABLE,
+        ProductionAuthorizationBlocker.SINGLE_ACTIVE_SESSION_ENFORCEMENT_UNAVAILABLE,
+        ProductionAuthorizationBlocker.SESSION_CONCURRENCY_PROTECTION_UNAVAILABLE,
+        ProductionAuthorizationBlocker.CORE_CHALLENGE_VERIFICATION_UNAVAILABLE,
+        ProductionAuthorizationBlocker.LITE_E2E_UNVERIFIED,
     ),
-    blockers=(),
 )
 
 

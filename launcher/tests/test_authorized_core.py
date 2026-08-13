@@ -209,24 +209,12 @@ class FakePermitGateway:
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
-        configuration_digest: str,
-        process_name: str,
-        target_pid: int,
-        mode: str,
-        product: str,
-        scope: str,
         timeout: float,
     ) -> OpaquePermit:
         self.request = {
             "authenticated_transport": authenticated_transport,
             "correlation_id": correlation_id,
             "challenge": challenge,
-            "configuration_digest": configuration_digest,
-            "process_name": process_name,
-            "target_pid": target_pid,
-            "mode": mode,
-            "product": product,
-            "scope": scope,
             "timeout": timeout,
         }
         self.calls.append("backend.permit")
@@ -669,7 +657,7 @@ def test_cancellation_during_heartbeat_fails_before_core_host_start() -> None:
     assert calls == ["backend.heartbeat"]
 
 
-def test_authority_request_uses_target_binding_without_server_owned_identity_fields() -> None:
+def test_authority_request_uses_only_authenticated_transport_and_core_challenge() -> None:
     orchestrator, _, _, channel = build_orchestrator()
     permits = orchestrator._permits
 
@@ -678,16 +666,10 @@ def test_authority_request_uses_target_binding_without_server_owned_identity_fie
     assert isinstance(channel.start_command, TargetBoundStartCommand)
     assert permits.request is not None  # type: ignore[attr-defined]
     request = permits.request  # type: ignore[attr-defined]
-    assert request["target_pid"] == 42
-    assert request["process_name"] == "pso2.exe"
-    assert request["mode"] == "ProcessMode"
-    assert request["product"] == "neko-family-proxy"
-    assert request["scope"] == "proxy:start"
-    assert request["configuration_digest"] == channel.start_command.configuration_digest
-    assert set(request).isdisjoint({"sub", "sid", "iid", "lid", "installation_key_hash"})
+    assert set(request) == {"authenticated_transport", "correlation_id", "challenge", "timeout"}
 
 
-def test_unique_runtime_configuration_identity_is_frozen_through_permit_and_start() -> None:
+def test_unique_runtime_configuration_identity_is_frozen_for_runtime_start_only() -> None:
     orchestrator, calls, _, channel = build_orchestrator()
 
     orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -704,7 +686,9 @@ def test_unique_runtime_configuration_identity_is_frozen_through_permit_and_star
         == "ef428b54b3fcd87ff219e3d2ed45b9160bfad1f247de7c04e9cf9f7a4fd3f115"
     )
     assert channel.validated_candidate == RuntimeConfigurationCandidate("profile-17", "server-42")
-    assert orchestrator._permits.request["configuration_digest"] == command.configuration_digest  # type: ignore[attr-defined,index]
+    assert set(orchestrator._permits.request) == {  # type: ignore[attr-defined,arg-type]
+        "authenticated_transport", "correlation_id", "challenge", "timeout"
+    }
     assert channel.discovery_calls == ["catalog", "validate"]
     assert calls.index("backend.permit") < calls.index("core.start")
 

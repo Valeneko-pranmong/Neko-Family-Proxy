@@ -28,9 +28,10 @@ plans or historical evidence.
 | [`current/debug-console.md`](current/debug-console.md) | Current | Operate the live Launcher/Core debug console and interpret startup failures |
 | [`current/repository-layout.md`](current/repository-layout.md) | Current | Tracked source, local inputs, and generated output |
 | [`current/runtime-distribution.md`](current/runtime-distribution.md) | Current policy | Controlled NekoProxyCore runtime delivery policy |
+| [`current/neko-auth-lite.md`](current/neko-auth-lite.md) | Current; production blocked | Lite v1 session, permit, and Core-integration contract |
 | [`current/phase-2-production-deployment-plan.md`](current/phase-2-production-deployment-plan.md) | Current; Phase 3 approval required | Exact production migration, verification, canary, and forward-only rollback sequence |
 | [`current/backend-single-active-session-ai-prompt.md`](current/backend-single-active-session-ai-prompt.md) | Current implementation handoff | Backend/Admin Web policy for multiple installations and one active session |
-| [`current/launcher-single-active-session-ai-prompt.md`](current/launcher-single-active-session-ai-prompt.md) | Current implementation handoff | Desktop Launcher behavior for latest-login-wins session replacement |
+| [`current/launcher-single-active-session-ai-prompt.md`](current/launcher-single-active-session-ai-prompt.md) | Historical S0 reference | Desktop Launcher latest-login-wins policy superseded by Lite first-active-session-wins |
 | [`current/final-windows-e2e-harness.md`](current/final-windows-e2e-harness.md) | Current preparation runbook | Gate-bound A → B → C → A Windows harness, evidence, topology, and cleanup contract |
 | [`current/phase-2-5-distinct-auth-session-future-permit-proof.md`](current/phase-2-5-distinct-auth-session-future-permit-proof.md) | Current preparation runbook | Narrow Auth A/B/C Edge-denial security proof; execution remains separately authorized |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |

@@ -4,11 +4,11 @@ Windows launcher for PSO2 NGS JP with Supabase authentication, coupon-based
 entitlements, launcher-session control, and a planned authorized NekoProxyCore
 integration.
 
-> **Current status (8 August 2026):** authentication, entitlement, coupon, and
-> launcher-session flows are implemented. Production Core startup remains
-> **fail closed** through `AuthorizationPendingProxyGateway` until the
-> `NEKO-AUTH-S0` acceptance and release gates are complete. The current source
-> does not start ProxyCore in production.
+> **Current status:** `NEKO-AUTH-LITE / lite-v1` implementation is branch-only.
+> Production Core startup remains **fail closed** through
+> `AuthorizationPendingProxyGateway`. Hosted Lite deployment and production
+> cutover are not performed; Core Lite migration and cross-component E2E remain
+> required.
 
 ## Documentation
 
@@ -23,6 +23,7 @@ Common entry points:
 - [Launcher debug console](docs/current/debug-console.md)
 - [Repository layout](docs/current/repository-layout.md)
 - [Runtime distribution policy](docs/current/runtime-distribution.md)
+- [NEKO-AUTH-LITE v1](docs/current/neko-auth-lite.md)
 - [Blocked NEKO-AUTH-S0 handoff](docs/blocked/neko-auth-s0-production-handoff.md)
 - [Blocked Launcher production adapters](docs/blocked/launcher-production-adapters.md)
 - [Supabase database](supabase/README.md)

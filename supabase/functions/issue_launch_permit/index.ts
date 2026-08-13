@@ -44,7 +44,6 @@ const handler = createIssueLaunchPermitHandler({
   },
   authorize: async (
     caller,
-    product,
     challenge,
   ): Promise<AuthorizationState | null> => {
     const accessToken = caller.accessToken;
@@ -53,18 +52,30 @@ const handler = createIssueLaunchPermitHandler({
     const { data, error } = await client
       .schema("launcher")
       .rpc("authorize_launch_permit", {
-        p_product_code: product,
         p_challenge: challenge,
       });
     if (error) throw new Error("authorization dependency unavailable");
     if (!data || typeof data !== "object" || Array.isArray(data)) return null;
     const row = data as Record<string, unknown>;
+    const authorizationError = row.error;
+    if (
+      authorizationError === "SessionInactive" ||
+      authorizationError === "SessionMismatch" ||
+      authorizationError === "EntitlementInactive" ||
+      authorizationError === "HeartbeatStale"
+    ) {
+      return {
+        userId: caller.userId,
+        authSessionId: caller.authSessionId,
+        launcherSessionId: "",
+        product: "",
+        error: authorizationError,
+      };
+    }
     const state: AuthorizationState = {
       userId: String(row.user_id ?? ""),
       authSessionId: String(row.auth_session_id ?? ""),
       launcherSessionId: String(row.session_id ?? ""),
-      installationId: String(row.installation_id ?? ""),
-      licenseId: String(row.license_id ?? ""),
       product: String(row.product_code ?? ""),
     };
     return state.userId === caller.userId &&

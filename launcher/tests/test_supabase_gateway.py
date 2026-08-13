@@ -115,7 +115,7 @@ class FakeFunctions:
         correlation_id = body.get("correlationId") if isinstance(body, dict) else None
         return {
             "version": 1,
-            "contractRevision": "s0-rc1",
+            "contractRevision": "lite-v1",
             "correlationId": correlation_id,
             "succeeded": True,
             "permit": "opaque-permit",
@@ -309,12 +309,6 @@ def test_permit_uses_same_authenticated_client_as_session_claim() -> None:
         gateway,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
-        "b" * 64,
-        "pso2.exe",
-        4242,
-        "ProcessMode",
-        "neko-family-proxy",
-        "proxy:start",
         10.0,
     )
 
@@ -337,7 +331,7 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
             200,
             json={
                 "version": 1,
-                "contractRevision": "s0-rc1",
+                "contractRevision": "lite-v1",
                 "correlationId": "0123456789abcdef0123456789abcdef",
                 "succeeded": True,
                 "permit": "opaque-sdk-permit",
@@ -370,12 +364,6 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
         gateway,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
-        "b" * 64,
-        "pso2.exe",
-        4242,
-        "ProcessMode",
-        "neko-family-proxy",
-        "proxy:start",
         10.0,
     )
 
@@ -389,15 +377,9 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
     }
     assert observed["body"] == {
         "version": 1,
-        "contractRevision": "s0-rc1",
+        "contractRevision": "lite-v1",
         "correlationId": "0123456789abcdef0123456789abcdef",
         "challenge": "a" * 43,
-        "configurationDigest": "b" * 64,
-        "processName": "pso2.exe",
-        "targetPid": 4242,
-        "mode": "ProcessMode",
-        "product": "neko-family-proxy",
-        "scope": "proxy:start",
     }
     assert permit.reveal_for_transport() == "opaque-sdk-permit"
 
@@ -488,12 +470,6 @@ def test_pinned_supabase_sdk_http_failures_are_classified_fail_closed(
             gateway,
             "0123456789abcdef0123456789abcdef",
             CoreChallenge("a" * 43),
-            "b" * 64,
-            "pso2.exe",
-            4242,
-            "ProcessMode",
-            "neko-family-proxy",
-            "proxy:start",
             10.0,
         )
 

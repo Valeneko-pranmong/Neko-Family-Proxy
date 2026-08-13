@@ -33,9 +33,11 @@ def test_lite_claim_preserves_first_fresh_session_without_mutating_it() -> None:
     assert "pg_advisory_xact_lock(hashtextextended(v_user_id::text, 0))" in claim
     assert "for update" in claim
     assert "last_seen_at > now() - interval '90 seconds'" in claim
-    assert "sessionalreadyactive" in claim
+    assert "session_already_active" in claim
     assert "replaced_by_new_session" not in claim
-    assert "update public.launcher_sessions\n  set revoked_at = now()" in claim
+    stale_branch = claim[claim.index("elsif v_active_session.last_seen_at <=") :]
+    assert "update public.launcher_sessions" in stale_branch
+    assert "set revoked_at = now()" in stale_branch
 
 
 def test_lite_claim_closes_only_a_stale_session_before_acquiring() -> None:

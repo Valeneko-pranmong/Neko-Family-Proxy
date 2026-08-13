@@ -493,12 +493,6 @@ class LaunchPermitGateway(Protocol):
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
-        configuration_digest: str,
-        process_name: str,
-        target_pid: int,
-        mode: str,
-        product: str,
-        scope: str,
         timeout: float,
     ) -> OpaquePermit: ...
 
@@ -716,7 +710,6 @@ class AuthorizedCoreOrchestrator:
                     ),
                     target_pid=self._target_pid(target),
                 )
-
                 if self._diagnostics:
                     self._diagnostics.record_stage("PERMIT_REQUEST")
                 permit = self._invoke_adapter(
@@ -724,12 +717,6 @@ class AuthorizedCoreOrchestrator:
                         access_context.authenticated_transport,
                         self._correlation_id(),
                         challenge,
-                        target_bound_command.configuration_digest,
-                        target_bound_command.process_name,
-                        target_bound_command.target_pid,
-                        target_bound_command.mode,
-                        "neko-family-proxy",
-                        "proxy:start",
                         self._timeouts.permit,
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,

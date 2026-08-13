@@ -16,7 +16,7 @@ from neko_launcher.application.authorized_core import (
 
 
 _FUNCTION_NAME = "issue_launch_permit"
-_CONTRACT_REVISION = "s0-rc1"
+_CONTRACT_REVISION = "lite-v1"
 
 
 class IssueLaunchPermitGateway:
@@ -27,12 +27,6 @@ class IssueLaunchPermitGateway:
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
-        configuration_digest: str,
-        process_name: str,
-        target_pid: int,
-        mode: str,
-        product: str,
-        scope: str,
         timeout: float,
     ) -> OpaquePermit:
         started_at = monotonic()
@@ -65,12 +59,6 @@ class IssueLaunchPermitGateway:
                         "contractRevision": _CONTRACT_REVISION,
                         "correlationId": correlation_id,
                         "challenge": challenge.value,
-                        "configurationDigest": configuration_digest,
-                        "processName": process_name,
-                        "targetPid": target_pid,
-                        "mode": mode,
-                        "product": product,
-                        "scope": scope,
                     },
                     "responseType": "json",
                 },
