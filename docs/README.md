@@ -32,6 +32,7 @@ plans or historical evidence.
 | [`current/backend-single-active-session-ai-prompt.md`](current/backend-single-active-session-ai-prompt.md) | Current implementation handoff | Backend/Admin Web policy for multiple installations and one active session |
 | [`current/launcher-single-active-session-ai-prompt.md`](current/launcher-single-active-session-ai-prompt.md) | Current implementation handoff | Desktop Launcher behavior for latest-login-wins session replacement |
 | [`current/final-windows-e2e-harness.md`](current/final-windows-e2e-harness.md) | Current preparation runbook | Gate-bound A → B → C → A Windows harness, evidence, topology, and cleanup contract |
+| [`current/phase-2-5-distinct-auth-session-future-permit-proof.md`](current/phase-2-5-distinct-auth-session-future-permit-proof.md) | Current preparation runbook | Narrow Auth A/B/C Edge-denial security proof; execution remains separately authorized |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Current | Contribution and local validation rules |
 
 ## Component documentation

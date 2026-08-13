@@ -165,6 +165,8 @@ class IssueLaunchPermitGateway:
             diagnostic_code = PermitDiagnosticCode.PERMIT_TIMEOUT
         elif status == 401:
             diagnostic_code = PermitDiagnosticCode.PERMIT_HTTP_401
+        elif status == 403 and cls._is_backend_edge_session_inactive(exc):
+            diagnostic_code = PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
         elif status == 403:
             diagnostic_code = PermitDiagnosticCode.PERMIT_HTTP_403
         elif status == 404:
@@ -179,6 +181,17 @@ class IssueLaunchPermitGateway:
             started_at,
             http_status=status if isinstance(status, int) else None,
             exception_class=type(exc).__name__,
+        )
+
+    @staticmethod
+    def _is_backend_edge_session_inactive(exc: Exception) -> bool:
+        """Accept only the fixed, safe Edge error needed by the proof harness.
+
+        The Supabase Functions SDK exposes the JSON ``error`` value as the
+        exception message.  Do not retain or surface arbitrary response text.
+        """
+        return getattr(exc, "message", None) == "SessionInactive" or str(exc) == (
+            "SessionInactive"
         )
 
     @staticmethod

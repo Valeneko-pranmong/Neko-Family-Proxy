@@ -130,8 +130,9 @@ def test_gateway_rejects_malformed_or_missing_permit(
 
 
 class FunctionFailure(RuntimeError):
-    def __init__(self, status: int) -> None:
-        super().__init__("sensitive backend response must not be logged")
+    def __init__(self, status: int, message: str = "sensitive backend response must not be logged") -> None:
+        super().__init__(message)
+        self.message = message
         self.status = status
 
 
@@ -163,6 +164,38 @@ def test_gateway_classifies_http_failure_without_exposing_backend_detail(
     assert raised.value.diagnostic_context["function"] == "issue_launch_permit"
     assert str(raised.value) == "authorization permit is unavailable"
     assert "sensitive backend response" not in str(raised.value)
+
+
+def test_gateway_classifies_only_the_fixed_edge_session_inactive_response() -> None:
+    functions = FakeFunctions(None)
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise FunctionFailure(403, "SessionInactive")
+
+    functions.invoke = fail  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        issue(transport_for(functions))
+
+    assert (
+        raised.value.diagnostic_code
+        is PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
+    )
+    assert raised.value.diagnostic_context["http_status"] == 403
+
+
+def test_gateway_does_not_misclassify_another_403_as_session_inactive() -> None:
+    functions = FakeFunctions(None)
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise FunctionFailure(403, "sensitive backend response must not be logged")
+
+    functions.invoke = fail  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        issue(transport_for(functions))
+
+    assert raised.value.diagnostic_code is PermitDiagnosticCode.PERMIT_HTTP_403
 
 
 @pytest.mark.parametrize(
