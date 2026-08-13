@@ -99,31 +99,18 @@ class ProductionHostedAuthorityDriver(FinalSequenceDriver):
                         raise RuntimeError("CLEANUP_FAILED")
 
 class RecordingPermitGateway(LaunchPermitGateway):
-    def __init__(self, delegate: LaunchPermitGateway, product: str = "neko-family-proxy", scope: str = "proxy:start"):
+    def __init__(self, delegate: LaunchPermitGateway):
         self.delegate = delegate
         self.last_permit: OpaquePermit | None = None
         self.issued_count = 0
-        self.product = product
-        self.scope = scope
 
     def issue_launch_permit(
         self,
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
-        configuration_digest: str,
-        process_name: str,
-        target_pid: int,
-        mode: str,
-        product: str,
-        scope: str,
         timeout: float,
     ) -> OpaquePermit:
-        if product != self.product:
-            raise ValueError(f"Expected product {self.product}, got {product}")
-        if scope != self.scope:
-            raise ValueError(f"Expected scope {self.scope}, got {scope}")
-
         if self.issued_count >= 1:
             raise RuntimeError("Permit already issued (No automatic positive permit retry)")
 
@@ -132,12 +119,6 @@ class RecordingPermitGateway(LaunchPermitGateway):
             authenticated_transport,
             correlation_id,
             challenge,
-            configuration_digest,
-            process_name,
-            target_pid,
-            mode,
-            product, # Delegate exactly what was received and validated
-            scope,
             timeout,
         )
         self.last_permit = permit
