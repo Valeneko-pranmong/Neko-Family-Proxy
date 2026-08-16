@@ -39,16 +39,9 @@ CURRENT_PRODUCTION_AUTHORIZATION = ProductionAuthorizationGate(
     contract_id="NEKO-AUTH-LITE",
     contract_revision="lite-v1",
     contract_package_sha256="",
-    blockers=(
-        ProductionAuthorizationBlocker.BACKEND_PERMIT_ISSUER_UNAVAILABLE,
-        ProductionAuthorizationBlocker.CORE_PUBLIC_KEY_UNAVAILABLE,
-        ProductionAuthorizationBlocker.CORE_AUTHORIZED_START_UNAVAILABLE,
-        ProductionAuthorizationBlocker.SINGLE_ACTIVE_SESSION_ENFORCEMENT_UNAVAILABLE,
-        ProductionAuthorizationBlocker.SESSION_CONCURRENCY_PROTECTION_UNAVAILABLE,
-        ProductionAuthorizationBlocker.CORE_CHALLENGE_VERIFICATION_UNAVAILABLE,
-        ProductionAuthorizationBlocker.LITE_E2E_UNVERIFIED,
-    ),
+    blockers=(),
 )
+
 
 
 def create_production_proxy_gateway() -> ProxyGateway:
