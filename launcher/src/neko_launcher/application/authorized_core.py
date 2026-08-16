@@ -699,10 +699,21 @@ class AuthorizedCoreOrchestrator:
                     stage="CHALLENGE_REQUEST",
                     retry_safe=True,
                 )
+                if self._diagnostics:
+                    self._diagnostics.record_stage(
+                        "CHALLENGE_RECEIVED",
+                        CORE_CHALLENGE_RECEIVED=True,
+                        CORE_CHALLENGE_LENGTH=len(challenge.value) if hasattr(challenge, "value") else 0,
+                    )
                 self._require_target(target)
 
                 if self._diagnostics:
-                    self._diagnostics.record_stage("TARGET_BIND")
+                    self._diagnostics.record_stage(
+                        "TARGET_BIND",
+                        PROFILE_REFERENCE_PRESENT=bool(frozen_configuration.profile_reference),
+                        SERVER_REFERENCE_PRESENT=bool(frozen_configuration.server_reference),
+                        TARGET_PID=self._target_pid(target),
+                    )
                 target_bound_command = TargetBoundStartCommand.from_opaque(
                     OpaqueStartCommand(
                         frozen_configuration.profile_reference,
@@ -722,6 +733,12 @@ class AuthorizedCoreOrchestrator:
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                     stage="PERMIT_REQUEST",
                 )
+                if self._diagnostics:
+                    self._diagnostics.record_stage(
+                        "PERMIT_RECEIVED",
+                        PERMIT_RECEIVED=True,
+                        PERMIT_LENGTH=len(permit.permit_jwt) if hasattr(permit, "permit_jwt") else 0,
+                    )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
 

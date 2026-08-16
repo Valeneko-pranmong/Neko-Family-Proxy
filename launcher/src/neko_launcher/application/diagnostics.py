@@ -48,20 +48,34 @@ def safe_authorized_start_details(details: dict[str, Any]) -> dict[str, object]:
 
 
 def sanitize_diagnostic_text(text: str) -> str:
-    """Redact sensitive patterns like tokens and passwords."""
+    """Redact sensitive patterns (tokens, JWTs, PEM keys, passwords, challenges) before writing."""
     if not text:
         return text
-    # Match patterns like:
-    # Authorization: Bearer abc
-    # access_token=abc
-    # password: secret
-    # refresh_token=abc
-    # service_role=abc
-    pattern = re.compile(
-        r"((?:authorization\s*:\s*bearer|access_token|refresh_token|password|passwd|secret|service_role)['\"]?\s*(?:[:=]\s*)?['\"]?)([^'\"\s]+)",
-        re.IGNORECASE,
+
+    # 1. Redact PEM private keys
+    pem_pattern = re.compile(
+        r"-----BEGIN[A-Z\s]+PRIVATE KEY-----.*?-----END[A-Z\s]+PRIVATE KEY-----",
+        re.DOTALL | re.IGNORECASE,
     )
-    return pattern.sub(r"\1<redacted>", text)
+    text = pem_pattern.sub("<redacted_private_key>", text)
+
+    # 2. Redact JWT tokens (3 base64url segments starting with eyJ)
+    jwt_pattern = re.compile(
+        r"\beyJ[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\.[A-Za-z0-9_\-]{5,}\b"
+    )
+    text = jwt_pattern.sub("<redacted_jwt>", text)
+
+    # 3. Redact Bearer authorization headers/values
+    bearer_pattern = re.compile(r"(?i)\b(bearer\s+)([A-Za-z0-9_\-\.+=/]+)")
+    text = bearer_pattern.sub(r"\1<redacted>", text)
+
+    # 4. Redact sensitive key-value pairs (JSON, query params, headers, assignment)
+    kv_pattern = re.compile(
+        r"""(?i)(["']?(?:access_token|refresh_token|token|password|passwd|secret|service_role|recovery_code|challenge|private_key|anon_key|api_key)[a-z0-9_\-]*["']?\s*[:=]\s*["']?)([^'"\s,;{}]+)(["']?)"""
+    )
+    text = kv_pattern.sub(r"\1<redacted>\3", text)
+
+    return text
 
 
 def format_safe_diagnostic_metadata(exc: Exception) -> str:

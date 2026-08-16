@@ -211,11 +211,28 @@ class WindowsCoreProcessAdapter:
             return
         self._close_debug_streams()
         self._process = None
+
+        core_dir = self._executable.parent
+        exe_exists = self._executable.is_file()
+        dll_exists = (core_dir / "NekoProxyCore.dll").is_file()
+        settings_exists = (core_dir / "runtime-settings.nkps").is_file()
+        redirector_exists = (core_dir / "Redirector.bin").is_file() or (core_dir / "bin" / "Redirector.bin").is_file()
+        nfapi_exists = (core_dir / "nfapi.dll").is_file() or (core_dir / "bin" / "nfapi.dll").is_file()
+        nfdriver_exists = (core_dir / "nfdriver.sys").is_file() or (core_dir / "bin" / "nfdriver.sys").is_file()
+        pso2_mode_exists = (core_dir / "mode" / "Custom" / "PSO2.json").is_file()
+
         if self._diagnostics:
             self._diagnostics.record_stage(
-                "HOST_START",
+                "CORE_RESOLVE",
                 core_path=str(self._executable),
-                exists=self._executable.exists(),
+                working_dir=str(core_dir),
+                CORE_EXE_EXISTS=exe_exists,
+                CORE_DLL_EXISTS=dll_exists,
+                RUNTIME_SETTINGS_EXISTS=settings_exists,
+                REDIRECTOR_EXISTS=redirector_exists,
+                NFAPI_EXISTS=nfapi_exists,
+                NFDRIVER_EXISTS=nfdriver_exists,
+                PSO2_MODE_EXISTS=pso2_mode_exists,
             )
 
         if not self._executable.exists():
@@ -230,29 +247,6 @@ class WindowsCoreProcessAdapter:
             subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         )
 
-        stdout = None
-        stderr = None
-
-        if self._debug_log_dir and self._diagnostics:
-            attempt_id = self._diagnostics.current_attempt_id
-            if attempt_id:
-                try:
-                    self._debug_log_dir.mkdir(parents=True, exist_ok=True)
-                    self._stdout_handle = open(
-                        self._debug_log_dir / f"core_stdout-{attempt_id}.log",
-                        "a",
-                        encoding="utf-8",
-                    )
-                    self._stderr_handle = open(
-                        self._debug_log_dir / f"core_stderr-{attempt_id}.log",
-                        "a",
-                        encoding="utf-8",
-                    )
-                    stdout = self._stdout_handle
-                    stderr = self._stderr_handle
-                except OSError:
-                    self._close_debug_streams()
-
         try:
             self._process = subprocess.Popen(
                 [str(self._executable)],
@@ -260,12 +254,16 @@ class WindowsCoreProcessAdapter:
                 shell=False,
                 creationflags=creationflags,
                 env=self._clean_env(),
-                stdout=stdout,
-                stderr=stderr,
             )
             self._process_started_at = time.monotonic()
             if self._diagnostics:
-                self._diagnostics.record_stage("HOST_START", pid=self._process.pid)
+                self._diagnostics.record_stage(
+                    "HOST_START",
+                    pid=self._process.pid,
+                    core_path=str(self._executable),
+                    working_dir=str(self._executable.parent),
+                    status="PROCESS_CREATED",
+                )
         except OSError as exc:
             self._close_debug_streams()
             if self._diagnostics:
@@ -435,7 +433,16 @@ class WindowsCoreProcessAdapter:
                 return
             time.sleep(0.05)
 
-        exc = TimeoutError(f"Timeout waiting for control channel pipe {self._pipe_name}")
+        is_alive = bool(self._process is not None and self._process.poll() is None)
+        pid = self._process.pid if self._process is not None else None
+        if self._diagnostics:
+            self._diagnostics.record_stage(
+                "PIPE_TIMEOUT",
+                pipe_name=self._pipe_name,
+                core_alive=is_alive,
+                core_pid=pid,
+            )
+        exc = TimeoutError(f"Timeout waiting for control channel pipe {self._pipe_name} (core_alive={is_alive}, pid={pid})")
         if self._diagnostics:
             self._diagnostics.record_exception(exc, "CONTROL_CHANNEL_WAIT")
         raise exc

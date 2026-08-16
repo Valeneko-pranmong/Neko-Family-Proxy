@@ -34,16 +34,23 @@ def test_packaged_runtime_uses_bundled_neko_proxy_core(tmp_path: Path) -> None:
     assert config.proxy_core_path == bundled_proxy
 
 
-def test_debug_mode_can_be_enabled_by_command_line(
+def test_debug_mode_can_be_enabled_by_environment(
     monkeypatch: object,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.delenv("NEKO_DEBUG", raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr("sys.argv", ["NekoLauncher.exe", "--debug"])  # type: ignore[attr-defined]
+    monkeypatch.setenv("NEKO_DEBUG_MODE", "1")  # type: ignore[attr-defined]
 
     config = LauncherConfig.from_environment(tmp_path)
-
     assert config.debug_mode is True
+    assert config.debug_log_dir.parts[-2:] == ("NekoFamilyProxy", "logs")
+
+    monkeypatch.setenv("NEKO_DEBUG_MODE", "0")  # type: ignore[attr-defined]
+    config_off = LauncherConfig.from_environment(tmp_path)
+    assert config_off.debug_mode is False
+
+    monkeypatch.delenv("NEKO_DEBUG_MODE", raising=False)  # type: ignore[attr-defined]
+    config_unset = LauncherConfig.from_environment(tmp_path)
+    assert config_unset.debug_mode is False
 
 
 def test_application_root_uses_pyinstaller_extraction_directory(

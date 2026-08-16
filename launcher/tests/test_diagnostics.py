@@ -195,3 +195,46 @@ def test_authorized_start_stage_logs_only_allow_listed_fields(tmp_path):
     assert "RAW_" not in log_text
     assert "permit" not in log_text.lower()
     assert "challenge" not in log_text.lower()
+
+
+def test_secret_redaction_unit_gate(tmp_path, capsys):
+    """SECRET REDACTION UNIT GATE: verify all synthetic secrets are redacted before write."""
+    synthetic_bearer = "Bearer synthetic_bearer_token_xyz987"
+    synthetic_jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.synthetic_signature_abcdef1234567890"
+    synthetic_refresh = "synthetic_refresh_token_abc"
+    synthetic_password = "synthetic_secret_password_p@ss123"
+    synthetic_challenge = "synthetic_challenge_payload_abcdef1234567890"
+    synthetic_pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0syntheticprivatekeydata12345\n-----END RSA PRIVATE KEY-----"
+
+    secret_sentinels = [
+        "synthetic_bearer_token_xyz987",
+        synthetic_jwt,
+        synthetic_refresh,
+        synthetic_password,
+        synthetic_challenge,
+        "MIIEowIBAAKCAQEA0syntheticprivatekeydata12345",
+    ]
+
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("SECRET-GATE")
+
+    # 1. Test message write with secrets
+    logger.record_stage("STAGE_A", auth=synthetic_bearer, token=synthetic_jwt)
+    logger.record_process_event("EVENT_A", refresh_token=synthetic_refresh, password=synthetic_password)
+
+    # 2. Test exception with secrets in message and traceback
+    try:
+        raise ValueError(f"Failed with challenge={synthetic_challenge} and {synthetic_pem}")
+    except ValueError as exc:
+        logger.record_exception(exc, "SECRET_STAGE")
+
+    # Verify log file
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    for sentinel in secret_sentinels:
+        assert sentinel not in log_text, f"Secret sentinel '{sentinel}' leaked in log file!"
+
+    # Verify console output
+    captured = capsys.readouterr()
+    for sentinel in secret_sentinels:
+        assert sentinel not in captured.out, f"Secret sentinel '{sentinel}' leaked in console stdout!"
+        assert sentinel not in captured.err, f"Secret sentinel '{sentinel}' leaked in console stderr!"

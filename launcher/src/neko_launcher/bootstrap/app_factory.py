@@ -60,6 +60,10 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
 
         diagnostics_sink = DevelopmentLogger(config.debug_log_dir)
+        diagnostics_sink.log_session_header(
+            core_path=str(config.proxy_core_path),
+            workspace_root=str(root),
+        )
     else:
         from neko_launcher.application.diagnostics import NoopDiagnosticsSink
 
