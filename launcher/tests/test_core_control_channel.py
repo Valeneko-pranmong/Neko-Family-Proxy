@@ -613,3 +613,113 @@ def test_real_windows_pipe_read_is_bounded_by_deadline() -> None:
 
     assert server.is_alive() is False
     assert server_errors == []
+
+
+class _MockWriteHandle:
+    def __init__(self, write_behavior: Any = None) -> None:
+        self.written = bytearray()
+        self.call_count = 0
+        self._behavior = write_behavior
+
+    def write(self, chunk: bytes) -> int | None:
+        self.call_count += 1
+        if self._behavior is not None:
+            return self._behavior(self, chunk)
+        self.written.extend(chunk)
+        return len(chunk)
+
+
+def test_write_all_full_write() -> None:
+    handle = _MockWriteHandle()
+    payload = b"A" * 1024
+    deadline = time.monotonic() + 2.0
+    NamedPipeCoreControlChannel._write_all(handle, payload, deadline)
+    assert bytes(handle.written) == payload
+    assert handle.call_count == 4  # 1024 / 256 = 4 chunks
+
+
+def test_write_all_partial_writes() -> None:
+    def partial_behavior(mock: _MockWriteHandle, chunk: bytes) -> int:
+        part = chunk[: min(len(chunk), 50)]
+        mock.written.extend(part)
+        return len(part)
+
+    handle = _MockWriteHandle(partial_behavior)
+    payload = b"TEST_PARTIAL_WRITE_" * 50  # 950 bytes
+    deadline = time.monotonic() + 2.0
+    NamedPipeCoreControlChannel._write_all(handle, payload, deadline)
+    assert bytes(handle.written) == payload
+
+
+def test_write_all_temporary_none_then_progress() -> None:
+    def none_then_progress(mock: _MockWriteHandle, chunk: bytes) -> int | None:
+        if mock.call_count <= 3:
+            return None
+        mock.written.extend(chunk)
+        return len(chunk)
+
+    handle = _MockWriteHandle(none_then_progress)
+    payload = b"TEMPORARY_NONE_THEN_PROGRESS_DATA" * 20
+    deadline = time.monotonic() + 2.0
+    NamedPipeCoreControlChannel._write_all(handle, payload, deadline)
+    assert bytes(handle.written) == payload
+    assert handle.call_count > 3
+
+
+def test_write_all_backpressure_then_progress() -> None:
+    def backpressure_then_progress(mock: _MockWriteHandle, chunk: bytes) -> int:
+        if mock.call_count <= 2:
+            raise BlockingIOError("Resource temporarily unavailable")
+        mock.written.extend(chunk)
+        return len(chunk)
+
+    handle = _MockWriteHandle(backpressure_then_progress)
+    payload = b"BACKPRESSURE_RECOVERY_PAYLOAD" * 30
+    deadline = time.monotonic() + 2.0
+    NamedPipeCoreControlChannel._write_all(handle, payload, deadline)
+    assert bytes(handle.written) == payload
+
+
+def test_write_all_deadline_exceeded() -> None:
+    handle = _MockWriteHandle(lambda mock, chunk: None)
+    payload = b"DEADLINE_EXCEEDED_PAYLOAD"
+    deadline = time.monotonic() + 0.05
+    with pytest.raises(CoreControlError) as exc_info:
+        NamedPipeCoreControlChannel._write_all(handle, payload, deadline)
+    assert exc_info.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+
+
+@pytest.mark.parametrize("winerror", [109, 233])
+def test_write_all_pipe_closed(winerror: int) -> None:
+    def fail_closed(mock: _MockWriteHandle, chunk: bytes) -> int:
+        err = OSError("Pipe closed")
+        err.winerror = winerror
+        raise err
+
+    handle = _MockWriteHandle(fail_closed)
+    payload = b"PIPE_CLOSED_PAYLOAD"
+    deadline = time.monotonic() + 2.0
+    with pytest.raises(CoreControlError) as exc_info:
+        NamedPipeCoreControlChannel._write_all(handle, payload, deadline)
+    assert exc_info.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+
+
+def test_write_all_payload_integrity_large_frame() -> None:
+    # Test large frame of 5000 bytes (>= 4 KiB)
+    import os
+    random_payload = os.urandom(5000)
+
+    # Alternate between partial writes and full writes
+    def mixed_behavior(mock: _MockWriteHandle, chunk: bytes) -> int:
+        if mock.call_count % 2 == 0:
+            part = chunk[: min(len(chunk), 73)]
+            mock.written.extend(part)
+            return len(part)
+        mock.written.extend(chunk)
+        return len(chunk)
+
+    handle = _MockWriteHandle(mixed_behavior)
+    deadline = time.monotonic() + 5.0
+    NamedPipeCoreControlChannel._write_all(handle, random_payload, deadline)
+    assert bytes(handle.written) == random_payload
+    assert len(handle.written) == 5000

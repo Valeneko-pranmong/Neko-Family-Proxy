@@ -93,6 +93,7 @@ class NamedPipeCoreControlChannel:
     """
 
     _MAX_PAYLOAD_BYTES = 8192
+    _WRITE_CHUNK_SIZE = 256
     _CLOSED_PIPE_ERRORS = frozenset({109, 233})
 
     def __init__(
@@ -187,21 +188,22 @@ class NamedPipeCoreControlChannel:
         offset = 0
         while offset < len(payload):
             cls._remaining(deadline)
+            chunk_size = min(len(payload) - offset, cls._WRITE_CHUNK_SIZE)
             try:
-                written = handle.write(payload[offset:])
+                written = handle.write(payload[offset : offset + chunk_size])
             except BlockingIOError:
-                time.sleep(min(0.01, cls._remaining(deadline)))
+                time.sleep(min(0.005, cls._remaining(deadline)))
                 continue
             except OSError as exc:
                 error_code = getattr(exc, "winerror", None) or exc.errno
                 if error_code in cls._CLOSED_PIPE_ERRORS:
                     raise CoreControlError(CoreControlFailureCode.PIPE_CLOSED) from None
-                time.sleep(min(0.01, cls._remaining(deadline)))
+                time.sleep(min(0.005, cls._remaining(deadline)))
                 continue
             if written is None:
                 # Raw non-blocking I/O returns None when it would block; no
                 # request bytes have been accepted yet.
-                time.sleep(min(0.01, cls._remaining(deadline)))
+                time.sleep(min(0.005, cls._remaining(deadline)))
                 continue
             if written <= 0:
                 raise CoreControlError(CoreControlFailureCode.RESPONSE_REJECTED)
