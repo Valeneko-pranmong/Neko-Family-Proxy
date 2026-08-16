@@ -52,10 +52,13 @@ FINAL_MANIFEST_SHA256 = "2826a78a34f4b536c38c9a038c72ed6a4802d3da044f94cd18b895e
 FINAL_MANIFEST_CONTROLLED_FILE_COUNT = 245
 FINAL_PHYSICAL_FILE_COUNT = 246
 _FINAL_CORE_ARTIFACT_ENV = "NEKO_FINAL_CORE_ARTIFACT_PATH"
+_FINAL_CORE_MANIFEST_ENV = "NEKO_FINAL_CORE_MANIFEST_PATH"
+_FINAL_CORE_EXE_SHA256_ENV = "NEKO_FINAL_CORE_EXE_SHA256"
 _FINAL_CORE_EXE_RELATIVE_PATH = Path("NekoProxyCore.exe")
 _FINAL_PAYLOAD_RELATIVE_PATH = Path("runtime-settings.nkps")
 _FINAL_PSO2_RELATIVE_PATH = Path("mode") / "Custom" / "PSO2.json"
 _FINAL_MANIFEST_RELATIVE_PATH = Path("manifest.json")
+_CANONICAL_MANIFEST_NAME = "canonical-core-manifest.json"
 
 
 class InstanceId(str, Enum):
@@ -251,7 +254,209 @@ def _manifest_digest(
     return FINAL_MANIFEST_SHA256, tuple(guarded_files)
 
 
-def admit_final_core_artifact(artifact_path: Path | None = None) -> FinalCoreAdmission:
+def _resolve_manifest_path(
+    selected_path: Path, explicit_manifest: Path | None = None
+) -> Path | None:
+    if explicit_manifest is not None:
+        p = Path(explicit_manifest).resolve()
+        if not p.is_file():
+            raise ValueError("manifest verification failed")
+        return p
+    env_manifest = os.environ.get(_FINAL_CORE_MANIFEST_ENV, "").strip()
+    if env_manifest:
+        p = Path(env_manifest).resolve()
+        if not p.is_file():
+            raise ValueError("manifest verification failed")
+        return p
+    if (selected_path / _CANONICAL_MANIFEST_NAME).is_file():
+        return (selected_path / _CANONICAL_MANIFEST_NAME).resolve()
+    if (selected_path.parent / _CANONICAL_MANIFEST_NAME).is_file():
+        return (selected_path.parent / _CANONICAL_MANIFEST_NAME).resolve()
+    if (selected_path / _FINAL_MANIFEST_RELATIVE_PATH).is_file():
+        return (selected_path / _FINAL_MANIFEST_RELATIVE_PATH).resolve()
+    return None
+
+
+def _admit_from_manifest(
+    selected_path: Path, manifest_path: Path
+) -> FinalCoreAdmission:
+    manifest_hash = _sha256_file(manifest_path)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("manifest verification failed") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest verification failed")
+
+    core_exe = selected_path / _FINAL_CORE_EXE_RELATIVE_PATH
+    if not core_exe.is_file():
+        raise ValueError("artifact is unavailable")
+    core_exe_hash = _sha256_file(core_exe)
+
+    payload = selected_path / _FINAL_PAYLOAD_RELATIVE_PATH
+    pso2_mode = selected_path / _FINAL_PSO2_RELATIVE_PATH
+
+    if isinstance(manifest.get("files"), dict) or "neko_proxy_core_exe_hash" in manifest:
+        files_dict: dict[str, str] = (
+            manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+        )
+        expected_exe_hash = manifest.get("neko_proxy_core_exe_hash") or files_dict.get(
+            "NekoProxyCore.exe"
+        )
+        if not isinstance(expected_exe_hash, str) or not expected_exe_hash:
+            raise ValueError("manifest verification failed")
+        if core_exe_hash != expected_exe_hash:
+            raise ValueError("Core executable hash mismatch")
+
+        expected_payload_hash = manifest.get("protected_settings_payload_hash") or files_dict.get(
+            "runtime-settings.nkps"
+        )
+        if payload.is_file() and expected_payload_hash:
+            actual_payload_hash = _sha256_file(payload)
+            if actual_payload_hash != expected_payload_hash:
+                raise ValueError("protected payload hash mismatch")
+        else:
+            actual_payload_hash = (
+                _sha256_file(payload) if payload.is_file() else (expected_payload_hash or "")
+            )
+
+        expected_pso2_hash = files_dict.get("mode/Custom/PSO2.json") or files_dict.get(
+            r"mode\Custom\PSO2.json"
+        )
+        if pso2_mode.is_file() and expected_pso2_hash:
+            actual_pso2_hash = _sha256_file(pso2_mode)
+            if actual_pso2_hash != expected_pso2_hash:
+                raise ValueError("PSO2 mode hash mismatch")
+        else:
+            actual_pso2_hash = (
+                _sha256_file(pso2_mode) if pso2_mode.is_file() else (expected_pso2_hash or "")
+            )
+
+        source_sha = manifest.get("source_commit") or FINAL_CORE_SOURCE_SHA
+        guarded_files: list[AdmittedArtifactFile] = []
+        for rel_name, exp_h in files_dict.items():
+            entry_path = (selected_path / Path(rel_name)).resolve()
+            if selected_path in entry_path.parents and entry_path.is_file():
+                if _sha256_file(entry_path) != exp_h:
+                    raise ValueError("manifest verification failed")
+            guarded_files.append(AdmittedArtifactFile(Path(rel_name), exp_h))
+        if manifest_path.is_relative_to(selected_path):
+            guarded_files.append(
+                AdmittedArtifactFile(manifest_path.relative_to(selected_path), manifest_hash)
+            )
+
+        physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
+        return FinalCoreAdmission(
+            source_sha=source_sha,
+            artifact_path=selected_path,
+            core_exe_sha256=core_exe_hash,
+            protected_payload_sha256=actual_payload_hash,
+            manifest_sha256=manifest_hash,
+            pso2_mode_sha256=actual_pso2_hash,
+            manifest_controlled_file_count=len(files_dict) if files_dict else len(physical_files),
+            physical_file_count=len(physical_files),
+            guarded_files=tuple(guarded_files),
+        )
+
+    if manifest.get("hash_algorithm") == "SHA-256" and isinstance(manifest.get("files"), list):
+        if selected_path == FINAL_CORE_ARTIFACT_PATH and manifest_hash != FINAL_MANIFEST_SHA256:
+            raise ValueError("manifest hash mismatch")
+        entries = manifest.get("files", [])
+        if (
+            selected_path == FINAL_CORE_ARTIFACT_PATH
+            and len(entries) != FINAL_MANIFEST_CONTROLLED_FILE_COUNT
+        ):
+            raise ValueError("manifest verification failed")
+
+        entry_map: dict[str, str] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("manifest verification failed")
+            rel = entry.get("relative_path")
+            h = entry.get("sha256")
+            if not isinstance(rel, str) or not isinstance(h, str):
+                raise ValueError("manifest verification failed")
+            entry_map[rel.replace("/", "\\")] = h
+
+        expected_exe = entry_map.get("NekoProxyCore.exe") or (
+            FINAL_CORE_EXE_SHA256 if selected_path == FINAL_CORE_ARTIFACT_PATH else None
+        )
+        if expected_exe is None or core_exe_hash != expected_exe:
+            raise ValueError("Core executable hash mismatch")
+
+        expected_payload = entry_map.get("runtime-settings.nkps") or (
+            FINAL_PROTECTED_PAYLOAD_SHA256
+            if selected_path == FINAL_CORE_ARTIFACT_PATH
+            else None
+        )
+        if expected_payload and payload.is_file():
+            actual_payload = _sha256_file(payload)
+            if actual_payload != expected_payload:
+                raise ValueError("protected payload hash mismatch")
+        else:
+            actual_payload = (
+                _sha256_file(payload) if payload.is_file() else (expected_payload or "")
+            )
+
+        expected_pso2 = (
+            entry_map.get(r"mode\Custom\PSO2.json")
+            or entry_map.get("mode/Custom/PSO2.json")
+            or (
+                FINAL_PSO2_MODE_SHA256
+                if selected_path == FINAL_CORE_ARTIFACT_PATH
+                else None
+            )
+        )
+        if expected_pso2 and pso2_mode.is_file():
+            actual_pso2 = _sha256_file(pso2_mode)
+            if actual_pso2 != expected_pso2:
+                raise ValueError("PSO2 mode hash mismatch")
+        else:
+            actual_pso2 = (
+                _sha256_file(pso2_mode) if pso2_mode.is_file() else (expected_pso2 or "")
+            )
+
+        guarded_files = []
+        for rel_k, exp_h in entry_map.items():
+            entry_path = (selected_path / Path(rel_k)).resolve()
+            if selected_path not in entry_path.parents:
+                raise ValueError("manifest verification failed")
+            if _sha256_file(entry_path) != exp_h:
+                raise ValueError("manifest verification failed")
+            guarded_files.append(AdmittedArtifactFile(Path(rel_k), exp_h))
+        try:
+            rel_manifest = manifest_path.relative_to(selected_path)
+        except ValueError:
+            rel_manifest = Path(manifest_path.name)
+        guarded_files.append(AdmittedArtifactFile(rel_manifest, manifest_hash))
+
+        physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
+        if (
+            selected_path == FINAL_CORE_ARTIFACT_PATH
+            and len(physical_files) != FINAL_PHYSICAL_FILE_COUNT
+        ):
+            raise ValueError("artifact physical file count mismatch")
+
+        return FinalCoreAdmission(
+            source_sha=FINAL_CORE_SOURCE_SHA,
+            artifact_path=selected_path,
+            core_exe_sha256=core_exe_hash,
+            protected_payload_sha256=actual_payload,
+            manifest_sha256=manifest_hash,
+            pso2_mode_sha256=actual_pso2,
+            manifest_controlled_file_count=len(entries),
+            physical_file_count=len(physical_files),
+            guarded_files=tuple(guarded_files),
+        )
+
+    raise ValueError("manifest verification failed")
+
+
+def admit_final_core_artifact(
+    artifact_path: Path | None = None,
+    manifest_path: Path | None = None,
+    expected_core_exe_sha256: str | None = None,
+) -> FinalCoreAdmission:
     selected_path = Path(
         os.environ.get(_FINAL_CORE_ARTIFACT_ENV, "")
     ) if artifact_path is None and os.environ.get(_FINAL_CORE_ARTIFACT_ENV) else (
@@ -260,33 +465,69 @@ def admit_final_core_artifact(artifact_path: Path | None = None) -> FinalCoreAdm
     selected_path = selected_path.resolve()
     if not selected_path.is_dir():
         raise ValueError("artifact directory is unavailable")
+
+    manifest_file = _resolve_manifest_path(selected_path, manifest_path)
+    if manifest_file is not None:
+        return _admit_from_manifest(selected_path, manifest_file)
+
     core_exe = selected_path / _FINAL_CORE_EXE_RELATIVE_PATH
-    payload = selected_path / _FINAL_PAYLOAD_RELATIVE_PATH
-    pso2_mode = selected_path / _FINAL_PSO2_RELATIVE_PATH
+    if not core_exe.is_file():
+        raise ValueError("artifact is unavailable")
     core_exe_hash = _sha256_file(core_exe)
-    if core_exe_hash != FINAL_CORE_EXE_SHA256:
-        raise ValueError("Core executable hash mismatch")
-    payload_hash = _sha256_file(payload)
-    if payload_hash != FINAL_PROTECTED_PAYLOAD_SHA256:
-        raise ValueError("protected payload hash mismatch")
-    pso2_hash = _sha256_file(pso2_mode)
-    if pso2_hash != FINAL_PSO2_MODE_SHA256:
-        raise ValueError("PSO2 mode hash mismatch")
-    manifest_hash, guarded_files = _manifest_digest(selected_path)
-    physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
-    if len(physical_files) != FINAL_PHYSICAL_FILE_COUNT:
-        raise ValueError("artifact physical file count mismatch")
-    return FinalCoreAdmission(
-        source_sha=FINAL_CORE_SOURCE_SHA,
-        artifact_path=selected_path,
-        core_exe_sha256=core_exe_hash,
-        protected_payload_sha256=payload_hash,
-        manifest_sha256=manifest_hash,
-        pso2_mode_sha256=pso2_hash,
-        manifest_controlled_file_count=FINAL_MANIFEST_CONTROLLED_FILE_COUNT,
-        physical_file_count=len(physical_files),
-        guarded_files=guarded_files,
+
+    explicit_exe_hash = (
+        expected_core_exe_sha256
+        or os.environ.get(_FINAL_CORE_EXE_SHA256_ENV, "").strip()
+        or None
     )
+    if explicit_exe_hash is not None:
+        if core_exe_hash != explicit_exe_hash:
+            raise ValueError("Core executable hash mismatch")
+        payload = selected_path / _FINAL_PAYLOAD_RELATIVE_PATH
+        pso2_mode = selected_path / _FINAL_PSO2_RELATIVE_PATH
+        payload_hash = _sha256_file(payload) if payload.is_file() else ""
+        pso2_hash = _sha256_file(pso2_mode) if pso2_mode.is_file() else ""
+        physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
+        return FinalCoreAdmission(
+            source_sha=FINAL_CORE_SOURCE_SHA,
+            artifact_path=selected_path,
+            core_exe_sha256=core_exe_hash,
+            protected_payload_sha256=payload_hash,
+            manifest_sha256="",
+            pso2_mode_sha256=pso2_hash,
+            manifest_controlled_file_count=0,
+            physical_file_count=len(physical_files),
+            guarded_files=(),
+        )
+
+    if selected_path == FINAL_CORE_ARTIFACT_PATH:
+        payload = selected_path / _FINAL_PAYLOAD_RELATIVE_PATH
+        pso2_mode = selected_path / _FINAL_PSO2_RELATIVE_PATH
+        if core_exe_hash != FINAL_CORE_EXE_SHA256:
+            raise ValueError("Core executable hash mismatch")
+        payload_hash = _sha256_file(payload)
+        if payload_hash != FINAL_PROTECTED_PAYLOAD_SHA256:
+            raise ValueError("protected payload hash mismatch")
+        pso2_hash = _sha256_file(pso2_mode)
+        if pso2_hash != FINAL_PSO2_MODE_SHA256:
+            raise ValueError("PSO2 mode hash mismatch")
+        manifest_hash, guarded_files = _manifest_digest(selected_path)
+        physical_files = tuple(path for path in selected_path.rglob("*") if path.is_file())
+        if len(physical_files) != FINAL_PHYSICAL_FILE_COUNT:
+            raise ValueError("artifact physical file count mismatch")
+        return FinalCoreAdmission(
+            source_sha=FINAL_CORE_SOURCE_SHA,
+            artifact_path=selected_path,
+            core_exe_sha256=core_exe_hash,
+            protected_payload_sha256=payload_hash,
+            manifest_sha256=manifest_hash,
+            pso2_mode_sha256=pso2_hash,
+            manifest_controlled_file_count=FINAL_MANIFEST_CONTROLLED_FILE_COUNT,
+            physical_file_count=len(physical_files),
+            guarded_files=guarded_files,
+        )
+
+    raise ValueError("artifact authority is unavailable")
 
 
 @dataclass(frozen=True)
