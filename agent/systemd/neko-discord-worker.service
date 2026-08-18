@@ -1,0 +1,40 @@
+[Unit]
+Description=Neko Family Proxy Unified Discord Worker (Status, Summary & Alerts)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/neko/discord.env
+ExecStart=/usr/bin/python3 /opt/neko/neko_discord_worker.py
+Restart=on-failure
+RestartSec=5s
+User=root
+Group=root
+
+# Privileges: CAP_NET_RAW is required for AF_PACKET raw socket binding on ens5
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_PACKET
+
+# System & State Hardening
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# Persistent Local State Directory
+StateDirectory=neko
+ReadWritePaths=/var/lib/neko
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
