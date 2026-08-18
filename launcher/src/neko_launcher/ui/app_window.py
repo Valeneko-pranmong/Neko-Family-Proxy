@@ -46,6 +46,8 @@ from .components.buttons import secondary_button
 from .views.auth_view import AuthView
 from .views.dashboard_view import DashboardView, open_password_dialog
 from .views.recovery_view import RecoveryView
+from .settings_window import SettingsWindow
+from .status_presentation import translate_customer_status
 
 
 HEARTBEAT_INTERVAL_MS = 30_000
@@ -84,6 +86,7 @@ class AppWindow:
         self._icon_path = icon_path
         self._password_dialog: ctk.CTkToplevel | None = None
         self._debug_dialog: ctk.CTkToplevel | None = None
+        self._settings_window: SettingsWindow | None = None
         self._closing = False
         self._tray_actions: SimpleQueue[str] = SimpleQueue()
         self._tray_manager: SystemTrayManager | None = None
@@ -94,6 +97,7 @@ class AppWindow:
         self._proxy_start_attempted_for_detected_game = False
         self._proxy_retry_suppression_logged = False
         self._last_debug_status: tuple[str, tuple[tuple[str, str], ...]] | None = None
+        self._last_telemetry_state: Any = None
         self._record_debug_status("LAUNCHER_START", message="Debug console enabled")
 
         self.root = ctk.CTk()
@@ -112,6 +116,13 @@ class AppWindow:
         self._status = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._account = tk.StringVar(value="")
         self._entitlement = tk.StringVar(value="ยังไม่มีวันใช้งาน")
+        self._status_title = tk.StringVar(value="กำลังเตรียมข้อมูล…")
+        self._status_subtitle = tk.StringVar(value="กำลังตรวจสอบการเข้าสู่ระบบ")
+        self._entitlement_days = tk.StringVar(value="0 วัน")
+        self._entitlement_expiry = tk.StringVar(value="ยังไม่มีวันใช้งาน")
+        self._download_speed = tk.StringVar(value="0 KB/s")
+        self._upload_speed = tk.StringVar(value="0 KB/s")
+        self._session_duration = tk.StringVar(value="00:00:00")
         self._error = tk.StringVar(value="")
         self._notice = tk.StringVar(value="")
         self._error.trace_add("write", self._update_message_visibility)
@@ -137,6 +148,7 @@ class AppWindow:
         self._telemetry_transfer = tk.StringVar(value="รับข้อมูล (RX): 0 B | ส่งข้อมูล (TX): 0 B")
         self._telemetry_session = tk.StringVar(value="เวลาเชื่อมต่อ: 00:00:00 | TCP: 0 active | DNS: 0")
         self._telemetry_health = tk.StringVar(value="สถานะระบบ: Core รอการเชื่อมต่อ")
+        self._process_detection_pending = False
         self._process_detection_pending = False
 
         if self._telemetry_client is not None:
@@ -253,24 +265,14 @@ class AppWindow:
         self._dashboard_view = DashboardView(
             self._content,
             self.root,
+            status_title_var=self._status_title,
+            status_subtitle_var=self._status_subtitle,
             account_var=self._account,
-            entitlement_var=self._entitlement,
-            coupon_var=self._coupon_code,
-            game_path_var=self._game_path,
-            auto_launch_var=self._auto_launch,
-            game_connection_var=self._game_connection_status,
-            proxy_connection_var=self._proxy_connection_status,
-            telemetry_speed_var=self._telemetry_speed,
-            telemetry_transfer_var=self._telemetry_transfer,
-            telemetry_session_var=self._telemetry_session,
-            telemetry_health_var=self._telemetry_health,
-            on_change_password=self._open_password_dialog,
-            on_sign_out=self._sign_out,
-            on_redeem_coupon=self._redeem_coupon,
-            on_choose_game=self._choose_game,
-            on_launch_game=self._launch_game,
-            debug_mode=self._debug_mode,
-            on_open_debug=self._show_debug_dialog,
+            entitlement_days_var=self._entitlement_days,
+            entitlement_expiry_var=self._entitlement_expiry,
+            download_speed_var=self._download_speed,
+            upload_speed_var=self._upload_speed,
+            session_duration_var=self._session_duration,
         )
         self._show_auth_view()
         self._update_message_visibility()
@@ -289,6 +291,13 @@ class AppWindow:
         controls.place(relx=1.0, x=-10, y=10, anchor="ne")
         secondary_button(
             controls,
+            "⚙",
+            self._open_settings_window,
+            width=30,
+            height=24,
+        ).pack(side="left", padx=(0, 3))
+        secondary_button(
+            controls,
             "—",
             self._minimize_window,
             width=30,
@@ -303,6 +312,41 @@ class AppWindow:
         ).pack(side="left")
         self._window_drag_handler = WindowDragHandler(self.root)
         self._window_drag_handler.bind_to(drag_surface)
+
+    # ------------------------------------------------------------------
+    # Settings window lifecycle
+    # ------------------------------------------------------------------
+    def _open_settings_window(self) -> None:
+        if (
+            self._settings_window is not None
+            and self._settings_window.winfo_exists()
+        ):
+            self._settings_window.lift()
+            self._settings_window.focus_force()
+            return
+
+        self._settings_window = SettingsWindow(
+            self.root,
+            icon_path=self._icon_path,
+            account_var=self._account,
+            entitlement_days_var=self._entitlement_days,
+            entitlement_expiry_var=self._entitlement_expiry,
+            game_path_var=self._game_path,
+            auto_launch_var=self._auto_launch,
+            proxy_connection_var=self._proxy_connection_status,
+            diagnostics=self._diagnostics,
+            debug_mode=self._debug_mode,
+            debug_log_dir=self._debug_log_dir,
+            on_close=self._close_settings_window,
+            on_change_password=self._open_password_dialog,
+            on_sign_out=self._sign_out,
+            on_redeem_coupon=self._redeem_coupon,
+            on_choose_game=self._choose_game,
+            on_launch_game=self._launch_game,
+        )
+
+    def _close_settings_window(self) -> None:
+        self._settings_window = None
 
     # ------------------------------------------------------------------
     # Tray
@@ -846,6 +890,17 @@ class AppWindow:
         self._auth_view.set_status_signed_in(signed_in)
         self._render_entitlement(state)
 
+        # Update customer status presentation
+        cust_status = translate_customer_status(
+            state, getattr(self, "_last_telemetry_state", None)
+        )
+        self._status_title.set(f"● {cust_status.title}")
+        self._status_subtitle.set(cust_status.subtitle)
+        if hasattr(self, "_dashboard_view") and hasattr(
+            self._dashboard_view, "update_status_role"
+        ):
+            self._dashboard_view.update_status_role(cust_status.role)
+
         recovery = state.auth_status in {
             AuthStatus.RECOVERY_CODE_ENTRY,
             AuthStatus.RECOVERY_VERIFYING,
@@ -862,6 +917,9 @@ class AppWindow:
         else:
             if self._password_dialog is not None:
                 self._close_password_dialog()
+            if self._settings_window is not None and self._settings_window.winfo_exists():
+                self._settings_window.destroy()
+                self._settings_window = None
             self._show_auth_view()
         self._recovery_view.set_busy(
             state.auth_status is AuthStatus.RECOVERY_VERIFYING
@@ -884,22 +942,6 @@ class AppWindow:
             ProxyStatus.FAILED: "ProxyCore: เริ่มทำงานไม่สำเร็จ",
         }[state.proxy_status]
         self._proxy_connection_status.set(proxy_text)
-        self._dashboard_view.set_redeem_enabled(signed_in)
-        can_launch_game = (
-            signed_in
-            and state.session_id is not None
-            and entitlement_is_active(state.entitlement)
-            and bool(self._game_path.get().strip())
-            and state.proxy_status not in {
-                ProxyStatus.STARTING,
-                ProxyStatus.STOPPING,
-            }
-            and state.game_status not in {
-                GameStatus.STARTING,
-                GameStatus.RUNNING,
-            }
-        )
-        self._dashboard_view.set_launch_enabled(can_launch_game)
         if state.last_error:
             self._error.set(state.last_error)
 
@@ -909,11 +951,21 @@ class AppWindow:
             self._entitlement.set(
                 "เหลือ 0 วัน • เติมวันด้วยคูปองเพื่อเริ่มต้น"
             )
-            self._dashboard_view.set_entitlement_style(PALETTE.warning)
+            self._entitlement_days.set("0 วัน (ยังไม่มีวันใช้งาน)")
+            self._entitlement_expiry.set("ยังไม่มีวันใช้งาน")
+            if hasattr(self, "_dashboard_view") and hasattr(
+                self._dashboard_view, "set_entitlement_style"
+            ):
+                self._dashboard_view.set_entitlement_style(PALETTE.warning)
             return
         if entitlement.valid_until is None:
             self._entitlement.set("ใช้งานได้ • ไม่จำกัดวัน")
-            self._dashboard_view.set_entitlement_style(PALETTE.success)
+            self._entitlement_days.set("ไม่จำกัดวัน")
+            self._entitlement_expiry.set("ตลอดชีพ (Unlimited)")
+            if hasattr(self, "_dashboard_view") and hasattr(
+                self._dashboard_view, "set_entitlement_style"
+            ):
+                self._dashboard_view.set_entitlement_style(PALETTE.success)
             return
         now = datetime.now(entitlement.valid_until.tzinfo)
         remaining = entitlement.valid_until - now
@@ -923,19 +975,34 @@ class AppWindow:
                 f"ใช้งานได้ • เหลือประมาณ {days} วัน • "
                 f"หมดอายุ {entitlement.valid_until:%d/%m/%Y %H:%M}"
             )
-            self._dashboard_view.set_entitlement_style(PALETTE.success)
+            self._entitlement_days.set(f"เหลือประมาณ {days} วัน")
+            self._entitlement_expiry.set(f"{entitlement.valid_until:%d/%m/%Y %H:%M}")
+            if hasattr(self, "_dashboard_view") and hasattr(
+                self._dashboard_view, "set_entitlement_style"
+            ):
+                self._dashboard_view.set_entitlement_style(PALETTE.success)
         else:
             if state.game_process_running:
                 self._entitlement.set(
                     "สิทธิ์หมดอายุแล้ว • จะตัดการเชื่อมต่อหลังออกจากเกม"
                 )
-                self._dashboard_view.set_entitlement_style(PALETTE.warning)
+                self._entitlement_days.set("0 วัน (หมดอายุ)")
+                self._entitlement_expiry.set(f"{entitlement.valid_until:%d/%m/%Y %H:%M}")
+                if hasattr(self, "_dashboard_view") and hasattr(
+                    self._dashboard_view, "set_entitlement_style"
+                ):
+                    self._dashboard_view.set_entitlement_style(PALETTE.warning)
             else:
                 self._entitlement.set(
                     f"หมดอายุแล้ว • เหลือ 0 วัน • "
                     f"{entitlement.valid_until:%d/%m/%Y %H:%M}"
                 )
-                self._dashboard_view.set_entitlement_style(PALETTE.danger)
+                self._entitlement_days.set("0 วัน (หมดอายุ)")
+                self._entitlement_expiry.set(f"{entitlement.valid_until:%d/%m/%Y %H:%M}")
+                if hasattr(self, "_dashboard_view") and hasattr(
+                    self._dashboard_view, "set_entitlement_style"
+                ):
+                    self._dashboard_view.set_entitlement_style(PALETTE.danger)
 
     def _set_auth_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
         self._auth_view.set_actions_enabled(
@@ -1055,11 +1122,16 @@ class AppWindow:
             format_uptime,
         )
 
+        self._last_telemetry_state = state
+
         if state.connection_state != TelemetryConnectionState.CONNECTED:
             self._telemetry_speed.set("ความเร็ว: ▼ 0 B/s | ▲ 0 B/s")
             self._telemetry_transfer.set("รับข้อมูล (RX): 0 B | ส่งข้อมูล (TX): 0 B")
             self._telemetry_session.set("เวลาเชื่อมต่อ: 00:00:00 | TCP: 0 active | DNS: 0")
             self._telemetry_health.set("สถานะระบบ: Core รอการเชื่อมต่อ")
+            self._download_speed.set("0 KB/s")
+            self._upload_speed.set("0 KB/s")
+            self._session_duration.set("00:00:00")
             return
 
         if state.is_stale:
@@ -1080,6 +1152,9 @@ class AppWindow:
         self._telemetry_session.set(
             f"เวลาเชื่อมต่อ: {uptime} | TCP: {state.snapshot.tcp_active} active | DNS: {state.snapshot.dns_query_total} | ข้อผิดพลาด: {state.snapshot.network_error_total}"
         )
+        self._download_speed.set(rx_speed)
+        self._upload_speed.set(tx_speed)
+        self._session_duration.set(uptime)
 
         core_str = (
             "Core ปกติ"
@@ -1099,6 +1174,15 @@ class AppWindow:
             f"ระบบ: {core_str} • {v2ray_str} • {socks_str} • {ss_str}"
         )
 
+        # Update customer hero status
+        cust_status = translate_customer_status(self._controller.state, state)
+        self._status_title.set(f"● {cust_status.title}")
+        self._status_subtitle.set(cust_status.subtitle)
+        if hasattr(self, "_dashboard_view") and hasattr(
+            self._dashboard_view, "update_status_role"
+        ):
+            self._dashboard_view.update_status_role(cust_status.role)
+
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
@@ -1107,6 +1191,13 @@ class AppWindow:
             return
         self._closing = True
         self._clear_recovery_sensitive_fields()
+        if getattr(self, "_settings_window", None) is not None:
+            try:
+                if self._settings_window.winfo_exists():
+                    self._settings_window.destroy()
+            except Exception:
+                pass
+            self._settings_window = None
         if getattr(self, "_telemetry_client", None) is not None:
             try:
                 self._telemetry_client.stop(timeout=0.5)

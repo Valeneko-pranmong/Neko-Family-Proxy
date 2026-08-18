@@ -454,3 +454,32 @@ DOCS                                    = CURRENT
 SECRET_AUDIT                            = PASS
 WORKTREES                               = CLEAN
 ```
+
+---
+
+## 16. T10B1 Commercial UI Foundation Implementation
+
+Phase T10B1 implements the commercial UI foundation, transforming the authenticated main view into a read-only customer dashboard and providing a dedicated single-instance Settings window shell with 10 navigation categories:
+
+1. **Read-Only Dashboard (`dashboard_view.py`)**:
+   - Connection Hero status pill with truth-table status presentation (`status_presentation.py`).
+   - Membership summary card (Username, Active status, Expiry date).
+   - Network stats summary (Download rate, Upload rate, Session duration; ping omitted per lack of latency authority).
+   - Passive guidance card (*"ระบบจะเชื่อมต่อ Tokyo Proxy อัตโนมัติเมื่อเปิดเกม PSO2"*).
+   - Removed coupon controls, password change button, sign-out button, game-path controls, Tweaker launch button, and debug mode controls from the Main view.
+
+2. **Settings Window Shell (`settings_window.py`)**:
+   - Standalone `CTkToplevel` window with 10 sidebar navigation categories (General, Account, Subscription, PSO2, Tweaker, Connection, Appearance, Notifications, Diagnostics, About).
+   - Search filter for settings categories.
+   - Strict single-instance lifecycle managed by `AppWindow`: subsequent clicks on `⚙` lift and focus the existing window; window destruction cleanly resets reference; closing Launcher terminates Settings.
+   - Connection page displays sanitized customer-safe data (Tokyo VPS Lightsail, Automatic High-Speed Direct Tunnel) with zero internal IPs, ports, ciphers, or passwords exposed.
+
+3. **Status Presentation Layer (`status_presentation.py`)**:
+   - Maps `AppState` and `TelemetryState` into human-friendly customer statuses without ever falsely reporting `READY` during Core or Auth failures.
+
+4. **Quality & Packaging Proof**:
+   - 492 automated unit tests passing across all suites.
+   - New debug executable built: `NekoLauncher-Debug.exe`.
+   - Fresh `_MEI` extraction verified upon launch.
+   - Sanitized UI screenshots captured for owner visual review.
+

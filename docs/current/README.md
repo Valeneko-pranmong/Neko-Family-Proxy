@@ -2,10 +2,11 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         T10A COMPLETED — DESIGN FROZEN
+STATUS:                         T10B1 IMPLEMENTED CANDIDATE — OWNER VISUAL REVIEW PENDING
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
-T10B:                           NEXT — COMMERCIAL UI IMPLEMENTATION
+T10B1:                          IMPLEMENTED CANDIDATE — OWNER VISUAL REVIEW PENDING
+T10B2:                          NEXT — SETTINGS FUNCTIONAL MIGRATION
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698
