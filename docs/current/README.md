@@ -2,11 +2,12 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         T10B1 IMPLEMENTED CANDIDATE — OWNER VISUAL REVIEW PENDING
+STATUS:                         T10B1.1 VISUAL POLISH CANDIDATE — OWNER REVIEW PENDING
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
-T10B1:                          IMPLEMENTED CANDIDATE — OWNER VISUAL REVIEW PENDING
-T10B2:                          NEXT — SETTINGS FUNCTIONAL MIGRATION
+T10B1:                          FUNCTIONAL PASS / VISUAL REVIEW IN PROGRESS
+T10B1.1:                        VISUAL CANDIDATE READY
+T10B2:                          NOT STARTED
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698

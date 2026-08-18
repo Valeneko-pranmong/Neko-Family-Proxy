@@ -58,34 +58,33 @@ class DashboardView:
         # --------------------------------------------------------------
         hero_card = card(self.frame)
         hero_inner = ctk.CTkFrame(hero_card, fg_color="transparent")
-        hero_inner.pack(fill="x", padx=16, pady=(14, 14))
+        hero_inner.pack(fill="x", padx=14, pady=(10, 10))
 
         self._status_pill = ctk.CTkFrame(
             hero_inner,
             fg_color=PALETTE.success_surface,
             border_color=PALETTE.success,
             border_width=1,
-            corner_radius=16,
-            height=34,
+            corner_radius=12,
         )
-        self._status_pill.pack(anchor="center", pady=(0, 6))
+        self._status_pill.pack(anchor="center", pady=(0, 4))
 
         self._status_title_label = ctk.CTkLabel(
             self._status_pill,
             textvariable=status_title_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
             text_color=PALETTE.success,
-            padx=16,
-            pady=4,
+            padx=14,
+            pady=3,
         )
         self._status_title_label.pack(anchor="center")
 
         self._status_subtitle_label = ctk.CTkLabel(
             hero_inner,
             textvariable=status_subtitle_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-            wraplength=380,
+            wraplength=360,
             justify="center",
         )
         self._status_subtitle_label.pack(anchor="center")
@@ -95,149 +94,149 @@ class DashboardView:
         # --------------------------------------------------------------
         membership_card = card(self.frame)
         membership_inner = ctk.CTkFrame(membership_card, fg_color="transparent")
-        membership_inner.pack(fill="x", padx=16, pady=(12, 12))
+        membership_inner.pack(fill="x", padx=14, pady=(8, 8))
 
         header_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        header_row.pack(fill="x", pady=(0, 6))
+        header_row.pack(fill="x", pady=(0, 4))
 
         ctk.CTkLabel(
             header_row,
-            text="ข้อมูลสมาชิก (Membership)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
-            text_color=PALETTE.primary_dark,
+            text="สมาชิก",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            text_color=PALETTE.text,
         ).pack(side="left")
 
-        # Status badge (Truthful plan/state authority: ACTIVE)
+        # Status badge (Truthful plan/state authority: ใช้งานได้)
         self._tier_badge = ctk.CTkLabel(
             header_row,
-            text="ACTIVE",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-            text_color=PALETTE.on_primary,
-            fg_color=PALETTE.primary,
-            corner_radius=10,
+            text="ใช้งานได้",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10, weight="bold"),
+            text_color=PALETTE.success,
+            fg_color=PALETTE.success_surface,
+            corner_radius=6,
             padx=8,
-            pady=2,
+            pady=1,
         )
         self._tier_badge.pack(side="right")
 
         user_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        user_row.pack(fill="x", pady=(2, 2))
+        user_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
             user_row,
-            text="👤 ชื่อผู้ใช้:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="ชื่อผู้ใช้",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             user_row,
             textvariable=account_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(side="left", padx=(6, 0))
+        ).pack(side="right")
 
         days_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        days_row.pack(fill="x", pady=(2, 2))
+        days_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
             days_row,
-            text="⏳ วันคงเหลือ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="วันคงเหลือ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         self._entitlement_days_label = ctk.CTkLabel(
             days_row,
             textvariable=entitlement_days_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.success,
         )
-        self._entitlement_days_label.pack(side="left", padx=(6, 0))
+        self._entitlement_days_label.pack(side="right")
 
         expiry_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        expiry_row.pack(fill="x", pady=(2, 0))
+        expiry_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
             expiry_row,
-            text="📅 วันหมดอายุ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="วันหมดอายุ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             expiry_row,
             textvariable=entitlement_expiry_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-        ).pack(side="left", padx=(6, 0))
+        ).pack(side="right")
 
         # --------------------------------------------------------------
         # 3. Network Summary Card
         # --------------------------------------------------------------
         network_card = card(self.frame)
         network_inner = ctk.CTkFrame(network_card, fg_color="transparent")
-        network_inner.pack(fill="x", padx=16, pady=(12, 12))
+        network_inner.pack(fill="x", padx=14, pady=(8, 8))
 
         ctk.CTkLabel(
             network_inner,
-            text="สถิติเครือข่าย (Network)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", pady=(0, 6))
+            text="เครือข่าย",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            text_color=PALETTE.text,
+        ).pack(anchor="w", pady=(0, 4))
 
         dl_row = ctk.CTkFrame(network_inner, fg_color="transparent")
-        dl_row.pack(fill="x", pady=(2, 2))
+        dl_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
             dl_row,
-            text="▼ ดาวน์โหลด:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="ดาวน์โหลด",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             dl_row,
             textvariable=download_speed_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.primary,
-        ).pack(side="left", padx=(6, 0))
+        ).pack(side="right")
 
         ul_row = ctk.CTkFrame(network_inner, fg_color="transparent")
-        ul_row.pack(fill="x", pady=(2, 2))
+        ul_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
             ul_row,
-            text="▲ อัปโหลด:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="อัปโหลด",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             ul_row,
             textvariable=upload_speed_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(side="left", padx=(6, 0))
+        ).pack(side="right")
 
         uptime_row = ctk.CTkFrame(network_inner, fg_color="transparent")
-        uptime_row.pack(fill="x", pady=(2, 0))
+        uptime_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
             uptime_row,
-            text="⏱ เวลาเชื่อมต่อ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="เวลาเชื่อมต่อ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             uptime_row,
             textvariable=session_duration_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-        ).pack(side="left", padx=(6, 0))
+        ).pack(side="right")
 
         # --------------------------------------------------------------
         # 4. Passive Guidance Card
         # --------------------------------------------------------------
         guidance_card = card(self.frame)
         guidance_inner = ctk.CTkFrame(guidance_card, fg_color="transparent")
-        guidance_inner.pack(fill="x", padx=16, pady=(10, 10))
+        guidance_inner.pack(fill="x", padx=14, pady=(6, 6))
 
         ctk.CTkLabel(
             guidance_inner,
             text="💡 ระบบจะเชื่อมต่อ Tokyo Proxy อัตโนมัติเมื่อเปิดเกม PSO2",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-            wraplength=380,
+            wraplength=360,
             justify="center",
         ).pack(anchor="center")
 
@@ -251,7 +250,7 @@ class DashboardView:
             self._status_title_label.configure(text_color=PALETTE.success)
         elif role == "warning":
             self._status_pill.configure(
-                fg_color=PALETTE.surface,
+                fg_color=PALETTE.warning_surface,
                 border_color=PALETTE.warning,
             )
             self._status_title_label.configure(text_color=PALETTE.warning)
@@ -267,6 +266,32 @@ class DashboardView:
                 border_color=PALETTE.border,
             )
             self._status_title_label.configure(text_color=PALETTE.text_muted)
+
+    def set_tier_badge(self, text: str, role: str = "success") -> None:
+        if role == "success":
+            self._tier_badge.configure(
+                text=text,
+                fg_color=PALETTE.success_surface,
+                text_color=PALETTE.success,
+            )
+        elif role == "danger":
+            self._tier_badge.configure(
+                text=text,
+                fg_color=PALETTE.danger_surface,
+                text_color=PALETTE.danger,
+            )
+        elif role == "warning":
+            self._tier_badge.configure(
+                text=text,
+                fg_color=PALETTE.warning_surface,
+                text_color=PALETTE.warning,
+            )
+        else:
+            self._tier_badge.configure(
+                text=text,
+                fg_color=PALETTE.surface,
+                text_color=PALETTE.text_muted,
+            )
 
     def set_entitlement_style(self, text_color: str) -> None:
         self._entitlement_days_label.configure(text_color=text_color)

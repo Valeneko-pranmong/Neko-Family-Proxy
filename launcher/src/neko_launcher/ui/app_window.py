@@ -195,14 +195,14 @@ class AppWindow:
             self.root,
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
-            border_width=2,
-            corner_radius=20,
+            border_width=1,
+            corner_radius=14,
         )
-        shell.pack(fill="both", expand=True, padx=10, pady=8)
+        shell.pack(fill="both", expand=True, padx=8, pady=6)
         self._build_window_controls(shell)
 
         header = ctk.CTkFrame(shell, fg_color="transparent")
-        header.pack(fill="x", padx=12, pady=(8, 2))
+        header.pack(fill="x", padx=12, pady=(6, 2))
 
         brand = ctk.CTkFrame(header, fg_color="transparent")
         brand.pack(side="left", fill="x", expand=True)
@@ -210,7 +210,7 @@ class AppWindow:
             try:
                 self._logo_image = ctk.CTkImage(
                     Image.open(logo_path),
-                    size=(260, 90),
+                    size=(140, 50),
                 )
                 ctk.CTkLabel(
                     brand,
@@ -225,20 +225,20 @@ class AppWindow:
 
         ctk.CTkLabel(
             brand,
-            text="NEKO FAMILY PROXY PSO2NGS",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=18, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="center", pady=(10, 0))
+            text="NEKO FAMILY PROXY",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
+            text_color=PALETTE.text,
+        ).pack(anchor="center", pady=(4, 0))
         self._header_message = ctk.CTkLabel(
             brand,
             text="High Performance & Low Latency",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         )
         self._header_message.pack(anchor="center")
 
         self._content = ctk.CTkFrame(shell, fg_color="transparent")
-        self._content.pack(fill="both", expand=True, padx=6, pady=(0, 2))
+        self._content.pack(fill="both", expand=True, padx=4, pady=(0, 2))
 
         self._auth_view = AuthView(
             self._content,
@@ -280,7 +280,7 @@ class AppWindow:
 
         footer = ctk.CTkLabel(
             shell,
-            text=f"Version {__version__}",
+            text=f"v{__version__}",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=PALETTE.text_muted,
         )
@@ -293,22 +293,8 @@ class AppWindow:
             controls,
             "⚙",
             self._open_settings_window,
-            width=30,
-            height=24,
-        ).pack(side="left", padx=(0, 3))
-        secondary_button(
-            controls,
-            "—",
-            self._minimize_window,
-            width=30,
-            height=24,
-        ).pack(side="left", padx=(0, 3))
-        secondary_button(
-            controls,
-            "×",
-            self.close,
-            width=30,
-            height=24,
+            width=32,
+            height=26,
         ).pack(side="left")
         self._window_drag_handler = WindowDragHandler(self.root)
         self._window_drag_handler.bind_to(drag_surface)
@@ -966,6 +952,7 @@ class AppWindow:
                 self._dashboard_view, "set_entitlement_style"
             ):
                 self._dashboard_view.set_entitlement_style(PALETTE.success)
+                self._dashboard_view.set_tier_badge("ใช้งานได้", role="success")
             return
         now = datetime.now(entitlement.valid_until.tzinfo)
         remaining = entitlement.valid_until - now
@@ -981,6 +968,7 @@ class AppWindow:
                 self._dashboard_view, "set_entitlement_style"
             ):
                 self._dashboard_view.set_entitlement_style(PALETTE.success)
+                self._dashboard_view.set_tier_badge("ใช้งานได้", role="success")
         else:
             if state.game_process_running:
                 self._entitlement.set(
@@ -992,6 +980,7 @@ class AppWindow:
                     self._dashboard_view, "set_entitlement_style"
                 ):
                     self._dashboard_view.set_entitlement_style(PALETTE.warning)
+                    self._dashboard_view.set_tier_badge("หมดอายุ", role="warning")
             else:
                 self._entitlement.set(
                     f"หมดอายุแล้ว • เหลือ 0 วัน • "
@@ -1003,6 +992,7 @@ class AppWindow:
                     self._dashboard_view, "set_entitlement_style"
                 ):
                     self._dashboard_view.set_entitlement_style(PALETTE.danger)
+                    self._dashboard_view.set_tier_badge("หมดอายุ", role="danger")
 
     def _set_auth_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
         self._auth_view.set_actions_enabled(

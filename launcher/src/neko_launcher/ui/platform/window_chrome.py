@@ -104,7 +104,6 @@ def style_native_title_bar(window: tk.Tk | tk.Toplevel, palette: Any) -> None:
         gwl_style = -16
         ws_maximizebox = 0x00010000
         ws_thickframe = 0x00040000
-        ws_caption = 0x00C00000
         
         get_window_long = user32.GetWindowLongPtrW
         get_window_long.argtypes = (ctypes.c_void_p, ctypes.c_int)
@@ -117,7 +116,7 @@ def style_native_title_bar(window: tk.Tk | tk.Toplevel, palette: Any) -> None:
         )
         set_window_long.restype = ctypes.c_ssize_t
         style = get_window_long(hwnd, gwl_style)
-        style &= ~(ws_maximizebox | ws_thickframe | ws_caption)
+        style &= ~(ws_maximizebox | ws_thickframe)
         set_window_long(hwnd, gwl_style, style)
         swp_flags = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
         user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, swp_flags)

@@ -15,6 +15,7 @@ from neko_launcher.ui.components.buttons import (
 )
 from neko_launcher.ui.platform.window_chrome import (
     apply_rounded_window_shape,
+    style_native_title_bar,
     WindowDragHandler,
 )
 
@@ -23,16 +24,16 @@ class SettingsWindow(ctk.CTkToplevel):
     """Standalone, single-instance Settings top-level window."""
 
     CATEGORIES = [
-        ("general", "📌 ทั่วไป"),
-        ("account", "👤 บัญชี"),
-        ("subscription", "💎 สมาชิก"),
-        ("pso2", "🎮 PSO2"),
-        ("tweaker", "🛠 PSO2 Tweaker"),
-        ("connection", "🌐 การเชื่อมต่อ"),
-        ("appearance", "🎨 การแสดงผล"),
-        ("notifications", "🔔 การแจ้งเตือน"),
-        ("diagnostics", "🩺 การวินิจฉัย"),
-        ("about", "ℹ️ เกี่ยวกับ"),
+        ("general", "การตั้งค่าทั่วไป"),
+        ("account", "บัญชีผู้ใช้"),
+        ("subscription", "สมาชิก"),
+        ("pso2", "PSO2"),
+        ("tweaker", "PSO2 Tweaker"),
+        ("connection", "การเชื่อมต่อ"),
+        ("appearance", "การแสดงผล"),
+        ("notifications", "การแจ้งเตือน"),
+        ("diagnostics", "การวินิจฉัย"),
+        ("about", "เกี่ยวกับ"),
     ]
 
     def __init__(
@@ -74,8 +75,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_launch_game = on_launch_game
 
         self.title("การตั้งค่า — Neko Family Proxy")
-        window_width = 740
-        window_height = 520
+        window_width = 880
+        window_height = 600
         self.geometry(f"{window_width}x{window_height}")
         self.resizable(False, False)
         self.configure(fg_color=PALETTE.background)
@@ -98,6 +99,7 @@ class SettingsWindow(ctk.CTkToplevel):
             pass
 
         self._build_layout()
+        style_native_title_bar(self, PALETTE)
         apply_rounded_window_shape(self, radius=20)
 
     def _build_layout(self) -> None:
@@ -105,36 +107,28 @@ class SettingsWindow(ctk.CTkToplevel):
             self,
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
-            border_width=2,
-            corner_radius=16,
+            border_width=1,
+            corner_radius=14,
         )
-        shell.pack(fill="both", expand=True, padx=10, pady=10)
+        shell.pack(fill="both", expand=True, padx=8, pady=8)
 
         # Header bar
         header = ctk.CTkFrame(shell, fg_color="transparent")
-        header.pack(fill="x", padx=16, pady=(12, 8))
+        header.pack(fill="x", padx=16, pady=(10, 6))
 
         ctk.CTkLabel(
             header,
-            text="⚙ การตั้งค่า (Settings)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
-            text_color=PALETTE.primary_dark,
+            text="⚙ การตั้งค่า",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            text_color=PALETTE.text,
         ).pack(side="left")
-
-        secondary_button(
-            header,
-            "×",
-            self.close,
-            width=30,
-            height=26,
-        ).pack(side="right")
 
         self._drag_handler = WindowDragHandler(self)
         self._drag_handler.bind_to(header)
 
         # Body container: Left Sidebar + Right Content
         body = ctk.CTkFrame(shell, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
         # --------------------------------------------------------------
         # Left Navigation Sidebar
@@ -144,10 +138,10 @@ class SettingsWindow(ctk.CTkToplevel):
             fg_color=PALETTE.surface,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=12,
-            width=200,
+            corner_radius=10,
+            width=220,
         )
-        self._sidebar.pack(side="left", fill="y", padx=(0, 8), pady=0)
+        self._sidebar.pack(side="left", fill="y", padx=(0, 10), pady=0)
         self._sidebar.pack_propagate(False)
 
         # Search bar
@@ -155,10 +149,13 @@ class SettingsWindow(ctk.CTkToplevel):
         self._search_entry = ctk.CTkEntry(
             self._sidebar,
             textvariable=self._search_var,
-            placeholder_text="🔍 ค้นหาการตั้งค่า...",
+            placeholder_text="ค้นหาการตั้งค่า...",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            height=30,
-            corner_radius=8,
+            fg_color=PALETTE.card,
+            border_color=PALETTE.border,
+            border_width=1,
+            height=32,
+            corner_radius=6,
         )
         self._search_entry.pack(fill="x", padx=8, pady=(8, 8))
         self._search_var.trace_add("write", self._filter_categories)
@@ -175,10 +172,10 @@ class SettingsWindow(ctk.CTkToplevel):
                 anchor="w",
                 fg_color="transparent",
                 text_color=PALETTE.text,
-                hover_color=PALETTE.card,
+                hover_color="#F3F4F6",
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-                height=32,
-                corner_radius=8,
+                height=34,
+                corner_radius=6,
                 command=lambda k=key: self.select_category(k),
             )
             btn.pack(fill="x", pady=1)
@@ -223,7 +220,7 @@ class SettingsWindow(ctk.CTkToplevel):
                 btn.configure(
                     fg_color="transparent",
                     text_color=PALETTE.text,
-                    hover_color=PALETTE.card,
+                    hover_color="#F3F4F6",
                 )
         for page in self._pages.values():
             page.pack_forget()
@@ -239,60 +236,45 @@ class SettingsWindow(ctk.CTkToplevel):
                 btn.pack_forget()
 
     # ------------------------------------------------------------------
-    # Page Builders (B1 Foundation)
+    # Page Builders (B1.1 Foundation)
     # ------------------------------------------------------------------
     def _create_general_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self._content_area, fg_color="transparent")
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="ตั้งค่าทั่วไป (General Settings)",
+            text="การตั้งค่าทั่วไป",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         item1 = ctk.CTkFrame(c, fg_color="transparent")
-        item1.pack(fill="x", padx=16, pady=6)
+        item1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             item1,
-            text="📌 การเชื่อมต่ออัตโนมัติ (Auto Connect):",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="การเชื่อมต่ออัตโนมัติ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             item1,
-            text="เปิดใช้งาน (ทำงานเมื่อพบ pso2.exe)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="เปิดใช้งาน (เมื่อพบ pso2.exe)",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
 
         item2 = ctk.CTkFrame(c, fg_color="transparent")
-        item2.pack(fill="x", padx=16, pady=6)
+        item2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             item2,
-            text="📌 ย่อเข้า System Tray:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            item2,
-            text="เปิดใช้งาน (กด — เพื่อซ่อนหน้าต่าง)",
+            text="ย่อเข้า System Tray",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
-        ).pack(side="right")
-
-        item3 = ctk.CTkFrame(c, fg_color="transparent")
-        item3.pack(fill="x", padx=16, pady=6)
-        ctk.CTkLabel(
-            item3,
-            text="📌 เปิดพร้อม Windows (Start with Windows):",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
         ).pack(side="left")
         ctk.CTkLabel(
-            item3,
-            text="ยังไม่เปิดใช้งาน (รองรับในเวอร์ชันถัดไป)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            item2,
+            text="เปิดใช้งาน",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="right")
         return page
@@ -302,32 +284,40 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="ข้อมูลบัญชีผู้ใช้ (Account)",
+            text="บัญชีผู้ใช้",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
-
-        row = ctk.CTkFrame(c, fg_color="transparent")
-        row.pack(fill="x", padx=16, pady=6)
-        ctk.CTkLabel(
-            row,
-            text="👤 ชื่อผู้ใช้:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
+
+        row1 = ctk.CTkFrame(c, fg_color="transparent")
+        row1.pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(
+            row1,
+            text="ชื่อผู้ใช้",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
-            row,
+            row1,
             textvariable=self._account_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.primary,
-        ).pack(side="left", padx=8)
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            text_color=PALETTE.text,
+        ).pack(side="right")
 
+        row2 = ctk.CTkFrame(c, fg_color="transparent")
+        row2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
-            c,
-            text="ℹ️ การเปลี่ยนรหัสผ่านและออกจากระบบจะเปิดใช้งานสมบูรณ์ในรอบ T10B2",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            row2,
+            text="สถานะบัญชี",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=16, pady=(8, 12))
+        ).pack(side="left")
+        ctk.CTkLabel(
+            row2,
+            text="ปกติ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            text_color=PALETTE.success,
+        ).pack(side="right")
         return page
 
     def _create_subscription_page(self) -> ctk.CTkFrame:
@@ -335,47 +325,55 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="ข้อมูลสมาชิก & วันใช้งาน (Subscription)",
+            text="สมาชิก",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="⏳ วันคงเหลือ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="สถานะสมาชิก",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
-            textvariable=self._entitlement_days_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="ใช้งานได้",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
-        ).pack(side="left", padx=8)
+        ).pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=6)
+        row2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row2,
-            text="📅 วันหมดอายุ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="วันคงเหลือ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row2,
+            textvariable=self._entitlement_days_var,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            text_color=PALETTE.success,
+        ).pack(side="right")
+
+        row3 = ctk.CTkFrame(c, fg_color="transparent")
+        row3.pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(
+            row3,
+            text="วันหมดอายุ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            row3,
             textvariable=self._entitlement_expiry_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
-        ).pack(side="left", padx=8)
-
-        ctk.CTkLabel(
-            c,
-            text="ℹ️ แบบฟอร์มเติมวันใช้งานด้วยคูปองจะเปิดใช้งานสมบูรณ์ในรอบ T10B2",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=16, pady=(8, 12))
+        ).pack(side="right")
         return page
 
     def _create_pso2_page(self) -> ctk.CTkFrame:
@@ -383,38 +381,38 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="ตั้งค่าเกม PSO2 (Game Settings)",
+            text="PSO2",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="🎮 ที่อยู่ไฟล์เปิดเกม:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="ตำแหน่งไฟล์เกม (pso2.exe)",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
             textvariable=self._game_path_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-        ).pack(side="left", padx=8)
+        ).pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=6)
+        row2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row2,
-            text="🔍 ตรวจจับตัวเกมอัตโนมัติ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="การตรวจจับเกมอัตโนมัติ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row2,
-            text="เปิดใช้งาน (pso2.exe)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="เปิดใช้งาน",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
         return page
@@ -424,25 +422,25 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="ตั้งค่า PSO2 Tweaker",
+            text="PSO2 Tweaker",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="🛠 Tweaker Executable:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="ตำแหน่งโปรแกรม Tweaker",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
             textvariable=self._game_path_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-        ).pack(side="left", padx=8)
+        ).pack(side="right")
         return page
 
     def _create_connection_page(self) -> ctk.CTkFrame:
@@ -450,38 +448,38 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="ข้อมูลการเชื่อมต่อ (Connection)",
+            text="การเชื่อมต่อ",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="🌐 โซนเซิร์ฟเวอร์:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="ภูมิภาค",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
-            text="Japan (Tokyo) — AWS Lightsail",
+            text="Japan (Tokyo)",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.primary,
         ).pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=6)
+        row2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row2,
-            text="🔒 โหมดการเชื่อมต่อ:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="โหมด",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row2,
-            text="Automatic High-Speed Direct Tunnel",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="อัตโนมัติ",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
         return page
@@ -491,18 +489,18 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="การแสดงผล (Appearance)",
+            text="การแสดงผล",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="🎨 ธีมสี:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="ธีมสี",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
@@ -512,12 +510,12 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=6)
+        row2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row2,
-            text="🔤 รูปแบบตัวอักษร:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="รูปแบบตัวอักษร",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row2,
@@ -532,23 +530,23 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="การแจ้งเตือน (Notifications)",
+            text="การแจ้งเตือน",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="🔔 การแจ้งเตือนในโปรแกรม:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="การแจ้งเตือนในโปรแกรม",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
-            text="เปิดใช้งาน (In-App Toast Active)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text="เปิดใช้งาน",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
         return page
@@ -558,34 +556,34 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="การวินิจฉัย & สนับสนุน (Diagnostics)",
+            text="การวินิจฉัย",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="🩺 สถานะ ProxyCore:",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="สถานะ ProxyCore",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
             textvariable=self._proxy_connection_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.primary,
         ).pack(side="right")
 
         if self._debug_log_dir:
             row2 = ctk.CTkFrame(c, fg_color="transparent")
-            row2.pack(fill="x", padx=16, pady=6)
+            row2.pack(fill="x", padx=16, pady=4)
             ctk.CTkLabel(
                 row2,
-                text="📁 โฟลเดอร์บันทึก Log:",
-                font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-                text_color=PALETTE.text,
+                text="โฟลเดอร์บันทึก Log",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                text_color=PALETTE.text_muted,
             ).pack(side="left")
             secondary_button(
                 row2,
@@ -594,13 +592,6 @@ class SettingsWindow(ctk.CTkToplevel):
                 width=90,
                 height=26,
             ).pack(side="right")
-
-        ctk.CTkLabel(
-            c,
-            text="ℹ️ เครื่องมือวินิจฉัยและหน้าต่าง Log Viewer แบบละเอียดจะเปิดใช้งานในรอบ T10B2",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(anchor="w", padx=16, pady=(8, 12))
         return page
 
     def _open_logs_folder(self) -> None:
@@ -615,18 +606,18 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="เกี่ยวกับโปรแกรม (About)",
+            text="เกี่ยวกับ",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
-            text_color=PALETTE.primary_dark,
-        ).pack(anchor="w", padx=16, pady=(12, 6))
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
 
         row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=6)
+        row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="เวอร์ชันโปรแกรม (Launcher):",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="เวอร์ชันโปรแกรม",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
@@ -636,12 +627,12 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=6)
+        row2.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row2,
-            text="สถาปัตยกรรม (Architecture):",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.text,
+            text="สถาปัตยกรรม",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row2,

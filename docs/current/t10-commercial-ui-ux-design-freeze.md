@@ -483,3 +483,37 @@ Phase T10B1 implements the commercial UI foundation, transforming the authentica
    - Fresh `_MEI` extraction verified upon launch.
    - Sanitized UI screenshots captured for owner visual review.
 
+---
+
+## 9. Phase T10B1.1 — Commercial Visual Polish Implementation (Current Candidate)
+
+```text
+STATUS:                         T10B1.1 VISUAL POLISH CANDIDATE — OWNER REVIEW PENDING
+PREDECESSOR:                    T10B1 COMMERCIAL UI FOUNDATION (Functional: PASS, Visual: REVISED)
+OBJECTIVE:                      Refine UI aesthetics, hierarchy, brand identity, and remove developer language
+```
+
+### Key Visual Refinements Implemented:
+1. **Developer / Phase Language Removal**:
+   - All references to internal phases (`T10`, `T10B1`, `T10B2`, `รอบถัดไป`, `implementation`, `not implemented`, `pending owner review`) removed from customer-facing UI.
+   - Unimplemented settings rows and preview notices cleanly omitted.
+
+2. **Window Chrome Authority**:
+   - Native Windows DWM title bar styling with single window-control authority.
+   - Main window retains only the `⚙` (Settings) action in client area; internal duplicate `—` and `×` controls removed.
+   - Settings window uses native Windows title bar close control; internal duplicate `×` button removed.
+
+3. **Neko Brand Identity & Header**:
+   - Compact Neko Family logo (`image_11.png`, 140x50) restored to Main header alongside clean typography.
+   - Compact launcher footprint with `DESIGN_WIDTH = 440` and `DESIGN_HEIGHT = 580`, eliminating excessive lower blank space.
+
+4. **Visual Hierarchy & Theme Tokens**:
+   - Preserved Neko Pink as purposeful brand accent (buttons, selected nav, gear, subtle highlights).
+   - Replaced all harsh pink card borders with subtle low-contrast structural borders (`#E5E7EB`).
+   - Clean tabular alignment across Membership and Network cards.
+
+5. **Customer Copy & Consistency**:
+   - Primary Thai localization across Main cards and Settings pages (สมาชิก, เครือข่าย, ใช้งานได้, การตั้งค่าทั่วไป, บัญชีผู้ใช้, การเชื่อมต่อ, etc.).
+   - Connection page displays customer-safe region `Japan (Tokyo)` and mode `อัตโนมัติ` without raw infrastructure or vendor terminology (no AWS, Lightsail, Shadowsocks, Direct Tunnel).
+   - Version strictly sourced from `neko_launcher.__version__`.
+

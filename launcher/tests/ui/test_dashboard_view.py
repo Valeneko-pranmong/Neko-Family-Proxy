@@ -41,8 +41,11 @@ def test_dashboard_view_source_has_no_customer_management_controls() -> None:
     assert "DEBUG MODE" not in source
     assert "TCP:" not in source
     assert "DNS:" not in source
-    assert "รับข้อมูล (RX)" not in source
     assert "ส่งข้อมูล (TX)" not in source
+    # Verify ping absent
+    assert "Ping" not in source
+    assert "ping" not in source.split("class DashboardView")[1]
+    assert "ACTIVE" not in source.split("class DashboardView")[1].split("def update_status_role")[0]
 
 
 def test_dashboard_view_construction_and_bindings() -> None:
@@ -83,6 +86,9 @@ def test_dashboard_view_construction_and_bindings() -> None:
         view.update_status_role("warning")
         view.update_status_role("danger")
         view.update_status_role("success")
+
+        view.set_tier_badge("ใช้งานได้", role="success")
+        view.set_tier_badge("หมดอายุ", role="danger")
     finally:
         try:
             root.destroy()

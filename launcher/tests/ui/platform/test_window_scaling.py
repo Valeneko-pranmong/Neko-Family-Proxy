@@ -44,10 +44,10 @@ class FakeSizingRoot:
         self.events.append(f"geometry:{value}")
 
     def winfo_width(self) -> int:
-        return 480
+        return 440
 
     def winfo_height(self) -> int:
-        return 760
+        return 580
 
 
 def test_fit_portrait_window_pure_calculation() -> None:
@@ -61,19 +61,19 @@ def test_fit_portrait_window_pure_calculation() -> None:
         margin_ratio=SCREEN_MARGIN_RATIO,
     )
 
-    assert geometry.logical_width == 480
-    assert geometry.logical_height == 760
+    assert geometry.logical_width == 440
+    assert geometry.logical_height == 580
     assert geometry.widget_scale == 1.0
-    assert geometry.x == 720
-    assert geometry.y == 160
+    assert geometry.x == 740
+    assert geometry.y == 250
 
 
 def test_center_window_calculation() -> None:
     """Test the pure centering calculation function."""
-    x, y = calculate_centered_position(1920, 1080, 480, 760)
+    x, y = calculate_centered_position(1920, 1080, 440, 580)
 
-    assert x == 720
-    assert y == 160
+    assert x == 740
+    assert y == 250
 
 
 def test_fit_portrait_window_adapter_100_percent_scaling(monkeypatch: Any) -> None:
@@ -85,9 +85,9 @@ def test_fit_portrait_window_adapter_100_percent_scaling(monkeypatch: Any) -> No
     fit_portrait_window(root)  # type: ignore[arg-type]
 
     assert "update_idletasks" in root.events
-    assert "minsize:480x760" in root.events
-    assert "maxsize:480x760" in root.events
-    assert "geometry:480x760+720+160" in root.events
+    assert "minsize:440x580" in root.events
+    assert "maxsize:440x580" in root.events
+    assert "geometry:440x580+740+250" in root.events
     assert set_scaling_calls == [1.0]
 
 
@@ -101,7 +101,7 @@ def test_fit_portrait_window_adapter_125_percent_scaling(monkeypatch: Any) -> No
 
     fit_portrait_window(root)  # type: ignore[arg-type]
 
-    assert "minsize:384x608" in root.events
+    assert "minsize:352x464" in root.events
     assert set_scaling_calls == [0.8]
 
 
@@ -115,28 +115,25 @@ def test_fit_portrait_window_adapter_150_percent_scaling(monkeypatch: Any) -> No
 
     fit_portrait_window(root)  # type: ignore[arg-type]
 
-    # At 720p logical height, max safe height is 720 * 0.9 = 648
-    # Design height is 760, so scale = 648/760 = 0.8526...
-    assert set_scaling_calls[0] < 1.0
+    assert "minsize:293x386" in root.events
 
 
-def test_fit_portrait_window_adapter_short_notebook(monkeypatch: Any) -> None:
-    # 1366x768 display at 100%
-    root = FakeSizingRoot(1366, 768)
+def test_fit_portrait_window_adapter_short_display(monkeypatch: Any) -> None:
+    # 800x480 ultra-compact display at 100%
+    root = FakeSizingRoot(800, 480)
     set_scaling_calls: list[float] = []
     monkeypatch.setattr(ctk, "set_widget_scaling", lambda s: set_scaling_calls.append(s))
     monkeypatch.setattr(ctk.ScalingTracker, "get_window_scaling", lambda r: 1.0)
 
     fit_portrait_window(root)  # type: ignore[arg-type]
 
-    # At 768 logical height, max safe height is 768 * 0.9 = 691.2
-    # Design height is 760, so scale = 691.2/760 = ~0.909
+    # Available height is 480 * 0.92 = 441.6 < 580, so scale down occurs
     assert set_scaling_calls[0] < 1.0
 
 
 def test_center_window_adapter() -> None:
     root = FakeSizingRoot(1920, 1080)
-    center_window(root, (480, 760))  # type: ignore[arg-type]
+    center_window(root, (440, 580))  # type: ignore[arg-type]
     
     assert "update_idletasks" in root.events
-    assert "geometry:480x760+720+160" in root.events
+    assert "geometry:440x580+740+250" in root.events

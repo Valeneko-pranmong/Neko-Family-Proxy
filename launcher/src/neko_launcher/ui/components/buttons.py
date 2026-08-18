@@ -18,8 +18,8 @@ def primary_button(
         fg_color=PALETTE.primary,
         hover_color=PALETTE.primary_hover,
         text_color=PALETTE.on_primary,
-        font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
-        corner_radius=18,
+        font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+        corner_radius=10,
         height=36,
         command=command,
     )
@@ -40,11 +40,11 @@ def secondary_button(
         parent,
         text=text,
         fg_color="transparent",
-        hover_color=PALETTE.card,
-        border_color=PALETTE.primary_soft,
-        border_width=2,
-        text_color=PALETTE.primary_dark,
-        corner_radius=14,
+        hover_color="#F3F4F6",
+        border_color=PALETTE.border,
+        border_width=1,
+        text_color=PALETTE.text,
+        corner_radius=8,
         height=height,
         font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
         command=command,
@@ -55,12 +55,12 @@ def secondary_button(
 def card(parent: ctk.CTkBaseClass) -> ctk.CTkFrame:
     frame = ctk.CTkFrame(
         parent,
-        fg_color=PALETTE.surface,
+        fg_color=PALETTE.card,
         border_color=PALETTE.border,
         border_width=1,
-        corner_radius=12,
+        corner_radius=10,
     )
-    frame.pack(fill="x", padx=8, pady=6)
+    frame.pack(fill="x", padx=8, pady=4)
     return frame
 
 

@@ -74,6 +74,48 @@ def test_connection_page_security_contract() -> None:
     assert "8388" not in source
     assert "aes-128-gcm" not in source
     assert "Shadowsocks" not in source.split("_create_connection_page")[1].split("def _create_appearance_page")[0]
+    # Verify no raw vendor/infrastructure marketing terms in customer UI
+    assert "AWS" not in source
+    assert "Lightsail" not in source
+    assert "Direct Tunnel" not in source
+
+
+def test_settings_window_has_no_phase_or_developer_language() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "neko_launcher"
+        / "ui"
+        / "settings_window.py"
+    ).read_text(encoding="utf-8")
+
+    forbidden_tokens = [
+        "T10",
+        "T10B1",
+        "T10B2",
+        "รอบถัดไป",
+        "เวอร์ชันถัดไป",
+        "not implemented",
+        "pending owner review",
+    ]
+    for token in forbidden_tokens:
+        assert token not in source
+
+
+def test_settings_search_placeholder_and_no_duplicate_close() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "neko_launcher"
+        / "ui"
+        / "settings_window.py"
+    ).read_text(encoding="utf-8")
+
+    assert "ค้นหาการตั้งค่า..." in source
+    # Header should not have a duplicate internal close button
+    header_section = source.split("# Header bar")[1].split("# Body container")[0]
+    assert 'secondary_button(\n            header,\n            "×"' not in header_section
+    assert '"×"' not in header_section
 
 
 def test_app_window_settings_single_instance_contract() -> None:
@@ -157,7 +199,7 @@ def test_app_window_close_cleans_settings_window() -> None:
     assert window._settings_window is None
 
 
-def test_app_window_source_has_settings_gear_control() -> None:
+def test_app_window_source_has_settings_gear_control_only() -> None:
     source = (
         Path(__file__).parents[2]
         / "src"
@@ -169,3 +211,7 @@ def test_app_window_source_has_settings_gear_control() -> None:
     assert "⚙" in source
     assert "self._open_settings_window" in source
     assert "self._settings_window" in source
+    # Verify no duplicate internal minimize / close buttons in _build_window_controls
+    controls_section = source.split("def _build_window_controls")[1].split("def _open_settings_window")[0]
+    assert '"—"' not in controls_section
+    assert '"×"' not in controls_section

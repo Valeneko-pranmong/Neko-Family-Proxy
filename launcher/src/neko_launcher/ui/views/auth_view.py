@@ -33,9 +33,7 @@ class AuthView:
     ) -> None:
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
         intro = card(self.frame)
-        intro.configure(height=540)
-        intro.pack_propagate(False)
-        intro.pack_configure(side="top", fill="x", expand=False, padx=8, pady=8)
+        intro.pack(fill="both", expand=True, padx=8, pady=(0, 4))
 
         top_row = ctk.CTkFrame(intro, fg_color="transparent")
         top_row.pack(fill="x", padx=14, pady=(6, 0))
@@ -44,7 +42,7 @@ class AuthView:
             top_row,
             text="เข้าสู่ระบบเพื่อเริ่มใช้งาน",
             text_color=PALETTE.primary_dark,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
         )
         self._auth_hint.pack(side="left")
 
@@ -52,57 +50,51 @@ class AuthView:
             top_row,
             textvariable=status_var,
             text_color=PALETTE.text_muted,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
         )
         self._status_badge.pack(side="right")
 
         title_frame = ctk.CTkFrame(intro, fg_color="transparent")
-        title_frame.pack(fill="x", pady=(4, 2))
+        title_frame.pack(fill="x", pady=(2, 2))
         ctk.CTkLabel(
             title_frame,
             text="เข้าสู่ระบบและสมัครสมาชิก",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=18, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
             text_color=PALETTE.text,
         ).pack(anchor="center")
-        ctk.CTkLabel(
-            title_frame,
-            text="— ♥ —",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
-            text_color=PALETTE.primary_soft,
-        ).pack(anchor="center", pady=(0, 6))
 
         self._tab_controls = ctk.CTkFrame(
             intro,
             fg_color="#F3F4F6",
-            corner_radius=22,
-            height=44,
+            corner_radius=10,
+            height=36,
         )
-        self._tab_controls.pack(fill="x", padx=30, pady=(6, 6))
+        self._tab_controls.pack(fill="x", padx=20, pady=(6, 6))
         self._tab_controls.pack_propagate(False)
 
         self._login_tab_btn = ctk.CTkButton(
             self._tab_controls,
             text="เข้าสู่ระบบ",
-            fg_color=PALETTE.card,
-            text_color=PALETTE.primary,
-            hover_color=PALETTE.card,
-            corner_radius=18,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            fg_color=PALETTE.primary,
+            text_color=PALETTE.on_primary,
+            hover_color=PALETTE.primary_hover,
+            corner_radius=8,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             command=lambda: self._switch_tab("login"),
         )
-        self._login_tab_btn.pack(side="left", padx=4, pady=4, expand=True, fill="both")
+        self._login_tab_btn.pack(side="left", padx=3, pady=3, expand=True, fill="both")
 
         self._register_tab_btn = ctk.CTkButton(
             self._tab_controls,
             text="สมัครสมาชิก",
             fg_color="transparent",
-            text_color="#888888",
+            text_color=PALETTE.text_muted,
             hover_color="#E5E7EB",
-            corner_radius=18,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            corner_radius=8,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             command=lambda: self._switch_tab("register"),
         )
-        self._register_tab_btn.pack(side="left", padx=4, pady=4, expand=True, fill="both")
+        self._register_tab_btn.pack(side="left", padx=3, pady=3, expand=True, fill="both")
 
         self._login_frame = ctk.CTkFrame(intro, fg_color="transparent")
         self._register_frame = ctk.CTkFrame(intro, fg_color="transparent")
@@ -194,19 +186,27 @@ class AuthView:
     def _switch_tab(self, tab: str) -> None:
         if tab == "login":
             self._login_tab_btn.configure(
-                fg_color=PALETTE.card, text_color=PALETTE.primary, hover_color=PALETTE.card
+                fg_color=PALETTE.primary,
+                text_color=PALETTE.on_primary,
+                hover_color=PALETTE.primary_hover,
             )
             self._register_tab_btn.configure(
-                fg_color="transparent", text_color="#888888", hover_color="#E5E7EB"
+                fg_color="transparent",
+                text_color=PALETTE.text_muted,
+                hover_color="#E5E7EB",
             )
             self._register_frame.pack_forget()
             self._login_frame.pack(fill="both", expand=True)
         else:
             self._register_tab_btn.configure(
-                fg_color=PALETTE.primary, text_color=PALETTE.on_primary, hover_color=PALETTE.primary_hover
+                fg_color=PALETTE.primary,
+                text_color=PALETTE.on_primary,
+                hover_color=PALETTE.primary_hover,
             )
             self._login_tab_btn.configure(
-                fg_color="transparent", text_color="#888888", hover_color="#E5E7EB"
+                fg_color="transparent",
+                text_color=PALETTE.text_muted,
+                hover_color="#E5E7EB",
             )
             self._login_frame.pack_forget()
             self._register_frame.pack(fill="both", expand=True)
