@@ -1,0 +1,456 @@
+# NEKO FAMILY PROXY — T10A COMMERCIAL LAUNCHER UI/UX DESIGN FREEZE
+
+```text
+DOCUMENT:                       docs/current/t10-commercial-ui-ux-design-freeze.md
+STATUS:                         FROZEN
+PHASE:                          T10A
+AUTHORITY:                      docs/current/t10-commercial-ui-ux-design-freeze.md
+BASE_SHA:                       8d4543553622f927d2d62dd054715a6523d82698
+BASE_BRANCH:                    main
+BRANCH:                         feature/t10-commercial-launcher-ui
+SUCCESSOR:                      T10B (Commercial Launcher UI Implementation)
+LAST_UPDATED:                   2026-08-18
+```
+
+---
+
+## 1. Executive Product Direction
+
+The commercial Neko Family Proxy Launcher must strictly transition from a **developer/customer control utility** into a **read-only customer dashboard with a separate Settings window**.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                      PRODUCT PRINCIPLE                      │
+├─────────────────────────────────────────────────────────────┤
+│ MAIN_WINDOW       = READ-ONLY CUSTOMER STATUS DASHBOARD     │
+│ SETTINGS_WINDOW   = ALL USER CONFIGURATION & MANAGEMENT     │
+│ DIAGNOSTICS       = SUPPORT & TROUBLESHOOTING IN SETTINGS   │
+│ MAIN_CONTROLS     = NONE (Only Gear ⚙ and Window Chrome)    │
+│ MAIN_ACTIONS      = NONE (Automatic proxy connection on PSO2)│
+└─────────────────────────────────────────────────────────────┘
+```
+
+The typical customer must never encounter raw network internals (such as *Named Pipes, SOCKS endpoints, redirectors, TCP connections, or raw packet counters*) on the primary screen. All technical observability tools remain fully accessible to support staff and power users under **Settings > Diagnostics**.
+
+---
+
+## 2. Current UI Source Map
+
+| Component / File | Current Responsibility | Proposed T10 Target |
+| :--- | :--- | :--- |
+| [`app_window.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/app_window.py) | Root Tk window, view switcher, event loop, process polling, modal dialogs, debug dialog | Pure UI Composition Root, window lifecycle, background event dispatch, Settings window lifecycle owner |
+| [`theme.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/theme.py) | Theme colors (`PinkPalette`), font family (`Sarabun`), font loading | Extended semantic palette tokens (Success, Warning, Danger, Surface, Border) |
+| [`views/auth_view.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/views/auth_view.py) | Login and Registration tabs, entry fields, validation | Preserved in T10A/T10B (Pre-auth stage) |
+| [`views/recovery_view.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/views/recovery_view.py) | Account recovery code verification and password reset | Preserved in T10A/T10B (Pre-auth stage) |
+| [`views/dashboard_view.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/views/dashboard_view.py) | Monolithic post-login panel containing account, coupon, proxy status, telemetry, game path, Tweaker launch | Refactored into pure read-only customer status dashboard; all configuration moved to Settings |
+| [`components/buttons.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/components/buttons.py) | Primary button, secondary button, card frame, field label, icon entry | Reused across Main and Settings pages |
+| [`components/toast.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/components/toast.py) | Transient floating notifications | Reused for feedback across Main and Settings |
+| [`platform/window_chrome.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/platform/window_chrome.py) | Win32 DWM rounded corners, borderless dragging, title styling | Reused for Main and Settings windows |
+| [`platform/window_scaling.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/platform/window_scaling.py) | DPI calculation, window auto-fit and centering | Reused with dedicated geometry calculation for Settings |
+| [`platform/system_tray.py`](file:///D:/Github/Neko-Family-Proxy/launcher/src/neko_launcher/ui/platform/system_tray.py) | Tray icon and background restore/close queue | Preserved; toggle configuration exposed in Settings > General |
+
+---
+
+## 3. Current Business Logic Bindings & Ownership Map
+
+Every UI control, state variable, and backend binding has been audited:
+
+| Item / Action | UI Owner | State Owner | Action Owner | Service / Controller Call | Persistence | Can Move to Settings |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Root Window** | `AppWindow` | `AppWindow` | `AppWindow.close()` | `LauncherService.shutdown()` | None | **NO** (Root lifecycle) |
+| **Dashboard** | `DashboardView` | `AppState` / Tk Vars | `AppWindow` | Multiple | None | **CONDITIONAL** (Read-only on Main, Controls in Settings) |
+| **Login** | `AuthView` | `AppState.auth_status` | `AppWindow._login()` | `LauncherService.sign_in()` | Keyring / SecureStore | **NO** (Pre-auth) |
+| **Recovery** | `RecoveryView` | `AppState.auth_status` | `AppWindow._verify_recovery_code()` | `LauncherService.verify_recovery_code()` | Memory-only session | **NO** (Pre-auth) |
+| **Password Dialog** | `open_password_dialog` | `tk.StringVar` | `AppWindow._change_password()` | `LauncherService.change_password()` | Supabase Auth | **YES** (Move to Settings > Account) |
+| **Debug Dialog** | `AppWindow._debug_dialog` | `CoreDiagnosticsRecorder` | `AppWindow._show_debug_dialog()` | `diagnostics.snapshot()` | Local log files | **YES** (Move to Settings > Diagnostics) |
+| **System Tray** | `SystemTrayManager` | `AppWindow._tray_manager` | `drain_tray_actions()` | Native tray loop | None | **NO** (Integration stays, config in Settings) |
+| **Game Path** | `DashboardView` | `AppWindow._game_path` | `AppWindow._choose_game()` | File dialog + text write | `%LOCALAPPDATA%/NEKO FAMILY/tweaker.path` | **YES** (Move to Settings > PSO2) |
+| **Auto-Launch** | `DashboardView` | `AppWindow._auto_launch` | `AppWindow._auto_launch_tweaker()` | `LauncherService.launch_tweaker()` | Memory default | **YES** (Move to Settings > PSO2) |
+| **Coupon Redeem** | `DashboardView` | `AppWindow._coupon_code` | `AppWindow._redeem_coupon()` | `LauncherService.redeem_coupon()` | Supabase DB RPC | **YES** (Move to Settings > Subscription) |
+| **Logout** | `DashboardView` | `AppState.auth_status` | `AppWindow._sign_out()` | `LauncherService.sign_out()` | Keyring deletion | **YES** (Move to Settings > Account) |
+| **Password Change** | `DashboardView` | `AppWindow._new_password` | `AppWindow._change_password()` | `LauncherService.change_password()` | Supabase Auth | **YES** (Move to Settings > Account) |
+| **Game Launch** | `DashboardView` | `AppState.game_status` | `AppWindow._launch_game()` | `LauncherService.launch_tweaker()` | None | **YES** (Move to Settings > PSO2) |
+| **Game Detection** | `AppWindow` | `AppState.game_process_running`| `AppWindow._poll_game_process()`| `is_any_process_running()` | None | **NO** (Background loop stays in AppWindow) |
+| **Core State** | `AppWindow` | `AppState.proxy_status` | `ApplicationController.dispatch()` | `AuthorizedProxyGateway` | None | **NO** (Projected to UI) |
+| **Telemetry State**| `AppWindow` | `TelemetryState` | `NamedPipeCoreTelemetryClient` | `\\.\pipe\NekoProxyCoreTelemetry` | None | **NO** (Projected to UI) |
+| **Entitlement** | `AppWindow` | `AppState.entitlement` | `LauncherService` | `SupabaseGateway.get_user_entitlement()` | Supabase DB | **YES** (Summary on Main, details in Settings) |
+| **Account Info** | `AppWindow` | `AppState.user_email` | `LauncherService` | `SupabaseGateway` | Keyring | **YES** (Summary on Main, details in Settings) |
+| **Theme** | `neko_launcher.ui.theme`| `ctk.ThemeManager` | Static module | CustomTkinter + Win32 GDI | None | **NO** (Theme tokens stay central) |
+| **Window Sizing** | `window_scaling.py` | `AppWindow._window_size` | `fit_portrait_window()` | Win32 DPI Tracker | None | **NO** (Main is portrait, Settings is landscape) |
+| **Window Chrome** | `window_chrome.py` | Win32 HWND | `WindowDragHandler` | `ctypes.windll.dwmapi` | None | **NO** (Shared platform helper) |
+
+---
+
+## 4. Main Dashboard Information Architecture
+
+Following successful login or session restoration, the Main Window displays a clean, vertical status card hierarchy with **zero configuration forms or developer controls**:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ NEKO FAMILY PSO2NGS                                   ⚙ ─ × │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│                   ●  พ ร้ อ ม ใ ช้ ง า น                    │
+│                      กำลังรอเปิด PSO2                       │
+│                                                             │
+│ ─────────────────────────────────────────────────────────── │
+│                                                             │
+│  MEMBERSHIP                                                 │
+│  👤 zalovenext                                    NEKO PRO  │
+│  ⏳ เหลือ 72 วัน (หมดอายุ 28 ต.ค. 2026 14:30)               │
+│                                                             │
+│ ─────────────────────────────────────────────────────────── │
+│                                                             │
+│  NETWORK                                                    │
+│  📶 Ping                   -- ms                            │
+│  ▼ Download               0 KB/s                            │
+│  ▲ Upload                 0 KB/s                            │
+│  ⏱ Connected              00:00:00                          │
+│                                                             │
+│ ─────────────────────────────────────────────────────────── │
+│                                                             │
+│  💡 ระบบจะเชื่อมต่อ Tokyo Proxy อัตโนมัติเมื่อเปิดเกม PSO2   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Main Window Content Breakdown
+1. **Brand & Chrome Header**:
+   - Neko Family Mascot & Logo
+   - Product title: `NEKO FAMILY PROXY PSO2NGS`
+   - Settings Gear Button (`⚙`) to open Settings Window
+   - Native Window Minimize (`—`) and Close (`×`)
+2. **Hero Connection Status Card**:
+   - Status Indicator Pill (e.g. `● พร้อมใช้งาน`, `● กำลังเชื่อมต่อ...`, `● เชื่อมต่อแล้ว`, `● หมดอายุ`)
+   - Human-friendly subtitle description
+3. **Membership Card**:
+   - Username badge
+   - Membership tier badge (`NEKO PRO` / `ACTIVE`)
+   - Remaining active days and formatted expiry timestamp
+4. **Network Card**:
+   - Latency (Ping in ms)
+   - Real-time Download speed (KB/s or MB/s)
+   - Real-time Upload speed (KB/s or MB/s)
+   - Active session duration (`HH:MM:SS`)
+5. **Passive Customer Guidance Footer**:
+   - Reassuring guidance note: *"ระบบจะเชื่อมต่ออัตโนมัติเมื่อตรวจพบเกม PSO2"*
+   - Version tag: `v1.0.0`
+
+---
+
+## 5. Settings Information Architecture
+
+The Settings window is a standalone, single-instance top-level desktop window (`CTkToplevel`) structured with a left-hand navigation sidebar and right-hand page content:
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  ⚙ การตั้งค่า (Settings)                                               ─ × │
+├────────────────────────┬─────────────────────────────────────────────────────┤
+│  🔍 ค้นหาการตั้งค่า...    │  ACCOUNT SETTINGS                                   │
+│                        │                                                     │
+│  📌 ทั่วไป (General)     │  ข้อมูลบัญชี                                         │
+│  👤 บัญชี (Account)     │  ชื่อผู้ใช้: zalovenext                             │
+│  💎 สมาชิก (Subscription)│  สถานะ: ใช้งานได้ (Active)                          │
+│  🎮 PSO2               │                                                     │
+│  🛠 PSO2 Tweaker       │  เปลี่ยนรหัสผ่าน                                     │
+│  🌐 การเชื่อมต่อ        │  [ รหัสผ่านใหม่ .................... ]               │
+│  🎨 การแสดงผล           │  [ ยืนยันรหัสผ่านใหม่ .............. ]               │
+│  🔔 การแจ้งเตือน        │  [ บันทึกรหัสผ่านใหม่ ]                             │
+│  🩺 การวินิจฉัย         │                                                     │
+│  ℹ️ เกี่ยวกับ (About)    │  [ ออกจากระบบ (Sign Out) ]                          │
+└────────────────────────┴─────────────────────────────────────────────────────┘
+```
+
+### Approved Settings Hierarchy
+1. **GENERAL (`ทั่วไป`)**
+   - เปิดพร้อม Windows (Start with Windows)
+   - ย่อเข้า System Tray (Minimize to System Tray on close/minimize)
+   - เชื่อมต่ออัตโนมัติ (Auto connect when game starts)
+2. **ACCOUNT (`บัญชีผู้ใช้`)**
+   - ชื่อผู้ใช้ (Username / User identifier)
+   - เปลี่ยนรหัสผ่าน (Change password form with validation)
+   - ออกจากระบบ (Sign out / Invalidate session)
+3. **SUBSCRIPTION (`วันใช้งาน & สมาชิก`)**
+   - วันคงเหลือ (Remaining days)
+   - วันหมดอายุ (Expiry date & time)
+   - ช่องกรอกคูปอง (Coupon code entry)
+   - ปุ่มเติมวันใช้งาน (Redeem coupon action)
+4. **PSO2 (`เกม PSO2`)**
+   - ที่อยู่ไฟล์เกม (Game executable path / `pso2.exe` or `Tweaker.exe`)
+   - ตรวจจับอัตโนมัติ (Auto process detection status)
+   - พฤติกรรมการเปิดเกม (Launch behavior / Auto-launch on login)
+5. **PSO2 TWEAKER (`PSO2 Tweaker`)**
+   - ที่อยู่ไฟล์ Tweaker (Tweaker.exe Path selector)
+   - ตัวเลือกเปิดเกมที่รองรับ (Launch Tweaker shortcut)
+6. **CONNECTION (`การเชื่อมต่อ`)**
+   - โซนเซิร์ฟเวอร์ (Region: `Japan (Tokyo) - AWS Lightsail`)
+   - โหมดการเชื่อมต่อ (Proxy mode: `High-Speed Direct Tunnel`)
+   - *Security Rule: Never display internal IPs, port 8388, Shadowsocks keys, or ciphers.*
+7. **APPEARANCE (`การแสดงผล`)**
+   - ธีมสี (Theme: `Neko Pink (Light)`)
+   - เริ่มต้นแบบย่อหน้าต่าง (Start minimized)
+8. **NOTIFICATIONS (`การแจ้งเตือน`)**
+   - แจ้งเตือนเมื่อเชื่อมต่อสำเร็จ (Connection notification)
+   - แจ้งเตือนการปิดปรับปรุงเซิร์ฟเวอร์ (Maintenance notice)
+9. **DIAGNOSTICS (`การวินิจฉัย & เครื่องมือสนับสนุน`)**
+   - สถานะ Core & Pipes (Core status, Control Pipe, Telemetry Pipe)
+   - สถิติเครือข่ายเชิงลึก (Active TCP connections, DNS query count, Raw RX/TX bytes)
+   - บันทึกการทำงาน (Live sanitized log viewer)
+   - เปิดโฟลเดอร์ Log (Open logs directory in Windows Explorer)
+   - โหมดทดสอบระบบ (Debug Mode retry action)
+10. **ABOUT (`เกี่ยวกับโปรแกรม`)**
+    - เวอร์ชันโปรแกรม (Launcher version)
+    - เวอร์ชัน Core Engine (Core version)
+    - หมายเลข Build (Build / Commit reference)
+    - ลิขสิทธิ์ (Copyright © 2026 NEKO FAMILY)
+
+---
+
+## 6. Settings Capability Matrix
+
+| Setting Item | Current Runtime Support | Source Location | T10 Implementation Class | Risk | Business Logic Change |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **เปิดพร้อม Windows** | Not implemented | OS Registry | `REQUIRES_NEW_OS_INTEGRATION` / `DEFER_RECOMMENDED` | Medium | NO |
+| **ย่อเข้า System Tray** | Runtime tray exists, setting unpersisted | `system_tray.py` | `REQUIRES_NEW_PERSISTENCE` | Low | NO |
+| **เชื่อมต่ออัตโนมัติ** | Implemented & active | `app_window.py:964` | `EXISTING_BEHAVIOR_NO_SETTINGS_UI` | Low | NO |
+| **Username** | Implemented | `AppState.user_email` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **เปลี่ยนรหัสผ่าน** | Implemented | `LauncherService.change_password` | `EXISTING_UI_BINDING` | Low | NO |
+| **ออกจากระบบ** | Implemented | `LauncherService.sign_out` | `EXISTING_UI_BINDING` | Low | NO |
+| **วันคงเหลือ** | Implemented | `AppState.entitlement` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **วันหมดอายุ** | Implemented | `AppState.entitlement` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **ช่องกรอกคูปอง** | Implemented | `app_window.py:703` | `EXISTING_UI_BINDING` | Low | NO |
+| **เติมวันใช้งาน** | Implemented | `LauncherService.redeem_coupon` | `EXISTING_UI_BINDING` | Low | NO |
+| **Game Path** | Implemented & persisted | `LauncherConfig.game_exe` | `EXISTING_UI_BINDING` | Low | NO |
+| **Auto Detect** | Implemented & active | `process_detector.py` | `EXISTING_BEHAVIOR_NO_SETTINGS_UI` | Low | NO |
+| **Launch behavior** | Implemented | `app_window.py:742` | `EXISTING_UI_BINDING` | Low | NO |
+| **Tweaker Path** | Implemented & persisted | `tweaker.path` | `EXISTING_UI_BINDING` | Low | NO |
+| **Tweaker Options** | Basic launch supported | `game_process_manager.py` | `EXISTING_BEHAVIOR_NO_SETTINGS_UI` / `DEFER_RECOMMENDED` | Low | NO |
+| **Region / Server** | Fixed Tokyo VPS | `defaults.py` | `AVAILABLE_DATA_ONLY` (Read-only Tokyo badge) | Low | NO |
+| **User Proxy Options**| Transparent auto routing | Core Orchestrator | `AVAILABLE_DATA_ONLY` (Read-only Auto badge) | Low | NO |
+| **Theme Selector** | Hardcoded Pink Light | `theme.py` | `NOT_CURRENTLY_SUPPORTED` / `DEFER_RECOMMENDED` | Low | NO |
+| **Start Minimized** | Not implemented | N/A | `REQUIRES_NEW_PERSISTENCE` / `DEFER_RECOMMENDED` | Low | NO |
+| **Notifications** | In-app toasts only | `toast.py` | `DEFER_RECOMMENDED` (Native OS notifications) | Low | NO |
+| **Core Status** | Implemented | `AppState.proxy_status` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **Control Pipe** | Implemented | `CoreDiagnosticsRecorder` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **Telemetry Pipe** | Implemented | `TelemetryConnectionState` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **TCP Connections** | Implemented | `TelemetrySnapshot.tcp_active` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **DNS Query Count** | Implemented | `TelemetrySnapshot.dns_query_total`| `AVAILABLE_DATA_ONLY` | Low | NO |
+| **RX / TX Raw** | Implemented | `TelemetrySnapshot.rx_bytes` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **Log Viewer** | Implemented | `app_window.py:465` | `EXISTING_UI_BINDING` | Low | NO |
+| **Open Log Folder** | Implemented | `app_window.py:510` | `EXISTING_UI_BINDING` | Low | NO |
+| **Debug Mode** | Implemented | `app_window.py:483` | `EXISTING_UI_BINDING` | Low | NO |
+| **Launcher Version** | Implemented | `neko_launcher.__version__` | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **Core Version** | Implemented | Telemetry snapshot | `AVAILABLE_DATA_ONLY` | Low | NO |
+| **Build & Copyright**| Implemented | Static constants | `AVAILABLE_DATA_ONLY` | Low | NO |
+
+---
+
+## 7. Customer-Facing Status Translation & Truth Table
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          STATUS TRANSLATION LAYER                           │
+├───────────────────────────────┬─────────────────────────────────────────────┤
+│ INTERNAL RUNTIME STATE        │ CUSTOMER-FACING COPY & PRESENTATION         │
+├───────────────────────────────┼─────────────────────────────────────────────┤
+│ Core Waiting / No Game Process│ พร้อมใช้งาน (กำลังรอเปิด PSO2)                │
+│ Game Detected / Starting Core │ กำลังเชื่อมต่อ... (ตรวจพบ PSO2)              │
+│ Core Running & Telemetry Up   │ เชื่อมต่อแล้ว (Tokyo Proxy พร้อมใช้งาน)     │
+│ Core Start / Auth Failure     │ ไม่สามารถเชื่อมต่อได้ (ดูใน Diagnostics)     │
+│ Entitlement Expired           │ วันใช้งานหมดอายุ (กรุณาเติมวันใน Settings)   │
+│ Telemetry Pipe Disconnected   │ เชื่อมต่อแล้ว (สถิติเครือข่ายขัดข้อง)        │
+│ Session Revoked / Replaced    │ เซสชันหมดอายุ (กรุณาเข้าสู่ระบบใหม่)         │
+└───────────────────────────────┴─────────────────────────────────────────────┘
+```
+
+### Strict Truth Table
+
+| State Condition | Title | Subtitle | Semantic Token | Main Network Values | Settings Window | Diagnostics Detail | Allowed Action | Forbidden False Claim |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **A. Auth Restoring** | `กำลังเตรียมข้อมูล...` | `กำลังตรวจสอบการเข้าสู่ระบบ` | `NEUTRAL` | `-- / 0 KB/s / 00:00:00` | Disabled | `AUTH_RESTORING` | None | Must NOT claim "พร้อมใช้งาน" before verification |
+| **B. Auth OK, Idle (No Game)** | `● พร้อมใช้งาน` | `กำลังรอเปิด PSO2` | `SUCCESS` | `-- / 0 KB/s / 00:00:00` | Enabled | `WAITING_FOR_GAME` | Open Settings, Launch Game | Must NOT claim "เชื่อมต่อแล้ว" or display fake traffic |
+| **C. Game Detected, Connecting**| `● กำลังเชื่อมต่อ...` | `ตรวจพบ PSO2 กำลังเริ่ม Proxy` | `WARNING` | `-- / 0 KB/s / 00:00:00` | Enabled | `START_REQUESTED` | Open Settings | Must NOT claim "เชื่อมต่อแล้ว" before handshake |
+| **D. Connected & Running** | `● เชื่อมต่อแล้ว` | `Tokyo Proxy ทำงานสมบูรณ์` | `SUCCESS` | Live Ping, RX/TX, Uptime | Enabled | `RUNNING` | Open Settings | Must NOT display synthetic/fake zero ping |
+| **E. Game Closed** | `● พร้อมใช้งาน` | `เกมปิดแล้ว • พักการเชื่อมต่อ` | `SUCCESS` | `-- / 0 KB/s / 00:00:00` | Enabled | `STOPPED` | Open Settings, Re-enter Game | Must NOT leave Core running after game exits |
+| **F. Entitlement Expired** | `● วันใช้งานหมดอายุ` | `กรุณาเติมวันใช้งานใน Settings` | `DANGER` | `Inactive` | Enabled | `ENTITLEMENT_EXPIRED` | Open Settings > Subscription | Must NOT attempt Core start or claim "พร้อมใช้งาน" |
+| **G. Session Invalidation** | `● เซสชันหมดอายุ` | `กรุณาเข้าสู่ระบบใหม่อีกครั้ง` | `DANGER` | `Disconnected` | Disabled (Auth View) | `SESSION_REVOKED` | Re-login | Must NOT display customer dashboard |
+| **H. Core Start Failed** | `● การเชื่อมต่อขัดข้อง` | `ไม่สามารถเริ่มระบบ Proxy ได้` | `DANGER` | `Error` | Enabled | `START_TYPED_FAILURE` | Open Settings > Diagnostics | Must NOT mask failure as normal idle state |
+| **I. Telemetry Disconnected** | `● เชื่อมต่อแล้ว` | `สถิติเครือข่ายขัดข้องชั่วคราว` | `WARNING` | `-- / -- / --` | Enabled | `TELEMETRY_DISCONNECTED`| Open Settings > Diagnostics | Must NOT fabricate traffic metrics |
+| **J. Telemetry Stale** | `● เชื่อมต่อแล้ว` | `สถิติเครือข่ายไม่อัปเดตชั่วขณะ` | `WARNING` | `0 B/s (stale)` | Enabled | `TELEMETRY_STALE` | Open Settings | Must NOT claim live updates when metrics frozen |
+| **K. Network / VPS Error** | `● เครือข่ายขัดข้อง` | `ไม่สามารถติดต่อเซิร์ฟเวอร์ได้` | `DANGER` | `Network Error` | Enabled | `PERMIT_TIMEOUT / 500` | Open Settings > Diagnostics | Must NOT claim tunnel is functioning |
+| **L. Server Maintenance** | `● เซิร์ฟเวอร์ปิดปรับปรุง` | `ระบบกำลังบำรุงรักษาประจำสัปดาห์` | `WARNING` | `Maintenance` | Enabled | `SERVER_MAINTENANCE` | Open Settings | Must NOT claim permanent error during 2-min reboot |
+
+---
+
+## 8. Shared State & Window Lifecycle Architecture
+
+```text
+                  ┌─────────────────────────────────────┐
+                  │        APPLICATION ROOT             │
+                  │ (Services, EventBus, Config, State) │
+                  └──────────────────┬──────────────────┘
+                                     │
+                 ┌───────────────────┴───────────────────┐
+                 ▼                                       ▼
+    ┌──────────────────────────┐           ┌───────────────────────────┐
+    │       MAIN WINDOW        │           │      SETTINGS WINDOW      │
+    │      (`AppWindow`)       │           │    (`SettingsWindow`)     │
+    ├──────────────────────────┤           ├───────────────────────────┤
+    │ • Read-Only Projections  │           │ • Single-instance toplevel│
+    │ • Hero Status Card       │ ──opens──▶│ • Category navigation     │
+    │ • Membership Summary     │           │ • Account & Password form │
+    │ • Live Network Metrics   │           │ • Coupon redemption form  │
+    │ • Tray & Background Loop │           │ • Game path configuration │
+    │ • Settings Gear Button ⚙ │           │ • Local Diagnostics tools │
+    └──────────────────────────┘           └───────────────────────────┘
+```
+
+### Lifecycle Rules:
+1. **Single State Authority**: `SettingsWindow` **never** creates an independent `ApplicationController`, `LauncherService`, `EventBus`, or `NamedPipeCoreTelemetryClient`. It receives shared references from `AppWindow`.
+2. **Single Instance Pattern**: Clicking the gear button (`⚙`) creates `SettingsWindow`. If already open, clicking gear lifts and focuses the existing window (`lift()`, `focus_force()`).
+3. **Independent Dismissal**: Closing `SettingsWindow` destroys only the Settings toplevel without interrupting the Main Dashboard or Core routing.
+4. **Coordinated Shutdown**: Closing Main Launcher initiates a graceful application shutdown, closing `SettingsWindow`, stopping telemetry, cancelling pending futures, and shutting down child processes.
+
+---
+
+## 9. Diagnostics & Privacy Boundary
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       CLIENT OBSERVABILITY PRIVACY RULE                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ ALL LOCAL DIAGNOSTICS & TELEMETRY = STRICTLY LOCAL TO USER MACHINE          │
+│ FORBIDDEN TO SEND TO SUPABASE / ADMIN WEB / EXTERNAL BACKENDS:              │
+│ • Core PID & Game PID                                                       │
+│ • Named Pipe raw message buffers                                            │
+│ • Per-process TCP connection endpoints & remote IPs                         │
+│ • Local DNS queries & resolution logs                                       │
+│ • Raw byte throughput histories                                             │
+│ • Diagnostic exception stack traces                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Sanitization**: Any diagnostic text copied or logged must pass through `sanitize_diagnostic_text()` to strip tokens, passwords, private keys, and session challenges.
+- **Debug Mode Guard**: Debug Mode is strictly an enhanced local logging and manual simulation tool. It **never** bypasses authentication, permit verification, or cryptographic challenges.
+
+---
+
+## 10. Visual System & Design Direction
+
+Preserving the distinctive **NEKO Pink** commercial identity:
+
+```text
+┌───────────────────────────────┬──────────────┬──────────────────────────────┐
+│ TOKEN NAME                    │ VALUE (HEX)  │ INTENDED ROLE / USAGE        │
+├───────────────────────────────┼──────────────┼──────────────────────────────┤
+│ PALETTE.primary               │ #F84B93      │ Brand pink, hero buttons     │
+│ PALETTE.primary_soft          │ #FFB6C1      │ Badges, subtle brand accents │
+│ PALETTE.primary_dark          │ #E83A82      │ Headings, emphasized brand   │
+│ PALETTE.primary_hover         │ #FF65A8      │ Button hover state           │
+│ PALETTE.background            │ #FFFFFF      │ Clean light background       │
+│ PALETTE.card                  │ #FFFFFF      │ Elevated card containers     │
+│ PALETTE.surface               │ #FFF0F5      │ Soft tinted surface panels   │
+│ PALETTE.border                │ #FFC1D6      │ Soft decorative border       │
+│ PALETTE.text                  │ #333333      │ Primary high-contrast text   │
+│ PALETTE.text_muted            │ #8A7180      │ Secondary captions & labels  │
+│ PALETTE.success               │ #32CD72      │ Ready / Connected status     │
+│ PALETTE.success_surface       │ #ECFBF3      │ Success badge background     │
+│ PALETTE.warning               │ #FFA07A      │ Connecting / Waiting status  │
+│ PALETTE.danger                │ #FF6347      │ Failure / Expired status     │
+│ PALETTE.danger_surface        │ #FFF1EE      │ Error badge background       │
+└───────────────────────────────┴──────────────┴──────────────────────────────┘
+```
+
+- **Typography**: Bundled `Sarabun` (`Sarabun-Regular.ttf`, `Sarabun-Bold.ttf`) loaded via private Win32 GDI font resource.
+- **Dimensions**:
+  - Main Window: `480x760` (Portrait, DPI scaled)
+  - Settings Window: `760x540` (Landscape, DPI scaled, minsize bounded)
+
+---
+
+## 11. Proposed Modular File Structure
+
+```text
+launcher/src/neko_launcher/ui/
+├── __init__.py
+├── app_window.py                 # Composition root, window lifecycle, background event loop
+├── theme.py                      # Theme tokens, PinkPalette, fonts
+├── settings_window.py            # Settings CTkToplevel shell & sidebar router
+├── components/
+│   ├── __init__.py
+│   ├── buttons.py                # Primary/secondary buttons, cards, icon inputs
+│   ├── toast.py                  # In-app toast feedback
+│   └── status_pill.py            # Hero status indicator pill widget
+├── platform/
+│   ├── __init__.py
+│   ├── system_tray.py            # Windows notification tray integration
+│   ├── window_chrome.py          # Native title bar styling & DWM rounded corners
+│   └── window_scaling.py         # DPI calculation for portrait & landscape
+└── views/
+    ├── __init__.py
+    ├── auth_view.py              # Login & Registration views (pre-auth)
+    ├── recovery_view.py          # Account Recovery views (pre-auth)
+    ├── dashboard_view.py         # Read-only commercial status dashboard (Main)
+    └── settings/
+        ├── __init__.py
+        ├── general_page.py       # General settings (tray, auto-connect)
+        ├── account_page.py       # Account settings (username, change password, logout)
+        ├── subscription_page.py  # Subscription info, remaining days, coupon redemption
+        ├── pso2_page.py          # Game path, Tweaker path, launch behavior
+        ├── connection_page.py    # Read-only server info (Tokyo VPS)
+        ├── diagnostics_page.py   # Diagnostics, log viewer, open log folder, debug
+        └── about_page.py         # Version, Core build, copyright
+```
+
+---
+
+## 12. Implementation Scope for Phase T10B
+
+Phase T10B will implement the visual architecture frozen here:
+1. Refactor `dashboard_view.py` to be a pure read-only status dashboard.
+2. Implement `settings_window.py` as a single-instance `CTkToplevel`.
+3. Implement modular settings pages under `ui/views/settings/` (Account, Subscription, PSO2, Connection, Diagnostics, About, General).
+4. Update `app_window.py` to delegate configuration actions to Settings.
+5. Create comprehensive unit, structural, and lifecycle tests in `launcher/tests/ui/`.
+
+---
+
+## 13. Explicitly Deferred Items
+
+The following items are outside the scope of T10 and deferred:
+- **Windows Startup Registry Integration** (`เปิดพร้อม Windows`): Requires OS registry management.
+- **Custom Theme Switching (Dark Mode)**: Requires complete dark palette design and testing.
+- **Native OS Toast Notifications**: Requires native Windows 10/11 toast notification bridge.
+- **Advanced Tweaker Command-line Injections**: Not needed for standard proxy operation.
+
+---
+
+## 14. Test Impact Plan
+
+| Test Category | Target Coverage | Method |
+| :--- | :--- | :--- |
+| **Settings Lifecycle** | Single-instance enforcement, reopen existing window, close handling | Unit & Tk Mock tests in `test_settings_window.py` |
+| **Main Dashboard Structure** | Verify Main contains zero configuration forms, no coupon inputs, no game browse | UI structural inspection tests |
+| **Action Delegation** | Verify password change, logout, coupon redemption, and game path work correctly from Settings | Service binding verification tests |
+| **Status Projection** | Verify all 12 truth table states project correct customer titles, subtitles, and color tokens | State projection unit tests |
+| **Diagnostics & Privacy** | Verify sanitized log output and zero remote transmission of local metrics | Diagnostics unit tests |
+
+---
+
+## 15. T10A Acceptance Gates
+
+```text
+T10_BRANCH_CREATED                      = YES (feature/t10-commercial-launcher-ui)
+T10_BRANCH_BASE_CORRECT                 = YES (8d4543553622f927d2d62dd054715a6523d82698)
+UI_SOURCE_MODIFIED                      = NO
+BUSINESS_LOGIC_MODIFIED                 = NO
+CORE_MODIFIED                           = NO
+SETTINGS_ARCHITECTURE                   = FROZEN
+MAIN_DASHBOARD_ARCHITECTURE             = FROZEN
+STATE_MATRIX                            = COMPLETE
+SETTINGS_CAPABILITY_MATRIX              = COMPLETE
+DIAGNOSTICS_PRIVACY                     = PASS
+DOCS                                    = CURRENT
+SECRET_AUDIT                            = PASS
+WORKTREES                               = CLEAN
+```

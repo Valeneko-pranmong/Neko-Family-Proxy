@@ -2,17 +2,17 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PRE-T10 CLOSED — T10 READY
+STATUS:                         T10A COMPLETED — DESIGN FROZEN
+CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
+T10A:                           CLOSED
+T10B:                           NEXT — COMMERCIAL UI IMPLEMENTATION
 GLOBAL_STATUS:                  see Admin docs/current/README.md
-PRE_T10:                        CLOSED
-T10:                            NOT STARTED
-T10_ENTRY_BRANCH:               main
-T10_ENTRY_RUNTIME_SOURCE:       8832429a7546ab57dd8ac3a48b40b93387cb9f19
+ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
+T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698
+RUNTIME_SOURCE_BASE:            8832429a7546ab57dd8ac3a48b40b93387cb9f19
 SERVER_OPERATIONS:              T1-T9 CLOSED (Production Verified on AWS Lightsail Japan)
-NEXT_PRODUCT_PHASE:             T10 COMMERCIAL LAUNCHER UI/UX (NOT STARTED)
-ACTIVE_PRODUCT_BRANCH:          main
-MAIN_BRANCH_STATUS:             CURRENT PRODUCT BASELINE
-HISTORICAL_PRODUCT_BRANCH:      feature/neko-auth-lite-v1-launcher-backend
+ACTIVE_PRODUCT_BRANCH:          feature/t10-commercial-launcher-ui
+MAIN_BRANCH_STATUS:             PRE-T10 BASELINE
 DATE:                           2026-08-18
 ```
 
@@ -28,7 +28,7 @@ The project infrastructure and operations milestones (**Phases T1 through T9**) 
 - **Phase T7–T8 (Closed)**: Unified AWS Lightsail Discord worker daemon, crash recovery, and production operations hardening.
 - **Phase T9 (Closed)**: Weekly automated server maintenance and scheduled reboot lifecycle (Tuesdays 02:00 Asia/Bangkok).
 
-The repository baseline is **`PRE-T10 CLOSED — T10 READY`**. The authoritative product baseline is `main` (with runtime source `8832429a7546ab57dd8ac3a48b40b93387cb9f19`), fully prepared for **Phase T10 (Commercial Launcher UI/UX)**.
+**Phase T10A (Commercial Launcher UI/UX Design Freeze)** is **CLOSED**. The commercial UI architecture, customer status translation layer, single-instance Settings window design, and capability matrix are frozen in [`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md).
 
 > [!IMPORTANT]
 > **Active Client Security Release Blocker:**
@@ -44,6 +44,7 @@ The repository baseline is **`PRE-T10 CLOSED — T10 READY`**. The authoritative
 | Document | Role / Content | Authority Level |
 | :--- | :--- | :--- |
 | **[`README.md`](README.md)** | Component status, branch authority, and start here orientation | `CURRENT_STATUS` |
+| **[`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md)** | T10 commercial UI/UX architecture, Settings window design & capability matrix | `CURRENT_CONTRACT` |
 | **[`launcher-architecture.md`](launcher-architecture.md)** | Desktop application layered architecture, IPC, and controllers | `CURRENT_CONTRACT` |
 | **[`neko-auth-lite.md`](neko-auth-lite.md)** | NEKO-AUTH-LITE authentication, challenge-response, and permit flow | `CURRENT_CONTRACT` |
 | **[`final-windows-e2e-harness.md`](final-windows-e2e-harness.md)** | Windows E2E integration test harness and binary admission gates | `CURRENT_CONTRACT` |
