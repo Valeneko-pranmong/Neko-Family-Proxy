@@ -1,0 +1,17 @@
+[Unit]
+Description=Neko Family Proxy — Weekly VPS Maintenance Controller
+Documentation=https://github.com/Valeneko-pranmong/Neko-Family-Proxy-admin-tool
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/neko/discord.env
+ExecStart=/usr/bin/python3 /opt/neko/neko_weekly_maintenance.py --execute
+TimeoutStartSec=60s
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/neko
+
+[Install]
+WantedBy=multi-user.target
