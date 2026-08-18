@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from neko_launcher.domain.telemetry import (
     CoreHealthSnapshot,
     TelemetryConnectionState,

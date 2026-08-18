@@ -1,19 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-import threading
 import time
-from typing import Any
-
-import pytest
 
 from neko_launcher.application.ports import EventPublisher
 from neko_launcher.domain.events import Event, TelemetryUpdated
 from neko_launcher.domain.telemetry import (
     TelemetryConnectionState,
-    TelemetryState,
 )
 from neko_launcher.infrastructure.core.core_telemetry_client import (
     NamedPipeCoreTelemetryClient,

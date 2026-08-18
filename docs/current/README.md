@@ -2,12 +2,15 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PRE-T10 REPOSITORY HYGIENE
+STATUS:                         PRE-T10 FINAL CI REMEDIATION
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 SERVER_OPERATIONS:              T1-T9 CLOSED (Production Verified on AWS Lightsail Japan)
 NEXT_PRODUCT_PHASE:             T10 COMMERCIAL LAUNCHER UI/UX (NOT STARTED)
-ACTIVE_PRODUCT_BRANCH:          feature/neko-auth-lite-v1-launcher-backend (HEAD: 8832429a7546ab57dd8ac3a48b40b93387cb9f19)
-MAIN_BRANCH_STATUS:             STALE PRODUCT LINE (26 commits behind active product line)
+ACTIVE_PRODUCT_BRANCH:          main
+MAIN_BRANCH_STATUS:             CURRENT PRODUCT BASELINE
+PRE_T10_MAIN_BASE:              bf366035fef443d8b595a4428c4f7933f7c9a7d8
+RUNTIME_SOURCE_COMMIT:          8832429a7546ab57dd8ac3a48b40b93387cb9f19
+HISTORICAL_PRODUCT_BRANCH:      feature/neko-auth-lite-v1-launcher-backend
 DATE:                           2026-08-18
 ```
 
@@ -23,7 +26,7 @@ The project infrastructure and operations milestones (**Phases T1 through T9**) 
 - **Phase T7–T8 (Closed)**: Unified AWS Lightsail Discord worker daemon, crash recovery, and production operations hardening.
 - **Phase T9 (Closed)**: Weekly automated server maintenance and scheduled reboot lifecycle (Tuesdays 02:00 Asia/Bangkok).
 
-The active source line is `feature/neko-auth-lite-v1-launcher-backend`. The repository is currently in **PRE-T10 (Repository Hygiene & Documentation Authority Freeze)** preparing for **Phase T10 (Commercial Launcher UI/UX)**.
+The authoritative product baseline is now `main` (fast-forwarded from `feature/neko-auth-lite-v1-launcher-backend`). The repository is currently in **PRE-T10 (Repository Hygiene & Final Baseline Closure)** preparing for **Phase T10 (Commercial Launcher UI/UX)**.
 
 > [!IMPORTANT]
 > **Active Client Security Release Blocker:**

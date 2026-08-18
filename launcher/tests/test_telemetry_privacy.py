@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import sys
-from pathlib import Path
 
 import neko_launcher.domain.telemetry as domain_telemetry
 import neko_launcher.infrastructure.core.core_telemetry_client as core_telemetry_client

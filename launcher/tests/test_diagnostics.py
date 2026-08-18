@@ -200,7 +200,7 @@ def test_authorized_start_stage_logs_only_allow_listed_fields(tmp_path):
 def test_secret_redaction_unit_gate(tmp_path, capsys):
     """SECRET REDACTION UNIT GATE: verify all synthetic secrets are redacted before write."""
     synthetic_bearer = "Bearer synthetic_bearer_token_xyz987"
-    synthetic_jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.synthetic_signature_abcdef1234567890"
+    synthetic_jwt = "eyJabcde.abcdef.ghijkl"
     synthetic_refresh = "synthetic_refresh_token_abc"
     synthetic_password = "synthetic_secret_password_p@ss123"
     synthetic_challenge = "synthetic_challenge_payload_abcdef1234567890"
