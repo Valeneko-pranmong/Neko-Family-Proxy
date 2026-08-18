@@ -528,6 +528,7 @@ def load_state(state_path: str) -> WorkerState:
 
 def save_state_atomic(state: WorkerState, state_path: str) -> bool:
     """Save state atomically using temporary file and atomic rename."""
+    temp_file_path: str | None = None
     try:
         dir_name = os.path.dirname(state_path)
         if dir_name:
@@ -553,10 +554,17 @@ def save_state_atomic(state: WorkerState, state_path: str) -> bool:
             pass
 
         os.replace(temp_file_path, state_path)
+        temp_file_path = None  # Replaced successfully, clear so finally block does not delete state
         return True
     except Exception as e:
         _safe_log("STATE_SAVE_FAILED", reason=str(e))
         return False
+    finally:
+        if temp_file_path is not None and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except OSError:
+                pass
 
 
 # -----------------------------------------------------------------------------
@@ -1124,13 +1132,108 @@ class UnifiedDiscordWorker:
 
 
 # -----------------------------------------------------------------------------
+# Configuration Validation & Pre-flight Checks
+# -----------------------------------------------------------------------------
+def validate_configuration(
+    env: dict[str, str] | None = None,
+    print_output: bool = True,
+) -> tuple[bool, list[str]]:
+    """
+    Validate worker configuration statically without network requests or state changes.
+    Returns (is_valid, list_of_error_messages).
+    NEVER prints or leaks secret values like DISCORD_WEBHOOK_URL.
+    """
+    if env is None:
+        env = os.environ  # type: ignore
+
+    errors: list[str] = []
+
+    # 1. Webhook URL validation (presence and structure only, value is never printed)
+    webhook_url = env.get("DISCORD_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        errors.append("DISCORD_WEBHOOK_URL is missing or empty.")
+    elif not (webhook_url.startswith("https://") and len(webhook_url) > 12):
+        errors.append("DISCORD_WEBHOOK_URL must be a valid HTTPS URL.")
+
+    # 2. Network Interface
+    interface = env.get("NETWORK_INTERFACE", DEFAULT_NETWORK_INTERFACE).strip()
+    if not interface:
+        errors.append("NETWORK_INTERFACE cannot be empty.")
+
+    # 3. Proxy Port
+    port_str = env.get("PROXY_PORT", str(DEFAULT_PROXY_PORT)).strip()
+    try:
+        port = int(port_str)
+        if not (1 <= port <= 65535):
+            errors.append(f"PROXY_PORT must be between 1 and 65535 (got {port}).")
+    except ValueError:
+        errors.append(f"PROXY_PORT must be an integer (got '{port_str}').")
+
+    # 4. Ping Target
+    ping_target = env.get("PING_TARGET", DEFAULT_PING_TARGET).strip()
+    if not ping_target:
+        errors.append("PING_TARGET cannot be empty.")
+
+    # 5. Numeric intervals
+    for key, default_val, min_val, is_strict_pos, val_type in [
+        ("HEALTH_SAMPLE_SECONDS", str(DEFAULT_HEALTH_SAMPLE_SECONDS), 0.0, True, float),
+        ("STATUS_UPDATE_SECONDS", str(DEFAULT_STATUS_UPDATE_SECONDS), 0.0, True, float),
+        ("TRAFFIC_SUMMARY_SECONDS", str(DEFAULT_TRAFFIC_SUMMARY_SECONDS), 1, True, int),
+        ("TRAFFIC_MIN_REPORT_BYTES", str(DEFAULT_TRAFFIC_MIN_REPORT_BYTES), 0, False, int),
+        ("STALE_AFTER_SECONDS", str(DEFAULT_STALE_AFTER_SECONDS), 0.0, True, float),
+        ("ALERT_COOLDOWN_SECONDS", str(DEFAULT_ALERT_COOLDOWN_SECONDS), 0.0, False, float),
+    ]:
+        val_str = env.get(key, default_val).strip()
+        try:
+            val = val_type(val_str)
+            if is_strict_pos and val <= min_val:
+                errors.append(f"{key} must be > {min_val} (got {val}).")
+            elif not is_strict_pos and val < min_val:
+                errors.append(f"{key} must be >= {min_val} (got {val}).")
+        except ValueError:
+            errors.append(f"{key} must be a valid {val_type.__name__} (got '{val_str}').")
+
+    # 6. State Path
+    state_path = env.get("STATE_PATH", DEFAULT_STATE_PATH).strip()
+    if not state_path:
+        errors.append("STATE_PATH cannot be empty.")
+
+    # 7. Timezone
+    timezone_name = env.get("MONITOR_TIMEZONE", DEFAULT_TIMEZONE).strip()
+    if timezone_name:
+        try:
+            ZoneInfo(timezone_name)
+        except Exception:
+            if timezone_name not in ("Asia/Bangkok", "Asia/Jakarta", "ICT", "GMT+7", "UTC+7", "UTC"):
+                errors.append(f"MONITOR_TIMEZONE '{timezone_name}' is not a recognized timezone.")
+
+    is_valid = (len(errors) == 0)
+
+    if print_output:
+        if is_valid:
+            print(f"[CONFIG_CHECK] SUCCESS: Configuration is valid. (interface={interface}, port={port_str}, state={state_path})")
+        else:
+            print("[CONFIG_CHECK] FAILED: Configuration errors found:")
+            for err in errors:
+                print(f"  - {err}")
+
+    return (is_valid, errors)
+
+
+# -----------------------------------------------------------------------------
 # Main Entry Point
 # -----------------------------------------------------------------------------
 def main() -> None:
-    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    if not webhook_url or not webhook_url.startswith("https://"):
-        raise SystemExit("CONFIGURATION_ERROR: Valid DISCORD_WEBHOOK_URL starting with https:// is required.")
+    if "--check-config" in sys.argv:
+        is_valid, _ = validate_configuration(print_output=True)
+        sys.exit(0 if is_valid else 1)
 
+    is_valid, errors = validate_configuration(print_output=False)
+    if not is_valid:
+        error_msg = "; ".join(errors)
+        raise SystemExit(f"CONFIGURATION_ERROR: {error_msg}")
+
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
     interface = os.environ.get("NETWORK_INTERFACE", DEFAULT_NETWORK_INTERFACE).strip()
     proxy_port = int(os.environ.get("PROXY_PORT", str(DEFAULT_PROXY_PORT)))
     ping_target = os.environ.get("PING_TARGET", DEFAULT_PING_TARGET).strip()

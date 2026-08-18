@@ -2,15 +2,22 @@
 Description=Neko Family Proxy Unified Discord Worker (Status, Summary & Alerts)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/neko/discord.env
+ExecStartPre=/usr/bin/python3 /opt/neko/neko_discord_worker.py --check-config
 ExecStart=/usr/bin/python3 /opt/neko/neko_discord_worker.py
-Restart=on-failure
+Restart=always
 RestartSec=5s
 User=root
 Group=root
+
+# Resource Safety Bounds
+MemoryMax=128M
+TasksMax=16
 
 # Privileges: CAP_NET_RAW is required for AF_PACKET raw socket binding on ens5
 NoNewPrivileges=true
