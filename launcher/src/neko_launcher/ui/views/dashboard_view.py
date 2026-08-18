@@ -48,6 +48,10 @@ class DashboardView:
         auto_launch_var: tk.BooleanVar,
         game_connection_var: tk.StringVar,
         proxy_connection_var: tk.StringVar,
+        telemetry_speed_var: tk.StringVar | None = None,
+        telemetry_transfer_var: tk.StringVar | None = None,
+        telemetry_session_var: tk.StringVar | None = None,
+        telemetry_health_var: tk.StringVar | None = None,
         on_change_password: Callable[[], None],
         on_sign_out: Callable[[], None],
         on_redeem_coupon: Callable[[], None],
@@ -160,7 +164,43 @@ class DashboardView:
             textvariable=proxy_connection_var,
             text_color=PALETTE.text,
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
-        ).pack(anchor="w", padx=14, pady=(0, 10))
+        ).pack(anchor="w", padx=14, pady=(0, 6))
+
+        if telemetry_speed_var is not None:
+            self._telemetry_frame = ctk.CTkFrame(proxy, fg_color="transparent")
+            self._telemetry_frame.pack(fill="x", padx=14, pady=(0, 10))
+
+            ctk.CTkLabel(
+                self._telemetry_frame,
+                textvariable=telemetry_speed_var,
+                text_color=PALETTE.primary,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            ).pack(anchor="w", pady=(0, 2))
+
+            if telemetry_transfer_var is not None:
+                ctk.CTkLabel(
+                    self._telemetry_frame,
+                    textvariable=telemetry_transfer_var,
+                    text_color=PALETTE.text_muted,
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                ).pack(anchor="w", pady=(0, 2))
+
+            if telemetry_session_var is not None:
+                ctk.CTkLabel(
+                    self._telemetry_frame,
+                    textvariable=telemetry_session_var,
+                    text_color=PALETTE.text_muted,
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                ).pack(anchor="w", pady=(0, 2))
+
+            if telemetry_health_var is not None:
+                ctk.CTkLabel(
+                    self._telemetry_frame,
+                    textvariable=telemetry_health_var,
+                    text_color=PALETTE.text_muted,
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                ).pack(anchor="w")
+
 
         game = card(self.frame)
         ctk.CTkLabel(

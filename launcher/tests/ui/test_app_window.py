@@ -394,6 +394,13 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._login_password = FakeVariable("password")  # type: ignore[assignment]
     window._proxy_start_attempted_for_detected_game = False
     window._proxy_retry_suppression_logged = False
+    window._telemetry_speed = FakeVariable()  # type: ignore[assignment]
+    window._telemetry_transfer = FakeVariable()  # type: ignore[assignment]
+    window._telemetry_session = FakeVariable()  # type: ignore[assignment]
+    window._telemetry_health = FakeVariable()  # type: ignore[assignment]
+    window._tray_manager = None
+    window._closing = False
+    window._clear_recovery_sensitive_fields = lambda: None  # type: ignore[method-assign]
     window._submitted_work = []
     window._submit = (  # type: ignore[method-assign]
         lambda work, on_success=None: window._submitted_work.append(work)
@@ -621,3 +628,68 @@ def test_debug_window_hex_format(tmp_path: Path) -> None:
     )
     content_zero = window._format_debug_snapshot(snapshot_zero)
     assert "Hex: 0x00000000" in content_zero
+
+
+def test_render_telemetry_updates_vars(tmp_path: Path) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    # Disconnected
+    s_disc = TelemetryState(connection_state=TelemetryConnectionState.DISCONNECTED)
+    window._render_telemetry(s_disc)
+    assert "Core รอการเชื่อมต่อ" in window._telemetry_health.get()
+
+    # Connected healthy
+    snapshot = CoreHealthSnapshot(
+        core_state="running",
+        proxy_state="connected",
+        uptime_ms=125000,
+        tcp_active=5,
+        dns_query_total=42,
+        rx_bytes=1048576,
+        tx_bytes=524288,
+        network_error_total=0,
+        v2ray_running=True,
+        local_socks_running=True,
+        shadowsocks_connected=True,
+    )
+    s_conn = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=snapshot,
+        rx_rate_bps=102400.0,
+        tx_rate_bps=51200.0,
+        is_stale=False,
+    )
+    window._render_telemetry(s_conn)
+    assert "100.0 KB/s" in window._telemetry_speed.get()
+    assert "50.0 KB/s" in window._telemetry_speed.get()
+    assert "1.0 MB" in window._telemetry_transfer.get()
+    assert "512.0 KB" in window._telemetry_transfer.get()
+    assert "00:02:05" in window._telemetry_session.get()
+    assert "5 active" in window._telemetry_session.get()
+    assert "Core ปกติ" in window._telemetry_health.get()
+    assert "V2Ray ทำงาน" in window._telemetry_health.get()
+    assert "SOCKS พร้อม" in window._telemetry_health.get()
+    assert "Upstream เชื่อมต่อแล้ว" in window._telemetry_health.get()
+
+
+def test_close_stops_telemetry_client(tmp_path: Path) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    stopped = False
+
+    class FakeTelemetryClient:
+        def stop(self, timeout: float = 0.5) -> None:
+            nonlocal stopped
+            stopped = True
+
+    window._telemetry_client = FakeTelemetryClient()  # type: ignore[assignment]
+    window._service = FakeShutdownService()  # type: ignore[assignment]
+    window._executor = FakeExecutor()  # type: ignore[assignment]
+    window.root = FakeRoot()  # type: ignore[assignment]
+
+    window.close()
+    assert stopped is True

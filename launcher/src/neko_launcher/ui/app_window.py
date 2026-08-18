@@ -19,6 +19,7 @@ from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.events import (
     GameProcessStateChanged,
     StateChanged,
+    TelemetryUpdated,
 )
 from neko_launcher.domain.models import (
     AppState,
@@ -65,11 +66,13 @@ class AppWindow:
         diagnostics: Any = None,
         debug_mode: bool = False,
         debug_log_dir: Path | None = None,
+        telemetry_client: Any = None,
     ) -> None:
         apply_theme()
         self._controller = controller
         self._service = service
         self._event_bus = event_bus
+        self._telemetry_client = telemetry_client
         self._executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="neko-launcher",
@@ -130,7 +133,14 @@ class AppWindow:
         self._auto_launch = tk.BooleanVar(value=True)
         self._game_connection_status = tk.StringVar(value="รอให้เข้าเกม (pso2.exe)")
         self._proxy_connection_status = tk.StringVar(value="ProxyCore ยังไม่ทำงาน")
+        self._telemetry_speed = tk.StringVar(value="ความเร็ว: ▼ 0 B/s | ▲ 0 B/s")
+        self._telemetry_transfer = tk.StringVar(value="รับข้อมูล (RX): 0 B | ส่งข้อมูล (TX): 0 B")
+        self._telemetry_session = tk.StringVar(value="เวลาเชื่อมต่อ: 00:00:00 | TCP: 0 active | DNS: 0")
+        self._telemetry_health = tk.StringVar(value="สถานะระบบ: Core รอการเชื่อมต่อ")
         self._process_detection_pending = False
+
+        if self._telemetry_client is not None:
+            self._telemetry_client.start()
 
         self._build_layout(logo_path)
         self._window_size = fit_portrait_window(self.root)
@@ -250,6 +260,10 @@ class AppWindow:
             auto_launch_var=self._auto_launch,
             game_connection_var=self._game_connection_status,
             proxy_connection_var=self._proxy_connection_status,
+            telemetry_speed_var=self._telemetry_speed,
+            telemetry_transfer_var=self._telemetry_transfer,
+            telemetry_session_var=self._telemetry_session,
+            telemetry_health_var=self._telemetry_health,
             on_change_password=self._open_password_dialog,
             on_sign_out=self._sign_out,
             on_redeem_coupon=self._redeem_coupon,
@@ -807,6 +821,8 @@ class AppWindow:
         for event in self._event_bus.drain():
             if isinstance(event, StateChanged):
                 self._render_state(event.state)
+            elif isinstance(event, TelemetryUpdated):
+                self._render_telemetry(event.state)
         if self.root.winfo_exists():
             self.root.after(100, self._drain_events)
 
@@ -1031,6 +1047,58 @@ class AppWindow:
             text_color=PALETTE.primary_dark,
         ).pack(anchor="w", pady=2)
 
+    def _render_telemetry(self, state: Any) -> None:
+        from neko_launcher.domain.telemetry import (
+            TelemetryConnectionState,
+            format_bytes,
+            format_speed,
+            format_uptime,
+        )
+
+        if state.connection_state != TelemetryConnectionState.CONNECTED:
+            self._telemetry_speed.set("ความเร็ว: ▼ 0 B/s | ▲ 0 B/s")
+            self._telemetry_transfer.set("รับข้อมูล (RX): 0 B | ส่งข้อมูล (TX): 0 B")
+            self._telemetry_session.set("เวลาเชื่อมต่อ: 00:00:00 | TCP: 0 active | DNS: 0")
+            self._telemetry_health.set("สถานะระบบ: Core รอการเชื่อมต่อ")
+            return
+
+        if state.is_stale:
+            rx_speed = "0 B/s (stale)"
+            tx_speed = "0 B/s (stale)"
+        else:
+            rx_speed = format_speed(state.rx_rate_bps)
+            tx_speed = format_speed(state.tx_rate_bps)
+
+        rx_total = format_bytes(state.snapshot.rx_bytes)
+        tx_total = format_bytes(state.snapshot.tx_bytes)
+        uptime = format_uptime(state.snapshot.uptime_ms)
+
+        self._telemetry_speed.set(f"ความเร็ว: ▼ {rx_speed} | ▲ {tx_speed}")
+        self._telemetry_transfer.set(
+            f"รับข้อมูล (RX): {rx_total} | ส่งข้อมูล (TX): {tx_total}"
+        )
+        self._telemetry_session.set(
+            f"เวลาเชื่อมต่อ: {uptime} | TCP: {state.snapshot.tcp_active} active | DNS: {state.snapshot.dns_query_total} | ข้อผิดพลาด: {state.snapshot.network_error_total}"
+        )
+
+        core_str = (
+            "Core ปกติ"
+            if state.snapshot.core_state == "running"
+            else f"Core: {state.snapshot.core_state}"
+        )
+        v2ray_str = "V2Ray ทำงาน" if state.snapshot.v2ray_running else "V2Ray ปิด"
+        socks_str = (
+            "SOCKS พร้อม" if state.snapshot.local_socks_running else "SOCKS ปิด"
+        )
+        ss_str = (
+            "Upstream เชื่อมต่อแล้ว"
+            if state.snapshot.shadowsocks_connected
+            else "Upstream รอเชื่อมต่อ"
+        )
+        self._telemetry_health.set(
+            f"ระบบ: {core_str} • {v2ray_str} • {socks_str} • {ss_str}"
+        )
+
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
@@ -1039,6 +1107,11 @@ class AppWindow:
             return
         self._closing = True
         self._clear_recovery_sensitive_fields()
+        if getattr(self, "_telemetry_client", None) is not None:
+            try:
+                self._telemetry_client.stop(timeout=0.5)
+            except Exception:
+                pass
         try:
             self._service.shutdown()
         except Exception:

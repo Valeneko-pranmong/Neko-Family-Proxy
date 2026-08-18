@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .models import AppState, Entitlement
+from .telemetry import TelemetryState
 
 
 class Event:
@@ -67,6 +68,13 @@ class LaunchTweakerRequested(Event):
     """Launch Tweaker after auth/entitlement checks, without starting ProxyCore."""
 
     executable: str
+
+
 @dataclass(frozen=True)
 class ErrorOccurred(Event):
     message: str
+
+
+@dataclass(frozen=True)
+class TelemetryUpdated(Event):
+    state: TelemetryState

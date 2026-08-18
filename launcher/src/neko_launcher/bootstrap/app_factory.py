@@ -24,6 +24,7 @@ from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
+from neko_launcher.infrastructure.core.core_telemetry_client import NamedPipeCoreTelemetryClient
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
@@ -140,6 +141,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config.product_code,
         recovery_gateway=recovery_gateway,
     )
+    telemetry_client = NamedPipeCoreTelemetryClient(event_publisher=event_bus)
     logo_path = root / "image_11.png"
     icon_path = root / "icon_app.ico"
     return AppWindow(
@@ -153,4 +155,5 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         diagnostics=diagnostics_recorder,
         debug_mode=config.debug_mode,
         debug_log_dir=config.debug_log_dir,
+        telemetry_client=telemetry_client,
     )
