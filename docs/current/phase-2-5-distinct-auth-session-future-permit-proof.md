@@ -1,8 +1,19 @@
 # Phase 2.5 distinct Auth-session future-permit proof
 
-> **Status: prepared only.** This harness is not authorization to execute a
-> hosted test, start Core, alter production configuration, or rerun Hosted
-> Positive + KP.
+```text
+STATUS:                 PREPARED ONLY / NOT EXECUTED
+CLASSIFICATION:         CURRENT_RELEASE_BLOCKER
+UI_WORK_BLOCKER:        NO
+PUBLIC_RELEASE_BLOCKER: YES
+DATE:                   2026-08-18
+```
+
+> [!IMPORTANT]
+> **Status: PREPARED ONLY / NOT EXECUTED.**
+> This test harness is prepared and verified locally, but has **NOT** been executed against hosted live infrastructure.
+> - **Blocks UI Design / Implementation:** **NO**
+> - **Blocks Public Commercial Client Release:** **YES**
+> This harness is not authorization to execute a hosted test, start Core, alter production configuration, or rerun Hosted Positive + KP without explicit owner instruction.
 
 ## What it proves
 
