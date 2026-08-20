@@ -517,3 +517,21 @@ OBJECTIVE:                      Refine UI aesthetics, hierarchy, brand identity,
    - Connection page displays customer-safe region `Japan (Tokyo)` and mode `อัตโนมัติ` without raw infrastructure or vendor terminology (no AWS, Lightsail, Shadowsocks, Direct Tunnel).
    - Version strictly sourced from `neko_launcher.__version__`.
 
+---
+
+## 18. Phase T10B1.2 — Customer-Safe Visual Closure Candidate
+
+```text
+T10B1.2:                        CUSTOMER-SAFE VISUAL CLOSURE CANDIDATE
+T10B1:                          FUNCTIONAL PASS
+OWNER_VISUAL_APPROVAL:          PENDING
+T10B2:                          NOT STARTED
+```
+
+This bounded visual-closure candidate removes internal runtime terminology from
+customer Diagnostics, removes framework and window-manager implementation detail
+from About, restores the visible Settings search placeholder while preserving
+category filtering, and reserves sufficient Main-window height for the complete
+version footer. The product direction, Settings hierarchy, Main cards, native
+chrome, and functional scope remain unchanged.
+

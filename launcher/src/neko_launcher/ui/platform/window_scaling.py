@@ -7,7 +7,7 @@ import customtkinter as ctk
 
 
 DESIGN_WIDTH = 440
-DESIGN_HEIGHT = 580
+DESIGN_HEIGHT = 592
 SCREEN_MARGIN_RATIO = 0.04
 
 

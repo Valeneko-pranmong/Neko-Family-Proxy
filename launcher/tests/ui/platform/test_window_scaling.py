@@ -62,10 +62,14 @@ def test_fit_portrait_window_pure_calculation() -> None:
     )
 
     assert geometry.logical_width == 440
-    assert geometry.logical_height == 580
+    assert geometry.logical_height == 592
     assert geometry.widget_scale == 1.0
     assert geometry.x == 740
-    assert geometry.y == 250
+    assert geometry.y == 244
+
+
+def test_portrait_design_height_reserves_full_version_footer() -> None:
+    assert DESIGN_HEIGHT == 592
 
 
 def test_center_window_calculation() -> None:
@@ -85,9 +89,9 @@ def test_fit_portrait_window_adapter_100_percent_scaling(monkeypatch: Any) -> No
     fit_portrait_window(root)  # type: ignore[arg-type]
 
     assert "update_idletasks" in root.events
-    assert "minsize:440x580" in root.events
-    assert "maxsize:440x580" in root.events
-    assert "geometry:440x580+740+250" in root.events
+    assert "minsize:440x592" in root.events
+    assert "maxsize:440x592" in root.events
+    assert "geometry:440x592+740+244" in root.events
     assert set_scaling_calls == [1.0]
 
 
@@ -101,7 +105,7 @@ def test_fit_portrait_window_adapter_125_percent_scaling(monkeypatch: Any) -> No
 
     fit_portrait_window(root)  # type: ignore[arg-type]
 
-    assert "minsize:352x464" in root.events
+    assert "minsize:352x473" in root.events
     assert set_scaling_calls == [0.8]
 
 
@@ -115,7 +119,7 @@ def test_fit_portrait_window_adapter_150_percent_scaling(monkeypatch: Any) -> No
 
     fit_portrait_window(root)  # type: ignore[arg-type]
 
-    assert "minsize:293x386" in root.events
+    assert "minsize:293x394" in root.events
 
 
 def test_fit_portrait_window_adapter_short_display(monkeypatch: Any) -> None:

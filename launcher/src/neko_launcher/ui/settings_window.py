@@ -20,6 +20,23 @@ from neko_launcher.ui.platform.window_chrome import (
 )
 
 
+def customer_connection_status(technical_status: str) -> str:
+    """Map an internal connection status to customer-safe presentation."""
+    normalized = technical_status.strip()
+    if "ไม่สำเร็จ" in normalized or "ล้มเหลว" in normalized:
+        return "ไม่สามารถเชื่อมต่อได้"
+    if "ทำงานแล้ว" in normalized or "เชื่อมต่อแล้ว" in normalized:
+        return "เชื่อมต่อแล้ว"
+    if any(
+        term in normalized
+        for term in ("กำลังเริ่ม", "กำลังหยุด", "กำลังเชื่อมต่อ")
+    ):
+        return "กำลังเชื่อมต่อ"
+    if "ยังไม่ทำงาน" in normalized or "รอการเชื่อมต่อ" in normalized:
+        return "ยังไม่ทำงาน"
+    return "ไม่สามารถเชื่อมต่อได้"
+
+
 class SettingsWindow(ctk.CTkToplevel):
     """Standalone, single-instance Settings top-level window."""
 
@@ -65,6 +82,12 @@ class SettingsWindow(ctk.CTkToplevel):
         self._game_path_var = game_path_var or tk.StringVar(value="")
         self._auto_launch_var = auto_launch_var or tk.BooleanVar(value=True)
         self._proxy_connection_var = proxy_connection_var or tk.StringVar(value="พร้อมใช้งาน")
+        self._customer_connection_var = tk.StringVar(
+            value=customer_connection_status(self._proxy_connection_var.get())
+        )
+        self._proxy_connection_trace_id = self._proxy_connection_var.trace_add(
+            "write", self._update_customer_connection_status
+        )
         self._diagnostics = diagnostics
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
@@ -145,10 +168,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self._sidebar.pack_propagate(False)
 
         # Search bar
-        self._search_var = tk.StringVar()
         self._search_entry = ctk.CTkEntry(
             self._sidebar,
-            textvariable=self._search_var,
             placeholder_text="ค้นหาการตั้งค่า...",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color=PALETTE.card,
@@ -158,7 +179,7 @@ class SettingsWindow(ctk.CTkToplevel):
             corner_radius=6,
         )
         self._search_entry.pack(fill="x", padx=8, pady=(8, 8))
-        self._search_var.trace_add("write", self._filter_categories)
+        self._search_entry.bind("<KeyRelease>", self._filter_categories)
 
         # Nav Buttons list
         self._nav_container = ctk.CTkFrame(self._sidebar, fg_color="transparent")
@@ -227,7 +248,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._pages[key].pack(fill="both", expand=True)
 
     def _filter_categories(self, *_args: Any) -> None:
-        query = self._search_var.get().strip().lower()
+        query = self._search_entry.get().strip().lower()
         for key, title in self.CATEGORIES:
             btn = self._nav_buttons[key]
             if not query or query in title.lower() or query in key.lower():
@@ -565,13 +586,13 @@ class SettingsWindow(ctk.CTkToplevel):
         row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="สถานะ ProxyCore",
+            text="สถานะระบบเชื่อมต่อ",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
-            textvariable=self._proxy_connection_var,
+            textvariable=self._customer_connection_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.primary,
         ).pack(side="right")
@@ -581,7 +602,7 @@ class SettingsWindow(ctk.CTkToplevel):
             row2.pack(fill="x", padx=16, pady=4)
             ctk.CTkLabel(
                 row2,
-                text="โฟลเดอร์บันทึก Log",
+                text="โฟลเดอร์บันทึกการทำงาน",
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12),
                 text_color=PALETTE.text_muted,
             ).pack(side="left")
@@ -593,6 +614,11 @@ class SettingsWindow(ctk.CTkToplevel):
                 height=26,
             ).pack(side="right")
         return page
+
+    def _update_customer_connection_status(self, *_args: Any) -> None:
+        self._customer_connection_var.set(
+            customer_connection_status(self._proxy_connection_var.get())
+        )
 
     def _open_logs_folder(self) -> None:
         if self._debug_log_dir:
@@ -626,21 +652,6 @@ class SettingsWindow(ctk.CTkToplevel):
             text_color=PALETTE.primary,
         ).pack(side="right")
 
-        row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(
-            row2,
-            text="สถาปัตยกรรม",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            row2,
-            text="CustomTkinter + Windows Native DWM",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="right")
-
         ctk.CTkLabel(
             c,
             text="© 2026 NEKO FAMILY. All rights reserved.",
@@ -652,6 +663,16 @@ class SettingsWindow(ctk.CTkToplevel):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+    def destroy(self) -> None:
+        trace_id = getattr(self, "_proxy_connection_trace_id", None)
+        if trace_id is not None:
+            try:
+                self._proxy_connection_var.trace_remove("write", trace_id)
+            except tk.TclError:
+                pass
+            self._proxy_connection_trace_id = None
+        super().destroy()
+
     def close(self) -> None:
         if self._on_close_callback:
             self._on_close_callback()
