@@ -604,10 +604,122 @@ TWEAKER_PATH_AUTHORITY:         %LOCALAPPDATA%\NEKO FAMILY\tweaker.path
 TWEAKER_PATH_OWNER:             AppWindow / LauncherConfig existing authority
 BACKEND_CONTRACT_CHANGED:       NO
 CORE_CHANGED:                   NO
-OWNER_FUNCTIONAL_REVIEW:        PENDING
+OWNER_FUNCTIONAL_REVIEW:        PASS
 SOURCE_TEST_BUILD_STATUS:       PASS
-FINAL_EXE_AUTHENTICATED_PROOF:  BLOCKED — AUTHENTICATED SESSION UNAVAILABLE
-SCREENSHOT_AUTHORITY:           PRE-FOLLOW-UP ARTIFACT ONLY — STALE FOR FINAL COMMIT
-T10B2:                          NOT CLOSED
+FINAL_EXE_AUTHENTICATED_PROOF:  PASS
+T10B2:                          CLOSED
+```
+
+---
+
+## 21. T10B2 Final Closure and T10B3 Opening
+
+```text
+T10B2 FINAL RESULT =
+PASS
+
+ENGINEERING =
+PASS
+
+AUTHENTICATED_PACKAGED_PROOF =
+PASS
+
+OWNER_FUNCTIONAL_UI_REVIEW =
+PASS
+
+APPROVED_SOURCE_COMMIT =
+b5497e35481ffacabdc3c43ffd1191342b6c2ae2
+
+APPROVED_EXE_SHA256 =
+1A886ADEB4F142B031B5BD771F87939BA323445346F1361A4FA1EFDC8C19D4A6
+```
+
+### Final Authority Matrix
+
+```text
+ACCOUNT_CHANGE_PASSWORD =
+EXISTING CALLBACK / MIGRATED TO SETTINGS
+
+ACCOUNT_SIGN_OUT =
+EXISTING CALLBACK / MIGRATED TO SETTINGS
+
+COUPON_REDEMPTION =
+EXISTING CALLBACK / MIGRATED TO SETTINGS
+
+PSO2_PROCESS_DETECTION =
+EXISTING AUTHORITY / READ-ONLY PRESENTATION
+
+PSO2_PATH_AUTHORITY =
+NO INDEPENDENT EDITABLE PATH AUTHORITY
+
+TWEAKER_PATH_AUTHORITY =
+EXISTING LEGACY PATH AUTHORITY
+
+TWEAKER_BROWSE_LAUNCH =
+MIGRATED TO SETTINGS
+
+DIAGNOSTICS =
+LOCAL CUSTOMER-SAFE SUPPORT
+```
+
+### T10B3 Commercial Polish / Final UX
+
+```text
+T10B3_NAME =
+COMMERCIAL POLISH / FINAL UX
+
+T10B3_STATUS =
+IN PROGRESS
+
+T10B3_OBJECTIVE =
+Polish the now-functional commercial Settings experience without
+changing business/backend contracts.
+```
+
+T10B3 may address presentation-only items such as:
+
+- spacing/alignment of functional controls
+- coupon-input placeholder/copy
+- customer wording
+- PSO2 status wording
+- disabled/hover/focus states
+- consistent field/button sizing
+- DPI behavior
+- 100% / 125% / 150% layout verification
+- keyboard focus / tab behavior where practical
+- final customer-facing state consistency
+- overall visual balance after functional controls were added
+
+Explicit owner-review carry-forward items:
+
+1. Subscription coupon input: add customer-facing placeholder such as
+   `กรอกรหัสคูปอง`.
+2. PSO2 idle status: prefer customer wording such as `กำลังรอเปิด PSO2`
+   instead of exposing `(รอ pso2.exe)` in normal UI.
+
+These are T10B3 polish items, not T10B2 defects.
+
+### T10B3 Capability Freeze
+
+T10B3 must not introduce:
+
+- new backend capability
+- new authentication behavior
+- new session behavior
+- new entitlement behavior
+- new coupon behavior
+- dark mode
+- Windows startup feature
+- native notification system
+- server selection
+- proxy-region selection
+- advanced Tweaker args
+- new preference persistence
+- diagnostic upload
+- Ping without authority
+
+```text
+T10B3 =
+UX/PRESENTATION POLISH ONLY
 ```
 
