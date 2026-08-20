@@ -567,7 +567,7 @@ authorization to merge the Launcher feature branch into `main`.
 
 ```text
 NAME:                           SETTINGS FUNCTIONAL MIGRATION
-STATUS:                         IMPLEMENTED CANDIDATE — FUNCTIONAL REVIEW PENDING
+STATUS:                         BLOCKED — FINAL AUTHENTICATED PACKAGED PROOF PENDING
 PRIMARY_OBJECTIVE:              Move existing supported customer actions from legacy locations
                                 into the approved Settings architecture without changing
                                 backend/business contracts.
@@ -605,6 +605,9 @@ TWEAKER_PATH_OWNER:             AppWindow / LauncherConfig existing authority
 BACKEND_CONTRACT_CHANGED:       NO
 CORE_CHANGED:                   NO
 OWNER_FUNCTIONAL_REVIEW:        PENDING
+SOURCE_TEST_BUILD_STATUS:       PASS
+FINAL_EXE_AUTHENTICATED_PROOF:  BLOCKED — AUTHENTICATED SESSION UNAVAILABLE
+SCREENSHOT_AUTHORITY:           PRE-FOLLOW-UP ARTIFACT ONLY — STALE FOR FINAL COMMIT
 T10B2:                          NOT CLOSED
 ```
 
