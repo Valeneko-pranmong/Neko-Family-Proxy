@@ -317,6 +317,7 @@ class AppWindow:
             self.root,
             icon_path=self._icon_path,
             account_var=self._account,
+            entitlement_status_var=self._entitlement,
             entitlement_days_var=self._entitlement_days,
             entitlement_expiry_var=self._entitlement_expiry,
             coupon_var=self._coupon_code,

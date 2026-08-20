@@ -151,6 +151,7 @@ def test_subscription_page_uses_shared_entitlement_and_coupon_authority() -> Non
     try:
         days_var = ctk.StringVar(master=root, value="เหลือประมาณ 30 วัน")
         expiry_var = ctk.StringVar(master=root, value="20/09/2026 12:00")
+        status_var = ctk.StringVar(master=root, value="ใช้งานได้ • เหลือประมาณ 30 วัน")
         coupon_var = ctk.StringVar(master=root, value="NEKO-TEST")
         calls = 0
 
@@ -161,6 +162,7 @@ def test_subscription_page_uses_shared_entitlement_and_coupon_authority() -> Non
 
         window = SettingsWindow(
             root,
+            entitlement_status_var=status_var,
             entitlement_days_var=days_var,
             entitlement_expiry_var=expiry_var,
             coupon_var=coupon_var,
@@ -168,6 +170,9 @@ def test_subscription_page_uses_shared_entitlement_and_coupon_authority() -> Non
         )
 
         assert str(window._coupon_entry.cget("textvariable")) == str(coupon_var)
+        assert str(window._entitlement_status_label.cget("textvariable")) == str(
+            status_var
+        )
         assert days_var.get() == "เหลือประมาณ 30 วัน"
         assert expiry_var.get() == "20/09/2026 12:00"
         window._redeem_coupon_button.invoke()
