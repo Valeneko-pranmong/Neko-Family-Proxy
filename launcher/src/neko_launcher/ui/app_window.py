@@ -317,6 +317,7 @@ class AppWindow:
             self.root,
             icon_path=self._icon_path,
             account_var=self._account,
+            account_status_var=self._status,
             entitlement_status_var=self._entitlement,
             entitlement_days_var=self._entitlement_days,
             entitlement_expiry_var=self._entitlement_expiry,
@@ -542,14 +543,14 @@ class AppWindow:
         sanitized = sanitize_diagnostic_text(content)
         self.root.clipboard_clear()
         self.root.clipboard_append(sanitized)
-        self._toast.show_toast("Copied to clipboard!")
+        self._show_toast("Copied to clipboard!", is_error=False)
 
     def _open_debug_logs(self) -> None:
         if self._debug_log_dir:
             try:
                 os.startfile(self._debug_log_dir)
             except (OSError, AttributeError):
-                self._toast.show_toast("Failed to open logs directory.", PALETTE.danger)
+                self._show_toast("Failed to open logs directory.", is_error=True)
 
     def _format_debug_snapshot(self, snapshot: Any) -> str:
         content = (

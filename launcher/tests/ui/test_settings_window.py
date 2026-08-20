@@ -78,10 +78,12 @@ def test_account_page_binds_shared_username_and_existing_actions_once() -> None:
 
     try:
         account_var = ctk.StringVar(master=root, value="neko-user")
+        account_status_var = ctk.StringVar(master=root, value="เข้าสู่ระบบแล้ว")
         calls = {"password": 0, "sign_out": 0}
         window = SettingsWindow(
             root,
             account_var=account_var,
+            account_status_var=account_status_var,
             on_change_password=lambda: calls.__setitem__(
                 "password", calls["password"] + 1
             ),
@@ -91,6 +93,9 @@ def test_account_page_binds_shared_username_and_existing_actions_once() -> None:
         )
 
         assert str(window._account_label.cget("textvariable")) == str(account_var)
+        assert str(window._account_status_label.cget("textvariable")) == str(
+            account_status_var
+        )
         assert account_var.get() == "neko-user"
 
         window._change_password_button.invoke()

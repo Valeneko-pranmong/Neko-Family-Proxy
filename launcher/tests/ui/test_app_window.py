@@ -333,6 +333,55 @@ def test_error_notification_shows_complete_actionable_toast(monkeypatch: Any) ->
     }
 
 
+def test_copy_debug_uses_existing_toast_authority(monkeypatch: Any) -> None:
+    window = object.__new__(AppWindow)
+    snapshot = object()
+    window._diagnostics = type(
+        "Diagnostics", (), {"snapshot": lambda _self: snapshot}
+    )()
+    window.root = type(
+        "Root",
+        (),
+        {
+            "clipboard_clear": lambda _self: None,
+            "clipboard_append": lambda _self, _text: None,
+        },
+    )()
+    monkeypatch.setattr(window, "_format_debug_snapshot", lambda _value: "safe")
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "_show_toast",
+        lambda message, is_error: calls.append((message, is_error)),
+    )
+
+    window._copy_debug_to_clipboard()
+
+    assert calls == [("Copied to clipboard!", False)]
+
+
+def test_open_debug_logs_failure_uses_existing_error_toast(
+    monkeypatch: Any,
+) -> None:
+    window = object.__new__(AppWindow)
+    window._debug_log_dir = Path("missing-logs")
+    calls: list[tuple[str, bool]] = []
+
+    def fail_to_open(_path: Path) -> None:
+        raise OSError
+
+    monkeypatch.setattr("neko_launcher.ui.app_window.os.startfile", fail_to_open)
+    monkeypatch.setattr(
+        window,
+        "_show_toast",
+        lambda message, is_error: calls.append((message, is_error)),
+    )
+
+    window._open_debug_logs()
+
+    assert calls == [("Failed to open logs directory.", True)]
+
+
 def test_session_heartbeat_polling_interval_is_bounded_to_thirty_seconds() -> None:
     assert HEARTBEAT_INTERVAL_MS == 30_000
 

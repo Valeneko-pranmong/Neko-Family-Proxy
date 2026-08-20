@@ -58,6 +58,7 @@ class SettingsWindow(ctk.CTkToplevel):
         *,
         icon_path: Path | None = None,
         account_var: tk.StringVar | None = None,
+        account_status_var: tk.StringVar | None = None,
         entitlement_status_var: tk.StringVar | None = None,
         entitlement_days_var: tk.StringVar | None = None,
         entitlement_expiry_var: tk.StringVar | None = None,
@@ -81,6 +82,7 @@ class SettingsWindow(ctk.CTkToplevel):
         super().__init__(parent)
         self._on_close_callback = on_close
         self._account_var = account_var or tk.StringVar(value="")
+        self._account_status_var = account_status_var or tk.StringVar(value="")
         self._entitlement_status_var = entitlement_status_var or tk.StringVar(value="")
         self._entitlement_days_var = entitlement_days_var or tk.StringVar(value="")
         self._entitlement_expiry_var = entitlement_expiry_var or tk.StringVar(value="")
@@ -345,12 +347,13 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
-        ctk.CTkLabel(
+        self._account_status_label = ctk.CTkLabel(
             row2,
-            text="ปกติ",
+            textvariable=self._account_status_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
-        ).pack(side="right")
+        )
+        self._account_status_label.pack(side="right")
 
         actions = ctk.CTkFrame(c, fg_color="transparent")
         actions.pack(fill="x", padx=16, pady=(12, 12))
