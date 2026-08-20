@@ -184,8 +184,9 @@ def test_subscription_page_uses_shared_entitlement_and_coupon_authority() -> Non
         assert window._coupon_var is coupon_var
         assert window._coupon_entry.cget("placeholder_text") == "กรอกรหัสคูปอง"
         assert str(window._entitlement_status_label.cget("textvariable")) == str(
-            status_var
+            window._customer_membership_status_var
         )
+        assert window._customer_membership_status_var.get() == "ใช้งานได้"
         assert days_var.get() == "เหลือประมาณ 30 วัน"
         assert expiry_var.get() == "20/09/2026 12:00"
         window._redeem_coupon_button.invoke()

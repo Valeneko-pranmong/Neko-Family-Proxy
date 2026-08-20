@@ -47,6 +47,16 @@ def customer_game_status(technical_status: str) -> str:
     return "กำลังรอเปิด PSO2"
 
 
+def customer_membership_status(entitlement_status: str) -> str:
+    """Reduce shared entitlement detail to one truthful membership state."""
+    normalized = entitlement_status.strip()
+    if normalized.startswith("ใช้งานได้"):
+        return "ใช้งานได้"
+    if normalized.startswith(("สิทธิ์หมดอายุแล้ว", "หมดอายุแล้ว")):
+        return "หมดอายุ"
+    return "ไม่พร้อมใช้งาน"
+
+
 class SettingsWindow(ctk.CTkToplevel):
     """Standalone, single-instance Settings top-level window."""
 
@@ -95,6 +105,12 @@ class SettingsWindow(ctk.CTkToplevel):
         self._account_var = account_var or tk.StringVar(value="")
         self._account_status_var = account_status_var or tk.StringVar(value="")
         self._entitlement_status_var = entitlement_status_var or tk.StringVar(value="")
+        self._customer_membership_status_var = tk.StringVar(
+            value=customer_membership_status(self._entitlement_status_var.get())
+        )
+        self._entitlement_status_trace_id = self._entitlement_status_var.trace_add(
+            "write", self._update_customer_membership_status
+        )
         self._entitlement_days_var = entitlement_days_var or tk.StringVar(value="")
         self._entitlement_expiry_var = entitlement_expiry_var or tk.StringVar(value="")
         self._coupon_var = coupon_var or tk.StringVar(value="")
@@ -428,7 +444,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="left")
         self._entitlement_status_label = ctk.CTkLabel(
             row1,
-            textvariable=self._entitlement_status_var,
+            textvariable=self._customer_membership_status_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         )
@@ -442,12 +458,13 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
-        ctk.CTkLabel(
+        self._entitlement_days_label = ctk.CTkLabel(
             row2,
             textvariable=self._entitlement_days_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
-        ).pack(side="right")
+        )
+        self._entitlement_days_label.pack(side="right")
 
         row3 = ctk.CTkFrame(c, fg_color="transparent")
         row3.pack(fill="x", padx=16, pady=4)
@@ -457,12 +474,13 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
-        ctk.CTkLabel(
+        self._entitlement_expiry_label = ctk.CTkLabel(
             row3,
             textvariable=self._entitlement_expiry_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
-        ).pack(side="right")
+        )
+        self._entitlement_expiry_label.pack(side="right")
 
         coupon = ctk.CTkFrame(c, fg_color="transparent")
         coupon.pack(fill="x", padx=16, pady=(12, 12))
@@ -813,6 +831,11 @@ class SettingsWindow(ctk.CTkToplevel):
             customer_game_status(self._game_status_var.get())
         )
 
+    def _update_customer_membership_status(self, *_args: Any) -> None:
+        self._customer_membership_status_var.set(
+            customer_membership_status(self._entitlement_status_var.get())
+        )
+
     def _invoke_open_logs(self) -> None:
         if self._on_open_logs is not None:
             self._on_open_logs()
@@ -858,6 +881,13 @@ class SettingsWindow(ctk.CTkToplevel):
     # Lifecycle
     # ------------------------------------------------------------------
     def destroy(self) -> None:
+        entitlement_trace_id = getattr(self, "_entitlement_status_trace_id", None)
+        if entitlement_trace_id is not None:
+            try:
+                self._entitlement_status_var.trace_remove("write", entitlement_trace_id)
+            except tk.TclError:
+                pass
+            self._entitlement_status_trace_id = None
         coupon_trace_id = getattr(self, "_coupon_trace_id", None)
         if coupon_trace_id is not None:
             try:

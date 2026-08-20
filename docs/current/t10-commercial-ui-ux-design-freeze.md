@@ -783,3 +783,45 @@ SCREENSHOTS =                     9 packaged authenticated PNG files
 T10B3 is not closed by this record. Owner final visual approval remains the
 next gate, and T10B4 must not start before that decision.
 
+---
+
+## 23. T10B3.1 Final Subscription Hierarchy Candidate
+
+```text
+T10B3.1 =
+FINAL SUBSCRIPTION HIERARCHY CANDIDATE
+
+OWNER_FINAL_VISUAL_REVIEW =
+PENDING
+
+T10B4 =
+NOT STARTED
+
+NEW_EXE_SHA256 =
+E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
+```
+
+The Settings Subscription card now derives a presentation-only membership
+status from the existing shared entitlement status. `สถานะสมาชิก` displays
+only the truthful state (`ใช้งานได้`, `หมดอายุ`, or fail-closed
+`ไม่พร้อมใช้งาน`), while `วันคงเหลือ` and `วันหมดอายุ` remain bound to their
+existing shared authorities. No entitlement calculation or backend behavior
+changed. Coupon synchronization, `กรอกรหัสคูปอง`, and `เติมวัน` are unchanged.
+
+Verification snapshot:
+
+```text
+TARGETED_AFFECTED_UI_TESTS =     92 passed, 1 skipped
+LAUNCHER_NON_INTEGRATION =       529 passed, 5 deselected
+FULL_REPOSITORY_NON_INTEGRATION = 591 passed, 5 deselected
+REPOSITORY_SAFETY =              PASS
+RUFF =                           PASS
+FRESH_MEI =                      _MEI65242
+PACKAGED_SCREENSHOTS =           Main, Subscription, Account, PSO2, Tweaker
+SUBSCRIPTION_INFORMATION_HIERARCHY = PASS
+DUPLICATE_ENTITLEMENT_INFORMATION = NO
+```
+
+T10B3 remains not closed. Owner final visual approval is the next gate, and
+T10B4 remains not started.
+
