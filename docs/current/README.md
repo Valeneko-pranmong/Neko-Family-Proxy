@@ -2,14 +2,15 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         T10B2 CLOSED — T10B3 IN PROGRESS
+STATUS:                         T10B3 IMPLEMENTED CANDIDATE — OWNER FINAL VISUAL REVIEW PENDING
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
 T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PASS
 T10B1.2:                        CLOSED — CUSTOMER-SAFE VISUAL CLOSURE
 T10B2:                          CLOSED — ENGINEERING + AUTHENTICATED PACKAGED + OWNER REVIEW PASS
-T10B3:                          IN PROGRESS — COMMERCIAL POLISH / FINAL UX
-SUCCESSOR:                      T10B3 COMMERCIAL POLISH
+T10B3:                          IMPLEMENTED CANDIDATE — OWNER FINAL VISUAL REVIEW PENDING
+T10B4:                          NOT STARTED
+SUCCESSOR:                      OWNER T10B3 FINAL VISUAL REVIEW
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698

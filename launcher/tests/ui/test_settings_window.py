@@ -1,4 +1,6 @@
 from pathlib import Path
+import tkinter as tk
+
 import pytest
 import customtkinter as ctk
 
@@ -6,9 +8,11 @@ from neko_launcher import __version__
 from neko_launcher.ui.settings_window import (
     SettingsWindow,
     customer_connection_status,
+    customer_game_status,
 )
 from neko_launcher.ui.app_window import AppWindow
 from neko_launcher.domain.models import AuthStatus
+from neko_launcher.ui.theme import PALETTE
 
 
 def test_settings_window_structure_and_categories() -> None:
@@ -55,9 +59,12 @@ def test_settings_window_structure_and_categories() -> None:
         window._filter_categories()
         assert window._nav_buttons["pso2"].winfo_manager() != ""
         assert window._nav_buttons["account"].winfo_manager() == ""
+        assert window._selected_category == "pso2"
+        assert window._pages["pso2"].winfo_manager() != ""
         window._search_entry.delete(0, "end")
         window._filter_categories()
         assert window._nav_buttons["account"].winfo_manager() != ""
+        assert window._selected_category == "pso2"
 
         # Test close
         window.close()
@@ -174,7 +181,8 @@ def test_subscription_page_uses_shared_entitlement_and_coupon_authority() -> Non
             on_redeem_coupon=redeem,
         )
 
-        assert str(window._coupon_entry.cget("textvariable")) == str(coupon_var)
+        assert window._coupon_var is coupon_var
+        assert window._coupon_entry.cget("placeholder_text") == "กรอกรหัสคูปอง"
         assert str(window._entitlement_status_label.cget("textvariable")) == str(
             status_var
         )
@@ -211,9 +219,7 @@ def test_pso2_page_is_detection_only_and_tweaker_uses_shared_path_actions() -> N
             on_launch_game=lambda: calls.__setitem__("launch", calls["launch"] + 1),
         )
 
-        assert str(window._game_status_label.cget("textvariable")) == str(
-            game_status_var
-        )
+        assert window._customer_game_status_var.get() == "กำลังรอเปิด PSO2"
         assert str(window._tweaker_path_entry.cget("textvariable")) == str(
             tweaker_path_var
         )
@@ -565,3 +571,208 @@ def test_app_window_source_has_settings_gear_control_only() -> None:
     controls_section = source.split("def _build_window_controls")[1].split("def _open_settings_window")[0]
     assert '"—"' not in controls_section
     assert '"×"' not in controls_section
+
+
+def test_coupon_placeholder_is_guidance_not_coupon_value() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        coupon_var = ctk.StringVar(master=root, value="")
+        window = SettingsWindow(root, coupon_var=coupon_var)
+
+        assert window._coupon_entry.cget("placeholder_text") == "กรอกรหัสคูปอง"
+        assert window._coupon_entry._placeholder_text_active is True
+        assert coupon_var.get() == ""
+        window._coupon_entry.focus_set()
+        window._coupon_entry.insert(0, "NEKO-TEST")
+        window._sync_coupon_from_entry()
+        assert coupon_var.get() == "NEKO-TEST"
+        window._coupon_entry.delete(0, "end")
+        window._sync_coupon_from_entry()
+        assert coupon_var.get() == ""
+        window._search_entry.focus_set()
+        window.update_idletasks()
+        assert window._coupon_entry._placeholder_text_active is True
+    finally:
+        root.destroy()
+
+
+def test_redeem_button_syncs_entry_to_shared_coupon_authority() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        coupon_var = ctk.StringVar(master=root, value="")
+        redeemed: list[str] = []
+        window = SettingsWindow(
+            root,
+            coupon_var=coupon_var,
+            on_redeem_coupon=lambda: redeemed.append(coupon_var.get()),
+        )
+        window._coupon_entry.focus_set()
+        window._coupon_entry.insert(0, "NEKO-PASTE")
+
+        window._redeem_coupon_button.invoke()
+
+        assert redeemed == ["NEKO-PASTE"]
+        assert coupon_var.get() == "NEKO-PASTE"
+    finally:
+        root.destroy()
+
+
+@pytest.mark.parametrize(
+    ("technical_status", "expected"),
+    [
+        ("สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)", "กำลังรอเปิด PSO2"),
+        ("สถานะเกม: เข้าเกมแล้ว (พบ pso2.exe)", "ตรวจพบ PSO2 แล้ว"),
+    ],
+)
+def test_pso2_customer_copy_hides_detector_implementation(
+    technical_status: str,
+    expected: str,
+) -> None:
+    result = customer_game_status(technical_status)
+
+    assert result == expected
+    assert "pso2.exe" not in result.lower()
+
+
+def test_tweaker_long_path_is_read_only_and_preserves_shared_value() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        long_path = "C:\\Users\\customer\\" + ("very-long-folder\\" * 20) + "Tweaker.exe"
+        path_var = ctk.StringVar(master=root, value=long_path)
+        window = SettingsWindow(root, game_path_var=path_var)
+        window.update_idletasks()
+
+        assert window._tweaker_path_entry.cget("state") == "readonly"
+        assert path_var.get() == long_path
+        assert window._tweaker_path_entry.winfo_width() <= window._content_area.winfo_width()
+    finally:
+        root.destroy()
+
+
+def test_settings_action_hierarchy_and_consistent_control_height() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(root, debug_log_dir=Path(r"C:\Neko\logs"))
+
+        assert window._redeem_coupon_button.cget("fg_color") == PALETTE.primary
+        assert window._launch_tweaker_button.cget("fg_color") == PALETTE.primary
+        assert window._change_password_button.cget("fg_color") == "transparent"
+        assert window._choose_tweaker_button.cget("fg_color") == "transparent"
+        assert window._sign_out_button.cget("text_color") == PALETTE.danger
+        assert window._sign_out_button.cget("border_color") == PALETTE.danger
+        assert window._sign_out_button.cget("fg_color") != PALETTE.primary
+        for control in (
+            window._search_entry,
+            window._coupon_entry,
+            window._tweaker_path_entry,
+            window._change_password_button,
+            window._sign_out_button,
+            window._redeem_coupon_button,
+            window._choose_tweaker_button,
+            window._launch_tweaker_button,
+            window._open_logs_button,
+        ):
+            assert control.cget("height") >= 32
+    finally:
+        root.destroy()
+
+
+def test_normal_settings_widgets_hide_customer_forbidden_terms() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        game_status = ctk.StringVar(
+            master=root, value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)"
+        )
+        connection_status = ctk.StringVar(master=root, value="ProxyCore: ยังไม่ทำงาน")
+        window = SettingsWindow(
+            root,
+            game_status_var=game_status,
+            proxy_connection_var=connection_status,
+            debug_mode=False,
+        )
+        forbidden = (
+            "T10",
+            "ProxyCore",
+            "pso2.exe",
+            "AWS",
+            "Lightsail",
+            "Shadowsocks",
+            "V2Ray",
+            "8388",
+            "Direct Tunnel",
+            "Named Pipe",
+            "CustomTkinter",
+            "DWM",
+        )
+
+        def visible_copy(widget: object) -> list[str]:
+            values: list[str] = []
+            cget = getattr(widget, "cget", None)
+            if cget is not None:
+                for option in ("text", "placeholder_text"):
+                    try:
+                        value = cget(option)
+                    except (tk.TclError, ValueError, TypeError):
+                        continue
+                    if isinstance(value, str):
+                        values.append(value)
+            for child in getattr(widget, "winfo_children")():
+                values.extend(visible_copy(child))
+            return values
+
+        copy = "\n".join(visible_copy(window))
+        for term in forbidden:
+            assert term.lower() not in copy.lower()
+    finally:
+        root.destroy()
+
+
+def test_settings_keyboard_focus_order_covers_important_controls() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(root, debug_log_dir=Path(r"C:\Neko\logs"))
+
+        assert window._focus_controls == (
+            window._search_entry,
+            window._change_password_button,
+            window._sign_out_button,
+            window._coupon_entry,
+            window._redeem_coupon_button,
+            window._tweaker_path_entry,
+            window._choose_tweaker_button,
+            window._launch_tweaker_button,
+            window._open_logs_button,
+        )
+        assert len(set(window._focus_controls)) == len(window._focus_controls)
+    finally:
+        root.destroy()

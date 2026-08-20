@@ -9,6 +9,11 @@ import customtkinter as ctk
 DESIGN_WIDTH = 440
 DESIGN_HEIGHT = 592
 SCREEN_MARGIN_RATIO = 0.04
+SETTINGS_WIDTH = 880
+SETTINGS_HEIGHT = 600
+SETTINGS_SIDEBAR_WIDTH = 220
+SETTINGS_CONTENT_MIN_WIDTH = 520
+SETTINGS_FOOTER_RESERVE = 40
 
 
 class WindowGeometry(NamedTuple):
@@ -67,6 +72,28 @@ def calculate_centered_position(
     x = max(0, (screen_w - width) // 2)
     y = max(0, (screen_h - height) // 2)
     return x, y
+
+
+def calculate_settings_geometry(
+    screen_w: int,
+    screen_h: int,
+    window_scale: float,
+) -> WindowGeometry:
+    """Describe the fixed Settings layout at supported Windows DPI values."""
+    del window_scale
+    x, y = calculate_centered_position(
+        screen_w,
+        screen_h,
+        SETTINGS_WIDTH,
+        SETTINGS_HEIGHT,
+    )
+    return WindowGeometry(
+        logical_width=SETTINGS_WIDTH,
+        logical_height=SETTINGS_HEIGHT,
+        x=x,
+        y=y,
+        widget_scale=1.0,
+    )
 
 
 def fit_portrait_window(root: tk.Tk | tk.Toplevel) -> tuple[int, int]:

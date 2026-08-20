@@ -723,3 +723,63 @@ T10B3 =
 UX/PRESENTATION POLISH ONLY
 ```
 
+---
+
+## 22. T10B3 Implemented Candidate
+
+```text
+T10B3_STATUS =
+IMPLEMENTED CANDIDATE — OWNER FINAL VISUAL REVIEW PENDING
+
+T10B4 =
+NOT STARTED
+
+OWNER_FINAL_VISUAL_REVIEW =
+PENDING
+
+RUNTIME_SOURCE_BASE =
+52dabe8dfc83fc0cb8b74d862d292773ab5fafda
+
+NEW_EXE_SHA256 =
+695096E214C02CA147D437BBE4962DC21AC080C54CE45E6DF23D63120F93F656
+```
+
+Implemented presentation-only polish:
+
+- Coupon guidance now visibly renders `กรอกรหัสคูปอง` while the shared coupon
+  authority remains empty until the customer types; clearing restores the
+  placeholder.
+- Normal PSO2 status maps internal detector wording to customer-safe
+  `กำลังรอเปิด PSO2` / `ตรวจพบ PSO2 แล้ว`; detector behavior is unchanged.
+- Primary `เติมวัน` and `เปิด PSO2 Tweaker`, secondary file/password/log
+  actions, and destructive `ออกจากระบบ` now have distinct visual hierarchy.
+- Settings fields and actions use consistent minimum heights, borders, spacing,
+  and long-path containment. Read-only connection and diagnostics values use
+  neutral/semantic presentation instead of brand color.
+- Deterministic Main and Settings geometry contracts cover logical 100%, 125%,
+  and 150% scaling, content width, footer visibility, and fixed min/max bounds.
+- Keyboard focus order covers Search, Account actions, Coupon, Tweaker actions,
+  and Open Logs; `Ctrl+F` focuses Search without adding a custom accessibility
+  framework.
+- Search filtering keeps the active page coherent by selecting the first
+  matching category when the previous page is filtered out; clearing restores
+  all categories without altering Settings business state.
+- Packaged authenticated review verified Main, Account, Subscription, PSO2,
+  Tweaker, Connection, Diagnostics, About, and Search with no clipping,
+  overflow, duplicate controls, or normal-customer forbidden terms.
+
+Verification snapshot:
+
+```text
+TARGETED_UI_TESTS =               37 passed
+LAUNCHER_NON_INTEGRATION =        521 passed, 5 deselected
+FULL_REPOSITORY_NON_INTEGRATION = 583 passed, 5 deselected
+REPOSITORY_SAFETY =               PASS
+RUFF =                            PASS
+FRESH_MEI =                       _MEI100442
+SCREENSHOTS =                     9 packaged authenticated PNG files
+```
+
+T10B3 is not closed by this record. Owner final visual approval remains the
+next gate, and T10B4 must not start before that decision.
+

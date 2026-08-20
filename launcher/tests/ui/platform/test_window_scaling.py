@@ -8,6 +8,12 @@ from neko_launcher.ui.platform.window_scaling import (
     DESIGN_WIDTH,
     DESIGN_HEIGHT,
     SCREEN_MARGIN_RATIO,
+    SETTINGS_CONTENT_MIN_WIDTH,
+    SETTINGS_FOOTER_RESERVE,
+    SETTINGS_HEIGHT,
+    SETTINGS_SIDEBAR_WIDTH,
+    SETTINGS_WIDTH,
+    calculate_settings_geometry,
 )
 
 
@@ -141,3 +147,23 @@ def test_center_window_adapter() -> None:
     
     assert "update_idletasks" in root.events
     assert "geometry:440x580+740+250" in root.events
+
+
+def test_settings_layout_contract_preserves_content_and_footer_at_supported_dpi() -> None:
+    for window_scale, screen_size in (
+        (1.0, (1920, 1080)),
+        (1.25, (1536, 864)),
+        (1.5, (1280, 720)),
+    ):
+        geometry = calculate_settings_geometry(
+            screen_w=screen_size[0],
+            screen_h=screen_size[1],
+            window_scale=window_scale,
+        )
+
+        assert geometry.logical_width == SETTINGS_WIDTH
+        assert geometry.logical_height == SETTINGS_HEIGHT
+        assert geometry.logical_width <= screen_size[0]
+        assert geometry.logical_height + SETTINGS_FOOTER_RESERVE <= screen_size[1]
+        assert geometry.logical_width - SETTINGS_SIDEBAR_WIDTH >= SETTINGS_CONTENT_MIN_WIDTH
+        assert geometry.widget_scale == 1.0

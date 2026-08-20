@@ -10,8 +10,11 @@ from neko_launcher import __version__
 from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 from neko_launcher.ui.components.buttons import (
     card,
+    destructive_button,
+    primary_button,
     secondary_button,
 )
+from neko_launcher.ui.platform.window_scaling import SETTINGS_HEIGHT, SETTINGS_WIDTH
 from neko_launcher.ui.platform.window_chrome import (
     apply_rounded_window_shape,
     style_native_title_bar,
@@ -34,6 +37,14 @@ def customer_connection_status(technical_status: str) -> str:
     if "ยังไม่ทำงาน" in normalized or "รอการเชื่อมต่อ" in normalized:
         return "ยังไม่ทำงาน"
     return "ไม่สามารถเชื่อมต่อได้"
+
+
+def customer_game_status(technical_status: str) -> str:
+    """Map internal process-detection copy to a customer-safe PSO2 state."""
+    normalized = technical_status.strip()
+    if "เข้าเกมแล้ว" in normalized or "ตรวจพบ" in normalized:
+        return "ตรวจพบ PSO2 แล้ว"
+    return "กำลังรอเปิด PSO2"
 
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -87,8 +98,18 @@ class SettingsWindow(ctk.CTkToplevel):
         self._entitlement_days_var = entitlement_days_var or tk.StringVar(value="")
         self._entitlement_expiry_var = entitlement_expiry_var or tk.StringVar(value="")
         self._coupon_var = coupon_var or tk.StringVar(value="")
+        self._coupon_syncing = False
+        self._coupon_trace_id = self._coupon_var.trace_add(
+            "write", self._sync_coupon_to_entry
+        )
         self._game_status_var = game_status_var or tk.StringVar(
             value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)"
+        )
+        self._customer_game_status_var = tk.StringVar(
+            value=customer_game_status(self._game_status_var.get())
+        )
+        self._game_status_trace_id = self._game_status_var.trace_add(
+            "write", self._update_customer_game_status
         )
         self._game_path_var = game_path_var or tk.StringVar(value="")
         self._auto_launch_var = auto_launch_var or tk.BooleanVar(value=True)
@@ -111,9 +132,11 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_show_advanced_diagnostics = on_show_advanced_diagnostics
 
         self.title("การตั้งค่า — Neko Family Proxy")
-        window_width = 880
-        window_height = 600
+        window_width = SETTINGS_WIDTH
+        window_height = SETTINGS_HEIGHT
         self.geometry(f"{window_width}x{window_height}")
+        self.minsize(window_width, window_height)
+        self.maxsize(window_width, window_height)
         self.resizable(False, False)
         self.configure(fg_color=PALETTE.background)
 
@@ -135,6 +158,7 @@ class SettingsWindow(ctk.CTkToplevel):
             pass
 
         self._build_layout()
+        self.bind("<Control-f>", self._focus_search)
         style_native_title_bar(self, PALETTE)
         apply_rounded_window_shape(self, radius=20)
 
@@ -243,6 +267,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def select_category(self, key: str) -> None:
         if key not in self._pages:
             return
+        self._selected_category = key
         for k, btn in self._nav_buttons.items():
             if k == key:
                 btn.configure(
@@ -262,12 +287,16 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def _filter_categories(self, *_args: Any) -> None:
         query = self._search_entry.get().strip().lower()
+        visible_keys: list[str] = []
         for key, title in self.CATEGORIES:
             btn = self._nav_buttons[key]
             if not query or query in title.lower() or query in key.lower():
                 btn.pack(fill="x", pady=1)
+                visible_keys.append(key)
             else:
                 btn.pack_forget()
+        if query and self._selected_category not in visible_keys and visible_keys:
+            self.select_category(visible_keys[0])
 
     # ------------------------------------------------------------------
     # Page Builders (B1.1 Foundation)
@@ -292,7 +321,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="left")
         ctk.CTkLabel(
             item1,
-            text="เปิดใช้งาน (เมื่อพบ pso2.exe)",
+            text="เปิดใช้งาน",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
@@ -363,7 +392,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self._invoke_change_password,
         )
         self._change_password_button.pack(side="left", padx=(0, 8))
-        self._sign_out_button = secondary_button(
+        self._sign_out_button = destructive_button(
             actions,
             "ออกจากระบบ",
             self._invoke_sign_out,
@@ -439,13 +468,22 @@ class SettingsWindow(ctk.CTkToplevel):
         coupon.pack(fill="x", padx=16, pady=(12, 12))
         self._coupon_entry = ctk.CTkEntry(
             coupon,
-            textvariable=self._coupon_var,
-            placeholder_text="รหัสคูปอง",
+            placeholder_text="กรอกรหัสคูปอง",
+            placeholder_text_color=PALETTE.text_muted,
+            fg_color=PALETTE.card,
+            border_color=PALETTE.border,
+            border_width=1,
+            corner_radius=8,
             height=32,
         )
         self._coupon_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self._coupon_entry.bind("<Return>", lambda _event: self._invoke_redeem_coupon())
-        self._redeem_coupon_button = secondary_button(
+        if self._coupon_var.get():
+            self._coupon_entry.insert(0, self._coupon_var.get())
+        self._coupon_entry.bind("<KeyRelease>", self._sync_coupon_from_entry)
+        self._coupon_entry.bind("<<Paste>>", self._schedule_coupon_sync, add="+")
+        self._coupon_entry.bind("<<Cut>>", self._schedule_coupon_sync, add="+")
+        self._coupon_entry.bind("<Return>", self._redeem_coupon_from_entry)
+        self._redeem_coupon_button = primary_button(
             coupon,
             "เติมวัน",
             self._invoke_redeem_coupon,
@@ -454,8 +492,40 @@ class SettingsWindow(ctk.CTkToplevel):
         return page
 
     def _invoke_redeem_coupon(self) -> None:
+        self._sync_coupon_from_entry()
         if self._on_redeem_coupon is not None:
             self._on_redeem_coupon()
+
+    def _schedule_coupon_sync(self, *_args: Any) -> None:
+        self.after_idle(self._sync_coupon_from_entry)
+
+    def _redeem_coupon_from_entry(self, _event: tk.Event[Any]) -> str:
+        self._sync_coupon_from_entry()
+        self._invoke_redeem_coupon()
+        return "break"
+
+    def _sync_coupon_from_entry(self, *_args: Any) -> None:
+        if self._coupon_syncing:
+            return
+        self._coupon_syncing = True
+        try:
+            self._coupon_var.set(self._coupon_entry.get())
+            if not self._coupon_var.get():
+                self._coupon_entry._activate_placeholder()
+        finally:
+            self._coupon_syncing = False
+
+    def _sync_coupon_to_entry(self, *_args: Any) -> None:
+        if self._coupon_syncing or not hasattr(self, "_coupon_entry"):
+            return
+        self._coupon_syncing = True
+        try:
+            value = self._coupon_var.get()
+            self._coupon_entry.delete(0, "end")
+            if value:
+                self._coupon_entry.insert(0, value)
+        finally:
+            self._coupon_syncing = False
 
     def _create_pso2_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self._content_area, fg_color="transparent")
@@ -492,7 +562,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="left")
         self._game_status_label = ctk.CTkLabel(
             row2,
-            textvariable=self._game_status_var,
+            textvariable=self._customer_game_status_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.text,
         )
@@ -522,6 +592,10 @@ class SettingsWindow(ctk.CTkToplevel):
             textvariable=self._game_path_var,
             height=32,
             state="readonly",
+            fg_color=PALETTE.surface,
+            border_color=PALETTE.border,
+            border_width=1,
+            corner_radius=8,
         )
         self._tweaker_path_entry.pack(fill="x", pady=(4, 0))
 
@@ -533,7 +607,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self._invoke_choose_game,
         )
         self._choose_tweaker_button.pack(side="left", padx=(0, 8))
-        self._launch_tweaker_button = secondary_button(
+        self._launch_tweaker_button = primary_button(
             actions,
             "เปิด PSO2 Tweaker",
             self._invoke_launch_game,
@@ -571,7 +645,7 @@ class SettingsWindow(ctk.CTkToplevel):
             row1,
             text="Japan (Tokyo)",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.primary,
+            text_color=PALETTE.text,
         ).pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
@@ -610,7 +684,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="left")
         ctk.CTkLabel(
             row1,
-            text="Neko Pink (Light Mode)",
+            text="ธีม Neko Pink",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.primary,
         ).pack(side="right")
@@ -625,7 +699,7 @@ class SettingsWindow(ctk.CTkToplevel):
         ).pack(side="left")
         ctk.CTkLabel(
             row2,
-            text=f"{FONT_FAMILY} (Bundled)",
+            text=FONT_FAMILY,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="right")
@@ -679,7 +753,7 @@ class SettingsWindow(ctk.CTkToplevel):
             row1,
             textvariable=self._customer_connection_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.primary,
+            text_color=PALETTE.text,
         ).pack(side="right")
 
         if self._debug_log_dir:
@@ -696,7 +770,7 @@ class SettingsWindow(ctk.CTkToplevel):
                 "เปิดโฟลเดอร์",
                 self._invoke_open_logs,
                 width=90,
-                height=26,
+                height=32,
             )
             self._open_logs_button.pack(side="right")
 
@@ -709,11 +783,34 @@ class SettingsWindow(ctk.CTkToplevel):
                 self._invoke_advanced_diagnostics,
             )
             self._advanced_diagnostics_button.pack(side="left")
+
+        focus_controls = [
+            self._search_entry,
+            self._change_password_button,
+            self._sign_out_button,
+            self._coupon_entry,
+            self._redeem_coupon_button,
+            self._tweaker_path_entry,
+            self._choose_tweaker_button,
+            self._launch_tweaker_button,
+        ]
+        if hasattr(self, "_open_logs_button"):
+            focus_controls.append(self._open_logs_button)
+        self._focus_controls = tuple(focus_controls)
         return page
+
+    def _focus_search(self, _event: tk.Event[Any]) -> str:
+        self._search_entry.focus_set()
+        return "break"
 
     def _update_customer_connection_status(self, *_args: Any) -> None:
         self._customer_connection_var.set(
             customer_connection_status(self._proxy_connection_var.get())
+        )
+
+    def _update_customer_game_status(self, *_args: Any) -> None:
+        self._customer_game_status_var.set(
+            customer_game_status(self._game_status_var.get())
         )
 
     def _invoke_open_logs(self) -> None:
@@ -761,6 +858,20 @@ class SettingsWindow(ctk.CTkToplevel):
     # Lifecycle
     # ------------------------------------------------------------------
     def destroy(self) -> None:
+        coupon_trace_id = getattr(self, "_coupon_trace_id", None)
+        if coupon_trace_id is not None:
+            try:
+                self._coupon_var.trace_remove("write", coupon_trace_id)
+            except tk.TclError:
+                pass
+            self._coupon_trace_id = None
+        game_trace_id = getattr(self, "_game_status_trace_id", None)
+        if game_trace_id is not None:
+            try:
+                self._game_status_var.trace_remove("write", game_trace_id)
+            except tk.TclError:
+                pass
+            self._game_status_trace_id = None
         trace_id = getattr(self, "_proxy_connection_trace_id", None)
         if trace_id is not None:
             try:

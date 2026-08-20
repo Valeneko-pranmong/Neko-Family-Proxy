@@ -31,7 +31,7 @@ def secondary_button(
     command: Callable[[], None],
     *,
     width: int | None = None,
-    height: int = 28,
+    height: int = 32,
 ) -> ctk.CTkButton:
     options: dict[str, Any] = {}
     if width is not None:
@@ -49,6 +49,26 @@ def secondary_button(
         font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
         command=command,
         **options,
+    )
+
+
+def destructive_button(
+    parent: ctk.CTkBaseClass,
+    text: str,
+    command: Callable[[], None],
+) -> ctk.CTkButton:
+    return ctk.CTkButton(
+        parent,
+        text=text,
+        fg_color="transparent",
+        hover_color=PALETTE.danger_surface,
+        border_color=PALETTE.danger,
+        border_width=1,
+        text_color=PALETTE.danger,
+        corner_radius=8,
+        height=32,
+        font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+        command=command,
     )
 
 
