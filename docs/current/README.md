@@ -2,12 +2,13 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         T10B1.2 FINAL VISUAL CANDIDATE — OWNER REVIEW PENDING
+STATUS:                         T10B1 CLOSED — T10B2 IN PROGRESS
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
-T10B1:                          FUNCTIONAL PASS
-T10B1.2:                        FINAL VISUAL CANDIDATE — OWNER REVIEW PENDING
-T10B2:                          NOT STARTED
+T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PASS
+T10B1.2:                        CLOSED — CUSTOMER-SAFE VISUAL CLOSURE
+T10B2:                          IN PROGRESS — SETTINGS FUNCTIONAL MIGRATION
+SUCCESSOR:                      T10B2 SETTINGS FUNCTIONAL MIGRATION
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698
@@ -15,7 +16,7 @@ RUNTIME_SOURCE_BASE:            8832429a7546ab57dd8ac3a48b40b93387cb9f19
 SERVER_OPERATIONS:              T1-T9 CLOSED (Production Verified on AWS Lightsail Japan)
 ACTIVE_PRODUCT_BRANCH:          feature/t10-commercial-launcher-ui
 MAIN_BRANCH_STATUS:             PRE-T10 BASELINE
-DATE:                           2026-08-20
+LAST_UPDATED:                   2026-08-20
 ```
 
 ---

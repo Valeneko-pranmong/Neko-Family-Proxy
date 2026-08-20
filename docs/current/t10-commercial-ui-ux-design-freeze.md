@@ -535,3 +535,55 @@ category filtering, and reserves sufficient Main-window height for the complete
 version footer. The product direction, Settings hierarchy, Main cards, native
 chrome, and functional scope remain unchanged.
 
+---
+
+## 19. T10B1 Final Closure
+
+```text
+T10B1_FINAL_RESULT:             PASS
+ENGINEERING:                    PASS
+OWNER_VISUAL_APPROVAL:          PASS
+APPROVED_COMMIT:                57698a853c0dc2b171617b19b15ae3f249afd606
+APPROVED_PDW-2_EXE_SHA256:      9CD33B128CB1AFD123A78CE960612BF8DE8FE8E7ADCBCCECF4826E59E1B5ACF4
+T10B2:                          IN PROGRESS
+```
+
+Approved T10B1 commercial UI foundation:
+
+- Main read-only dashboard
+- Settings dedicated window
+- Customer-safe terminology
+- Native chrome
+- Commercial visual hierarchy
+
+This closure preserves the historical T10B1, T10B1.1, and T10B1.2 progression
+above. It is approval of the commercial UI foundation only; it is not final
+product release approval, public release authorization, Phase 2.5 closure, or
+authorization to merge the Launcher feature branch into `main`.
+
+---
+
+## 20. T10B2 Settings Functional Migration
+
+```text
+NAME:                           SETTINGS FUNCTIONAL MIGRATION
+STATUS:                         IN PROGRESS
+PRIMARY_OBJECTIVE:              Move existing supported customer actions from legacy locations
+                                into the approved Settings architecture without changing
+                                backend/business contracts.
+```
+
+Approved T10B2 target areas:
+
+- Account
+- Subscription
+- PSO2
+- PSO2 Tweaker
+- Diagnostics
+- About
+
+The General, Connection, Appearance, and Notifications capability freeze remains
+in force unless a capability is explicitly supported by existing product
+authority. T10B2 implementation has not started as part of this documentation
+closure.
+
