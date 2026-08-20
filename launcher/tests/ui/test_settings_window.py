@@ -8,6 +8,7 @@ from neko_launcher.ui.settings_window import (
     customer_connection_status,
 )
 from neko_launcher.ui.app_window import AppWindow
+from neko_launcher.domain.models import AuthStatus
 
 
 def test_settings_window_structure_and_categories() -> None:
@@ -61,6 +62,204 @@ def test_settings_window_structure_and_categories() -> None:
         # Test close
         window.close()
         assert closed is True
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_account_page_binds_shared_username_and_existing_actions_once() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        account_var = ctk.StringVar(master=root, value="neko-user")
+        calls = {"password": 0, "sign_out": 0}
+        window = SettingsWindow(
+            root,
+            account_var=account_var,
+            on_change_password=lambda: calls.__setitem__(
+                "password", calls["password"] + 1
+            ),
+            on_sign_out=lambda: calls.__setitem__(
+                "sign_out", calls["sign_out"] + 1
+            ),
+        )
+
+        assert str(window._account_label.cget("textvariable")) == str(account_var)
+        assert account_var.get() == "neko-user"
+
+        window._change_password_button.invoke()
+        window._sign_out_button.invoke()
+
+        assert calls == {"password": 1, "sign_out": 1}
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_repeated_settings_password_action_reuses_existing_app_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = object.__new__(AppWindow)
+    window._password_dialog = None
+    window._icon_path = None
+    window._new_password = object()
+    window._new_password_confirm = object()
+    window._error = object()
+    window.root = object()
+    created = 0
+
+    class FakeDialog:
+        def winfo_exists(self) -> bool:
+            return True
+
+        def lift(self) -> None:
+            pass
+
+        def focus_force(self) -> None:
+            pass
+
+    def create_dialog(*_args: object) -> FakeDialog:
+        nonlocal created
+        created += 1
+        return FakeDialog()
+
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.open_password_dialog", create_dialog
+    )
+
+    window._open_password_dialog()
+    window._open_password_dialog()
+
+    assert created == 1
+
+
+def test_subscription_page_uses_shared_entitlement_and_coupon_authority() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        days_var = ctk.StringVar(master=root, value="เหลือประมาณ 30 วัน")
+        expiry_var = ctk.StringVar(master=root, value="20/09/2026 12:00")
+        coupon_var = ctk.StringVar(master=root, value="NEKO-TEST")
+        calls = 0
+
+        def redeem() -> None:
+            nonlocal calls
+            calls += 1
+            coupon_var.set("")
+
+        window = SettingsWindow(
+            root,
+            entitlement_days_var=days_var,
+            entitlement_expiry_var=expiry_var,
+            coupon_var=coupon_var,
+            on_redeem_coupon=redeem,
+        )
+
+        assert str(window._coupon_entry.cget("textvariable")) == str(coupon_var)
+        assert days_var.get() == "เหลือประมาณ 30 วัน"
+        assert expiry_var.get() == "20/09/2026 12:00"
+        window._redeem_coupon_button.invoke()
+        assert calls == 1
+        assert coupon_var.get() == ""
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_pso2_page_is_detection_only_and_tweaker_uses_shared_path_actions() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        game_status_var = ctk.StringVar(
+            master=root, value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)"
+        )
+        tweaker_path_var = ctk.StringVar(master=root, value=r"C:\PSO2\Tweaker.exe")
+        calls = {"browse": 0, "launch": 0}
+        window = SettingsWindow(
+            root,
+            game_status_var=game_status_var,
+            game_path_var=tweaker_path_var,
+            on_choose_game=lambda: calls.__setitem__("browse", calls["browse"] + 1),
+            on_launch_game=lambda: calls.__setitem__("launch", calls["launch"] + 1),
+        )
+
+        assert str(window._game_status_label.cget("textvariable")) == str(
+            game_status_var
+        )
+        assert str(window._tweaker_path_entry.cget("textvariable")) == str(
+            tweaker_path_var
+        )
+        window._choose_tweaker_button.invoke()
+        window._launch_tweaker_button.invoke()
+        assert calls == {"browse": 1, "launch": 1}
+
+        source = Path(__file__).parents[2].joinpath(
+            "src", "neko_launcher", "ui", "settings_window.py"
+        ).read_text(encoding="utf-8")
+        pso2_page = source.split("def _create_pso2_page")[1].split(
+            "def _create_tweaker_page"
+        )[0]
+        assert "_game_path_var" not in pso2_page
+        assert "ตำแหน่งไฟล์เกม" not in pso2_page
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_diagnostics_uses_existing_local_tools_with_debug_gate() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        calls = {"logs": 0, "advanced": 0}
+        normal_window = SettingsWindow(
+            root,
+            debug_mode=False,
+            debug_log_dir=Path(r"C:\Neko\logs"),
+            on_open_logs=lambda: calls.__setitem__("logs", calls["logs"] + 1),
+            on_show_advanced_diagnostics=lambda: calls.__setitem__(
+                "advanced", calls["advanced"] + 1
+            ),
+        )
+        normal_window._open_logs_button.invoke()
+        assert calls["logs"] == 1
+        assert not hasattr(normal_window, "_advanced_diagnostics_button")
+        normal_window.destroy()
+
+        debug_window = SettingsWindow(
+            root,
+            debug_mode=True,
+            debug_log_dir=Path(r"C:\Neko\logs"),
+            on_open_logs=lambda: calls.__setitem__("logs", calls["logs"] + 1),
+            on_show_advanced_diagnostics=lambda: calls.__setitem__(
+                "advanced", calls["advanced"] + 1
+            ),
+        )
+        debug_window._advanced_diagnostics_button.invoke()
+        assert calls["advanced"] == 1
     finally:
         try:
             root.destroy()
@@ -190,7 +389,7 @@ def test_diagnostics_and_about_copy_is_customer_safe() -> None:
         / "settings_window.py"
     ).read_text(encoding="utf-8")
     diagnostics = source.split("def _create_diagnostics_page")[1].split(
-        "def _open_logs_folder"
+        "def _create_about_page"
     )[0]
     about = source.split("def _create_about_page")[1].split("# Lifecycle")[0]
 
@@ -207,6 +406,11 @@ def test_diagnostics_and_about_copy_is_customer_safe() -> None:
 def test_app_window_settings_single_instance_contract() -> None:
     window = object.__new__(AppWindow)
     window._settings_window = None
+    window._controller = type(
+        "Controller",
+        (),
+        {"state": type("State", (), {"auth_status": AuthStatus.AUTHENTICATED})()},
+    )()
 
     class FakeToplevel:
         def __init__(self) -> None:
@@ -236,6 +440,56 @@ def test_app_window_settings_single_instance_contract() -> None:
 
     # Closing settings window clears owner reference
     window._close_settings_window()
+    assert window._settings_window is None
+
+
+def test_app_window_does_not_open_settings_while_unauthenticated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeController:
+        state = type("State", (), {"auth_status": AuthStatus.SIGNED_OUT})()
+
+    window = object.__new__(AppWindow)
+    window._controller = FakeController()  # type: ignore[assignment]
+    window._settings_window = None
+    created = 0
+
+    def create_settings(*_args: object, **_kwargs: object) -> object:
+        nonlocal created
+        created += 1
+        return object()
+
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.SettingsWindow", create_settings
+    )
+
+    window._open_settings_window()
+
+    assert created == 0
+    assert window._settings_window is None
+
+
+@pytest.mark.parametrize(
+    "auth_status",
+    [
+        AuthStatus.RECOVERY_CODE_ENTRY,
+        AuthStatus.RECOVERY_VERIFYING,
+        AuthStatus.RECOVERY_PASSWORD_CHANGE,
+    ],
+)
+def test_app_window_does_not_open_settings_during_recovery(
+    auth_status: AuthStatus,
+) -> None:
+    window = object.__new__(AppWindow)
+    window._controller = type(
+        "Controller",
+        (),
+        {"state": type("State", (), {"auth_status": auth_status})()},
+    )()
+    window._settings_window = None
+
+    window._open_settings_window()
+
     assert window._settings_window is None
 
 

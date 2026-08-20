@@ -303,6 +303,8 @@ class AppWindow:
     # Settings window lifecycle
     # ------------------------------------------------------------------
     def _open_settings_window(self) -> None:
+        if self._controller.state.auth_status is not AuthStatus.AUTHENTICATED:
+            return
         if (
             self._settings_window is not None
             and self._settings_window.winfo_exists()
@@ -317,6 +319,8 @@ class AppWindow:
             account_var=self._account,
             entitlement_days_var=self._entitlement_days,
             entitlement_expiry_var=self._entitlement_expiry,
+            coupon_var=self._coupon_code,
+            game_status_var=self._game_connection_status,
             game_path_var=self._game_path,
             auto_launch_var=self._auto_launch,
             proxy_connection_var=self._proxy_connection_status,
@@ -329,6 +333,8 @@ class AppWindow:
             on_redeem_coupon=self._redeem_coupon,
             on_choose_game=self._choose_game,
             on_launch_game=self._launch_game,
+            on_open_logs=self._open_debug_logs,
+            on_show_advanced_diagnostics=self._show_debug_dialog,
         )
 
     def _close_settings_window(self) -> None:
@@ -727,6 +733,7 @@ class AppWindow:
 
     def _signed_out(self, _: Any) -> None:
         self._close_password_dialog()
+        self._close_debug_dialog()
         self._coupon_code.set("")
         self._notice.set("ออกจากระบบแล้ว")
 
@@ -892,6 +899,14 @@ class AppWindow:
             AuthStatus.RECOVERY_VERIFYING,
             AuthStatus.RECOVERY_PASSWORD_CHANGE,
         }
+        if not signed_in:
+            if self._password_dialog is not None:
+                self._close_password_dialog()
+            if self._debug_dialog is not None:
+                self._close_debug_dialog()
+            if self._settings_window is not None and self._settings_window.winfo_exists():
+                self._settings_window.destroy()
+                self._settings_window = None
         if signed_in:
             self._show_program_view()
         elif recovery:
@@ -901,11 +916,6 @@ class AppWindow:
             else:
                 self._show_recovery_code_entry()
         else:
-            if self._password_dialog is not None:
-                self._close_password_dialog()
-            if self._settings_window is not None and self._settings_window.winfo_exists():
-                self._settings_window.destroy()
-                self._settings_window = None
             self._show_auth_view()
         self._recovery_view.set_busy(
             state.auth_status is AuthStatus.RECOVERY_VERIFYING

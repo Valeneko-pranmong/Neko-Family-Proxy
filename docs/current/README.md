@@ -2,13 +2,13 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         T10B1 CLOSED — T10B2 IN PROGRESS
+STATUS:                         T10B1 CLOSED — T10B2 IMPLEMENTED CANDIDATE
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
 T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PASS
 T10B1.2:                        CLOSED — CUSTOMER-SAFE VISUAL CLOSURE
-T10B2:                          IN PROGRESS — SETTINGS FUNCTIONAL MIGRATION
-SUCCESSOR:                      T10B2 SETTINGS FUNCTIONAL MIGRATION
+T10B2:                          IMPLEMENTED CANDIDATE — FUNCTIONAL REVIEW PENDING
+SUCCESSOR:                      OWNER T10B2 FUNCTIONAL/UI REVIEW
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698

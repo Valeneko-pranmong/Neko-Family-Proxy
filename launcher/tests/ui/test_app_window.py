@@ -220,6 +220,42 @@ def test_successful_password_change_clears_both_password_fields() -> None:
     assert dialog.destroyed
 
 
+def test_signed_out_closes_password_and_advanced_diagnostics_dialogs() -> None:
+    window = object.__new__(AppWindow)
+    window._coupon_code = FakeVariable("coupon")  # type: ignore[assignment]
+    window._notice = FakeVariable()  # type: ignore[assignment]
+    closed = {"password": 0, "debug": 0}
+    window._close_password_dialog = (  # type: ignore[method-assign]
+        lambda: closed.__setitem__("password", closed["password"] + 1)
+    )
+    window._close_debug_dialog = (  # type: ignore[method-assign]
+        lambda: closed.__setitem__("debug", closed["debug"] + 1)
+    )
+
+    window._signed_out(None)
+
+    assert closed == {"password": 1, "debug": 1}
+    assert window._coupon_code.get() == ""
+
+
+def test_signed_out_state_transition_closes_advanced_diagnostics_dialog() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "neko_launcher"
+        / "ui"
+        / "app_window.py"
+    ).read_text(encoding="utf-8")
+    auth_transition_cleanup = source.split("recovery = state.auth_status in {")[1].split(
+        "if signed_in:"
+    )[0]
+
+    assert "if not signed_in:" in auth_transition_cleanup
+    assert "self._close_password_dialog()" in auth_transition_cleanup
+    assert "self._close_debug_dialog()" in auth_transition_cleanup
+    assert "self._settings_window.destroy()" in auth_transition_cleanup
+
+
 def test_auth_controls_update_without_removed_reset_password_button() -> None:
     window = object.__new__(AppWindow)
     window._auth_view = FakeAuthView()  # type: ignore[assignment]

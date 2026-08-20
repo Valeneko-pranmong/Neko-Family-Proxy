@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Callable
 import tkinter as tk
@@ -61,6 +60,8 @@ class SettingsWindow(ctk.CTkToplevel):
         account_var: tk.StringVar | None = None,
         entitlement_days_var: tk.StringVar | None = None,
         entitlement_expiry_var: tk.StringVar | None = None,
+        coupon_var: tk.StringVar | None = None,
+        game_status_var: tk.StringVar | None = None,
         game_path_var: tk.StringVar | None = None,
         auto_launch_var: tk.BooleanVar | None = None,
         proxy_connection_var: tk.StringVar | None = None,
@@ -73,12 +74,18 @@ class SettingsWindow(ctk.CTkToplevel):
         on_redeem_coupon: Callable[[], None] | None = None,
         on_choose_game: Callable[[], None] | None = None,
         on_launch_game: Callable[[], None] | None = None,
+        on_open_logs: Callable[[], None] | None = None,
+        on_show_advanced_diagnostics: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_close_callback = on_close
         self._account_var = account_var or tk.StringVar(value="")
         self._entitlement_days_var = entitlement_days_var or tk.StringVar(value="")
         self._entitlement_expiry_var = entitlement_expiry_var or tk.StringVar(value="")
+        self._coupon_var = coupon_var or tk.StringVar(value="")
+        self._game_status_var = game_status_var or tk.StringVar(
+            value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)"
+        )
         self._game_path_var = game_path_var or tk.StringVar(value="")
         self._auto_launch_var = auto_launch_var or tk.BooleanVar(value=True)
         self._proxy_connection_var = proxy_connection_var or tk.StringVar(value="พร้อมใช้งาน")
@@ -96,6 +103,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_redeem_coupon = on_redeem_coupon
         self._on_choose_game = on_choose_game
         self._on_launch_game = on_launch_game
+        self._on_open_logs = on_open_logs
+        self._on_show_advanced_diagnostics = on_show_advanced_diagnostics
 
         self.title("การตั้งค่า — Neko Family Proxy")
         window_width = 880
@@ -318,12 +327,13 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
-        ctk.CTkLabel(
+        self._account_label = ctk.CTkLabel(
             row1,
             textvariable=self._account_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(side="right")
+        )
+        self._account_label.pack(side="right")
 
         row2 = ctk.CTkFrame(c, fg_color="transparent")
         row2.pack(fill="x", padx=16, pady=4)
@@ -339,7 +349,30 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
+
+        actions = ctk.CTkFrame(c, fg_color="transparent")
+        actions.pack(fill="x", padx=16, pady=(12, 12))
+        self._change_password_button = secondary_button(
+            actions,
+            "เปลี่ยนรหัสผ่าน",
+            self._invoke_change_password,
+        )
+        self._change_password_button.pack(side="left", padx=(0, 8))
+        self._sign_out_button = secondary_button(
+            actions,
+            "ออกจากระบบ",
+            self._invoke_sign_out,
+        )
+        self._sign_out_button.pack(side="left")
         return page
+
+    def _invoke_change_password(self) -> None:
+        if self._on_change_password is not None:
+            self._on_change_password()
+
+    def _invoke_sign_out(self) -> None:
+        if self._on_sign_out is not None:
+            self._on_sign_out()
 
     def _create_subscription_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self._content_area, fg_color="transparent")
@@ -395,7 +428,28 @@ class SettingsWindow(ctk.CTkToplevel):
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="right")
+
+        coupon = ctk.CTkFrame(c, fg_color="transparent")
+        coupon.pack(fill="x", padx=16, pady=(12, 12))
+        self._coupon_entry = ctk.CTkEntry(
+            coupon,
+            textvariable=self._coupon_var,
+            placeholder_text="รหัสคูปอง",
+            height=32,
+        )
+        self._coupon_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._coupon_entry.bind("<Return>", lambda _event: self._invoke_redeem_coupon())
+        self._redeem_coupon_button = secondary_button(
+            coupon,
+            "เติมวัน",
+            self._invoke_redeem_coupon,
+        )
+        self._redeem_coupon_button.pack(side="right")
         return page
+
+    def _invoke_redeem_coupon(self) -> None:
+        if self._on_redeem_coupon is not None:
+            self._on_redeem_coupon()
 
     def _create_pso2_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self._content_area, fg_color="transparent")
@@ -411,31 +465,32 @@ class SettingsWindow(ctk.CTkToplevel):
         row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="ตำแหน่งไฟล์เกม (pso2.exe)",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            row1,
-            textvariable=self._game_path_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(side="right")
-
-        row2 = ctk.CTkFrame(c, fg_color="transparent")
-        row2.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(
-            row2,
             text="การตรวจจับเกมอัตโนมัติ",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
-            row2,
+            row1,
             text="เปิดใช้งาน",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         ).pack(side="right")
+
+        row2 = ctk.CTkFrame(c, fg_color="transparent")
+        row2.pack(fill="x", padx=16, pady=(4, 12))
+        ctk.CTkLabel(
+            row2,
+            text="สถานะเกม",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
+        ).pack(side="left")
+        self._game_status_label = ctk.CTkLabel(
+            row2,
+            textvariable=self._game_status_var,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            text_color=PALETTE.text,
+        )
+        self._game_status_label.pack(side="right")
         return page
 
     def _create_tweaker_page(self) -> ctk.CTkFrame:
@@ -452,17 +507,41 @@ class SettingsWindow(ctk.CTkToplevel):
         row1.pack(fill="x", padx=16, pady=4)
         ctk.CTkLabel(
             row1,
-            text="ตำแหน่งโปรแกรม Tweaker",
+            text="ตำแหน่ง PSO2 Tweaker",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
+        ).pack(anchor="w")
+        self._tweaker_path_entry = ctk.CTkEntry(
             row1,
             textvariable=self._game_path_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(side="right")
+            height=32,
+            state="readonly",
+        )
+        self._tweaker_path_entry.pack(fill="x", pady=(4, 0))
+
+        actions = ctk.CTkFrame(c, fg_color="transparent")
+        actions.pack(fill="x", padx=16, pady=(8, 12))
+        self._choose_tweaker_button = secondary_button(
+            actions,
+            "เลือกไฟล์",
+            self._invoke_choose_game,
+        )
+        self._choose_tweaker_button.pack(side="left", padx=(0, 8))
+        self._launch_tweaker_button = secondary_button(
+            actions,
+            "เปิด PSO2 Tweaker",
+            self._invoke_launch_game,
+        )
+        self._launch_tweaker_button.pack(side="left")
         return page
+
+    def _invoke_choose_game(self) -> None:
+        if self._on_choose_game is not None:
+            self._on_choose_game()
+
+    def _invoke_launch_game(self) -> None:
+        if self._on_launch_game is not None:
+            self._on_launch_game()
 
     def _create_connection_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self._content_area, fg_color="transparent")
@@ -606,13 +685,24 @@ class SettingsWindow(ctk.CTkToplevel):
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12),
                 text_color=PALETTE.text_muted,
             ).pack(side="left")
-            secondary_button(
+            self._open_logs_button = secondary_button(
                 row2,
                 "เปิดโฟลเดอร์",
-                self._open_logs_folder,
+                self._invoke_open_logs,
                 width=90,
                 height=26,
-            ).pack(side="right")
+            )
+            self._open_logs_button.pack(side="right")
+
+        if self._debug_mode and self._on_show_advanced_diagnostics is not None:
+            actions = ctk.CTkFrame(c, fg_color="transparent")
+            actions.pack(fill="x", padx=16, pady=(8, 12))
+            self._advanced_diagnostics_button = secondary_button(
+                actions,
+                "เครื่องมือวินิจฉัยขั้นสูง",
+                self._invoke_advanced_diagnostics,
+            )
+            self._advanced_diagnostics_button.pack(side="left")
         return page
 
     def _update_customer_connection_status(self, *_args: Any) -> None:
@@ -620,12 +710,13 @@ class SettingsWindow(ctk.CTkToplevel):
             customer_connection_status(self._proxy_connection_var.get())
         )
 
-    def _open_logs_folder(self) -> None:
-        if self._debug_log_dir:
-            try:
-                os.startfile(self._debug_log_dir)
-            except Exception:
-                pass
+    def _invoke_open_logs(self) -> None:
+        if self._on_open_logs is not None:
+            self._on_open_logs()
+
+    def _invoke_advanced_diagnostics(self) -> None:
+        if self._on_show_advanced_diagnostics is not None:
+            self._on_show_advanced_diagnostics()
 
     def _create_about_page(self) -> ctk.CTkFrame:
         page = ctk.CTkFrame(self._content_area, fg_color="transparent")

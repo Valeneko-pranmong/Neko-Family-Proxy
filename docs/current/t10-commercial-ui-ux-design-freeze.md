@@ -567,7 +567,7 @@ authorization to merge the Launcher feature branch into `main`.
 
 ```text
 NAME:                           SETTINGS FUNCTIONAL MIGRATION
-STATUS:                         IN PROGRESS
+STATUS:                         IMPLEMENTED CANDIDATE — FUNCTIONAL REVIEW PENDING
 PRIMARY_OBJECTIVE:              Move existing supported customer actions from legacy locations
                                 into the approved Settings architecture without changing
                                 backend/business contracts.
@@ -584,6 +584,27 @@ Approved T10B2 target areas:
 
 The General, Connection, Appearance, and Notifications capability freeze remains
 in force unless a capability is explicitly supported by existing product
-authority. T10B2 implementation has not started as part of this documentation
-closure.
+authority.
+
+Implemented capability authority:
+
+| Area | Existing authority migrated into Settings |
+| --- | --- |
+| Account | Shared username plus existing change-password dialog and sign-out callbacks |
+| Subscription | Shared entitlement values and coupon `StringVar` plus existing redeem callback |
+| PSO2 | Read-only automatic `pso2.exe` process-detection status only |
+| PSO2 Tweaker | Shared Tweaker executable path plus existing Browse and Launch callbacks |
+| Diagnostics | Customer-safe shared connection status, existing local logs action, and existing debug-gated advanced dialog |
+| About | `neko_launcher.__version__` |
+
+```text
+GAME_PATH_VAR_ACTUAL_MEANING:   TWEAKER_EXECUTABLE
+PSO2_PATH_AUTHORITY:            NONE — NO EDITABLE PSO2 PATH IS PRESENTED
+TWEAKER_PATH_AUTHORITY:         %LOCALAPPDATA%\NEKO FAMILY\tweaker.path
+TWEAKER_PATH_OWNER:             AppWindow / LauncherConfig existing authority
+BACKEND_CONTRACT_CHANGED:       NO
+CORE_CHANGED:                   NO
+OWNER_FUNCTIONAL_REVIEW:        PENDING
+T10B2:                          NOT CLOSED
+```
 
