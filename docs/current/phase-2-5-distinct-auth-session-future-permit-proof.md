@@ -46,6 +46,21 @@ after the old Auth context has already lost Launcher authority. It creates no
 Core challenge and never starts Core. A successful response is an immediate
 failure and its content is never retained or written to evidence.
 
+Harness uses Lite-v1 adapter call exactly:
+
+```text
+issue_launch_permit(
+    authenticated_transport,
+    correlation_id,
+    challenge,
+    timeout
+)
+```
+
+Request body remains exactly `version`, `contractRevision`, `correlationId`, and
+`challenge`. Obsolete S0 fields such as `configurationDigest`, `processName`,
+`targetPid`, `mode`, `product`, and `scope` are not sent.
+
 ## Safety contract
 
 - Auth A, B, and C are three separate `sign_in_with_password` calls backed by
@@ -70,7 +85,7 @@ or Launcher session identifier.
 
 ## Offline preparation now
 
-From `E:\Github\Neko-Family-Proxy\launcher`, this command is offline and only
+From `D:\Git\Neko-Family-Proxy\launcher`, this command is offline and only
 writes a safe readiness manifest to the chosen non-secret location:
 
 ```powershell

@@ -2,6 +2,11 @@
 
 **Status:** implementation branch only. Not deployed. Not production cutover.
 
+```text
+SESSION_POLICY = LATEST_CLAIM_WINS
+PERMIT_CONTRACT = LITE_V1
+```
+
 ## Threat model
 
 Core proxy start needs both an active Launcher authorization session and a valid
@@ -12,16 +17,16 @@ identity.
 
 ## Single Launcher session
 
-**FIRST ACTIVE SESSION WINS.** `launcher.claim_session` takes the existing
-per-user transaction advisory lock. It locks any unrevoked session row. If its
-heartbeat is fresh (`last_seen_at > now() - 90 seconds`), it returns
-`SessionAlreadyActive` and does not change row, installation, or authority.
+**LATEST CLAIM WINS.** `launcher.claim_session` takes the existing per-user
+transaction advisory lock. Every valid claim atomically revokes any prior active
+Launcher session and inserts the replacement. The old Launcher session loses
+future heartbeat authority and its bound Auth session loses future permit
+authority.
 
-A stale session is revoked with audit reason `stale_recovered`; only then may a
-new session be created. Existing unique partial index
+Installation rows remain reusable history. A may claim, then B, then C, then A
+again without a permanent device lock or revoke. Existing unique partial index
 `launcher_sessions_one_active_per_user_idx` enforces one unrevoked session per
-user. Normal `release_session` immediately revokes only caller-owned session,
-so another device can claim without waiting for stale timeout.
+user. Normal `release_session` immediately revokes only caller-owned session.
 
 Heartbeat target: 30 seconds. Backend stale timeout: 90 seconds. Heartbeat and
 release require `auth.uid()`, current validated JWT `session_id`, matching
@@ -41,9 +46,9 @@ Permit authorization requires:
 permit caller JWT session_id == active Launcher Session auth_session_id
 ```
 
-A second Supabase Auth session for same account may authenticate but cannot
-claim while first session stays fresh. It cannot request permit for first
-session: Backend returns `SessionMismatch` or `SessionInactive`, never permit.
+A second Supabase Auth session for same account may authenticate and claim,
+superseding first session. Superseded Auth session cannot request a permit:
+Backend returns `SessionInactive`, never permit.
 
 ## Lite permit API
 
@@ -88,7 +93,7 @@ Production composition remains fail closed until these exist and pass:
 `SESSION_CONCURRENCY_PROTECTION_UNAVAILABLE`,
 `CORE_CHALLENGE_VERIFICATION_UNAVAILABLE`, `LITE_E2E_UNVERIFIED`.
 
-S0 latest-login-wins evidence, configuration SHA/PID cryptographic binding,
+S0 configuration SHA/PID cryptographic binding,
 package-SHA ceremony, continuous renewal, advanced replay DB, strict pipe proof,
 anti-debugging, and S1 are historical or optional hardening—not Lite blockers.
 

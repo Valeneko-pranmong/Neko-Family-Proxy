@@ -34,6 +34,12 @@ def _token_for(session_id: str) -> str:
 class FakeState:
     active: FakeGateway | None = None
     device_revokes: int = 0
+    claim_history: list[str] | None = None
+    heartbeat_history: list[tuple[str, str, bool]] | None = None
+
+    def __post_init__(self) -> None:
+        self.claim_history = []
+        self.heartbeat_history = []
 
 
 class FakeGateway:
@@ -69,13 +75,18 @@ class FakeGateway:
         self._claim_number += 1
         self._launcher_session_id = f"launcher-{self.label}-{self._claim_number}"
         self._state.active = self
+        assert self._state.claim_history is not None
+        self._state.claim_history.append(self.label)
         return SimpleNamespace(
             session_id=self._launcher_session_id,
             installation_id=f"installation-{self.label}",
         )
 
     def heartbeat_session(self, session_id: str) -> bool:
-        return self._state.active is self and session_id == self._launcher_session_id
+        accepted = self._state.active is self and session_id == self._launcher_session_id
+        assert self._state.heartbeat_history is not None
+        self._state.heartbeat_history.append((self.label, session_id, accepted))
+        return accepted
 
     def release_session(self, session_id: str) -> bool:
         if self._state.active is not self or session_id != self._launcher_session_id:
@@ -92,11 +103,19 @@ class FakePermitRequester:
         self._state = state
         self._diagnostic = diagnostic
         self.calls: list[str] = []
+        self.lite_invocations: list[tuple[str, object, float]] = []
 
-    def issue_launch_permit(self, authenticated_transport: object, *_args: object) -> object:
+    def issue_launch_permit(
+        self,
+        authenticated_transport: object,
+        correlation_id: str,
+        challenge: object,
+        timeout: float,
+    ) -> object:
         gateway = getattr(authenticated_transport, "proof_gateway", None)
         assert isinstance(gateway, FakeGateway)
         self.calls.append(gateway.label)
+        self.lite_invocations.append((correlation_id, challenge, timeout))
         if self._state.active is gateway:
             return object()
         raise AuthorizedCoreError(
@@ -120,7 +139,12 @@ def _harness(
     user_ids: tuple[str, str, str] = ("same-user", "same-user", "same-user"),
     pso2_running: bool | None = False,
     diagnostic: PermitDiagnosticCode = PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE,
-) -> tuple[DistinctAuthSessionFuturePermitProofHarness, list[FakeGateway], FakePermitRequester]:
+) -> tuple[
+    DistinctAuthSessionFuturePermitProofHarness,
+    list[FakeGateway],
+    FakePermitRequester,
+    FakeState,
+]:
     state = FakeState()
     gateways = [
         FakeGateway(label, session_id, user_id, state)
@@ -144,13 +168,12 @@ def _harness(
         pso2_running=lambda: pso2_running,
         active_session_count=active_session_count,  # type: ignore[arg-type]
         installation_state=installation_state,  # type: ignore[arg-type]
-        target_pid=lambda: 4242,
     )
-    return harness, gateways, requester
+    return harness, gateways, requester, state
 
 
 def test_run_proves_three_distinct_auth_sessions_and_edge_denials_without_core() -> None:
-    harness, remaining_gateways, requester = _harness()
+    harness, remaining_gateways, requester, state = _harness()
 
     result = harness.run("operator-input", "operator-input")
 
@@ -168,11 +191,46 @@ def test_run_proves_three_distinct_auth_sessions_and_edge_denials_without_core()
         "core_challenges": 0,
     }
     assert requester.calls == ["A", "B", "C"]
+    assert state.claim_history == ["A", "B", "C", "A"]
+    assert state.heartbeat_history == [
+        ("A", "launcher-A-1", True),
+        ("A", "launcher-A-1", False),
+        ("B", "launcher-B-1", False),
+        ("C", "launcher-C-1", False),
+        ("A", "launcher-A-2", True),
+    ]
+    assert len(requester.lite_invocations) == 3
+    for correlation_id, challenge, timeout in requester.lite_invocations:
+        assert len(correlation_id) == 32
+        assert getattr(challenge, "value", None) is not None
+        assert timeout == 10.0
     assert [gateway.clear_calls for gateway in remaining_gateways] == [1, 1, 1]
 
 
+def test_obsolete_s0_ten_argument_permit_invocation_is_rejected() -> None:
+    state = FakeState()
+    requester = FakePermitRequester(
+        state,
+        diagnostic=PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE,
+    )
+
+    with pytest.raises(TypeError):
+        requester.issue_launch_permit(  # type: ignore[call-arg]
+            object(),
+            "0123456789abcdef0123456789abcdef",
+            object(),
+            "configuration-digest",
+            "pso2.exe",
+            4242,
+            "ProcessMode",
+            "neko-family-proxy",
+            "proxy:start",
+            10.0,
+        )
+
+
 def test_duplicate_auth_session_id_is_rejected_before_c_can_claim() -> None:
-    harness, _remaining_gateways, requester = _harness(
+    harness, _remaining_gateways, requester, _state = _harness(
         session_ids=(
             "00000000-0000-4000-8000-000000000001",
             "00000000-0000-4000-8000-000000000002",
@@ -187,7 +245,7 @@ def test_duplicate_auth_session_id_is_rejected_before_c_can_claim() -> None:
 
 
 def test_different_authenticated_users_are_not_accepted_for_the_proof() -> None:
-    harness, _remaining_gateways, requester = _harness(
+    harness, _remaining_gateways, requester, _state = _harness(
         user_ids=("same-user", "different-user", "same-user")
     )
 
@@ -198,7 +256,7 @@ def test_different_authenticated_users_are_not_accepted_for_the_proof() -> None:
 
 
 def test_local_precondition_denial_is_not_accepted_as_edge_proof() -> None:
-    harness, _remaining_gateways, requester = _harness(
+    harness, _remaining_gateways, requester, _state = _harness(
         diagnostic=PermitDiagnosticCode.PERMIT_AUTH_SESSION_UNAVAILABLE
     )
 
@@ -212,7 +270,7 @@ def test_local_precondition_denial_is_not_accepted_as_edge_proof() -> None:
 def test_manual_auth_is_fail_closed_until_pso2_is_confirmed_closed(
     pso2_running: bool | None,
 ) -> None:
-    harness, _remaining_gateways, requester = _harness(pso2_running=pso2_running)
+    harness, _remaining_gateways, requester, _state = _harness(pso2_running=pso2_running)
 
     with pytest.raises(ProofFailure, match="PSO2_CLOSED_REQUIRED"):
         harness.run("operator-input", "operator-input")
