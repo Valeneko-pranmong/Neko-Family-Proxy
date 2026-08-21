@@ -20,7 +20,7 @@
 
 ## Local-only inputs and generated files
 
-- `ProxyCore/` — optional approved runtime input for controlled builds.
+- `ProxyCore/` — local stale input only; never packaged into Launcher EXE.
 - `launcher/.env.local` — local publishable client configuration.
 - `launcher/build/` — temporary PyInstaller output.
 - `launcher/dist/` — generated deliverables.

@@ -3,10 +3,9 @@
 **Status:** Current policy — reviewed 8 August 2026. Production runtime startup
 remains blocked by the `NEKO-AUTH-S0` release gates.
 
-`NekoProxyCore` is a separately licensed runtime and is never committed to this
-repository or published in GitHub release artifacts. An approved local
-distribution build may embed the runtime into a one-file launcher; the runtime
-must still be delivered through the team's access-controlled channel.
+`NekoProxyCore` is a separately licensed external runtime. It is never committed
+to this repository, published in GitHub Launcher release artifacts, or embedded
+in Launcher EXE.
 
 ## Controlled delivery contract
 
@@ -14,7 +13,7 @@ must still be delivered through the team's access-controlled channel.
    channel.
 2. Publish a SHA-256 checksum and runtime version alongside the archive.
 3. Verify the checksum before extraction.
-4. For a separate-runtime installation, extract the approved runtime to:
+4. Replace external runtime directory with complete approved frozen bundle:
 
    `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe`
 
@@ -23,10 +22,10 @@ must still be delivered through the team's access-controlled channel.
 6. Revoke and replace the archive immediately if its checksum, licensing
    status, or provenance cannot be verified.
 
-The current launcher resolves a bundled runtime first and then the local path
-above. It does not implement an environment-variable path override. The public
-release pipeline builds only the launcher and fails if a tracked `ProxyCore`
-file is detected.
+Launcher resolves `NekoProxyCore.exe` only from the external runtime path above.
+It does not implement bundled-runtime or environment-variable path override.
+The Launcher EXE contains no Core runtime payload. Release uses protected
+`runtime-settings.nkps`; standalone key and plaintext settings are not released.
 
 Embedding or installing the runtime does not bypass the fail-closed production
 authorization gateway.

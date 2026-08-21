@@ -15,16 +15,7 @@ datas = [
 ]
 datas += collect_data_files("customtkinter")
 
-proxy_root = repository_root / "ProxyCore"
-if proxy_root.is_dir():
-    for proxy_file in proxy_root.rglob("*"):
-        if proxy_file.is_file():
-            datas.append(
-                (
-                    str(proxy_file),
-                    str(Path("ProxyCore") / proxy_file.relative_to(proxy_root).parent),
-                )
-            )
+
 
 a = Analysis(
     [str(launcher_root / "src" / "neko_launcher" / "main.py")],

@@ -45,12 +45,7 @@ class LauncherConfig:
                 ).strip()
             except OSError:
                 stored_game_exe = ""
-        bundled_proxy = workspace_root / "ProxyCore" / "NekoProxyCore.exe"
-        proxy_path = (
-            bundled_proxy
-            if bundled_proxy.is_file()
-            else local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
-        )
+        proxy_path = local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
         # Single debug mode authority: NEKO_DEBUG_MODE=1
         debug_mode = os.getenv("NEKO_DEBUG_MODE") == "1"
         debug_log_dir = local_app_data / "NekoFamilyProxy" / "logs"

@@ -24,14 +24,24 @@ def test_packaged_runtime_defaults_to_local_app_data(
     assert config.account_recovery_api_url == "https://neko-control-room.vercel.app"
 
 
-def test_packaged_runtime_uses_bundled_neko_proxy_core(tmp_path: Path) -> None:
+def test_runtime_ignores_bundled_neko_proxy_core(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    local_app_data = tmp_path / "AppData"
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "LOCALAPPDATA",
+        str(local_app_data),
+    )
     bundled_proxy = tmp_path / "ProxyCore" / "NekoProxyCore.exe"
     bundled_proxy.parent.mkdir()
     bundled_proxy.touch()
 
     config = LauncherConfig.from_environment(tmp_path)
 
-    assert config.proxy_core_path == bundled_proxy
+    assert config.proxy_core_path == (
+        local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
+    )
 
 
 def test_debug_mode_can_be_enabled_by_environment(
