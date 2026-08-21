@@ -825,3 +825,31 @@ DUPLICATE_ENTITLEMENT_INFORMATION = NO
 T10B3 remains not closed. Owner final visual approval is the next gate, and
 T10B4 remains not started.
 
+---
+
+## 24. T10B3 Final Closure
+
+```text
+T10B3 =
+CLOSED — ENGINEERING + OWNER FINAL VISUAL REVIEW PASS
+
+T10B3_APPROVED_COMMIT =
+1edfdb05042ed4a74128fc6826280f70f558b61d
+
+T10B3_APPROVED_EXE_SHA256 =
+E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
+
+T10B4 =
+BLOCKED — CORE ARTIFACT AUTHORITY RESOLUTION REQUIRED
+
+CORE_DEPLOYED_ARTIFACT =
+AMBIGUOUS / NOT YET REFROZEN
+
+PHASE_2_5 =
+PUBLIC RELEASE BLOCKER
+```
+
+T10B3 engineering and owner final visual review are closed. T10B4 is not yet
+executable and requires a separate Core artifact authority audit. No runtime
+source, Core, packaging, or public-release authority changes are granted here.
+
