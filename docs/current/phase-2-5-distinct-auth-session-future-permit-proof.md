@@ -1,10 +1,12 @@
 # Phase 2.5 distinct Auth-session future-permit proof
 
 ```text
-STATUS:                 CLOSED/PASS
+STATUS:                 PRODUCTION RELEASED
 PHASE:                  Phase 2.5 — technical security closure
 AUTHORITY:              START bba655b3e6443ebcdf84a266e42cc918bdefe32f; CORE 862bfec463d06d57e1bee05c2bc490740eb714d4
-SUCCESSOR:              RELEASE/CUTOVER GATE
+PHASE_2_5:              CLOSED
+TECHNICAL_SECURITY_GATE: PASS
+NEXT_ACTION:            NORMAL DEVELOPMENT
 LAST_UPDATED:           2026-08-22
 CLASSIFICATION:         CURRENT_RELEASE_EVIDENCE
 UI_WORK_BLOCKER:        NO
@@ -13,8 +15,9 @@ DATE:                   2026-08-18
 ```
 
 > [!IMPORTANT]
-> **Status: CLOSED/PASS.** The hosted distinct-auth technical security proof completed.
-> The next gate is release/cutover; production cutover is not claimed here.
+> **Status: PRODUCTION RELEASED.** The hosted distinct-auth technical security proof
+> completed, Phase 2.5 is closed, and the approved release has been cut over to
+> production `main`. The next action is normal development.
 
 ## What it proves
 

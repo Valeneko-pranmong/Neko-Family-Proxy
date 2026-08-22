@@ -2,10 +2,12 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PHASE 2.5 CLOSED/PASS — TECHNICAL SECURITY GATE PASS
-PHASE:                          Phase 2.5 — NEKO-AUTH-LITE v1 closure
+STATUS:                         PRODUCTION RELEASED
+PHASE:                          PRODUCTION RELEASE/CUTOVER CLOSED
 AUTHORITY:                      START bba655b3e6443ebcdf84a266e42cc918bdefe32f; CORE 862bfec463d06d57e1bee05c2bc490740eb714d4
-SUCCESSOR:                     RELEASE/CUTOVER GATE
+PHASE_2_5:                      CLOSED
+TECHNICAL_SECURITY_GATE:        PASS
+NEXT_ACTION:                    NORMAL DEVELOPMENT
 LAST_UPDATED:                  2026-08-22
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
@@ -13,19 +15,20 @@ T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PA
 T10B1.2:                        CLOSED — CUSTOMER-SAFE VISUAL CLOSURE
 T10B2:                          CLOSED — ENGINEERING + AUTHENTICATED PACKAGED + OWNER REVIEW PASS
 T10B3:                          CLOSED — ENGINEERING + OWNER FINAL VISUAL REVIEW PASS
-T10B3.1:                        FINAL SUBSCRIPTION HIERARCHY CANDIDATE
+T10B3.1:                        CLOSED
 T10B3_APPROVED_COMMIT:          1edfdb05042ed4a74128fc6826280f70f558b61d
-T10B3_APPROVED_EXE_SHA256:      E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
-T10B4:                          BLOCKED — CORE ARTIFACT AUTHORITY RESOLUTION REQUIRED
-CORE_DEPLOYED_ARTIFACT:         AMBIGUOUS / NOT YET REFROZEN
-SUCCESSOR:                      RELEASE/CUTOVER GATE
+T10B4:                          CLOSED — APPROVED AUTHORITIES PRESERVED
+APPROVED_FEATURE_AUTHORITY:     e7f9530b1e9eb0536e10c04ad7b362ae7281f4d7
+APPROVED_EXE_SHA256:            4ae0aa676a41822033a6b00fdae9dde7ff3b900fc30ae39ca71dea6851411609
+CORE_DEPLOYED_ARTIFACT:         862bfec463d06d57e1bee05c2bc490740eb714d4
+SUCCESSOR:                      NORMAL DEVELOPMENT
 GLOBAL_STATUS:                  see Admin docs/current/README.md
-ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
+ACTIVE_BRANCH:                  main
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698
 RUNTIME_SOURCE_BASE:            8832429a7546ab57dd8ac3a48b40b93387cb9f19
 SERVER_OPERATIONS:              T1-T9 CLOSED (Production Verified on AWS Lightsail Japan)
-ACTIVE_PRODUCT_BRANCH:          feature/t10-commercial-launcher-ui
-MAIN_BRANCH_STATUS:             PRE-T10 BASELINE
+ACTIVE_PRODUCT_BRANCH:          main
+MAIN_BRANCH_STATUS:             PRODUCTION RELEASED
 PHASE_2_5_TECHNICAL_SECURITY_GATE: PASS
 PERMIT_CONTRACT:                LITE_V1
 SESSION_POLICY:                 LATEST_CLAIM_WINS
@@ -48,9 +51,13 @@ The project infrastructure and operations milestones (**Phases T1 through T9**) 
 **Phase T10A (Commercial Launcher UI/UX Design Freeze)** is **CLOSED**. The commercial UI architecture, customer status translation layer, single-instance Settings window design, and capability matrix are frozen in [`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md).
 
 > [!IMPORTANT]
-> **Phase 2.5 technical security gate: CLOSED/PASS.** The distinct-auth proof verified
-> latest-claim-wins enforcement and strict `SessionInactive` Edge denials. The next
-> gate is release/cutover; this document does not claim that production cutover is complete.
+> **Production release: COMPLETE.** Phase 2.5 is `CLOSED`, the technical security
+> gate is `PASS`, and the approved Launcher feature authority has been cut over to
+> production `main`. The next action is normal development.
+
+Original Edge evidence remains **A=MISSING, B=PASS, C=PASS**. Supplemental old-A
+Edge evidence remains **PASS**. `PROCESS_COMPLIANCE = FAIL — HISTORICAL FORCE-PUSH
+RECORDED` remains historical release evidence.
 
 ---
 
