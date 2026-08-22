@@ -2,7 +2,11 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         T10B3 CLOSED — ENGINEERING + OWNER FINAL VISUAL REVIEW PASS
+STATUS:                         PHASE 2.5 CLOSED/PASS — TECHNICAL SECURITY GATE PASS
+PHASE:                          Phase 2.5 — NEKO-AUTH-LITE v1 closure
+AUTHORITY:                      START bba655b3e6443ebcdf84a266e42cc918bdefe32f; CORE 862bfec463d06d57e1bee05c2bc490740eb714d4
+SUCCESSOR:                     RELEASE/CUTOVER GATE
+LAST_UPDATED:                  2026-08-22
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
 T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PASS
@@ -14,7 +18,7 @@ T10B3_APPROVED_COMMIT:          1edfdb05042ed4a74128fc6826280f70f558b61d
 T10B3_APPROVED_EXE_SHA256:      E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
 T10B4:                          BLOCKED — CORE ARTIFACT AUTHORITY RESOLUTION REQUIRED
 CORE_DEPLOYED_ARTIFACT:         AMBIGUOUS / NOT YET REFROZEN
-SUCCESSOR:                      CORE ARTIFACT AUTHORITY AUDIT
+SUCCESSOR:                      RELEASE/CUTOVER GATE
 GLOBAL_STATUS:                  see Admin docs/current/README.md
 ACTIVE_BRANCH:                  feature/t10-commercial-launcher-ui
 T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698
@@ -22,7 +26,10 @@ RUNTIME_SOURCE_BASE:            8832429a7546ab57dd8ac3a48b40b93387cb9f19
 SERVER_OPERATIONS:              T1-T9 CLOSED (Production Verified on AWS Lightsail Japan)
 ACTIVE_PRODUCT_BRANCH:          feature/t10-commercial-launcher-ui
 MAIN_BRANCH_STATUS:             PRE-T10 BASELINE
-LAST_UPDATED:                   2026-08-20
+PHASE_2_5_TECHNICAL_SECURITY_GATE: PASS
+PERMIT_CONTRACT:                LITE_V1
+SESSION_POLICY:                 LATEST_CLAIM_WINS
+PHASE_2_5_CLOSURE_EVIDENCE:     See phase-2-5-distinct-auth-session-future-permit-proof.md
 T10B3.1_EXE_SHA256:             E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
 ```
 
@@ -41,11 +48,9 @@ The project infrastructure and operations milestones (**Phases T1 through T9**) 
 **Phase T10A (Commercial Launcher UI/UX Design Freeze)** is **CLOSED**. The commercial UI architecture, customer status translation layer, single-instance Settings window design, and capability matrix are frozen in [`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md).
 
 > [!IMPORTANT]
-> **Active Client Security Release Blocker:**
-> [`phase-2-5-distinct-auth-session-future-permit-proof.md`](phase-2-5-distinct-auth-session-future-permit-proof.md) remains **`PREPARED ONLY / NOT EXECUTED`**.
-> - **Blocks UI Design / Implementation:** **NO**
-> - **Blocks Public Commercial Client Release:** **YES**
-> This test harness verifies that invalidated Auth sessions receive strict Edge denials before permit issuance. It must be executed and verified before any public commercial client release.
+> **Phase 2.5 technical security gate: CLOSED/PASS.** The distinct-auth proof verified
+> latest-claim-wins enforcement and strict `SessionInactive` Edge denials. The next
+> gate is release/cutover; this document does not claim that production cutover is complete.
 
 ---
 
@@ -58,7 +63,7 @@ The project infrastructure and operations milestones (**Phases T1 through T9**) 
 | **[`launcher-architecture.md`](launcher-architecture.md)** | Desktop application layered architecture, IPC, and controllers | `CURRENT_CONTRACT` |
 | **[`neko-auth-lite.md`](neko-auth-lite.md)** | NEKO-AUTH-LITE authentication, challenge-response, and permit flow | `CURRENT_CONTRACT` |
 | **[`final-windows-e2e-harness.md`](final-windows-e2e-harness.md)** | Windows E2E integration test harness and binary admission gates | `CURRENT_CONTRACT` |
-| **[`phase-2-5-distinct-auth-session-future-permit-proof.md`](phase-2-5-distinct-auth-session-future-permit-proof.md)** | Unresolved distinct auth session future permit security gate | `CURRENT_RELEASE_BLOCKER` |
+| **[`phase-2-5-distinct-auth-session-future-permit-proof.md`](phase-2-5-distinct-auth-session-future-permit-proof.md)** | Closed distinct auth session future permit security proof and evidence | `CURRENT_RELEASE_EVIDENCE` |
 | **[`build-windows-executable.md`](build-windows-executable.md)** | PyInstaller standalone packaging and secret-hygiene build instructions | `CURRENT_OPERATIONAL` |
 | **[`debug-console.md`](debug-console.md)** | Windows debug console, runtime logging, and IPC troubleshooting | `CURRENT_OPERATIONAL` |
 | **[`repository-layout.md`](repository-layout.md)** | File organization and component dependency layout | `CURRENT_OPERATIONAL` |

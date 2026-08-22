@@ -1,6 +1,6 @@
 # NEKO-AUTH-LITE v1
 
-**Status:** implementation branch only. Not deployed. Not production cutover.
+**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Release/cutover remains the successor gate.
 
 ```text
 SESSION_POLICY = LATEST_CLAIM_WINS
@@ -100,8 +100,27 @@ anti-debugging, and S1 are historical or optional hardening—not Lite blockers.
 ## Deployment status
 
 ```text
-HOSTED LITE DEPLOYMENT = NOT PERFORMED
+HOSTED LITE DEPLOYMENT = MIGRATION DEPLOYED AND VERIFIED
 PRODUCTION CUTOVER = NOT PERFORMED
-CORE LITE MIGRATION = REQUIRED
-LITE CROSS-COMPONENT E2E = NOT YET EXECUTED
+CORE LITE MIGRATION = VERIFIED AT CORE AUTHORITY
+LITE CROSS-COMPONENT E2E = PHASE 2.5 TECHNICAL SECURITY GATE PASS
+HOSTED_MIGRATION = 20260821120000_neko_auth_lite_latest_claim_wins
+TEMPORARY_AUTOTEST_USER_ENTITLEMENT = CLEANED UP
+FINAL_ACTIVE_TEST_SESSIONS = 0
+
+## Phase 2.5 closure
+
+The verified distinct-auth proof recorded pairwise-distinct Auth sessions, the
+A→B→C→A replacement sequence, old A/B/C heartbeat denial, and old A/B/C future
+permit denial as HTTP 403 `SessionInactive`. Successful permits, Core starts,
+and Core challenges were all zero. Remembered installation A was reused and
+final cleanup passed.
+
+Original run Edge evidence was **A=MISSING, B=PASS, C=PASS**. A supplemental
+old-A Edge run independently passed. The original run must not be represented
+as containing all three Edge logs.
+
+Historical `FIRST_ACTIVE_WINS` behavior remains superseded history and is not
+erased. `HISTORICAL_FORCE_PUSH_VIOLATION = RECORDED` remains recorded;
+`PROCESS_COMPLIANCE = FAIL` until Owner explicitly waives it.
 ```

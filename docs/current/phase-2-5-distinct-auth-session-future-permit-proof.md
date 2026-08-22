@@ -1,21 +1,40 @@
 # Phase 2.5 distinct Auth-session future-permit proof
 
 ```text
-STATUS:                 PREPARED ONLY / NOT EXECUTED
-CLASSIFICATION:         CURRENT_RELEASE_BLOCKER
+STATUS:                 CLOSED/PASS
+PHASE:                  Phase 2.5 — technical security closure
+AUTHORITY:              START bba655b3e6443ebcdf84a266e42cc918bdefe32f; CORE 862bfec463d06d57e1bee05c2bc490740eb714d4
+SUCCESSOR:              RELEASE/CUTOVER GATE
+LAST_UPDATED:           2026-08-22
+CLASSIFICATION:         CURRENT_RELEASE_EVIDENCE
 UI_WORK_BLOCKER:        NO
-PUBLIC_RELEASE_BLOCKER: YES
+PUBLIC_RELEASE_BLOCKER: NO — release/cutover is the successor gate
 DATE:                   2026-08-18
 ```
 
 > [!IMPORTANT]
-> **Status: PREPARED ONLY / NOT EXECUTED.**
-> This test harness is prepared and verified locally, but has **NOT** been executed against hosted live infrastructure.
-> - **Blocks UI Design / Implementation:** **NO**
-> - **Blocks Public Commercial Client Release:** **YES**
-> This harness is not authorization to execute a hosted test, start Core, alter production configuration, or rerun Hosted Positive + KP without explicit owner instruction.
+> **Status: CLOSED/PASS.** The hosted distinct-auth technical security proof completed.
+> The next gate is release/cutover; production cutover is not claimed here.
 
 ## What it proves
+
+### Verified closure result
+
+- Auth sessions pairwise distinct: **YES**.
+- A→B→C→A replacement: **PASS**.
+- Old A/B/C heartbeat denial: **PASS**.
+- Old A/B/C future permit: **403 `SessionInactive`**.
+- Successful permits: **0**; Core starts: **0**; Core challenges: **0**.
+- Remembered installation A reused: **YES**; final cleanup: **PASS**.
+- Hosted migration `20260821120000_neko_auth_lite_latest_claim_wins` deployed and verified.
+- Temporary autotest user/entitlement cleaned up; final active test sessions: **0**.
+
+Original run Edge evidence: **A=MISSING, B=PASS, C=PASS**. Supplemental old-A
+Edge evidence: **PASS**. The original run did not contain all three Edge logs.
+
+`HISTORICAL_FORCE_PUSH_VIOLATION = RECORDED` remains unchanged, and
+`PROCESS_COMPLIANCE = FAIL` until Owner explicitly waives it. Historical
+`FIRST_ACTIVE_WINS` behavior is preserved as superseded history.
 
 One disposable Launcher user obtains three independent normal Supabase Auth
 sessions, labelled A, B, and C. The harness reads each JWT `session_id` only
