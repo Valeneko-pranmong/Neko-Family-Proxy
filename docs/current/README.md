@@ -74,7 +74,8 @@ RECORDED` remains historical release evidence.
 | **[`build-windows-executable.md`](build-windows-executable.md)** | PyInstaller standalone packaging and secret-hygiene build instructions | `CURRENT_OPERATIONAL` |
 | **[`debug-console.md`](debug-console.md)** | Windows debug console, runtime logging, and IPC troubleshooting | `CURRENT_OPERATIONAL` |
 | **[`repository-layout.md`](repository-layout.md)** | File organization and component dependency layout | `CURRENT_OPERATIONAL` |
-| **[`runtime-distribution.md`](runtime-distribution.md)** | Packaging and distribution layout for bundled Core binaries | `CURRENT_OPERATIONAL` |
+| **[`runtime-distribution.md`](runtime-distribution.md)** | External Core runtime distribution policy | `CURRENT_OPERATIONAL` |
+| **[`closed-beta-runbook.md`](closed-beta-runbook.md)** | Approved closed-beta distribution, tester, rollback, and monitoring checklist | `CURRENT_OPERATIONAL` |
 
 ---
 
