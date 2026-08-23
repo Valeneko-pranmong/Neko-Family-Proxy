@@ -2,13 +2,16 @@
 
 ```text
 CLOSED_BETA_STATUS:          READY
+CLOSED_BETA_RUNTIME:         VERIFIED
+BETA_TESTER_001:             PASS (RUNNING_TO_NORMAL_STOP_PASS)
 BETA_DATABASE_BASELINE:      CLEAN
 CUSTOMER_TEST_USERS:         0 before onboarding
 PRODUCTION_HEAD:             6ff9a3de70da34e52088c47eb1cdcfd62fa9f731
 LAUNCHER_RUNTIME_AUTHORITY:  bba655b3e6443ebcdf84a266e42cc918bdefe32f
-CORE_AUTHORITY:              862bfec463d06d57e1bee05c2bc490740eb714d4
-LAUNCHER_EXE_SHA256:         4ae0aa676a41822033a6b00fdae9dde7ff3b900fc30ae39ca71dea6851411609
-LAST_VERIFIED:               2026-08-22
+CORE_AUTHORITY:              33f97ae0110075089f39b1e123890f931417d907
+LAUNCHER_EXE_SHA256:         985dd0c292b90c541128c29a895a97391c6b5260691044a45f8617068598f6b9
+LAST_VERIFIED:               2026-08-23
+NEXT_ACTION:                 CONTINUE CLOSED BETA
 ```
 
 This procedure prepares a limited closed beta without changing the approved
@@ -36,7 +39,7 @@ A tester needs:
    ```
 
    The result must be
-   `4ae0aa676a41822033a6b00fdae9dde7ff3b900fc30ae39ca71dea6851411609`.
+   `985dd0c292b90c541128c29a895a97391c6b5260691044a45f8617068598f6b9`.
 4. The complete approved Core bundle, delivered through the separate
    access-controlled runtime channel with `core-manifest.json`. Replace the
    complete destination directory; do not mix files from different bundles:
@@ -46,7 +49,7 @@ A tester needs:
    ```
 
    The manifest `source_commit` must be
-   `862bfec463d06d57e1bee05c2bc490740eb714d4`, every declared file hash must
+   `33f97ae0110075089f39b1e123890f931417d907`, every declared file hash must
    match, and no plaintext settings or standalone key is distributed.
 5. Run `NekoLauncher.exe` directly. No additional Launcher Python environment,
    source checkout, service-role key, proxy credential, or installer is

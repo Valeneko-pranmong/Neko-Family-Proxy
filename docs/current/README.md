@@ -8,7 +8,7 @@ AUTHORITY:                      START bba655b3e6443ebcdf84a266e42cc918bdefe32f; 
 PHASE_2_5:                      CLOSED
 TECHNICAL_SECURITY_GATE:        PASS
 NEXT_ACTION:                    NORMAL DEVELOPMENT
-LAST_UPDATED:                  2026-08-22
+LAST_UPDATED:                  2026-08-23
 CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
 T10A:                           CLOSED
 T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PASS
@@ -34,6 +34,7 @@ PERMIT_CONTRACT:                LITE_V1
 SESSION_POLICY:                 LATEST_CLAIM_WINS
 PHASE_2_5_CLOSURE_EVIDENCE:     See phase-2-5-distinct-auth-session-future-permit-proof.md
 T10B3.1_EXE_SHA256:             E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
+CLOSED_BETA_AUTHORITY:          CORE 33f97ae0110075089f39b1e123890f931417d907 — Tester-001 RUNNING_TO_NORMAL_STOP_PASS (2026-08-23); see closed-beta-runbook.md
 ```
 
 ---
