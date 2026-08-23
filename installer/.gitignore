@@ -1,0 +1,2 @@
+# Generated installer build outputs must never be committed.
+out/

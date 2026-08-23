@@ -6,12 +6,16 @@ CLOSED_BETA_RUNTIME:         VERIFIED
 BETA_TESTER_001:             PASS (RUNNING_TO_NORMAL_STOP_PASS)
 BETA_DATABASE_BASELINE:      CLEAN
 CUSTOMER_TEST_USERS:         0 before onboarding
+BETA_DISTRIBUTION:           SINGLE_EXE_INSTALLER
+INSTALLER_VERSION:           1.0.0.1 (1.0.0-beta.1)
+INSTALLER_FILE:              NekoFamilyProxy-Beta-Setup.exe
+INSTALLER_SHA256:            3fab856f75962ae36cd3946e459ffaa8a9f0f54558101c522dfcb8ea97f17516
 PRODUCTION_HEAD:             6ff9a3de70da34e52088c47eb1cdcfd62fa9f731
 LAUNCHER_RUNTIME_AUTHORITY:  bba655b3e6443ebcdf84a266e42cc918bdefe32f
 CORE_AUTHORITY:              33f97ae0110075089f39b1e123890f931417d907
 LAUNCHER_EXE_SHA256:         985dd0c292b90c541128c29a895a97391c6b5260691044a45f8617068598f6b9
 LAST_VERIFIED:               2026-08-23
-NEXT_ACTION:                 CONTINUE CLOSED BETA
+NEXT_ACTION:                 FRESH-MACHINE BETA INSTALLER SMOKE
 ```
 
 This procedure prepares a limited closed beta without changing the approved
@@ -20,40 +24,66 @@ closure.
 
 ## Supported distribution and installation
 
-The supported beta delivery is the existing standalone Launcher plus the
-separately delivered complete Core runtime. The Launcher EXE does not contain
-Core. At the production head there is no tracked customer installer or
-bootstrap implementation; the beta uses controlled manual placement rather
-than inventing a new packaging path.
+`BETA_DISTRIBUTION = SINGLE_EXE_INSTALLER`. The supported beta delivery is the
+single-file installer `NekoFamilyProxy-Beta-Setup.exe`, built from the tracked
+source under `installer/` in this repository. After installation the Launcher
+and Core remain separate: `NekoLauncher.exe` sits at
+`%LOCALAPPDATA%\NEKO FAMILY\NekoLauncher.exe` and resolves the external
+`%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe` runtime; Core is
+never embedded in the Launcher EXE.
+
+Installer facts:
+
+- Installer version `1.0.0.1 (1.0.0-beta.1)`, SHA-256 and size are recorded in
+  the build record produced by `installer/scripts/build_beta_installer.py`
+  (`D:\Build\NekoBetaInstaller\out\build-record.json` on the build machine).
+- The build fails closed unless the staged payload matches the approved
+  Launcher SHA-256, the Core manifest authority commit, every declared Core
+  file hash, the pinned `v2ray-sn.exe` SHA-256, and secret-hygiene checks.
+- After copying files, setup verifies the installed Core against
+  `core-manifest.json` (authority commit, all file hashes, `v2ray-sn.exe`,
+  presence of `runtime-settings.nkps`, absence of any plaintext settings or
+  key) and shows a clear failure with the optional launch suppressed when
+  verification fails.
+- Driver-install policy: netfilter2 is prepared through the existing supported
+  path — copy `bin\nfdriver.sys` to `System32\drivers\netfilter2.sys` and
+  register via the proven `Redirector.bin!aio_register("netfilter2")`
+  entry point (exactly what NekoProxyCore's own NFController does). An already
+  valid running driver is verified only without elevation; elevation is
+  requested only when registration is actually required; a running driver
+  whose bytes differ from the approved bundle is never silently overwritten.
+- Uninstall policy: the netfilter2 driver is treated as a shared machine
+  prerequisite and is intentionally PRESERVED on uninstall. The uninstaller
+  removes only the program files it installed, shortcuts, and its own
+  uninstall registry entries; pre-existing user state (`logs\`, `tweaker.path`)
+  and runtime logs are left untouched.
 
 A tester needs:
 
 1. Windows x64 with PSO2 JP and PSO2 Tweaker already installed.
 2. Microsoft .NET 6 Windows Desktop Runtime x64 for the framework-dependent
    Core runtime.
-3. The approved `NekoLauncher.exe`, delivered through the team's controlled
-   beta channel. Verify SHA-256 before running:
+3. The approved beta installer `NekoFamilyProxy-Beta-Setup.exe`, delivered
+   through the team's controlled beta channel. Verify SHA-256 before running:
 
    ```powershell
-   (Get-FileHash .\NekoLauncher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+   (Get-FileHash .\NekoFamilyProxy-Beta-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
    ```
 
    The result must be
-   `985dd0c292b90c541128c29a895a97391c6b5260691044a45f8617068598f6b9`.
-4. The complete approved Core bundle, delivered through the separate
-   access-controlled runtime channel with `core-manifest.json`. Replace the
-   complete destination directory; do not mix files from different bundles:
-
-   ```text
-   %LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe
-   ```
-
-   The manifest `source_commit` must be
-   `33f97ae0110075089f39b1e123890f931417d907`, every declared file hash must
-   match, and no plaintext settings or standalone key is distributed.
-5. Run `NekoLauncher.exe` directly. No additional Launcher Python environment,
-   source checkout, service-role key, proxy credential, or installer is
-   required on the tester machine.
+   `3fab856f75962ae36cd3946e459ffaa8a9f0f54558101c522dfcb8ea97f17516`.
+4. Run the installer. It deploys the approved Launcher and the complete
+   manifest-verified Core bundle to the exact Local AppData paths, verifies
+   the Core installation against `core-manifest.json` (authority commit
+   `33f97ae0110075089f39b1e123890f931417d907`, every declared file hash,
+   `v2ray-sn.exe`, `runtime-settings.nkps` present, no plaintext settings or
+   standalone key), and prepares the netfilter2 driver (asking for admin
+   approval only when registration is actually required). No plaintext
+   settings, key, service-role material, or proxy credential is contained in
+   or displayed by the installer.
+5. Run `NekoLauncher.exe`. No additional Launcher Python environment,
+   source checkout, service-role key, proxy credential, or manual file
+   placement is required on the tester machine.
 
 ## Tester checklist
 
@@ -61,8 +91,9 @@ A tester needs:
 
 - [ ] Install PSO2 JP, PSO2 Tweaker, and Microsoft .NET 6 Windows Desktop
       Runtime x64.
-- [ ] Verify the Launcher SHA-256 above.
-- [ ] Copy the complete verified Core bundle to the exact Local AppData path.
+- [ ] Verify the installer SHA-256 above, then run it and let it finish.
+- [ ] If the installer reports a Core verification or driver failure, stop and
+      report; do not run the Launcher.
 - [ ] Start `NekoLauncher.exe`; do not run a second Launcher instance.
 
 ### Register, obtain access, and play
