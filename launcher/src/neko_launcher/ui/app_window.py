@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from queue import SimpleQueue
 from typing import Any, Callable
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import tkinter as tk
@@ -32,6 +32,7 @@ from neko_launcher.domain.models import (
 )
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.process_detector import is_any_process_running
+from neko_launcher.infrastructure.config import ProgramPreferences
 
 from .theme import FONT_FAMILY, PALETTE, apply_theme
 from .platform.window_chrome import (
@@ -80,9 +81,15 @@ class AppWindow:
             thread_name_prefix="neko-launcher",
         )
         self._pending: list[
-            tuple[Future[Any], Callable[[Any], None] | None]
+            tuple[
+                Future[Any],
+                Callable[[Any], None] | None,
+                Callable[[Exception], None] | None,
+            ]
         ] = []
         self._logo_image = None
+        self._settings_control_image = None
+        self._logo_path = logo_path
         self._icon_path = icon_path
         self._password_dialog: ctk.CTkToplevel | None = None
         self._debug_dialog: ctk.CTkToplevel | None = None
@@ -98,11 +105,13 @@ class AppWindow:
         self._proxy_retry_suppression_logged = False
         self._last_debug_status: tuple[str, tuple[tuple[str, str], ...]] | None = None
         self._last_telemetry_state: Any = None
+        self._last_truthful_telemetry_snapshot: Any = None
+        self._redeem_in_flight = False
         self._record_debug_status("LAUNCHER_START", message="Debug console enabled")
 
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.root.title("Neko Family Proxy")
+        self.root.title("NEKO FAMILY")
         self.root.resizable(False, False)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
@@ -120,9 +129,9 @@ class AppWindow:
         self._status_subtitle = tk.StringVar(value="กำลังตรวจสอบการเข้าสู่ระบบ")
         self._entitlement_days = tk.StringVar(value="0 วัน")
         self._entitlement_expiry = tk.StringVar(value="ยังไม่มีวันใช้งาน")
-        self._download_speed = tk.StringVar(value="0 KB/s")
-        self._upload_speed = tk.StringVar(value="0 KB/s")
-        self._session_duration = tk.StringVar(value="00:00:00")
+        self._download_speed = tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._upload_speed = tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._session_duration = tk.StringVar(value="ไม่พร้อมใช้งาน")
         self._error = tk.StringVar(value="")
         self._notice = tk.StringVar(value="")
         self._error.trace_add("write", self._update_message_visibility)
@@ -142,12 +151,23 @@ class AppWindow:
         self._game_path = tk.StringVar(value=game_default_path)
         self._game_path_store = game_path_store
         self._auto_launch = tk.BooleanVar(value=True)
+        preferences_dir = (
+            game_path_store.parent
+            if game_path_store is not None
+            else Path(os.getenv("LOCALAPPDATA", ".")) / "NEKO FAMILY"
+        )
+        self._program_preferences = ProgramPreferences(
+            preferences_dir / "program.json"
+        )
+        self._always_on_top = tk.BooleanVar(
+            value=self._program_preferences.always_on_top
+        )
         self._game_connection_status = tk.StringVar(value="รอให้เข้าเกม (pso2.exe)")
         self._proxy_connection_status = tk.StringVar(value="ProxyCore ยังไม่ทำงาน")
-        self._telemetry_speed = tk.StringVar(value="ความเร็ว: ▼ 0 B/s | ▲ 0 B/s")
-        self._telemetry_transfer = tk.StringVar(value="รับข้อมูล (RX): 0 B | ส่งข้อมูล (TX): 0 B")
-        self._telemetry_session = tk.StringVar(value="เวลาเชื่อมต่อ: 00:00:00 | TCP: 0 active | DNS: 0")
-        self._telemetry_health = tk.StringVar(value="สถานะระบบ: Core รอการเชื่อมต่อ")
+        self._telemetry_speed = tk.StringVar(value="ความเร็ว: ไม่พร้อมใช้งาน")
+        self._telemetry_transfer = tk.StringVar(value="ยอดรับ/ส่ง: ไม่พร้อมใช้งาน")
+        self._telemetry_session = tk.StringVar(value="เซสชัน: ไม่พร้อมใช้งาน")
+        self._telemetry_health = tk.StringVar(value="สถานะระบบ: ไม่พร้อมใช้งาน")
         self._process_detection_pending = False
         self._process_detection_pending = False
 
@@ -185,7 +205,7 @@ class AppWindow:
 
     def _release_initial_topmost(self) -> None:
         if self.root.winfo_exists() and not self._closing:
-            self.root.attributes("-topmost", False)
+            self.root.attributes("-topmost", self._always_on_top.get())
 
     # ------------------------------------------------------------------
     # Layout
@@ -289,12 +309,17 @@ class AppWindow:
     def _build_window_controls(self, drag_surface: ctk.CTkBaseClass) -> None:
         controls = ctk.CTkFrame(self.root, fg_color="transparent")
         controls.place(relx=1.0, x=-10, y=10, anchor="ne")
-        secondary_button(
-            controls,
-            "⚙",
-            self._open_settings_window,
-            width=32,
-            height=26,
+        if self._icon_path and self._icon_path.is_file():
+            try:
+                self._settings_control_image = ctk.CTkImage(
+                    Image.open(self._icon_path), size=(18, 18)
+                )
+            except Exception:
+                self._settings_control_image = None
+        ctk.CTkButton(
+            controls, text="", image=self._settings_control_image,
+            command=self._open_settings_window, width=32, height=26,
+            fg_color="transparent", hover_color="#F3F4F6",
         ).pack(side="left")
         self._window_drag_handler = WindowDragHandler(self.root)
         self._window_drag_handler.bind_to(drag_surface)
@@ -316,6 +341,7 @@ class AppWindow:
         self._settings_window = SettingsWindow(
             self.root,
             icon_path=self._icon_path,
+            logo_path=self._logo_path,
             account_var=self._account,
             account_status_var=self._status,
             entitlement_status_var=self._entitlement,
@@ -326,6 +352,12 @@ class AppWindow:
             game_path_var=self._game_path,
             auto_launch_var=self._auto_launch,
             proxy_connection_var=self._proxy_connection_status,
+            telemetry_speed_var=self._telemetry_speed,
+            telemetry_transfer_var=self._telemetry_transfer,
+            telemetry_session_var=self._telemetry_session,
+            telemetry_health_var=self._telemetry_health,
+            always_on_top_var=self._always_on_top,
+            on_always_on_top_changed=self._apply_always_on_top,
             diagnostics=self._diagnostics,
             debug_mode=self._debug_mode,
             debug_log_dir=self._debug_log_dir,
@@ -338,6 +370,14 @@ class AppWindow:
             on_open_logs=self._open_debug_logs,
             on_show_advanced_diagnostics=self._show_debug_dialog,
         )
+        self._apply_always_on_top()
+
+    def _apply_always_on_top(self) -> None:
+        enabled = bool(self._always_on_top.get())
+        self._program_preferences.set_always_on_top(enabled)
+        self.root.attributes("-topmost", enabled)
+        if self._settings_window is not None and self._settings_window.winfo_exists():
+            self._settings_window.attributes("-topmost", enabled)
 
     def _close_settings_window(self) -> None:
         self._settings_window = None
@@ -731,6 +771,11 @@ class AppWindow:
         self._notice.set("เปลี่ยนรหัสผ่านสำเร็จ")
 
     def _sign_out(self) -> None:
+        if (
+            getattr(getattr(self, "_controller", None), "state", AppState()).game_process_running
+            and not self._confirm_game_active_action("ออกจากระบบ")
+        ):
+            return
         self._submit(self._service.sign_out, self._signed_out)
 
     def _signed_out(self, _: Any) -> None:
@@ -740,16 +785,40 @@ class AppWindow:
         self._notice.set("ออกจากระบบแล้ว")
 
     def _redeem_coupon(self) -> None:
+        if self._redeem_in_flight:
+            return
+        self._redeem_in_flight = True
+        self._set_redeem_busy(True)
         self._submit(
             lambda: self._service.redeem_coupon(self._coupon_code.get()),
             self._coupon_redeemed,
+            self._coupon_redeem_failed,
         )
 
     def _coupon_redeemed(self, result: Any) -> None:
+        self._redeem_in_flight = False
+        self._set_redeem_busy(False)
         self._coupon_code.set("")
         self._notice.set(
             f"เติมวันสำเร็จ +{result.days_added} วัน "
             f"หมดอายุ {result.valid_until:%d/%m/%Y %H:%M}"
+        )
+
+    def _coupon_redeem_failed(self, _error: Exception) -> None:
+        self._redeem_in_flight = False
+        self._set_redeem_busy(False)
+
+    def _set_redeem_busy(self, busy: bool) -> None:
+        settings = self._settings_window
+        if settings is not None and settings.winfo_exists():
+            settings.set_redeem_busy(busy)
+
+    def _confirm_game_active_action(self, action: str) -> bool:
+        return messagebox.askyesno(
+            "NEKO FAMILY",
+            f"ตรวจพบว่า PSO2 กำลังทำงานอยู่\nยืนยันที่จะ{action}หรือไม่?\n"
+            "เกมจะไม่ถูกปิด",
+            parent=self.root,
         )
 
     # ------------------------------------------------------------------
@@ -833,25 +902,31 @@ class AppWindow:
         self,
         work: Callable[[], Any],
         on_success: Callable[[Any], None] | None = None,
+        on_failure: Callable[[Exception], None] | None = None,
     ) -> None:
         self._error.set("")
         self._notice.set("")
-        self._pending.append((self._executor.submit(work), on_success))
+        self._pending.append((self._executor.submit(work), on_success, on_failure))
 
     def _drain_events(self) -> None:
         remaining: list[
-            tuple[Future[Any], Callable[[Any], None] | None]
+            tuple[Future[Any], Callable[[Any], None] | None,
+                  Callable[[Exception], None] | None]
         ] = []
-        for future, on_success in self._pending:
+        for future, on_success, on_failure in self._pending:
             if not future.done():
-                remaining.append((future, on_success))
+                remaining.append((future, on_success, on_failure))
                 continue
             try:
                 result = future.result()
             except LauncherServiceError as exc:
                 self._error.set(str(exc))
-            except Exception:
+                if on_failure:
+                    on_failure(exc)
+            except Exception as exc:
                 self._error.set("เกิดข้อผิดพลาด กรุณาลองใหม่")
+                if on_failure:
+                    on_failure(exc)
             else:
                 if on_success:
                     on_success(result)
@@ -1127,21 +1202,27 @@ class AppWindow:
         self._last_telemetry_state = state
 
         if state.connection_state != TelemetryConnectionState.CONNECTED:
-            self._telemetry_speed.set("ความเร็ว: ▼ 0 B/s | ▲ 0 B/s")
-            self._telemetry_transfer.set("รับข้อมูล (RX): 0 B | ส่งข้อมูล (TX): 0 B")
-            self._telemetry_session.set("เวลาเชื่อมต่อ: 00:00:00 | TCP: 0 active | DNS: 0")
-            self._telemetry_health.set("สถานะระบบ: Core รอการเชื่อมต่อ")
-            self._download_speed.set("0 KB/s")
-            self._upload_speed.set("0 KB/s")
-            self._session_duration.set("00:00:00")
+            self._telemetry_speed.set("ความเร็ว: ไม่พร้อมใช้งาน")
+            self._telemetry_session.set("เซสชัน: ไม่พร้อมใช้งาน")
+            self._telemetry_health.set("สถานะระบบ: ไม่พร้อมใช้งาน (รอข้อมูลล่าสุด)")
+            self._download_speed.set("ไม่พร้อมใช้งาน")
+            self._upload_speed.set("ไม่พร้อมใช้งาน")
+            self._session_duration.set("ไม่พร้อมใช้งาน")
             return
 
         if state.is_stale:
-            rx_speed = "0 B/s (stale)"
-            tx_speed = "0 B/s (stale)"
+            self._telemetry_speed.set("ความเร็ว: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
+            self._telemetry_session.set("เซสชัน: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
+            self._telemetry_health.set("สถานะระบบ: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
+            self._download_speed.set("ไม่พร้อมใช้งาน")
+            self._upload_speed.set("ไม่พร้อมใช้งาน")
+            self._session_duration.set("ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
+            return
         else:
             rx_speed = format_speed(state.rx_rate_bps)
             tx_speed = format_speed(state.tx_rate_bps)
+
+        self._last_truthful_telemetry_snapshot = state.snapshot
 
         rx_total = format_bytes(state.snapshot.rx_bytes)
         tx_total = format_bytes(state.snapshot.tx_bytes)
@@ -1191,6 +1272,14 @@ class AppWindow:
     def close(self) -> None:
         if self._closing:
             return
+        if (
+            getattr(getattr(self, "_controller", None), "state", AppState()).game_process_running
+            and not self._confirm_game_active_action("ปิด Launcher")
+        ):
+            return
+        self._perform_close()
+
+    def _perform_close(self) -> None:
         self._closing = True
         self._clear_recovery_sensitive_fields()
         if getattr(self, "_settings_window", None) is not None:

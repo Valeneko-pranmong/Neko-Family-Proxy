@@ -18,6 +18,28 @@ LAST_VERIFIED:               2026-08-23
 NEXT_ACTION:                 FRESH-MACHINE BETA INSTALLER SMOKE
 ```
 
+## Launcher UI repair source status (2026-08-24)
+
+The CLOSED BETA Launcher source and tests now use the approved `image_11.png`
+and `icon_app.ico`, the five functional Settings groups (`Status`, `Program`,
+`Account & Subscription`, `PSO2`, `About`), persisted Always-on-top under
+`%LOCALAPPDATA%\NEKO FAMILY`, working password visibility controls,
+single-flight coupon redemption, PSO2-aware close/logout confirmation, and
+truth-preserving unavailable telemetry presentation. A new Launcher EXE was
+built from the repaired source (SHA-256
+`3406eb4900abd134241323bf814b77b7de20f22681cedee1af50f48d7d8ab657`) and
+verified from a fresh `_MEI` extraction with no embedded ProxyCore/V2Ray files.
+No Installer was built, and no Proxy/Core authorization or runtime transport
+behavior was changed.
+
+The following CLOSED BETA issues remain explicitly **OPEN and untouched** by
+this repair:
+
+- unexpected automatic logout;
+- automatic reconnect after a Proxy/runtime disconnect;
+- reopening Launcher while `pso2.exe` is already running and reconnecting
+  without Tweaker.
+
 This procedure prepares a limited closed beta without changing the approved
 Launcher or Core runtime, production security contracts, or Phase 2.5/T10B4
 closure.

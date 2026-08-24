@@ -11,6 +11,7 @@ from neko_launcher.ui.components.buttons import (
     field_label,
     primary_button,
     secondary_button,
+    toggle_password_visibility,
 )
 from neko_launcher.ui.platform.window_chrome import apply_rounded_window_shape
 
@@ -365,6 +366,10 @@ def open_password_dialog(
         new_password_var,
         show="●",
     )
+    secondary_button(
+        panel, "👁 แสดง/ซ่อนรหัสผ่าน",
+        lambda: toggle_password_visibility(new_password_entry, new_password_var),
+    ).pack(anchor="e", padx=14, pady=(2, 0))
     field_label(panel, "ยืนยันรหัสผ่านใหม่")
     new_password_confirm_entry = _entry(
         panel,
@@ -372,6 +377,12 @@ def open_password_dialog(
         new_password_confirm_var,
         show="●",
     )
+    secondary_button(
+        panel, "👁 แสดง/ซ่อนการยืนยัน",
+        lambda: toggle_password_visibility(
+            new_password_confirm_entry, new_password_confirm_var
+        ),
+    ).pack(anchor="e", padx=14, pady=(2, 0))
     new_password_entry.bind(
         "<Return>", lambda _event: on_change_password()
     )

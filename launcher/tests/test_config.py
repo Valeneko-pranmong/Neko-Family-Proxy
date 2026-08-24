@@ -1,7 +1,19 @@
 from pathlib import Path
 
-from neko_launcher.infrastructure.config import LauncherConfig
+import pytest
+
 from neko_launcher.bootstrap.app_factory import application_root
+from neko_launcher.infrastructure.config import LauncherConfig, ProgramPreferences
+
+
+@pytest.mark.parametrize("contents", ["null", "[]"])
+def test_program_preferences_non_object_json_defaults_always_on_top_false(
+    tmp_path: Path, contents: str
+) -> None:
+    path = tmp_path / "program.json"
+    path.write_text(contents, encoding="utf-8")
+
+    assert ProgramPreferences(path).always_on_top is False
 
 
 def test_packaged_runtime_defaults_to_local_app_data(

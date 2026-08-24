@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 import tkinter as tk
+import webbrowser
 
 import customtkinter as ctk
+from PIL import Image
 
 from neko_launcher import __version__
 from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
@@ -61,16 +63,11 @@ class SettingsWindow(ctk.CTkToplevel):
     """Standalone, single-instance Settings top-level window."""
 
     CATEGORIES = [
-        ("general", "การตั้งค่าทั่วไป"),
-        ("account", "บัญชีผู้ใช้"),
-        ("subscription", "สมาชิก"),
+        ("status", "Status"),
+        ("program", "Program"),
+        ("account", "Account & Subscription"),
         ("pso2", "PSO2"),
-        ("tweaker", "PSO2 Tweaker"),
-        ("connection", "การเชื่อมต่อ"),
-        ("appearance", "การแสดงผล"),
-        ("notifications", "การแจ้งเตือน"),
-        ("diagnostics", "การวินิจฉัย"),
-        ("about", "เกี่ยวกับ"),
+        ("about", "About"),
     ]
 
     def __init__(
@@ -78,6 +75,7 @@ class SettingsWindow(ctk.CTkToplevel):
         parent: ctk.CTkBaseClass,
         *,
         icon_path: Path | None = None,
+        logo_path: Path | None = None,
         account_var: tk.StringVar | None = None,
         account_status_var: tk.StringVar | None = None,
         entitlement_status_var: tk.StringVar | None = None,
@@ -88,6 +86,12 @@ class SettingsWindow(ctk.CTkToplevel):
         game_path_var: tk.StringVar | None = None,
         auto_launch_var: tk.BooleanVar | None = None,
         proxy_connection_var: tk.StringVar | None = None,
+        telemetry_speed_var: tk.StringVar | None = None,
+        telemetry_transfer_var: tk.StringVar | None = None,
+        telemetry_session_var: tk.StringVar | None = None,
+        telemetry_health_var: tk.StringVar | None = None,
+        always_on_top_var: tk.BooleanVar | None = None,
+        on_always_on_top_changed: Callable[[], None] | None = None,
         diagnostics: Any = None,
         debug_mode: bool = False,
         debug_log_dir: Path | None = None,
@@ -102,6 +106,8 @@ class SettingsWindow(ctk.CTkToplevel):
     ) -> None:
         super().__init__(parent)
         self._on_close_callback = on_close
+        self._logo_path = logo_path
+        self._about_logo_image = None
         self._account_var = account_var or tk.StringVar(value="")
         self._account_status_var = account_status_var or tk.StringVar(value="")
         self._entitlement_status_var = entitlement_status_var or tk.StringVar(value="")
@@ -130,6 +136,12 @@ class SettingsWindow(ctk.CTkToplevel):
         self._game_path_var = game_path_var or tk.StringVar(value="")
         self._auto_launch_var = auto_launch_var or tk.BooleanVar(value=True)
         self._proxy_connection_var = proxy_connection_var or tk.StringVar(value="พร้อมใช้งาน")
+        self._telemetry_speed_var = telemetry_speed_var or tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._telemetry_transfer_var = telemetry_transfer_var or tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._telemetry_session_var = telemetry_session_var or tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._telemetry_health_var = telemetry_health_var or tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._always_on_top_var = always_on_top_var or tk.BooleanVar(value=False)
+        self._on_always_on_top_changed = on_always_on_top_changed
         self._customer_connection_var = tk.StringVar(
             value=customer_connection_status(self._proxy_connection_var.get())
         )
@@ -147,7 +159,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_open_logs = on_open_logs
         self._on_show_advanced_diagnostics = on_show_advanced_diagnostics
 
-        self.title("การตั้งค่า — Neko Family Proxy")
+        self.title("NEKO FAMILY — Settings")
         window_width = SETTINGS_WIDTH
         window_height = SETTINGS_HEIGHT
         self.geometry(f"{window_width}x{window_height}")
@@ -194,7 +206,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             header,
-            text="⚙ การตั้งค่า",
+            text="NEKO FAMILY — Settings",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.text,
         ).pack(side="left")
@@ -266,19 +278,25 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._init_pages()
-        self.select_category("general")
+        self.select_category("status")
 
     def _init_pages(self) -> None:
-        self._pages["general"] = self._create_general_page()
+        self._pages["status"] = self._create_diagnostics_page()
+        self._pages["program"] = self._create_general_page()
         self._pages["account"] = self._create_account_page()
-        self._pages["subscription"] = self._create_subscription_page()
+        self._create_subscription_page(self._pages["account"])
         self._pages["pso2"] = self._create_pso2_page()
-        self._pages["tweaker"] = self._create_tweaker_page()
-        self._pages["connection"] = self._create_connection_page()
-        self._pages["appearance"] = self._create_appearance_page()
-        self._pages["notifications"] = self._create_notifications_page()
-        self._pages["diagnostics"] = self._create_diagnostics_page()
+        self._create_tweaker_page(self._pages["pso2"])
         self._pages["about"] = self._create_about_page()
+        self._focus_controls = tuple(
+            control for control in (
+                self._search_entry, self._change_password_button,
+                self._sign_out_button, self._coupon_entry,
+                self._redeem_coupon_button, self._tweaker_path_entry,
+                self._choose_tweaker_button, self._launch_tweaker_button,
+                getattr(self, "_open_logs_button", None),
+            ) if control is not None
+        )
 
     def select_category(self, key: str) -> None:
         if key not in self._pages:
@@ -322,40 +340,15 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="การตั้งค่าทั่วไป",
+            text="Program",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.text,
         ).pack(anchor="w", padx=16, pady=(12, 8))
-
-        item1 = ctk.CTkFrame(c, fg_color="transparent")
-        item1.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(
-            item1,
-            text="การเชื่อมต่ออัตโนมัติ",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            item1,
-            text="เปิดใช้งาน",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.success,
-        ).pack(side="right")
-
-        item2 = ctk.CTkFrame(c, fg_color="transparent")
-        item2.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(
-            item2,
-            text="ย่อเข้า System Tray",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            item2,
-            text="เปิดใช้งาน",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="right")
+        self._always_on_top_switch = ctk.CTkSwitch(
+            c, text="Always on top", variable=self._always_on_top_var,
+            command=self._on_always_on_top_changed,
+        )
+        self._always_on_top_switch.pack(anchor="w", padx=16, pady=8)
         return page
 
     def _create_account_page(self) -> ctk.CTkFrame:
@@ -424,8 +417,10 @@ class SettingsWindow(ctk.CTkToplevel):
         if self._on_sign_out is not None:
             self._on_sign_out()
 
-    def _create_subscription_page(self) -> ctk.CTkFrame:
-        page = ctk.CTkFrame(self._content_area, fg_color="transparent")
+    def _create_subscription_page(
+        self, page: ctk.CTkFrame | None = None
+    ) -> ctk.CTkFrame:
+        page = page or ctk.CTkFrame(self._content_area, fg_color="transparent")
         c = card(page)
         ctk.CTkLabel(
             c,
@@ -587,8 +582,10 @@ class SettingsWindow(ctk.CTkToplevel):
         self._game_status_label.pack(side="right")
         return page
 
-    def _create_tweaker_page(self) -> ctk.CTkFrame:
-        page = ctk.CTkFrame(self._content_area, fg_color="transparent")
+    def _create_tweaker_page(
+        self, page: ctk.CTkFrame | None = None
+    ) -> ctk.CTkFrame:
+        page = page or ctk.CTkFrame(self._content_area, fg_color="transparent")
         c = card(page)
         ctk.CTkLabel(
             c,
@@ -774,6 +771,20 @@ class SettingsWindow(ctk.CTkToplevel):
             text_color=PALETTE.text,
         ).pack(side="right")
 
+        for variable in (
+            self._telemetry_speed_var,
+            self._telemetry_transfer_var,
+            self._telemetry_session_var,
+            self._telemetry_health_var,
+        ):
+            ctk.CTkLabel(
+                c,
+                textvariable=variable,
+                anchor="w",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                text_color=PALETTE.text_muted,
+            ).pack(fill="x", padx=16, pady=2)
+
         if self._debug_log_dir:
             row2 = ctk.CTkFrame(c, fg_color="transparent")
             row2.pack(fill="x", padx=16, pady=4)
@@ -802,20 +813,13 @@ class SettingsWindow(ctk.CTkToplevel):
             )
             self._advanced_diagnostics_button.pack(side="left")
 
-        focus_controls = [
-            self._search_entry,
-            self._change_password_button,
-            self._sign_out_button,
-            self._coupon_entry,
-            self._redeem_coupon_button,
-            self._tweaker_path_entry,
-            self._choose_tweaker_button,
-            self._launch_tweaker_button,
-        ]
-        if hasattr(self, "_open_logs_button"):
-            focus_controls.append(self._open_logs_button)
-        self._focus_controls = tuple(focus_controls)
         return page
+
+    def set_redeem_busy(self, busy: bool) -> None:
+        self._redeem_coupon_button.configure(
+            state="disabled" if busy else "normal",
+            text="กำลังดำเนินการ..." if busy else "เติมวัน",
+        )
 
     def _focus_search(self, _event: tk.Event[Any]) -> str:
         self._search_entry.focus_set()
@@ -849,32 +853,43 @@ class SettingsWindow(ctk.CTkToplevel):
         c = card(page)
         ctk.CTkLabel(
             c,
-            text="เกี่ยวกับ",
+            text="NEKO FAMILY",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.text,
         ).pack(anchor="w", padx=16, pady=(12, 8))
-
-        row1 = ctk.CTkFrame(c, fg_color="transparent")
-        row1.pack(fill="x", padx=16, pady=4)
+        if self._logo_path and self._logo_path.is_file():
+            try:
+                self._about_logo_image = ctk.CTkImage(
+                    Image.open(self._logo_path), size=(140, 50)
+                )
+                ctk.CTkLabel(c, image=self._about_logo_image, text="").pack(pady=4)
+            except Exception:
+                pass
         ctk.CTkLabel(
-            row1,
-            text="เวอร์ชันโปรแกรม",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
+            c, text="NEKO FAMILY PROXY",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            text_color=PALETTE.text,
+        ).pack(pady=2)
         ctk.CTkLabel(
-            row1,
-            text=f"v{__version__}",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=PALETTE.primary,
-        ).pack(side="right")
-
-        ctk.CTkLabel(
-            c,
-            text="© 2026 NEKO FAMILY. All rights reserved.",
+            c, text="จัดทำโดย NEKO FAMILY STUDIO",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-        ).pack(anchor="center", pady=(14, 8))
+        ).pack(pady=2)
+        ctk.CTkLabel(
+            c, text=f"Version / Build: v{__version__}",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=PALETTE.text_muted,
+        ).pack(pady=2)
+        discord = ctk.CTkLabel(
+            c, text="https://discord.gg/fkjXW9AJ6a", cursor="hand2",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, underline=True),
+            text_color=PALETTE.primary,
+        )
+        discord.pack(pady=(6, 12))
+        discord.bind(
+            "<Button-1>",
+            lambda _event: webbrowser.open("https://discord.gg/fkjXW9AJ6a"),
+        )
         return page
 
     # ------------------------------------------------------------------

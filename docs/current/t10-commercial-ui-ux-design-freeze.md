@@ -1,5 +1,13 @@
 # NEKO FAMILY PROXY — T10A COMMERCIAL LAUNCHER UI/UX DESIGN FREEZE
 
+> CLOSED BETA repair note (2026-08-24): the current Launcher supersedes the
+> historical ten-category examples below with exactly five functional groups:
+> Status, Program, Account & Subscription, PSO2, and About. The Settings entry
+> uses the approved project icon instead of a generic gear. Temporary missing
+> or stale telemetry preserves the last truthful totals and marks live values
+> unavailable. This clarification changes Launcher presentation only; the
+> frozen Proxy/Core authorization and transport contracts remain unchanged.
+
 ```text
 DOCUMENT:                       docs/current/t10-commercial-ui-ux-design-freeze.md
 STATUS:                         FROZEN
@@ -852,4 +860,3 @@ PUBLIC RELEASE BLOCKER
 T10B3 engineering and owner final visual review are closed. T10B4 is not yet
 executable and requires a separate Core artifact authority audit. No runtime
 source, Core, packaging, or public-release authority changes are granted here.
-

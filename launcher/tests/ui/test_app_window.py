@@ -731,7 +731,7 @@ def test_render_telemetry_updates_vars(tmp_path: Path) -> None:
     # Disconnected
     s_disc = TelemetryState(connection_state=TelemetryConnectionState.DISCONNECTED)
     window._render_telemetry(s_disc)
-    assert "Core รอการเชื่อมต่อ" in window._telemetry_health.get()
+    assert "ไม่พร้อมใช้งาน" in window._telemetry_health.get()
 
     # Connected healthy
     snapshot = CoreHealthSnapshot(
@@ -765,6 +765,21 @@ def test_render_telemetry_updates_vars(tmp_path: Path) -> None:
     assert "V2Ray ทำงาน" in window._telemetry_health.get()
     assert "SOCKS พร้อม" in window._telemetry_health.get()
     assert "Upstream เชื่อมต่อแล้ว" in window._telemetry_health.get()
+
+    truthful_totals = window._telemetry_transfer.get()
+    disconnected = replace(
+        s_conn, connection_state=TelemetryConnectionState.DISCONNECTED
+    )
+    window._render_telemetry(disconnected)
+    assert window._telemetry_transfer.get() == truthful_totals
+    assert window._telemetry_session.get() == "เซสชัน: ไม่พร้อมใช้งาน"
+    assert window._session_duration.get() == "ไม่พร้อมใช้งาน"
+
+    stale = replace(s_conn, is_stale=True)
+    window._render_telemetry(stale)
+    assert window._telemetry_transfer.get() == truthful_totals
+    assert window._telemetry_session.get() == "เซสชัน: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)"
+    assert window._session_duration.get() == "ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)"
 
 
 def test_close_stops_telemetry_client(tmp_path: Path) -> None:

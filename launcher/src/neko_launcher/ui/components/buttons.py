@@ -7,6 +7,12 @@ import customtkinter as ctk
 from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 
 
+def toggle_password_visibility(entry: Any, variable: Any) -> None:
+    """Toggle masking without reading, copying, or changing the secret value."""
+    del variable
+    entry.configure(show="" if entry.cget("show") else "●")
+
+
 def primary_button(
     parent: ctk.CTkBaseClass,
     text: str,
@@ -132,12 +138,19 @@ def icon_entry(
     entry.pack(side="left", fill="both", expand=True, pady=4)
 
     if right_icon:
-        ctk.CTkLabel(
+        eye = ctk.CTkLabel(
             frame,
             text=right_icon,
             text_color="#C0C0C0",
             font=ctk.CTkFont(family=FONT_FAMILY, size=18),
             width=30,
-        ).pack(side="right", padx=(4, 10), pady=4)
+            cursor="hand2" if show else "arrow",
+        )
+        eye.pack(side="right", padx=(4, 10), pady=4)
+        if show:
+            eye.bind(
+                "<Button-1>",
+                lambda _event: toggle_password_visibility(entry, variable),
+            )
 
     return entry

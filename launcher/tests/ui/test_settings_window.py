@@ -34,17 +34,12 @@ def test_settings_window_structure_and_categories() -> None:
             on_close=on_close,
         )
 
-        assert len(window.CATEGORIES) == 10
+        assert len(window.CATEGORIES) == 5
         expected_keys = [
-            "general",
+            "status",
+            "program",
             "account",
-            "subscription",
             "pso2",
-            "tweaker",
-            "connection",
-            "appearance",
-            "notifications",
-            "diagnostics",
             "about",
         ]
         assert [k for k, _ in window.CATEGORIES] == expected_keys
@@ -416,7 +411,10 @@ def test_diagnostics_and_about_copy_is_customer_safe() -> None:
     assert "CustomTkinter" not in about
     assert "DWM" not in about
     assert "สถาปัตยกรรม" not in about
-    assert 'text=f"v{__version__}"' in about
+    assert 'text=f"Version / Build: v{__version__}"' in about
+    assert "NEKO FAMILY PROXY" in about
+    assert "จัดทำโดย NEKO FAMILY STUDIO" in about
+    assert "https://discord.gg/fkjXW9AJ6a" in about
     assert __version__
 
 
@@ -556,7 +554,7 @@ def test_app_window_close_cleans_settings_window() -> None:
     assert window._settings_window is None
 
 
-def test_app_window_source_has_settings_gear_control_only() -> None:
+def test_app_window_source_uses_approved_asset_for_settings_control() -> None:
     source = (
         Path(__file__).parents[2]
         / "src"
@@ -565,7 +563,9 @@ def test_app_window_source_has_settings_gear_control_only() -> None:
         / "app_window.py"
     ).read_text(encoding="utf-8")
 
-    assert "⚙" in source
+    assert "self._settings_control_image" in source
+    assert "Image.open(self._icon_path)" in source
+    assert "⚙" not in source
     assert "self._open_settings_window" in source
     assert "self._settings_window" in source
     # Verify no duplicate internal minimize / close buttons in _build_window_controls

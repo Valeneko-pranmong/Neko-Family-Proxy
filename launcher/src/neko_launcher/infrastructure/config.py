@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,30 @@ from .defaults import (
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
 )
+
+
+class ProgramPreferences:
+    """Small, non-sensitive Launcher UI preferences stored in Local AppData."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @property
+    def always_on_top(self) -> bool:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return False
+        if not isinstance(value, dict):
+            return False
+        return value.get("always_on_top") is True
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            json.dumps({"always_on_top": bool(enabled)}, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
 
 @dataclass(frozen=True)

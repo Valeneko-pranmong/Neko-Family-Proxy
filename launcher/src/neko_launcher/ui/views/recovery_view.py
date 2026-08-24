@@ -84,7 +84,7 @@ class RecoveryView:
             "🔒",
             "12-128 ตัวอักษร",
             new_password_var,
-            show="●",
+            show="●", right_icon="👁",
         )
         field_label(self._password_frame, "ยืนยันรหัสผ่านใหม่")
         confirm_entry = icon_entry(
@@ -92,7 +92,7 @@ class RecoveryView:
             "🔒",
             "กรอกรหัสผ่านอีกครั้ง",
             confirm_password_var,
-            show="●",
+            show="●", right_icon="👁",
         )
         ctk.CTkLabel(
             self._password_frame,
