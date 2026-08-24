@@ -4,6 +4,10 @@ from threading import Event, Thread
 
 import pytest
 
+from neko_launcher.application.authorized_core import (
+    AuthorizedCoreError,
+    AuthorizedCoreErrorCode,
+)
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import (
     DeviceAuthorizationDenied,
@@ -56,6 +60,7 @@ class FakeGateway:
         self.proxy_stop_count = 0
         self.proxy_host_owned = False
         self.proxy_shutdown_count = 0
+        self.proxy_reconnect_error: Exception | None = None
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -108,6 +113,12 @@ class FakeGateway:
     def start(self) -> None:
         self.proxy_running = True
         self.proxy_host_owned = True
+
+    def reconnect(self, cancellation: Event) -> None:
+        del cancellation
+        if self.proxy_reconnect_error is not None:
+            raise self.proxy_reconnect_error
+        self.start()
 
     def has_owned_host(self) -> bool:
         return self.proxy_host_owned
@@ -639,6 +650,64 @@ def test_authoritative_heartbeat_auth_invalid_logs_out(
     assert controller.state.auth_status is AuthStatus.SIGNED_OUT
     assert controller.state.session_id is None
     assert gateway.signed_out is True
+
+
+def test_reconnect_heartbeat_auth_invalid_logs_out() -> None:
+    bus = EventBus()
+    gateway = FakeGateway()
+    gateway.has_access = True
+    controller = ApplicationController(bus, proxy_gateway=gateway)
+    service = LauncherService(
+        controller,
+        gateway,
+        gateway,
+        FakeInstallation(),
+        "neko-family-proxy",
+    )
+    service.sign_in("testuser", "password123")
+    controller.dispatch(GameProcessStateChanged(True))
+    gateway.proxy_reconnect_error = AuthorizedCoreError(
+        AuthorizedCoreErrorCode.AUTHORIZATION_INVALID,
+        auth_invalid=True,
+    )
+
+    service.start_proxy(cancellation=Event(), automatic_reconnect=True)
+
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller.state.session_id is None
+    assert gateway.signed_out is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        AuthorizedCoreError(AuthorizedCoreErrorCode.AUTHORIZATION_INVALID),
+        AuthorizedCoreError(AuthorizedCoreErrorCode.SESSION_INACTIVE),
+    ],
+)
+def test_non_auth_reconnect_denial_fails_closed_without_forcing_logout(
+    error: AuthorizedCoreError,
+) -> None:
+    bus = EventBus()
+    gateway = FakeGateway()
+    gateway.has_access = True
+    controller = ApplicationController(bus, proxy_gateway=gateway)
+    service = LauncherService(
+        controller,
+        gateway,
+        gateway,
+        FakeInstallation(),
+        "neko-family-proxy",
+    )
+    service.sign_in("testuser", "password123")
+    controller.dispatch(GameProcessStateChanged(True))
+    gateway.proxy_reconnect_error = error
+
+    service.start_proxy(cancellation=Event(), automatic_reconnect=True)
+
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.session_id == "session-id"
+    assert gateway.signed_out is False
 
 
 def test_successful_heartbeat_recovers_after_transient_failures(

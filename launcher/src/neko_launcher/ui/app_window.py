@@ -15,6 +15,11 @@ from PIL import Image
 from neko_launcher import __version__
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import LauncherServiceError
+from neko_launcher.application.reconnect import (
+    AutomaticProxyReconnectController,
+    ReconnectAttempt,
+    ReconnectCompletion,
+)
 from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.events import (
     GameProcessStateChanged,
@@ -52,6 +57,7 @@ from .status_presentation import translate_customer_status
 
 
 HEARTBEAT_INTERVAL_MS = 30_000
+RECONNECT_BACKOFF_SECONDS = (1.0, 3.0, 8.0)
 
 
 class AppWindow:
@@ -103,6 +109,9 @@ class AppWindow:
         self._debug_retry_pending = False
         self._proxy_start_attempted_for_detected_game = False
         self._proxy_retry_suppression_logged = False
+        self._reconnect_controller = AutomaticProxyReconnectController(
+            backoff_seconds=RECONNECT_BACKOFF_SECONDS
+        )
         self._last_debug_status: tuple[str, tuple[tuple[str, str], ...]] | None = None
         self._last_telemetry_state: Any = None
         self._last_truthful_telemetry_snapshot: Any = None
@@ -776,6 +785,8 @@ class AppWindow:
             and not self._confirm_game_active_action("ออกจากระบบ")
         ):
             return
+        self._cancel_automatic_reconnect(reset_attempts=True)
+        self._controller.suppress_proxy_reconnect()
         self._submit(self._service.sign_out, self._signed_out)
 
     def _signed_out(self, _: Any) -> None:
@@ -1010,6 +1021,7 @@ class AppWindow:
         proxy_text = {
             ProxyStatus.STOPPED: "ProxyCore: ยังไม่ทำงาน",
             ProxyStatus.STARTING: "ProxyCore: กำลังเริ่มทำงาน...",
+            ProxyStatus.RECONNECTING: "ProxyCore: กำลังเชื่อมต่อใหม่...",
             ProxyStatus.RUNNING: "ProxyCore: ทำงานแล้ว",
             ProxyStatus.STOPPING: "ProxyCore: กำลังหยุดทำงาน...",
             ProxyStatus.FAILED: "ProxyCore: เริ่มทำงานไม่สำเร็จ",
@@ -1131,6 +1143,7 @@ class AppWindow:
         if detection_changed:
             self._controller.dispatch(GameProcessStateChanged(detected))
         if not detected:
+            self._cancel_automatic_reconnect(reset_attempts=True)
             self._proxy_start_attempted_for_detected_game = False
             self._proxy_retry_suppression_logged = False
             self._record_debug_status(
@@ -1151,10 +1164,24 @@ class AppWindow:
         if not entitlement_is_active(state.entitlement):
             self._record_debug_status("PROXY_START_BLOCKED", reason="entitlement is inactive")
             return
-        if state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RUNNING}:
+        if state.proxy_status in {
+            ProxyStatus.STARTING,
+            ProxyStatus.RECONNECTING,
+            ProxyStatus.RUNNING,
+        }:
             self._record_debug_status(
                 "PROXY_ALREADY_ACTIVE",
                 status=state.proxy_status.value,
+            )
+            return
+        reconnect_controller = getattr(self, "_reconnect_controller", None)
+        if (
+            reconnect_controller is not None
+            and reconnect_controller.owns_recovery
+        ):
+            self._record_debug_status(
+                "PROXY_START_NOT_RETRIED",
+                reason="automatic reconnect controller owns runtime recovery",
             )
             return
         if self._proxy_start_attempted_for_detected_game:
@@ -1200,6 +1227,7 @@ class AppWindow:
         )
 
         self._last_telemetry_state = state
+        self._observe_runtime_health(state)
 
         if state.connection_state != TelemetryConnectionState.CONNECTED:
             self._telemetry_speed.set("ความเร็ว: ไม่พร้อมใช้งาน")
@@ -1266,6 +1294,113 @@ class AppWindow:
         ):
             self._dashboard_view.update_status_role(cust_status.role)
 
+    def _observe_runtime_health(self, telemetry: Any) -> None:
+        reconnect_controller = getattr(self, "_reconnect_controller", None)
+        if reconnect_controller is None:
+            return
+        state = self._controller.state
+        if telemetry.is_healthy:
+            if state.proxy_status is ProxyStatus.RUNNING:
+                reconnect_controller.observe_running()
+            return
+        attempt = reconnect_controller.request(
+            state,
+            shutting_down=getattr(self, "_closing", False),
+        )
+        if attempt is None:
+            return
+        self._controller.mark_proxy_reconnecting()
+        self._record_debug_status(
+            "RECONNECT_SCHEDULED",
+            attempt=attempt.attempt,
+            delay_seconds=attempt.delay_seconds,
+        )
+        self._schedule_reconnect(
+            attempt.delay_seconds,
+            lambda: self._begin_automatic_reconnect(attempt),
+        )
+
+    def _schedule_reconnect(
+        self,
+        delay_seconds: float,
+        callback: Callable[[], None],
+    ) -> None:
+        self.root.after(max(1, round(delay_seconds * 1000)), callback)
+
+    def _begin_automatic_reconnect(self, attempt: ReconnectAttempt) -> None:
+        cancellation = self._reconnect_controller.begin(
+            attempt,
+            self._controller.state,
+            shutting_down=self._closing,
+        )
+        if cancellation is None:
+            return
+        self._controller.mark_proxy_reconnecting()
+        self._record_debug_status("RECONNECT_STARTED", attempt=attempt.attempt)
+        self._submit(
+            lambda: self._run_automatic_reconnect(attempt, cancellation),
+            lambda completion: self._automatic_reconnect_completed(
+                attempt, completion
+            ),
+            lambda _error: self._automatic_reconnect_crashed(attempt),
+        )
+
+    def _run_automatic_reconnect(
+        self,
+        attempt: ReconnectAttempt,
+        cancellation: Any,
+    ) -> ReconnectCompletion:
+        self._service.start_proxy(
+            cancellation=cancellation,
+            automatic_reconnect=True,
+        )
+        state = self._controller.state
+        return self._reconnect_controller.complete(
+            attempt,
+            succeeded=state.proxy_status is ProxyStatus.RUNNING,
+            retry_safe=state.proxy_start_retry_safe,
+            failure_code=state.proxy_failure_code,
+        )
+
+    def _automatic_reconnect_completed(
+        self,
+        attempt: ReconnectAttempt,
+        completion: ReconnectCompletion,
+    ) -> None:
+        if completion is ReconnectCompletion.SUCCEEDED:
+            self._record_debug_status("RECONNECT_SUCCEEDED", attempt=attempt.attempt)
+            return
+        if completion is ReconnectCompletion.RETRY:
+            self._observe_runtime_health(self._last_telemetry_state)
+            return
+        if completion is ReconnectCompletion.EXHAUSTED:
+            message = "เชื่อมต่อใหม่ไม่สำเร็จ กรุณาตรวจสอบเครือข่ายแล้วลองใหม่"
+            self._controller.mark_proxy_reconnect_failed(message)
+            self._record_debug_status("RECONNECT_EXHAUSTED", attempts=attempt.attempt)
+            return
+        if completion is ReconnectCompletion.FAILED:
+            self._controller.mark_proxy_reconnect_failed(
+                "การเชื่อมต่อขัดข้อง กรุณาลองใหม่"
+            )
+        self._record_debug_status(
+            "RECONNECT_BLOCKED",
+            attempt=attempt.attempt,
+            completion=completion.value,
+        )
+
+    def _automatic_reconnect_crashed(self, attempt: ReconnectAttempt) -> None:
+        completion = self._reconnect_controller.complete(
+            attempt,
+            succeeded=False,
+            retry_safe=False,
+        )
+        self._automatic_reconnect_completed(attempt, completion)
+
+    def _cancel_automatic_reconnect(self, *, reset_attempts: bool) -> None:
+        controller = getattr(self, "_reconnect_controller", None)
+        if controller is not None:
+            controller.cancel(reset_attempts=reset_attempts)
+
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
@@ -1281,6 +1416,7 @@ class AppWindow:
 
     def _perform_close(self) -> None:
         self._closing = True
+        self._cancel_automatic_reconnect(reset_attempts=True)
         self._clear_recovery_sensitive_fields()
         if getattr(self, "_settings_window", None) is not None:
             try:

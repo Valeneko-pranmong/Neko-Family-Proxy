@@ -9,6 +9,8 @@ from time import monotonic
 from typing import Callable, Protocol, TypeVar, cast, Any
 from uuid import uuid4
 
+from neko_launcher.application.errors import HeartbeatAuthInvalid
+
 
 class AuthorizedCoreErrorCode(str, Enum):
     ADAPTER_FAILURE = "AdapterFailure"
@@ -213,6 +215,7 @@ class AuthorizedCoreError(RuntimeError):
         diagnostic_code: PermitDiagnosticCode | None = None,
         diagnostic_context: dict[str, object] | None = None,
         retry_safe: bool = False,
+        auth_invalid: bool = False,
     ) -> None:
         # Legacy/adapter-owned text is never treated as a public condition.
         self.code = (
@@ -222,6 +225,10 @@ class AuthorizedCoreError(RuntimeError):
         )
         self.domain = _FAILURE_DOMAINS[self.code]
         self.retry_safe = retry_safe is True
+        self.auth_invalid = (
+            auth_invalid is True
+            and self.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+        )
         self.diagnostic_code = (
             diagnostic_code if isinstance(diagnostic_code, PermitDiagnosticCode) else None
         )
@@ -531,12 +538,30 @@ class OnlineHeartbeatLaunchPrecondition:
         installation_key_hash: str,
         timeout: float,
     ) -> None:
+        failure_code: AuthorizedCoreErrorCode | None = None
+        retry_safe = False
+        auth_invalid = False
+        alive = False
         try:
             alive = self._probe(session_id, installation_key_hash, timeout)
+        except HeartbeatAuthInvalid:
+            failure_code = AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+            auth_invalid = True
+        except AuthorizedCoreError as exc:
+            failure_code = exc.code
+            retry_safe = exc.retry_safe
+            auth_invalid = exc.auth_invalid
         except Exception:
-            alive = False
+            failure_code = AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE
+            retry_safe = True
+        if failure_code is not None:
+            raise AuthorizedCoreError(
+                failure_code,
+                retry_safe=retry_safe,
+                auth_invalid=auth_invalid,
+            )
         if not alive:
-            raise AuthorizedCoreError(AuthorizedCoreErrorCode.HEARTBEAT_UNAVAILABLE)
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.SESSION_INACTIVE)
         self._last_success_monotonic = self._monotonic()
 
 
@@ -767,6 +792,7 @@ class AuthorizedCoreOrchestrator:
                     diagnostic_code=exc.diagnostic_code,
                     diagnostic_context=exc.diagnostic_context,
                     retry_safe=exc.retry_safe,
+                    auth_invalid=exc.auth_invalid,
                 )
             except Exception as exc:
                 if self._diagnostics:
@@ -826,6 +852,20 @@ class AuthorizedCoreOrchestrator:
                     AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
                     diagnostic_code=exc.diagnostic_code,
                     diagnostic_context=exc.diagnostic_context,
+                )
+            elif (
+                stage == "ACCESS_CONTEXT_VALIDATE"
+                and isinstance(exc, AuthorizedCoreError)
+                and exc.code
+                in {
+                    AuthorizedCoreErrorCode.AUTHORIZATION_INVALID,
+                    AuthorizedCoreErrorCode.SESSION_INACTIVE,
+                    AuthorizedCoreErrorCode.ENTITLEMENT_INACTIVE,
+                }
+            ):
+                failure = AuthorizedCoreError(
+                    exc.code,
+                    auth_invalid=exc.auth_invalid,
                 )
             else:
                 failure = AuthorizedCoreError(failure_code, retry_safe=retry_safe)

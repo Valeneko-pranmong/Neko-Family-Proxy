@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event as CancellationEvent
 from typing import Protocol
 
 from neko_launcher.domain.events import Event
@@ -23,7 +24,10 @@ class ProxyGateway(Protocol):
     def has_owned_host(self) -> bool:
         ...
 
-    def start(self) -> None:
+    def start(self, cancellation: CancellationEvent | None = None) -> None:
+        ...
+
+    def reconnect(self, cancellation: CancellationEvent) -> None:
         ...
 
     def stop(self) -> None:

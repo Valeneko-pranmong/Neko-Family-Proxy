@@ -112,6 +112,24 @@ def test_status_game_detected_connecting() -> None:
     assert status.is_ready is False
 
 
+def test_status_reconnecting_is_truthful_and_actionable() -> None:
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    state = AppState(
+        auth_status=AuthStatus.AUTHENTICATED,
+        entitlement=Entitlement("pso2-proxy", EntitlementStatus.ACTIVE, future),
+        session_id="session-id",
+        proxy_status=ProxyStatus.RECONNECTING,
+        game_process_running=True,
+    )
+
+    status = translate_customer_status(state)
+
+    assert status.title == "กำลังเชื่อมต่อใหม่..."
+    assert "อัตโนมัติ" in status.subtitle
+    assert status.role == "warning"
+    assert status.is_ready is False
+
+
 def test_status_connected_running_healthy() -> None:
     future = datetime.now(timezone.utc) + timedelta(days=30)
     state = AppState(

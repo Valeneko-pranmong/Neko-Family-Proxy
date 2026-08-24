@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from threading import RLock
+from threading import Event as CancellationEvent, RLock
 
 from neko_launcher.domain.events import (
     AuthFailed,
@@ -44,6 +44,8 @@ class ApplicationController:
         self._game_gateway = game_gateway
         self._state = AppState()
         self._lock = RLock()
+        self._proxy_operation_lock = RLock()
+        self._active_proxy_cancellation: CancellationEvent | None = None
 
     @property
     def state(self) -> AppState:
@@ -62,6 +64,8 @@ class ApplicationController:
                 auth_status=AuthStatus.AUTHENTICATED,
                 user_id=event.user_id,
                 user_email=event.email,
+                proxy_reconnect_suppressed=False,
+                shutting_down=False,
                 last_error=None,
             )
         elif isinstance(event, AuthFailed):
@@ -86,7 +90,14 @@ class ApplicationController:
             self._revoke_session(event.reason)
         elif isinstance(event, GameProcessStateChanged):
             state = self.state
-            self._update(game_process_running=event.running)
+            if not event.running:
+                self._cancel_active_proxy_operation()
+            self._update(
+                game_process_running=event.running,
+                proxy_reconnect_suppressed=(
+                    state.proxy_reconnect_suppressed if event.running else False
+                ),
+            )
             deferred_reason = state.deferred_session_revocation_reason
             if not event.running and deferred_reason is not None:
                 self._revoke_session(
@@ -101,19 +112,22 @@ class ApplicationController:
                 self._revoke_session("สิทธิ์หมดอายุแล้ว", allow_defer=False)
             elif not event.running and state.proxy_status in {
                 ProxyStatus.STARTING,
+                ProxyStatus.RECONNECTING,
                 ProxyStatus.RUNNING,
             }:
                 self._stop_proxy()
         elif isinstance(event, StartProxyRequested):
-            self._start_proxy()
+            self.start_proxy()
         elif isinstance(event, StopProxyRequested):
-            self._stop_proxy()
+            self.stop_proxy()
         elif isinstance(event, LaunchTweakerRequested):
             self._launch_tweaker(event.executable)
         elif isinstance(event, ErrorOccurred):
             self._update(last_error=event.message)
 
     def sign_out(self, *, shutdown_core: bool = True) -> None:
+        self._update(proxy_reconnect_suppressed=True)
+        self._cancel_active_proxy_operation()
         shutdown_error = self._shutdown_proxy_host() if shutdown_core else None
         self._update(
             auth_status=AuthStatus.SIGNED_OUT,
@@ -124,6 +138,9 @@ class ApplicationController:
             proxy_status=(
                 ProxyStatus.FAILED if shutdown_error else ProxyStatus.STOPPED
             ),
+            proxy_start_retry_safe=False,
+            proxy_failure_code=None,
+            proxy_reconnect_suppressed=True,
             game_status=GameStatus.STOPPED,
             game_process_running=False,
             deferred_session_revocation_reason=None,
@@ -132,6 +149,8 @@ class ApplicationController:
 
     def begin_account_recovery(self) -> None:
         """Enter recovery without creating normal user/session authorization."""
+        self._update(proxy_reconnect_suppressed=True)
+        self._cancel_active_proxy_operation()
         shutdown_error = self._shutdown_proxy_host()
         self._update(
             auth_status=AuthStatus.RECOVERY_CODE_ENTRY,
@@ -145,6 +164,9 @@ class ApplicationController:
             proxy_status=(
                 ProxyStatus.FAILED if shutdown_error else ProxyStatus.STOPPED
             ),
+            proxy_start_retry_safe=False,
+            proxy_failure_code=None,
+            proxy_reconnect_suppressed=True,
             last_error=shutdown_error,
         )
 
@@ -181,6 +203,8 @@ class ApplicationController:
 
     def shutdown(self) -> None:
         """Stop only the child processes created by this launcher."""
+        self._update(shutting_down=True, proxy_reconnect_suppressed=True)
+        self._cancel_active_proxy_operation()
         self._shutdown_proxy_host()
         self._stop_game()
 
@@ -204,22 +228,104 @@ class ApplicationController:
             )
             return
         if shutdown_core:
+            self._cancel_active_proxy_operation()
             self._shutdown_proxy_host()
         self._update(
             session_id=None,
             entitlement=None,
+            proxy_reconnect_suppressed=True,
             deferred_session_revocation_reason=None,
             last_error=reason,
         )
 
-    def _start_proxy(self) -> None:
+    def start_proxy(
+        self,
+        *,
+        cancellation: CancellationEvent | None = None,
+        automatic_reconnect: bool = False,
+    ) -> bool:
+        if not automatic_reconnect:
+            self._update(proxy_reconnect_suppressed=False)
+        return self._start_proxy(
+            cancellation=cancellation,
+            automatic_reconnect=automatic_reconnect,
+        )
+
+    def stop_proxy(self) -> None:
+        self.suppress_proxy_reconnect()
+        self._stop_proxy()
+
+    def suppress_proxy_reconnect(self) -> None:
+        """Latch explicit user intent before asynchronous cleanup begins."""
+        self._update(proxy_reconnect_suppressed=True, proxy_start_retry_safe=False)
+        self._cancel_active_proxy_operation()
+
+    def mark_proxy_reconnecting(self) -> None:
         state = self.state
+        if (
+            state.shutting_down
+            or state.proxy_reconnect_suppressed
+            or not state.game_process_running
+        ):
+            return
+        self._update(
+            proxy_status=ProxyStatus.RECONNECTING,
+            proxy_failure_code=None,
+            last_error=None,
+        )
+
+    def mark_proxy_reconnect_failed(self, message: str) -> None:
+        state = self.state
+        if (
+            state.shutting_down
+            or state.proxy_reconnect_suppressed
+            or not state.game_process_running
+            or state.proxy_status
+            not in {ProxyStatus.RECONNECTING, ProxyStatus.FAILED}
+        ):
+            return
+        self._update(
+            proxy_status=ProxyStatus.FAILED,
+            proxy_start_retry_safe=False,
+            last_error=message,
+        )
+
+    def mark_proxy_running(self) -> None:
+        state = self.state
+        if (
+            state.shutting_down
+            or state.proxy_reconnect_suppressed
+            or not state.game_process_running
+        ):
+            return
+        self._update(
+            proxy_status=ProxyStatus.RUNNING,
+            proxy_start_retry_safe=False,
+            proxy_failure_code=None,
+            last_error=None,
+        )
+
+    def _start_proxy(
+        self,
+        *,
+        cancellation: CancellationEvent | None = None,
+        automatic_reconnect: bool = False,
+    ) -> bool:
+        state = self.state
+        if automatic_reconnect and (
+            cancellation is None
+            or cancellation.is_set()
+            or not self._automatic_reconnect_eligible(state)
+        ):
+            return False
+        if not automatic_reconnect and state.shutting_down:
+            return False
         if state.auth_status is not AuthStatus.AUTHENTICATED:
             self._update(
                 proxy_status=ProxyStatus.FAILED,
                 last_error="กรุณาเข้าสู่ระบบก่อนเริ่มใช้งาน",
             )
-            return
+            return False
         if (
             not entitlement_is_active(state.entitlement)
             or state.session_id is None
@@ -228,68 +334,155 @@ class ApplicationController:
                 proxy_status=ProxyStatus.FAILED,
                 last_error="บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน",
             )
-            return
+            return False
         if not state.game_process_running:
             self._update(
                 proxy_status=ProxyStatus.FAILED,
                 last_error="ยังไม่พบ pso2.exe จึงยังไม่เริ่มการเชื่อมต่อ",
             )
-            return
+            return False
         if self._proxy_gateway is None:
             self._update(
                 proxy_status=ProxyStatus.FAILED,
                 last_error="เริ่มการเชื่อมต่อไม่ได้ กรุณาลองใหม่",
             )
-            return
-        self._update(proxy_status=ProxyStatus.STARTING, last_error=None)
+            return False
+        self._update(
+            proxy_status=(
+                ProxyStatus.RECONNECTING
+                if automatic_reconnect
+                else ProxyStatus.STARTING
+            ),
+            proxy_failure_code=None,
+            last_error=None,
+        )
+        if automatic_reconnect and cancellation is not None:
+            with self._lock:
+                self._active_proxy_cancellation = cancellation
+        auth_invalid = False
         try:
-            self._proxy_gateway.start()
+            with self._proxy_operation_lock:
+                if automatic_reconnect and cancellation is not None:
+                    self._proxy_gateway.reconnect(cancellation)
+                elif cancellation is None:
+                    self._proxy_gateway.start()
+                else:
+                    self._proxy_gateway.start(cancellation)
         except Exception as exc:
-            self._update(
-                proxy_status=ProxyStatus.FAILED,
-                proxy_start_retry_safe=self._is_safe_pre_permit_failure(exc),
-                last_error="เริ่มการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
-            )
+            auth_invalid = getattr(exc, "auth_invalid", False) is True
+            current = self.state
+            if not automatic_reconnect or self._automatic_reconnect_eligible(current):
+                code = getattr(getattr(exc, "code", None), "value", None)
+                self._update(
+                    proxy_status=ProxyStatus.FAILED,
+                    proxy_start_retry_safe=self._is_safe_pre_permit_failure(exc),
+                    proxy_failure_code=code if isinstance(code, str) else None,
+                    last_error=(
+                        "เชื่อมต่อใหม่ไม่สำเร็จ กรุณารอสักครู่"
+                        if automatic_reconnect
+                        else "เริ่มการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่"
+                    ),
+                )
         else:
-            self._update(proxy_status=ProxyStatus.RUNNING, proxy_start_retry_safe=False)
+            current = self.state
+            if (
+                automatic_reconnect
+                and not self._automatic_reconnect_eligible(current)
+            ) or (
+                not automatic_reconnect
+                and (
+                    current.shutting_down
+                    or current.proxy_reconnect_suppressed
+                    or not current.game_process_running
+                )
+            ):
+                try:
+                    self._proxy_gateway.stop()
+                except Exception:
+                    pass
+                self._update(
+                    proxy_status=ProxyStatus.STOPPED,
+                    proxy_start_retry_safe=False,
+                    proxy_failure_code=None,
+                )
+            else:
+                self._update(
+                    proxy_status=ProxyStatus.RUNNING,
+                    proxy_start_retry_safe=False,
+                    proxy_failure_code=None,
+                    last_error=None,
+                )
+        finally:
+            if automatic_reconnect and cancellation is not None:
+                with self._lock:
+                    if self._active_proxy_cancellation is cancellation:
+                        self._active_proxy_cancellation = None
+        return auth_invalid
 
     def _stop_proxy(self) -> None:
         if self._proxy_gateway is None:
             self._update(proxy_status=ProxyStatus.STOPPED)
             return
         self._update(proxy_status=ProxyStatus.STOPPING)
-        try:
-            self._proxy_gateway.stop()
-        except Exception:
-            self._update(
-                proxy_status=ProxyStatus.FAILED,
-                last_error="หยุดการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
-            )
-        else:
-            self._update(proxy_status=ProxyStatus.STOPPED, proxy_start_retry_safe=False)
+        with self._proxy_operation_lock:
+            try:
+                self._proxy_gateway.stop()
+            except Exception:
+                self._update(
+                    proxy_status=ProxyStatus.FAILED,
+                    last_error="หยุดการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่",
+                )
+            else:
+                self._update(
+                    proxy_status=ProxyStatus.STOPPED,
+                    proxy_start_retry_safe=False,
+                    proxy_failure_code=None,
+                )
 
     def _shutdown_proxy_host(self) -> str | None:
         if self._proxy_gateway is None:
             self._update(proxy_status=ProxyStatus.STOPPED)
             return None
-        try:
-            if not self._proxy_gateway.has_owned_host():
-                self._update(proxy_status=ProxyStatus.STOPPED)
-                return None
-            self._update(proxy_status=ProxyStatus.STOPPING)
-            self._proxy_gateway.shutdown()
-        except Exception as exc:
-            code = getattr(getattr(exc, "code", None), "value", None)
-            safe_code = code if isinstance(code, str) else "SHUTDOWN_REJECTED"
-            message = f"ปิด ProxyCore ไม่สมบูรณ์ ({safe_code})"
-            self._update(proxy_status=ProxyStatus.FAILED, last_error=message)
-            return message
-        self._update(proxy_status=ProxyStatus.STOPPED, proxy_start_retry_safe=False)
+        with self._proxy_operation_lock:
+            try:
+                if not self._proxy_gateway.has_owned_host():
+                    self._update(proxy_status=ProxyStatus.STOPPED)
+                    return None
+                self._update(proxy_status=ProxyStatus.STOPPING)
+                self._proxy_gateway.shutdown()
+            except Exception as exc:
+                code = getattr(getattr(exc, "code", None), "value", None)
+                safe_code = code if isinstance(code, str) else "SHUTDOWN_REJECTED"
+                message = f"ปิด ProxyCore ไม่สมบูรณ์ ({safe_code})"
+                self._update(proxy_status=ProxyStatus.FAILED, last_error=message)
+                return message
+        self._update(
+            proxy_status=ProxyStatus.STOPPED,
+            proxy_start_retry_safe=False,
+            proxy_failure_code=None,
+        )
         return None
 
     def _is_safe_pre_permit_failure(self, error: Exception) -> bool:
         """Allow automatic retry only for failures before permit issuance."""
         return getattr(error, "retry_safe", False) is True
+
+    @staticmethod
+    def _automatic_reconnect_eligible(state: AppState) -> bool:
+        return (
+            not state.shutting_down
+            and not state.proxy_reconnect_suppressed
+            and state.game_process_running
+            and state.auth_status is AuthStatus.AUTHENTICATED
+            and state.session_id is not None
+            and entitlement_is_active(state.entitlement)
+        )
+
+    def _cancel_active_proxy_operation(self) -> None:
+        with self._lock:
+            cancellation = self._active_proxy_cancellation
+        if cancellation is not None:
+            cancellation.set()
 
     def _launch_tweaker(self, executable: str) -> None:
         state = self.state

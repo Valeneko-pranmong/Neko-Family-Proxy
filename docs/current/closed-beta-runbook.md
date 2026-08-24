@@ -10,12 +10,16 @@ BETA_DISTRIBUTION:           SINGLE_EXE_INSTALLER
 INSTALLER_VERSION:           1.0.0.1 (1.0.0-beta.1)
 INSTALLER_FILE:              NekoFamilyProxy-Beta-Setup.exe
 INSTALLER_SHA256:            3fab856f75962ae36cd3946e459ffaa8a9f0f54558101c522dfcb8ea97f17516
+INSTALLER_REBUILD:           PENDING
 PRODUCTION_HEAD:             6ff9a3de70da34e52088c47eb1cdcfd62fa9f731
 LAUNCHER_RUNTIME_AUTHORITY:  bba655b3e6443ebcdf84a266e42cc918bdefe32f
 CORE_AUTHORITY:              33f97ae0110075089f39b1e123890f931417d907
 LAUNCHER_EXE_SHA256:         a9bd1b18612601420020e2ed2de1d827f81169c9a05b07bdeef58aed703bb42c
-LAST_VERIFIED:               2026-08-23
-NEXT_ACTION:                 FRESH-MACHINE BETA INSTALLER SMOKE
+RECONNECT_SOURCE_VERSION:    5.0.0a8
+RECONNECT_EXE_SHA256:        0daded67ec2a462823aa4316f3910cc0aa631bcbc5de177f57054e502522a299
+RECONNECT_LIVE_PROOF:        PASS (SUPPLEMENTAL_ATTEMPT_1)
+LAST_VERIFIED:               2026-08-24
+NEXT_ACTION:                 IMPLEMENT REOPEN-WHILE-PSO2-ALIVE RECOVERY
 ```
 
 ## Launcher UI repair source status (2026-08-24)
@@ -39,6 +43,57 @@ authorization/entitlement 403 failures retain durable Auth for bounded retry.
 Authoritative `heartbeat_session = false` and latest-claim-wins remain
 fail-closed.
 
+```text
+AUTH_ERROR_CLASSIFICATION:    PASS
+REFRESH_TOKEN_REJECTED:       LOGOUT
+```
+
+Launcher `5.0.0a8` adds single-flight automatic Proxy reconnect after a
+previously healthy RUNNING connection loses Core, V2Ray, local SOCKS, upstream,
+or telemetry transport while `pso2.exe` remains alive. Recovery uses bounded
+backoff (`1s`, `3s`, `8s`) and the existing fail-closed authorization flow:
+runtime-only STOP where an owned Core host remains, then a fresh Core challenge,
+exactly one fresh launch permit, and a typed RUNNING verification. No challenge
+or permit is reused. A successful RUNNING transition resets the retry budget.
+
+Automatic reconnect is suppressed after manual STOP, confirmed Logout,
+Launcher shutdown, `pso2.exe` exit, invalid Auth, `SessionInactive`, or inactive
+entitlement. Exhausting the retry budget leaves a truthful disconnected/error
+status and does not force logout unless Auth is authoritatively invalid. The UI
+shows `กำลังเชื่อมต่อใหม่...` during recovery and `เชื่อมต่อแล้ว` only after a
+typed successful transition.
+
+### Supplemental live reconnect proof (2026-08-24)
+
+The existing `5.0.0a8` EXE with SHA-256
+`0daded67ec2a462823aa4316f3910cc0aa631bcbc5de177f57054e502522a299`
+passed one supplemental live reconnect proof. The previous observation that
+stopped before `pso2.exe` started was not counted as an attempt. The Owner
+completed the required elevated Tweaker `Start PSO2` action; no
+privilege-crossing automation was used.
+
+`INITIAL_RUNNING` was established with the exact `pso2.exe` alive, Launcher
+detection, one Core host, one V2Ray process and local SOCKS listener, a typed
+Core `Running` response, one HTTP 200 launch-permit response, ProcessMode
+traffic, and truthful live telemetry. The sole disconnect injection was one
+Core control-channel runtime-only `STOP`; it retained the same `pso2.exe`, Auth,
+session, entitlement, and owned Core host.
+
+Launcher detected the disconnect and displayed `กำลังเชื่อมต่อใหม่...`,
+scheduled exactly one reconnect at the first bounded `1s` delay, and performed
+one fresh attempt with one new challenge, one new HTTP 200 permit, and one
+authorized start. The original Core host remained single; V2Ray exited and one
+replacement V2Ray started. No duplicate Core/V2Ray or permit spam was observed.
+The typed state returned to `Running`, the UI returned to `เชื่อมต่อแล้ว`, and
+real telemetry resumed while the same `pso2.exe` remained alive.
+
+Normal Launcher close used the PSO2-active confirmation path. Launcher, Core,
+and V2Ray exited; `pso2.exe` remained alive by policy. The immediate and delayed
+orphan scans found no Core/V2Ray, and the Windows Application log contained no
+Launcher/Core/V2Ray crash event for the proof window. No source, version, Core,
+Launcher EXE, or Installer was changed or rebuilt during the live proof.
+Installer rebuild remains pending.
+
 The unexpected automatic logout defect was fixed in Launcher `5.0.0a6`. The
 root cause was the heartbeat exception path treating three consecutive
 transport/backend failures as revoked authorization, then calling local Auth
@@ -48,9 +103,8 @@ reconnecting status, and retry only on the existing bounded heartbeat schedule.
 An authoritative rejected heartbeat still immediately invalidates the session,
 including latest-claim-wins replacement enforcement.
 
-The following CLOSED BETA issues remain explicitly **OPEN and untouched**:
+The following CLOSED BETA issue remains explicitly **OPEN and untouched**:
 
-- automatic reconnect after a Proxy/runtime disconnect;
 - reopening Launcher while `pso2.exe` is already running and reconnecting
   without Tweaker.
 

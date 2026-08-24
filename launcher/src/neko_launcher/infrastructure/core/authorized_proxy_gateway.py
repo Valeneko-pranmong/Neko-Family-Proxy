@@ -27,15 +27,20 @@ class AuthorizedProxyGateway:
         self._orchestrator = orchestrator
         self._access_context_provider = access_context_provider
 
-    def start(self) -> None:
+    def start(self, cancellation: Event | None = None) -> None:
         """Run the full authorized start flow; raise on any failure."""
         context = self._access_context_provider()
-        cancellation = Event()
-        status = self._orchestrator.start(None, context, cancellation)
+        status = self._orchestrator.start(None, context, cancellation or Event())
         require_core_start_running(status)
 
     def has_owned_host(self) -> bool:
         return self._orchestrator.has_owned_host()
+
+    def reconnect(self, cancellation: Event) -> None:
+        """Reset an extant runtime, then run one fresh authorized start flow."""
+        if self._orchestrator.has_owned_host():
+            self._orchestrator.stop()
+        self.start(cancellation)
 
     def stop(self) -> None:
         """Stop proxy runtime only while retaining the owned Core host."""

@@ -92,6 +92,13 @@ def translate_customer_status(
         )
 
     # 4. Proxy / Core Failures (Strict Truthfulness Check)
+    if state.proxy_status is ProxyStatus.RECONNECTING:
+        return CustomerStatus(
+            title="กำลังเชื่อมต่อใหม่...",
+            subtitle="การเชื่อมต่อขัดข้องชั่วคราว ระบบกำลังลองเชื่อมต่อให้อัตโนมัติ",
+            role="warning",
+            is_ready=False,
+        )
     if state.proxy_status is ProxyStatus.FAILED or state.game_status is GameStatus.FAILED:
         return CustomerStatus(
             title="การเชื่อมต่อขัดข้อง",

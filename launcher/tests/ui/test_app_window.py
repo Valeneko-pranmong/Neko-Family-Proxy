@@ -2,6 +2,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from neko_launcher.domain.models import (
     AppState,
     AuthStatus,
@@ -12,6 +14,10 @@ from neko_launcher.domain.models import (
 )
 from neko_launcher.ui.app_window import AppWindow, HEARTBEAT_INTERVAL_MS
 from neko_launcher.domain.events import GameProcessStateChanged
+from neko_launcher.application.reconnect import (
+    AutomaticProxyReconnectController,
+    ReconnectCompletion,
+)
 from neko_launcher.ui.theme import PALETTE
 
 
@@ -131,6 +137,7 @@ class FakeService:
         self.proxy_started = 0
         self.tweaker_started = 0
         self.sign_ins: list[tuple[str, str]] = []
+        self.sign_outs = 0
 
     def sign_in(self, username: str, password: str) -> None:
         self.sign_ins.append((username, password))
@@ -139,8 +146,11 @@ class FakeService:
         self.started.append(executable)
         self.tweaker_started += 1
 
-    def start_proxy(self) -> None:
+    def start_proxy(self, **_kwargs: Any) -> None:
         self.proxy_started += 1
+
+    def sign_out(self) -> None:
+        self.sign_outs += 1
 
 
 class FakeRecoveryService:
@@ -166,6 +176,20 @@ class FakeController:
     def dispatch(self, event: object) -> None:
         if isinstance(event, GameProcessStateChanged):
             self.state = replace(self.state, game_process_running=event.running)
+
+    def mark_proxy_reconnecting(self) -> None:
+        self.state = replace(self.state, proxy_status=ProxyStatus.RECONNECTING)
+
+    def suppress_proxy_reconnect(self) -> None:
+        self.state = replace(self.state, proxy_reconnect_suppressed=True)
+
+    def mark_proxy_reconnect_failed(self, message: str) -> None:
+        self.state = replace(
+            self.state,
+            proxy_status=ProxyStatus.FAILED,
+            proxy_start_retry_safe=False,
+            last_error=message,
+        )
 
 
 class FakeAuthView:
@@ -479,6 +503,14 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._login_password = FakeVariable("password")  # type: ignore[assignment]
     window._proxy_start_attempted_for_detected_game = False
     window._proxy_retry_suppression_logged = False
+    window._reconnect_controller = AutomaticProxyReconnectController(
+        backoff_seconds=(1.0, 2.0, 4.0)
+    )
+    window._runtime_was_healthy = False
+    window._scheduled_reconnects = []
+    window._schedule_reconnect = (  # type: ignore[method-assign]
+        lambda delay, callback: window._scheduled_reconnects.append((delay, callback))
+    )
     window._telemetry_speed = FakeVariable()  # type: ignore[assignment]
     window._telemetry_transfer = FakeVariable()  # type: ignore[assignment]
     window._telemetry_session = FakeVariable()  # type: ignore[assignment]
@@ -492,9 +524,15 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._closing = False
     window._clear_recovery_sensitive_fields = lambda: None  # type: ignore[method-assign]
     window._submitted_work = []
-    window._submit = (  # type: ignore[method-assign]
-        lambda work, on_success=None: window._submitted_work.append(work)
-    )
+    window._submitted_callbacks = []
+
+    def submit(work: Any, on_success: Any = None, on_failure: Any = None) -> None:
+        window._submitted_work.append(work)  # type: ignore[attr-defined]
+        window._submitted_callbacks.append(  # type: ignore[attr-defined]
+            (on_success, on_failure)
+        )
+
+    window._submit = submit  # type: ignore[method-assign]
     return window
 
 
@@ -780,6 +818,292 @@ def test_render_telemetry_updates_vars(tmp_path: Path) -> None:
     assert window._telemetry_transfer.get() == truthful_totals
     assert window._telemetry_session.get() == "เซสชัน: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)"
     assert window._session_duration.get() == "ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)"
+
+
+def test_running_proxy_transport_disconnect_with_pso2_queues_reconnect(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+
+    window._render_telemetry(healthy)
+    submitted_before = len(window._submitted_work)  # type: ignore[attr-defined]
+    window._render_telemetry(
+        replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    )
+
+    assert len(window._submitted_work) == submitted_before  # type: ignore[attr-defined]
+    assert len(window._scheduled_reconnects) == 1  # type: ignore[attr-defined]
+    delay, callback = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
+    assert delay == 1.0
+
+    callback()
+
+    assert len(window._submitted_work) == submitted_before + 1  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"core_state": "stopped"},
+        {"proxy_state": "disconnected"},
+        {"v2ray_running": False},
+        {"local_socks_running": False},
+        {"shadowsocks_connected": False},
+    ],
+)
+def test_each_runtime_health_failure_queues_only_one_reconnect(
+    tmp_path: Path,
+    changes: dict[str, object],
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    snapshot = CoreHealthSnapshot(
+        core_state="running",
+        proxy_state="connected",
+        v2ray_running=True,
+        local_socks_running=True,
+        shadowsocks_connected=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=snapshot,
+    )
+    window._render_telemetry(healthy)
+    unhealthy = replace(healthy, snapshot=replace(snapshot, **changes))
+
+    window._render_telemetry(unhealthy)
+    window._render_telemetry(unhealthy)
+
+    assert window._controller.state.proxy_status is ProxyStatus.RECONNECTING
+    assert len(window._scheduled_reconnects) == 1  # type: ignore[attr-defined]
+
+
+def test_successful_reconnect_returns_running_and_resets_retry_budget(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+    window._render_telemetry(
+        replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    )
+    _, scheduled = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
+    scheduled()
+
+    def succeed(**_kwargs: Any) -> None:
+        window._controller.state = replace(  # type: ignore[assignment]
+            window._controller.state,
+            proxy_status=ProxyStatus.RUNNING,
+            proxy_start_retry_safe=False,
+        )
+
+    window._service.start_proxy = succeed  # type: ignore[method-assign]
+    result = window._submitted_work[0]()  # type: ignore[attr-defined]
+    on_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    on_success(result)
+    window._render_telemetry(healthy)
+
+    assert window._controller.state.proxy_status is ProxyStatus.RUNNING
+    assert window._reconnect_controller.attempts == 0
+    assert len(window._scheduled_reconnects) == 1  # type: ignore[attr-defined]
+    assert window._status_title.get() == "● เชื่อมต่อแล้ว"
+
+
+def test_retry_budget_exhaustion_stays_failed_without_rescheduling(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._reconnect_controller = AutomaticProxyReconnectController(
+        backoff_seconds=(1.0, 2.0)
+    )
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+    unhealthy = replace(
+        healthy, connection_state=TelemetryConnectionState.DISCONNECTED
+    )
+    window._render_telemetry(unhealthy)
+
+    def fail_retry_safe(**_kwargs: Any) -> None:
+        window._controller.state = replace(  # type: ignore[assignment]
+            window._controller.state,
+            proxy_status=ProxyStatus.FAILED,
+            proxy_start_retry_safe=True,
+        )
+
+    window._service.start_proxy = fail_retry_safe  # type: ignore[method-assign]
+    for index in range(2):
+        _, scheduled = window._scheduled_reconnects[index]  # type: ignore[attr-defined]
+        scheduled()
+        result = window._submitted_work[index]()  # type: ignore[attr-defined]
+        on_success, _ = window._submitted_callbacks[index]  # type: ignore[attr-defined]
+        on_success(result)
+
+    window._render_telemetry(unhealthy)
+
+    assert len(window._scheduled_reconnects) == 2  # type: ignore[attr-defined]
+    assert window._controller.state.proxy_status is ProxyStatus.FAILED
+    assert "ตรวจสอบเครือข่าย" in (window._controller.state.last_error or "")
+    assert window._reconnect_controller.attempts == 2
+
+
+def test_runtime_reconnect_retry_cannot_race_legacy_game_detection_retry(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    window._proxy_start_attempted_for_detected_game = True
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+    window._render_telemetry(
+        replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    )
+    _, scheduled = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
+    scheduled()
+
+    def fail_retry_safe(**_kwargs: Any) -> None:
+        window._controller.state = replace(  # type: ignore[assignment]
+            window._controller.state,
+            proxy_status=ProxyStatus.FAILED,
+            proxy_start_retry_safe=True,
+        )
+
+    window._service.start_proxy = fail_retry_safe  # type: ignore[method-assign]
+    result = window._submitted_work[0]()  # type: ignore[attr-defined]
+
+    # Reproduce the UI ordering window before the worker completion callback
+    # has scheduled bounded reconnect attempt 2.
+    window._on_game_detected(True)
+
+    assert result is ReconnectCompletion.RETRY
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+
+
+def test_confirmed_logout_cancels_scheduled_reconnect_before_background_work(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    window._confirm_game_active_action = lambda _action: True  # type: ignore[method-assign]
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+    window._render_telemetry(
+        replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    )
+    _, reconnect_callback = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
+
+    window._sign_out()
+    reconnect_callback()
+
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
 
 
 def test_close_stops_telemetry_client(tmp_path: Path) -> None:

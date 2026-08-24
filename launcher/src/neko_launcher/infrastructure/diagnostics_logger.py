@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from neko_launcher import __version__
 from neko_launcher.application.diagnostics import (
     format_safe_diagnostic_metadata,
     safe_authorized_start_details,
@@ -60,7 +61,7 @@ class DevelopmentLogger:
             "======================================================================",
             f"DEBUG_SESSION_ID = {self._session_id}",
             f"TIMESTAMP_UTC = {datetime.datetime.utcnow().isoformat()}Z",
-            "LAUNCHER_VERSION_BUILD_CLASS = NekoLauncher-5.0.0a7 (Debug)",
+            f"LAUNCHER_VERSION_BUILD_CLASS = NekoLauncher-{__version__} (Debug)",
             f"PACKAGED_VS_SOURCE = {'PACKAGED' if packaged else 'SOURCE'}",
             f"PID = {os.getpid()}",
             f"ELEVATION_STATE = {'YES' if is_elevated else 'NO'}",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from threading import RLock, Thread
+from threading import Event, RLock, Thread
 
 from neko_launcher.domain.events import (
     AuthFailed,
@@ -427,8 +427,32 @@ class LauncherService:
             self._controller.dispatch(ErrorOccurred(reason))
         return alive
 
-    def start_proxy(self) -> None:
-        self._controller.dispatch(StartProxyRequested())
+    def start_proxy(
+        self,
+        *,
+        cancellation: Event | None = None,
+        automatic_reconnect: bool = False,
+    ) -> None:
+        if cancellation is None and not automatic_reconnect:
+            self._controller.dispatch(StartProxyRequested())
+            return
+        session_id = self._controller.state.session_id
+        auth_invalid = self._controller.start_proxy(
+            cancellation=cancellation,
+            automatic_reconnect=automatic_reconnect,
+        )
+        if not automatic_reconnect or not auth_invalid or session_id is None:
+            return
+        with self._session_lock:
+            if self._controller.state.session_id != session_id:
+                return
+            reason = "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+            self._controller.invalidate_session(reason)
+            self._force_sign_out_safely(shutdown_core=False)
+            self._controller.dispatch(ErrorOccurred(reason))
+
+    def stop_proxy(self) -> None:
+        self._controller.stop_proxy()
 
     def launch_tweaker(self, executable: str) -> None:
         """Launch Tweaker; ProxyCore starts after pso2.exe appears."""

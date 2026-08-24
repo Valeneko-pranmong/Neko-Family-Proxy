@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from threading import Event
+
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.ports import AuthGateway, EntitlementGateway
 from neko_launcher.domain.models import (
@@ -17,8 +19,12 @@ class AuthorizationPendingProxyGateway:
     def has_owned_host(self) -> bool:
         return False
 
-    def start(self) -> None:
+    def start(self, cancellation: Event | None = None) -> None:
+        del cancellation
         raise RuntimeError("authorization integration is unavailable")
+
+    def reconnect(self, cancellation: Event) -> None:
+        self.start(cancellation)
 
     def stop(self) -> None:
         return

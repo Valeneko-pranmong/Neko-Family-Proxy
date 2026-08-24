@@ -34,6 +34,7 @@ class SessionTerminationReason(str, Enum):
 class ProxyStatus(str, Enum):
     STOPPED = "stopped"
     STARTING = "starting"
+    RECONNECTING = "reconnecting"
     RUNNING = "running"
     STOPPING = "stopping"
     FAILED = "failed"
@@ -110,6 +111,9 @@ class AppState:
     session_id: str | None = None
     proxy_status: ProxyStatus = ProxyStatus.STOPPED
     proxy_start_retry_safe: bool = False
+    proxy_failure_code: str | None = None
+    proxy_reconnect_suppressed: bool = False
+    shutting_down: bool = False
     game_status: GameStatus = GameStatus.STOPPED
     game_process_running: bool = False
     deferred_session_revocation_reason: str | None = None

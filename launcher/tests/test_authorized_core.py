@@ -6,6 +6,7 @@ import traceback
 
 import pytest
 
+from neko_launcher.application.errors import HeartbeatAuthInvalid
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
@@ -135,6 +136,7 @@ class FakeChannel:
         self.candidates = (RuntimeConfigurationCandidate("profile-17", "server-42"),)
         self.validated_candidate: RuntimeConfigurationCandidate | None = None
         self.discovery_calls: list[str] = []
+        self.challenges: list[CoreChallenge] = []
 
     def runtime_config_catalog(
         self, correlation_id: str, timeout: float
@@ -155,7 +157,9 @@ class FakeChannel:
     def request_challenge(self, correlation_id: str, timeout: float) -> CoreChallenge:
         self.challenge_timeout = timeout
         self.calls.append("core.challenge")
-        return CoreChallenge("challenge-value")
+        challenge = CoreChallenge(f"challenge-{len(self.challenges) + 1}")
+        self.challenges.append(challenge)
+        return challenge
 
     def start_authorized(
         self,
@@ -408,12 +412,29 @@ def test_online_heartbeat_precondition_sanitizes_probe_failure() -> None:
     assert precondition.last_success_monotonic is None
 
 
-def test_online_heartbeat_false_has_no_success_timestamp() -> None:
-    precondition = OnlineHeartbeatLaunchPrecondition(lambda *args: False)
+def test_online_heartbeat_auth_invalid_is_authoritative_and_not_retry_safe() -> None:
+    def reject_auth(*args: object) -> bool:
+        raise HeartbeatAuthInvalid("refresh token rejected")
 
-    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+    precondition = OnlineHeartbeatLaunchPrecondition(reject_auth)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
         precondition.require_fresh("session", "installation", 2.0)
 
+    assert raised.value.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+    assert raised.value.auth_invalid is True
+    assert raised.value.retry_safe is False
+    assert precondition.last_success_monotonic is None
+
+
+def test_online_heartbeat_false_is_session_inactive_and_not_retry_safe() -> None:
+    precondition = OnlineHeartbeatLaunchPrecondition(lambda *args: False)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        precondition.require_fresh("session", "installation", 2.0)
+
+    assert raised.value.code is AuthorizedCoreErrorCode.SESSION_INACTIVE
+    assert raised.value.retry_safe is False
     assert precondition.last_success_monotonic is None
 
 
@@ -426,9 +447,10 @@ def test_failed_heartbeat_does_not_advance_previous_success_timestamp() -> None:
     )
     precondition.require_fresh("session", "installation", 2.0)
 
-    with pytest.raises(AuthorizedCoreError, match="fresh heartbeat is unavailable"):
+    with pytest.raises(AuthorizedCoreError) as raised:
         precondition.require_fresh("session", "installation", 2.0)
 
+    assert raised.value.code is AuthorizedCoreErrorCode.SESSION_INACTIVE
     assert precondition.last_success_monotonic == 123.0
 
 
@@ -446,6 +468,23 @@ def test_authorized_start_is_strictly_sequenced_and_requires_typed_running() -> 
         "backend.permit",
         "core.start",
     ]
+
+
+def test_reconnect_start_obtains_a_fresh_challenge_and_one_fresh_permit() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    permits = orchestrator._permits
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+    first_request = dict(permits.request)  # type: ignore[arg-type,union-attr]
+    orchestrator.stop()
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+    second_request = dict(permits.request)  # type: ignore[arg-type,union-attr]
+
+    assert channel.challenges == [CoreChallenge("challenge-1"), CoreChallenge("challenge-2")]
+    assert first_request["challenge"] == channel.challenges[0]
+    assert second_request["challenge"] == channel.challenges[1]
+    assert first_request["correlation_id"] != second_request["correlation_id"]
+    assert calls.count("backend.permit") == 2
 
 
 def test_each_operation_uses_its_independent_timeout() -> None:
@@ -638,6 +677,62 @@ def test_replaced_session_fails_before_core_host_start() -> None:
 
     assert raised.value.retry_safe is True
     assert calls == ["backend.heartbeat"]
+
+
+@pytest.mark.parametrize(
+    "denial_code",
+    [
+        AuthorizedCoreErrorCode.AUTHORIZATION_INVALID,
+        AuthorizedCoreErrorCode.SESSION_INACTIVE,
+        AuthorizedCoreErrorCode.ENTITLEMENT_INACTIVE,
+    ],
+)
+def test_authoritative_launch_precondition_denial_is_preserved_fail_closed(
+    denial_code: AuthorizedCoreErrorCode,
+) -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+
+    def deny(*args: object, **kwargs: object) -> None:
+        raise AuthorizedCoreError(denial_code)
+
+    orchestrator._precondition.require_fresh = deny  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is denial_code
+    assert raised.value.retry_safe is False
+    assert calls == []
+
+
+def test_orchestrator_preserves_heartbeat_auth_invalid_provenance() -> None:
+    orchestrator, calls, _, _ = build_orchestrator()
+
+    def deny(*args: object, **kwargs: object) -> None:
+        raise AuthorizedCoreError(
+            AuthorizedCoreErrorCode.AUTHORIZATION_INVALID,
+            auth_invalid=True,
+        )
+
+    orchestrator._precondition.require_fresh = deny  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+    assert raised.value.auth_invalid is True
+    assert calls == []
+
+
+def test_core_authorization_invalid_does_not_gain_heartbeat_auth_provenance() -> None:
+    orchestrator, _, _, channel = build_orchestrator()
+    channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+    assert raised.value.auth_invalid is False
 
 
 def test_cancellation_during_heartbeat_fails_before_core_host_start() -> None:
