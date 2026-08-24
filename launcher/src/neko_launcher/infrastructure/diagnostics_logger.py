@@ -60,7 +60,7 @@ class DevelopmentLogger:
             "======================================================================",
             f"DEBUG_SESSION_ID = {self._session_id}",
             f"TIMESTAMP_UTC = {datetime.datetime.utcnow().isoformat()}Z",
-            "LAUNCHER_VERSION_BUILD_CLASS = NekoLauncher-5.0.0a5 (Debug)",
+            "LAUNCHER_VERSION_BUILD_CLASS = NekoLauncher-5.0.0a6 (Debug)",
             f"PACKAGED_VS_SOURCE = {'PACKAGED' if packaged else 'SOURCE'}",
             f"PID = {os.getpid()}",
             f"ELEVATION_STATE = {'YES' if is_elevated else 'NO'}",

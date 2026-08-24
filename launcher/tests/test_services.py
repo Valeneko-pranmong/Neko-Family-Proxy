@@ -33,7 +33,7 @@ class FakeGateway:
     def __init__(self) -> None:
         self.has_access = False
         self.heartbeat_alive = True
-        self.heartbeat_error = False
+        self.heartbeat_error: bool | Exception = False
         self.before_heartbeat: Callable[[], None] | None = None
         self.heartbeat_started: Event | None = None
         self.heartbeat_continue: Event | None = None
@@ -128,6 +128,8 @@ class FakeGateway:
         if self.before_heartbeat is not None:
             self.before_heartbeat()
         if self.heartbeat_error:
+            if isinstance(self.heartbeat_error, Exception):
+                raise self.heartbeat_error
             raise RuntimeError("network")
         return self.heartbeat_alive
 
@@ -597,24 +599,34 @@ def test_failed_heartbeat_still_dispatches_replacement_if_local_cleanup_errors(
     )
 
 
-def test_transient_heartbeat_errors_need_three_failures_before_revocation(
+@pytest.mark.parametrize(
+    "transient_error",
+    [
+        TimeoutError("temporary timeout"),
+        ConnectionRefusedError("temporarily offline"),
+        LauncherServiceError("backend returned temporary 503"),
+    ],
+)
+def test_transient_heartbeat_failure_never_logs_out_or_clears_auth(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+    transient_error: Exception,
 ) -> None:
     service, controller, gateway = workflow
     gateway.has_access = True
     service.sign_in("testuser", "password123")
-    gateway.heartbeat_error = True
+    gateway.heartbeat_error = transient_error
 
-    assert service.heartbeat() is True
-    assert service.heartbeat() is True
+    for _attempt in range(5):
+        assert service.heartbeat() is True
+
     assert controller.state.session_id == "session-id"
-
-    assert service.heartbeat() is False
-    assert controller.state.session_id is None
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert gateway.signed_out is False
+    assert gateway.local_session_cleared is False
     assert "เครือข่าย" in (controller.state.last_error or "")
 
 
-def test_heartbeat_failure_counter_resets_for_a_new_session(
+def test_successful_heartbeat_recovers_after_transient_failures(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:
     service, controller, gateway = workflow
@@ -624,16 +636,14 @@ def test_heartbeat_failure_counter_resets_for_a_new_session(
 
     assert service.heartbeat() is True
     assert service.heartbeat() is True
-    assert service.heartbeat() is False
-    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert "เครือข่าย" in (controller.state.last_error or "")
 
     gateway.heartbeat_error = False
-    service.sign_in("testuser", "password123")
-    gateway.heartbeat_error = True
 
     assert service.heartbeat() is True
-    assert service.heartbeat() is True
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
     assert controller.state.session_id == "session-id"
+    assert gateway.signed_out is False
 
 
 def test_account_restriction_and_entitlement_failure_remain_fail_closed(

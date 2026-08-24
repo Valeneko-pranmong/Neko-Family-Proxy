@@ -13,7 +13,7 @@ INSTALLER_SHA256:            3fab856f75962ae36cd3946e459ffaa8a9f0f54558101c522df
 PRODUCTION_HEAD:             6ff9a3de70da34e52088c47eb1cdcfd62fa9f731
 LAUNCHER_RUNTIME_AUTHORITY:  bba655b3e6443ebcdf84a266e42cc918bdefe32f
 CORE_AUTHORITY:              33f97ae0110075089f39b1e123890f931417d907
-LAUNCHER_EXE_SHA256:         985dd0c292b90c541128c29a895a97391c6b5260691044a45f8617068598f6b9
+LAUNCHER_EXE_SHA256:         a9bd1b18612601420020e2ed2de1d827f81169c9a05b07bdeef58aed703bb42c
 LAST_VERIFIED:               2026-08-23
 NEXT_ACTION:                 FRESH-MACHINE BETA INSTALLER SMOKE
 ```
@@ -26,16 +26,23 @@ and `icon_app.ico`, the five functional Settings groups (`Status`, `Program`,
 `%LOCALAPPDATA%\NEKO FAMILY`, working password visibility controls,
 single-flight coupon redemption, PSO2-aware close/logout confirmation, and
 truth-preserving unavailable telemetry presentation. A new Launcher EXE was
-built from the repaired source (SHA-256
-`3406eb4900abd134241323bf814b77b7de20f22681cedee1af50f48d7d8ab657`) and
+built from the repaired source. The current Launcher `5.0.0a6` SHA-256 is
+`a9bd1b18612601420020e2ed2de1d827f81169c9a05b07bdeef58aed703bb42c`,
 verified from a fresh `_MEI` extraction with no embedded ProxyCore/V2Ray files.
 No Installer was built, and no Proxy/Core authorization or runtime transport
 behavior was changed.
 
-The following CLOSED BETA issues remain explicitly **OPEN and untouched** by
-this repair:
+The unexpected automatic logout defect was fixed in Launcher `5.0.0a6`. The
+root cause was the heartbeat exception path treating three consecutive
+transport/backend failures as revoked authorization, then calling local Auth
+sign-out and clearing Launcher state. Timeouts, offline/connection-refused, and
+temporary backend failures now retain durable Auth/session state, display a
+reconnecting status, and retry only on the existing bounded heartbeat schedule.
+An authoritative rejected heartbeat still immediately invalidates the session,
+including latest-claim-wins replacement enforcement.
 
-- unexpected automatic logout;
+The following CLOSED BETA issues remain explicitly **OPEN and untouched**:
+
 - automatic reconnect after a Proxy/runtime disconnect;
 - reopening Launcher while `pso2.exe` is already running and reconnecting
   without Tweaker.

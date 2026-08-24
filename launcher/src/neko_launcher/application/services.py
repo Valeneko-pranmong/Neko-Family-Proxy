@@ -361,16 +361,17 @@ class LauncherService:
             if self._controller.state.session_id != session_id:
                 self._heartbeat_failures = 0
                 return True
-            self._heartbeat_failures += 1
-            if self._heartbeat_failures < 3:
-                return True
-            reason = (
-                "เชื่อมต่อเครือข่ายไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต"
-                "แล้วเข้าสู่ระบบใหม่"
+            # Transport/backend failures do not prove that Auth or the claimed
+            # session is invalid. Preserve durable login state and let the
+            # existing bounded heartbeat schedule retry; only an authoritative
+            # ``False`` response may invalidate the session below.
+            self._heartbeat_failures = min(self._heartbeat_failures + 1, 3)
+            self._controller.dispatch(
+                ErrorOccurred(
+                    "เชื่อมต่อเครือข่ายไม่ได้ กำลังลองเชื่อมต่อใหม่อัตโนมัติ"
+                )
             )
-            self._force_sign_out_safely()
-            self._controller.dispatch(ErrorOccurred(reason))
-            return False
+            return True
         else:
             if self._controller.state.session_id != session_id:
                 self._heartbeat_failures = 0
