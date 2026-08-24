@@ -3,9 +3,11 @@ import json
 
 import httpx
 import pytest
+from postgrest.exceptions import APIError
 from supabase import ClientOptions, create_client
+from supabase_auth.errors import AuthApiError, AuthRetryableError
 
-from neko_launcher.application.errors import LauncherServiceError
+from neko_launcher.application.errors import HeartbeatAuthInvalid, LauncherServiceError
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     CoreChallenge,
@@ -427,6 +429,62 @@ def test_current_session_heartbeat_applies_requested_http_timeout(
         "write": 2.5,
         "pool": 2.5,
     }
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        AuthApiError("refresh token rejected", 400, "refresh_token_not_found"),
+        APIError(
+            {
+                "code": "PGRST301",
+                "message": "JWT expired",
+                "details": None,
+                "hint": None,
+            }
+        ),
+    ],
+)
+def test_heartbeat_translates_structured_auth_rejection(error: Exception) -> None:
+    client = FakeRpcClient(None, error=error)
+
+    with pytest.raises(HeartbeatAuthInvalid):
+        build_gateway(client).heartbeat_session("current-session")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("timeout"),
+        ConnectionRefusedError("offline"),
+        AuthRetryableError("temporary auth backend failure", 503),
+        APIError(
+            {
+                "code": "PGRST503",
+                "message": "backend unavailable",
+                "details": None,
+                "hint": None,
+            }
+        ),
+        APIError(
+            {
+                "code": "42501",
+                "message": "unrelated entitlement permission denied",
+                "details": None,
+                "hint": None,
+            }
+        ),
+    ],
+)
+def test_heartbeat_does_not_translate_transient_or_unrelated_authorization(
+    error: Exception,
+) -> None:
+    client = FakeRpcClient(None, error=error)
+
+    with pytest.raises(LauncherServiceError) as raised:
+        build_gateway(client).heartbeat_session("current-session")
+
+    assert raised.type is LauncherServiceError
 
 
 @pytest.mark.parametrize(

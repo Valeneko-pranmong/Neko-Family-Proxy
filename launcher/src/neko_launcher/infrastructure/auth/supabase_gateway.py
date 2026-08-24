@@ -4,10 +4,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from postgrest.exceptions import APIError
 from supabase import Client, ClientOptions, create_client
+from supabase_auth.errors import (
+    AuthApiError,
+    AuthInvalidJwtError,
+    AuthSessionMissingError,
+)
 
 from neko_launcher.application.errors import (
     EntitlementUnavailable,
+    HeartbeatAuthInvalid,
     LauncherServiceError,
 )
 from neko_launcher.application.ports import AuthGateway, EntitlementGateway, SecureStore
@@ -198,6 +205,10 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 "heartbeat_session", {"p_session_id": session_id}
             ).execute()
         except Exception as exc:
+            if self._heartbeat_auth_is_invalid(exc):
+                raise HeartbeatAuthInvalid(
+                    "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+                ) from exc
             raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
         return response.data is True
 
@@ -397,6 +408,22 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     @staticmethod
     def _contains_error(exc: Exception, code: str) -> bool:
         return code.lower() in str(exc).lower()
+
+    @staticmethod
+    def _heartbeat_auth_is_invalid(exc: Exception) -> bool:
+        """Classify only structured Supabase Auth/JWT rejection signals."""
+        if isinstance(exc, (AuthInvalidJwtError, AuthSessionMissingError)):
+            return True
+        if isinstance(exc, AuthApiError):
+            return exc.status in {400, 401} and exc.code in {
+                "bad_jwt",
+                "refresh_token_already_used",
+                "refresh_token_not_found",
+                "session_not_found",
+            }
+        # PGRST301 is PostgREST's structured invalid-JWT classification.
+        # Unrelated 403 authorization/entitlement codes remain transient here.
+        return isinstance(exc, APIError) and exc.code == "PGRST301"
 
     @classmethod
     def _auth_error(cls, exc: Exception, fallback: str) -> LauncherServiceError:

@@ -25,6 +25,7 @@ from neko_launcher.domain.models import (
 from .controller import ApplicationController
 from .errors import (
     EntitlementUnavailable,
+    HeartbeatAuthInvalid,
     LauncherServiceError,
     RecoveryRetryRequired,
     RecoverySessionInvalid,
@@ -357,6 +358,15 @@ class LauncherService:
             return False
         try:
             alive = self._entitlement_gateway.heartbeat_session(session_id)
+        except HeartbeatAuthInvalid:
+            if self._controller.state.session_id != session_id:
+                self._heartbeat_failures = 0
+                return True
+            reason = "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+            self._controller.invalidate_session(reason)
+            self._force_sign_out_safely(shutdown_core=False)
+            self._controller.dispatch(ErrorOccurred(reason))
+            return False
         except Exception:
             if self._controller.state.session_id != session_id:
                 self._heartbeat_failures = 0

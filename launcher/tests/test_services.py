@@ -8,6 +8,7 @@ from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import (
     DeviceAuthorizationDenied,
     EntitlementUnavailable,
+    HeartbeatAuthInvalid,
     LauncherServiceError,
 )
 from neko_launcher.application.services import LauncherService
@@ -624,6 +625,20 @@ def test_transient_heartbeat_failure_never_logs_out_or_clears_auth(
     assert gateway.signed_out is False
     assert gateway.local_session_cleared is False
     assert "เครือข่าย" in (controller.state.last_error or "")
+
+
+def test_authoritative_heartbeat_auth_invalid_logs_out(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    service.sign_in("testuser", "password123")
+    gateway.heartbeat_error = HeartbeatAuthInvalid("auth invalid")
+
+    assert service.heartbeat() is False
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller.state.session_id is None
+    assert gateway.signed_out is True
 
 
 def test_successful_heartbeat_recovers_after_transient_failures(

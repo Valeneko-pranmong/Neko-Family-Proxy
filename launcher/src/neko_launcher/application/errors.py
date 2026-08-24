@@ -5,6 +5,10 @@ class LauncherServiceError(RuntimeError):
     """A safe, customer-facing workflow error."""
 
 
+class HeartbeatAuthInvalid(LauncherServiceError):
+    """Heartbeat proved that the durable Supabase Auth session is invalid."""
+
+
 class EntitlementUnavailable(LauncherServiceError):
     """The authenticated account does not currently have product access."""
 

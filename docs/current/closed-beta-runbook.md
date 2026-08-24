@@ -32,6 +32,13 @@ verified from a fresh `_MEI` extraction with no embedded ProxyCore/V2Ray files.
 No Installer was built, and no Proxy/Core authorization or runtime transport
 behavior was changed.
 
+The heartbeat Auth-invalid classification gap was closed in Launcher `5.0.0a7`.
+Structured Supabase invalid-JWT and rejected refresh-session errors now return
+the Launcher to Login, while timeout, connection, backend 5xx, and unrelated
+authorization/entitlement 403 failures retain durable Auth for bounded retry.
+Authoritative `heartbeat_session = false` and latest-claim-wins remain
+fail-closed.
+
 The unexpected automatic logout defect was fixed in Launcher `5.0.0a6`. The
 root cause was the heartbeat exception path treating three consecutive
 transport/backend failures as revoked authorization, then calling local Auth
