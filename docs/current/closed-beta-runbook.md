@@ -158,9 +158,10 @@ Core, V2Ray, or Tweaker process, and the fresh `_MEI` contained only the
 Python runtime, dependencies, and declared assets (no
 `NekoProxyCore.exe`/`.dll`, `v2ray-sn.exe`, `runtime-settings.nkps`, driver,
 or `core-manifest.json` entries). A full recursive PyInstaller archive
-enumeration (2,224 entries via `pkg_archive_contents`) confirmed the declared
-assets (`image_11.png`, `icon_app.ico`, both Sarabun fonts, license text) are
-present and contains no external-runtime entry. Finally, the
+enumeration (2,224 entries via `pkg_archive_contents`) listed the declared
+`image_11.png` and `icon_app.ico` and contained no external-runtime entry;
+the Sarabun fonts and their OFL license text were confirmed present in the
+fresh `_MEI` extraction (`mei_top_entries_sample`). Finally, the
 `neko_launcher.infrastructure.defaults` module was extracted from the packaged
 PYZ and inspected: only the Supabase URL and the intentional publishable key
 are embedded — no service-role key, `sb_secret_` material, or private key
