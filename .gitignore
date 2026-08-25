@@ -200,3 +200,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .vercel/
+
+# Local packaged-artifact smoke scratch evidence (screenshots, sandbox, logs)
+.hermes-smoke-shots/
+

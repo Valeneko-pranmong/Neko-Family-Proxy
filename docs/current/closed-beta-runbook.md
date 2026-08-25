@@ -20,15 +20,15 @@ RECONNECT_EXE_SHA256:        0daded67ec2a462823aa4316f3910cc0aa631bcbc5de177f570
 RECONNECT_LIVE_PROOF:        PASS (SUPPLEMENTAL_ATTEMPT_1)
 REOPEN_SOURCE_VERSION:       5.0.0a9
 REOPEN_EXISTING_PSO2:        IMPLEMENTED — LIVE PROOF PENDING
-REOPEN_EXE_SHA256:           PENDING FINAL BUILD
-REOPEN_FINAL_BUILD:          PENDING
-REOPEN_ARTIFACT_SMOKE:       PENDING
+REOPEN_EXE_SHA256:           f24c5f3f05350dcfc6ffa9fbc1370c93e2f457352cb80b382a961565e086874c
+REOPEN_FINAL_BUILD:          PASS
+REOPEN_ARTIFACT_SMOKE:       PASS
 REOPEN_LIVE_PROOF:           PENDING
 REOPEN_FINAL_SHUTDOWN:       PENDING
 REOPEN_GIT_COMMIT:           PENDING
 REOPEN_GIT_PUSH:             PENDING
-LAST_VERIFIED:               2026-08-25
-NEXT_ACTION:                 FINAL BUILD AND ARTIFACT SMOKE
+LAST_VERIFIED:               2026-08-26
+NEXT_ACTION:                 PROVIDE/INSTALL APPROVED CORE RUNTIME FOR LIVE PROOF
 ```
 
 ## Launcher UI repair source status (2026-08-24)
@@ -126,6 +126,59 @@ The final Launcher build, packaged-artifact smoke, controlled live reopen proof,
 normal final shutdown evidence, commit, and push remain pending. Each ledger
 entry above stays `PENDING` until its own evidence is captured; therefore
 `REOPEN_EXISTING_PSO2` is not yet marked VERIFIED.
+
+### Final build and packaged-artifact smoke (2026-08-26)
+
+The final `5.0.0a9` Launcher EXE was built fresh from HEAD
+`ce6e01d5e3829040056624dd29f3ec473139fb04` with the documented procedure
+(`python -m PyInstaller --clean --noconfirm NekoLauncher.spec`, PyInstaller
+6.21.0, Python 3.11.15). Pre-build gates passed: `ruff check src tests` clean,
+`pytest -q -m "not integration"` = 610 passed, 5 deselected, and
+`compileall -q src` clean; a focused reopen/lifecycle/detector/window set of
+186 targeted tests also passed. No source file changed, so the version stayed
+`5.0.0a9`. The build log reported 0 errors and 5 benign tooling warnings
+(unresolved optional hidden imports such as `tzdata`, `pycparser.lextab`).
+
+```text
+REOPEN_FINAL_BUILD:   PASS
+FINAL_EXE:            launcher\dist\NekoLauncher.exe (29,862,857 bytes)
+REOPEN_EXE_SHA256:    f24c5f3f05350dcfc6ffa9fbc1370c93e2f457352cb80b382a961565e086874c
+TARGETED_TESTS:       PASS (186 focused reopen/lifecycle/detector/window tests)
+```
+
+The packaged EXE (not the source launcher) then passed a packaged-artifact
+smoke in a sandboxed fresh context (`TEMP`/`LOCALAPPDATA` redirected, only the
+spawned EXE handle/PID tracked, `NEKO_DEBUG_MODE=1`). The debug session header
+identified `NekoLauncher-5.0.0a9 (Debug)`, `PACKAGED_VS_SOURCE = PACKAGED`, and
+the fresh extraction `_MEI338362`. The UI initialized fully (logo, Thai fonts,
+session restore, `v5.0.0a9` footer) with no startup crash, and the
+single-instance mutex correctly blocked a second launch attempt. Closing the
+window exited both onefile processes within 25 seconds, left no Launcher-owned
+Core, V2Ray, or Tweaker process, and the fresh `_MEI` contained only the
+Python runtime, dependencies, and declared assets (no
+`NekoProxyCore.exe`/`.dll`, `v2ray-sn.exe`, `runtime-settings.nkps`, driver,
+or `core-manifest.json` entries). A full recursive PyInstaller archive
+enumeration (2,224 entries via `pkg_archive_contents`) confirmed the declared
+assets (`image_11.png`, `icon_app.ico`, both Sarabun fonts, license text) are
+present and contains no external-runtime entry. Finally, the
+`neko_launcher.infrastructure.defaults` module was extracted from the packaged
+PYZ and inspected: only the Supabase URL and the intentional publishable key
+are embedded — no service-role key, `sb_secret_` material, or private key
+block.
+
+```text
+REOPEN_ARTIFACT_SMOKE: PASS
+FRESH_MEI:             PASS (no Core/V2Ray/nkps entries)
+EMBEDDED_CORE_CHECK:   PASS (external runtime contract preserved)
+SECRET_HYGIENE:        PASS (PYZ-level inspection of defaults module)
+```
+
+This artifact smoke does not prove the live Core/reopen authorization path.
+This machine currently has no installed Core runtime at
+`%LOCALAPPDATA%\NEKO FAMILY\ProxyCore` (directory absent, no
+`core-manifest.json`), so the controlled reopen-while-PSO2-alive live proof
+remains blocked until the approved Core-33f97ae runtime bundle is installed
+through the supported channel.
 
 The unexpected automatic logout defect was fixed in Launcher `5.0.0a6`. The
 root cause was the heartbeat exception path treating three consecutive
