@@ -32,6 +32,21 @@ def test_exact_detector_returns_only_pso2_target() -> None:
     assert target == TargetProcess(2, "pso2.exe", 20)
 
 
+def test_exact_detector_fails_closed_when_multiple_pso2_candidates_are_ambiguous() -> None:
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (
+            TargetProcess(50, "pso2.exe", 300),
+            TargetProcess(70, "pso2.exe", 100),
+            TargetProcess(60, "pso2.exe", 100),
+        ),
+        poll_interval=0.001,
+    )
+
+    target = detector.wait_for_exact_pso2(0.1, Event())
+
+    assert target is None
+
+
 def test_exact_detector_is_bounded_and_cancellable() -> None:
     cancellation = Event()
     cancellation.set()

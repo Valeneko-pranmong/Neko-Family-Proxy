@@ -554,7 +554,7 @@ wheels = [
 
 [[package]]
 name = "neko-family-launcher"
-version = "5.0.0a8"
+version = "5.0.0a9"
 source = { editable = "." }
 dependencies = [
     { name = "customtkinter" },

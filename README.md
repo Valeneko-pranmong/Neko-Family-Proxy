@@ -1,14 +1,15 @@
 # Neko Family Proxy
 
 Windows launcher for PSO2 NGS JP with Supabase authentication, coupon-based
-entitlements, launcher-session control, and a planned authorized NekoProxyCore
+entitlements, launcher-session control, and authorized external NekoProxyCore
 integration.
 
-> **Current status:** `NEKO-AUTH-LITE / lite-v1` implementation is branch-only.
-> Production Core startup remains **fail closed** through
-> `AuthorizationPendingProxyGateway`. Hosted Lite deployment and production
-> cutover are not performed; Core Lite migration and cross-component E2E remain
-> required.
+> **Current status (25 August 2026):** the accepted `NEKO-AUTH-LITE / lite-v1`
+> production composition is active. Core startup remains **fail closed** unless
+> Auth, current Launcher-session ownership, ACTIVE entitlement, exact target
+> identity, fresh challenge/permit authorization all pass. Launcher `5.0.0a9`
+> implements existing-PSO2 reopen recovery; its one controlled live proof
+> remains pending.
 
 ## Documentation
 
@@ -35,7 +36,8 @@ Common entry points:
 - `docs/current/` — maintained cross-component documentation.
 - `docs/blocked/` — active plans and handoffs without production approval.
 - `docs/archive/` — superseded or dated evidence retained for traceability.
-- `ProxyCore/` — optional, approved local build input; excluded from Git.
+- `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore` — externally installed, pinned runtime
+  authority; never a PyInstaller build input and not stored in Git.
 - `scripts/` — repository validation tools.
 - Root assets — launcher icon, image, and Sarabun fonts.
 

@@ -3,10 +3,10 @@
 Desktop launcher for Supabase username/password membership, entitlement checks,
 launcher-session control, and user-selected PSO2 Tweaker configuration.
 
-> **Current status (8 August 2026):** production Core startup is intentionally
-> fail closed through `AuthorizationPendingProxyGateway`. The S0 authorization
-> contract is not fully accepted or released, so the current production
-> composition does not start NekoProxyCore or Tweaker.
+> **Current status (24 August 2026):** the accepted NEKO-AUTH-LITE production
+> composition is active. Core startup remains fail-closed unless Auth, the
+> current Launcher session, ACTIVE entitlement, exact PSO2 identity, fresh
+> challenge/permit, and typed RUNNING checks all succeed.
 
 ## Set up
 
@@ -47,9 +47,8 @@ log files, troubleshooting, and security guidance.
 4. Change the password from the Launcher after signing in.
 5. Check remaining entitlement time or redeem a coupon.
 6. Select `Tweaker.exe`; the launcher remembers the path.
-7. Request startup. The current fail-closed gateway rejects the request until
-   the production authorization adapters and Core contract pass all release
-   gates.
+7. Request startup. The Launcher spawns the exact owned external Core host,
+   then performs fresh authorized startup.
 
 ## Validation
 
@@ -66,17 +65,17 @@ python -m pytest -q -m integration
 
 ## One-file build
 
-An approved `../ProxyCore/` directory may be present as a controlled local build
-input. The current build specification embeds the directory when it exists:
+The approved Core runtime is installed separately under
+`%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\`. The current build specification never
+embeds Core or V2Ray:
 
 ```powershell
 python -m PyInstaller --clean --noconfirm NekoLauncher.spec
 ```
 
-The output is `dist/NekoLauncher.exe`. If `../ProxyCore/` exists, its contents
-are embedded; that does not enable production startup or constitute release
-approval. The publishable client configuration is embedded and extractable by
-design; never embed a secret/service-role key.
+The output is `dist/NekoLauncher.exe`. Its PyInstaller archive must contain zero
+`NekoProxyCore` and `v2ray-sn` entries. The publishable client configuration is
+embedded and extractable by design; never embed a secret/service-role key.
 
 See [`../docs/current/build-windows-executable.md`](../docs/current/build-windows-executable.md)
 and [`../docs/README.md`](../docs/README.md) for the maintained build procedure

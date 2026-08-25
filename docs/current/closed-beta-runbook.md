@@ -18,8 +18,17 @@ LAUNCHER_EXE_SHA256:         a9bd1b18612601420020e2ed2de1d827f81169c9a05b07bdeef
 RECONNECT_SOURCE_VERSION:    5.0.0a8
 RECONNECT_EXE_SHA256:        0daded67ec2a462823aa4316f3910cc0aa631bcbc5de177f57054e502522a299
 RECONNECT_LIVE_PROOF:        PASS (SUPPLEMENTAL_ATTEMPT_1)
-LAST_VERIFIED:               2026-08-24
-NEXT_ACTION:                 IMPLEMENT REOPEN-WHILE-PSO2-ALIVE RECOVERY
+REOPEN_SOURCE_VERSION:       5.0.0a9
+REOPEN_EXISTING_PSO2:        IMPLEMENTED — LIVE PROOF PENDING
+REOPEN_EXE_SHA256:           PENDING FINAL BUILD
+REOPEN_FINAL_BUILD:          PENDING
+REOPEN_ARTIFACT_SMOKE:       PENDING
+REOPEN_LIVE_PROOF:           PENDING
+REOPEN_FINAL_SHUTDOWN:       PENDING
+REOPEN_GIT_COMMIT:           PENDING
+REOPEN_GIT_PUSH:             PENDING
+LAST_VERIFIED:               2026-08-25
+NEXT_ACTION:                 FINAL BUILD AND ARTIFACT SMOKE
 ```
 
 ## Launcher UI repair source status (2026-08-24)
@@ -94,6 +103,30 @@ Launcher/Core/V2Ray crash event for the proof window. No source, version, Core,
 Launcher EXE, or Installer was changed or rebuilt during the live proof.
 Installer rebuild remains pending.
 
+Launcher `5.0.0a9` adds the reopen route after Auth, current-session claim, and
+ACTIVE entitlement validation. Before any Tweaker launch, the responsive
+background startup probe checks for `pso2.exe`; an existing game suppresses
+Tweaker, enters `ตรวจพบ PSO2 ที่กำลังทำงาน — กำลังเชื่อมต่อ...`, and uses the
+same exact-target authorization path to obtain a fresh Core challenge and one
+fresh launch permit bound to that live PID. `เชื่อมต่อแล้ว` is shown only after
+the controller reaches RUNNING. Missing Auth/session/entitlement remains
+fail-closed, repeated startup callbacks are single-flight, target exit cancels
+the operation, and multiple PSO2 candidates remain ambiguous/fail-closed.
+
+Launcher/Core lifecycle ownership is now explicit for newly started hosts: a
+Core child is created directly inside a Launcher-held Windows kill-on-close
+Job Object, so the exact Core/V2Ray tree dies with Launcher ownership while
+the unrelated `pso2.exe` process is untouched. The Job handle is verified
+before a spawned child is accepted and closed on every cleanup path; if the
+child cannot be killed during failed-spawn cleanup, closing the owning Job is
+the fail-closed fallback. This is process-lifetime ownership only — it does
+not claim that `%LOCALAPPDATA%` is immutable against an already-compromised
+process running as the same Windows user.
+The final Launcher build, packaged-artifact smoke, controlled live reopen proof,
+normal final shutdown evidence, commit, and push remain pending. Each ledger
+entry above stays `PENDING` until its own evidence is captured; therefore
+`REOPEN_EXISTING_PSO2` is not yet marked VERIFIED.
+
 The unexpected automatic logout defect was fixed in Launcher `5.0.0a6`. The
 root cause was the heartbeat exception path treating three consecutive
 transport/backend failures as revoked authorization, then calling local Auth
@@ -103,10 +136,11 @@ reconnecting status, and retry only on the existing bounded heartbeat schedule.
 An authoritative rejected heartbeat still immediately invalidates the session,
 including latest-claim-wins replacement enforcement.
 
-The following CLOSED BETA issue remains explicitly **OPEN and untouched**:
+The following CLOSED BETA verification remains explicitly **OPEN**:
 
-- reopening Launcher while `pso2.exe` is already running and reconnecting
-  without Tweaker.
+- one controlled live proof of reopening Launcher `5.0.0a9` while the same
+  `pso2.exe` remains alive, including fresh challenge/permit and duplicate-count
+  evidence.
 
 This procedure prepares a limited closed beta without changing the approved
 Launcher or Core runtime, production security contracts, or Phase 2.5/T10B4

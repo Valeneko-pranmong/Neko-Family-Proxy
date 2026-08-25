@@ -233,8 +233,10 @@ network drivers under `%WINDIR%\System32\drivers`:
 They are **SYSTEM_DRIVER_DEPENDENCY_ONLY**, not distributable Launcher payload.
 Do not copy them into `ProxyCore` or the one-file Launcher merely to silence a
 scanner. The current `NekoProxyCore.deps.json` declares 41 managed runtime assets
-and zero native assets; every declared managed asset is present, and the existing
-Launcher archive contains all 248 files from the controlled `ProxyCore` input.
+and zero native assets; every declared managed asset is present in the external
+`ProxyCore` runtime. All 248 controlled `ProxyCore` files and the
+V2Ray runtime remain outside `NekoLauncher.exe`; the Launcher archive contains
+zero embedded ProxyCore/V2Ray files.
 
 This packaging audit does not replace the blocked positive historical-PSO2 / host
 RUNNING E2E gate.

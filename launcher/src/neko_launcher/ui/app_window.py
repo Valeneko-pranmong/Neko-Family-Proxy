@@ -109,6 +109,12 @@ class AppWindow:
         self._debug_retry_pending = False
         self._proxy_start_attempted_for_detected_game = False
         self._proxy_retry_suppression_logged = False
+        self._startup_recovery_in_progress = False
+        self._startup_route_pending = False
+        self._startup_route_completed = False
+        self._startup_routed_session_id: str | None = None
+        self._startup_route_generation = 0
+        self._startup_process_probe = is_any_process_running
         self._reconnect_controller = AutomaticProxyReconnectController(
             backoff_seconds=RECONNECT_BACKOFF_SECONDS
         )
@@ -730,14 +736,14 @@ class AppWindow:
     def _restore_completed(self, restored: bool) -> None:
         if restored:
             self._notice.set("กู้คืนการเข้าสู่ระบบสำเร็จ")
-            self._auto_launch_tweaker()
+            self._route_after_authentication()
         elif self._controller.state.auth_status is AuthStatus.SIGNED_OUT:
             self._status.set("ยังไม่ได้เข้าสู่ระบบ")
 
     def _login_succeeded(self, _: Any) -> None:
         self._login_password.set("")
         self._notice.set("เข้าสู่ระบบสำเร็จ")
-        self._auto_launch_tweaker()
+        self._route_after_authentication()
 
     def _register(self) -> None:
         password = self._register_password.get()
@@ -870,6 +876,71 @@ class AppWindow:
         )
         if ready:
             self._launch_tweaker_only()
+
+    def _route_after_authentication(self) -> None:
+        """Observe PSO2 before choosing recovery or normal Tweaker launch."""
+        state = self._controller.state
+        if state.session_id != self._startup_routed_session_id:
+            self._startup_route_generation += 1
+            self._startup_route_pending = False
+            self._startup_route_completed = False
+            self._startup_recovery_in_progress = False
+            self._proxy_start_attempted_for_detected_game = False
+            self._proxy_retry_suppression_logged = False
+            self._startup_routed_session_id = state.session_id
+        ready = (
+            state.auth_status is AuthStatus.AUTHENTICATED
+            and state.session_id is not None
+            and entitlement_is_active(state.entitlement)
+        )
+        if not ready or self._startup_route_completed or self._startup_route_pending:
+            return
+        if state.game_process_running:
+            self._complete_startup_route(True, self._startup_route_generation)
+            return
+        self._startup_route_pending = True
+        generation = self._startup_route_generation
+        self._submit(
+            self._startup_process_probe,
+            lambda detected: self._complete_startup_route(detected, generation),
+            lambda error: self._startup_route_failed(error, generation),
+        )
+
+    def _complete_startup_route(
+        self,
+        detected: bool | None,
+        generation: int,
+    ) -> None:
+        if generation != self._startup_route_generation:
+            return
+        self._startup_route_pending = False
+        state = self._controller.state
+        ready = (
+            state.auth_status is AuthStatus.AUTHENTICATED
+            and state.session_id is not None
+            and entitlement_is_active(state.entitlement)
+        )
+        if not ready or self._startup_route_completed:
+            return
+        if detected is None:
+            self._record_debug_status(
+                "STARTUP_PROCESS_OBSERVATION_FAILED",
+                reason="Tweaker launch suppressed until PSO2 state is known",
+            )
+            return
+        self._startup_route_completed = True
+        if detected:
+            self._startup_recovery_in_progress = True
+            self._on_game_detected(True)
+            if self._proxy_start_attempted_for_detected_game:
+                self._notice.set("ตรวจพบ PSO2 ที่กำลังทำงาน — กำลังเชื่อมต่อ...")
+            else:
+                self._startup_recovery_in_progress = False
+            return
+        self._auto_launch_tweaker()
+
+    def _startup_route_failed(self, _error: Exception, generation: int) -> None:
+        self._complete_startup_route(None, generation)
 
     def _launch_tweaker_only(self) -> None:
         """Open Tweaker without starting ProxyCore."""
@@ -1132,6 +1203,12 @@ class AppWindow:
     def _on_game_detected(self, detected: bool | None) -> None:
         """Callback when process detection finishes."""
         self._process_detection_pending = False
+        if self._startup_route_pending:
+            self._record_debug_status(
+                "GAME_PROCESS_POLL_DEFERRED",
+                reason="post-authentication startup probe owns initial routing",
+            )
+            return
         if detected is None:
             self._record_debug_status(
                 "GAME_PROCESS_OBSERVATION_FAILED",
@@ -1142,7 +1219,19 @@ class AppWindow:
         detection_changed = state.game_process_running is not detected
         if detection_changed:
             self._controller.dispatch(GameProcessStateChanged(detected))
+        state = self._controller.state
+        startup_authority_ready = (
+            state.auth_status is AuthStatus.AUTHENTICATED
+            and state.session_id is not None
+            and entitlement_is_active(state.entitlement)
+        )
+        if detected and startup_authority_ready and not self._startup_route_completed:
+            self._startup_route_completed = True
+            self._startup_recovery_in_progress = True
         if not detected:
+            if startup_authority_ready and not self._startup_route_completed:
+                self._startup_route_completed = True
+                self._auto_launch_tweaker()
             self._cancel_automatic_reconnect(reset_attempts=True)
             self._proxy_start_attempted_for_detected_game = False
             self._proxy_retry_suppression_logged = False
@@ -1201,7 +1290,25 @@ class AppWindow:
                 return
         self._proxy_start_attempted_for_detected_game = True
         self._record_debug_status("PROXY_START_REQUESTED", process="pso2.exe")
-        self._submit(self._service.start_proxy)
+        self._submit(
+            self._service.start_proxy,
+            self._startup_proxy_start_completed
+            if self._startup_recovery_in_progress
+            else None,
+            self._startup_proxy_start_failed
+            if self._startup_recovery_in_progress
+            else None,
+        )
+        if self._startup_recovery_in_progress:
+            self._notice.set("ตรวจพบ PSO2 ที่กำลังทำงาน — กำลังเชื่อมต่อ...")
+
+    def _startup_proxy_start_completed(self, _result: Any) -> None:
+        self._startup_recovery_in_progress = False
+        if self._controller.state.proxy_status is ProxyStatus.RUNNING:
+            self._notice.set("เชื่อมต่อแล้ว")
+
+    def _startup_proxy_start_failed(self, _error: Exception) -> None:
+        self._startup_recovery_in_progress = False
 
     def _heartbeat(self) -> None:
         if self._controller.state.session_id:

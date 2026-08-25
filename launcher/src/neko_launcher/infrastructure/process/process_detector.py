@@ -53,9 +53,11 @@ class ExactPso2TargetDetector:
                 snapshot = self._snapshot()
             except ProcessObservationUnavailable:
                 snapshot = ()
-            for process in snapshot:
-                if process.image_name == "pso2.exe":
-                    return process
+            candidates = tuple(
+                process for process in snapshot if process.image_name == "pso2.exe"
+            )
+            if len(candidates) == 1:
+                return candidates[0]
             remaining = deadline - monotonic()
             if remaining <= 0:
                 return None

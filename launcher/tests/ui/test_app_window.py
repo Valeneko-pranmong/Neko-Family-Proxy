@@ -503,6 +503,12 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._login_password = FakeVariable("password")  # type: ignore[assignment]
     window._proxy_start_attempted_for_detected_game = False
     window._proxy_retry_suppression_logged = False
+    window._startup_recovery_in_progress = False
+    window._startup_route_pending = False
+    window._startup_route_completed = False
+    window._startup_routed_session_id = None
+    window._startup_route_generation = 0
+    window._startup_process_probe = lambda: False
     window._reconnect_controller = AutomaticProxyReconnectController(
         backoff_seconds=(1.0, 2.0, 4.0)
     )
@@ -594,6 +600,176 @@ def test_detected_pso2_attempts_proxy_only_once_until_game_exits(tmp_path: Path)
     assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
 
 
+def test_repeated_startup_auth_callbacks_do_not_request_duplicate_proxy_start(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        game_process_running=True,
+    )
+
+    window._restore_completed(True)
+    window._login_succeeded(None)
+    window._on_game_detected(True)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+
+
+def test_repeated_auth_callback_while_startup_probe_is_pending_is_single_flight(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._login_succeeded(None)
+    window._login_succeeded(None)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+
+
+def test_regular_poll_cannot_steal_pending_startup_recovery_completion(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._login_succeeded(None)
+    assert window._startup_route_pending is True
+
+    window._on_game_detected(True)
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+
+    on_probe_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    assert on_probe_success is not None
+    on_probe_success(True)
+
+    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
+    on_start_success, _ = window._submitted_callbacks[1]  # type: ignore[attr-defined]
+    assert on_start_success == window._startup_proxy_start_completed
+
+
+def test_regular_poll_completes_route_after_transient_startup_observation_failure(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._login_succeeded(None)
+    on_probe_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    assert on_probe_success is not None
+    on_probe_success(None)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert window._startup_route_completed is False
+
+    window._on_game_detected(False)
+
+    assert window._service.tweaker_started == 1  # type: ignore[attr-defined]
+    assert window._startup_route_completed is True
+
+
+def test_regular_poll_recovers_existing_game_after_transient_startup_observation_failure(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._login_succeeded(None)
+    on_probe_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    assert on_probe_success is not None
+    on_probe_success(None)
+
+    window._on_game_detected(True)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert window._notice.get() == "ตรวจพบ PSO2 ที่กำลังทำงาน — กำลังเชื่อมต่อ..."
+    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
+    on_start_success, _ = window._submitted_callbacks[1]  # type: ignore[attr-defined]
+    assert on_start_success == window._startup_proxy_start_completed
+
+
+@pytest.mark.parametrize("detected", [False, True])
+def test_pre_auth_regular_poll_does_not_consume_post_auth_startup_route(
+    tmp_path: Path,
+    detected: bool,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = AppState()  # type: ignore[assignment]
+
+    window._on_game_detected(detected)
+
+    assert window._startup_route_completed is False
+    assert window._startup_recovery_in_progress is False
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+
+
+def test_superseded_session_ignores_stale_startup_probe_result(tmp_path: Path) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._login_succeeded(None)
+    first_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        session_id="replacement-session-id",
+    )
+    window._login_succeeded(None)
+    second_success, _ = window._submitted_callbacks[1]  # type: ignore[attr-defined]
+    assert first_success is not None
+    assert second_success is not None
+
+    first_success(False)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert window._startup_route_pending is True
+
+    second_success(True)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 3  # type: ignore[attr-defined]
+
+
+def test_startup_recovery_does_not_compete_with_runtime_reconnect_owner(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        game_process_running=True,
+        proxy_status=ProxyStatus.RUNNING,
+    )
+    window._reconnect_controller.observe_running()
+    attempt = window._reconnect_controller.request(
+        window._controller.state,
+        shutting_down=False,
+    )
+    assert attempt is not None
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        proxy_status=ProxyStatus.STOPPED,
+    )
+
+    window._login_succeeded(None)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 0  # type: ignore[attr-defined]
+    assert window._startup_recovery_in_progress is False
+
+
 def test_safe_pre_permit_failure_retries_while_same_game_remains(tmp_path: Path) -> None:
     tweaker = tmp_path / "Tweaker.exe"
     tweaker.touch()
@@ -655,7 +831,133 @@ def test_successful_login_auto_launches_checked_tweaker(tmp_path: Path) -> None:
     window._login_succeeded(None)
 
     assert window._login_password.get() == ""
+    assert window._service.started == []  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+    observed = window._submitted_work[0]()  # type: ignore[attr-defined]
+    on_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    on_success(observed)
     assert window._service.started == [str(tweaker.resolve())]  # type: ignore[attr-defined]
+
+
+def test_successful_login_with_existing_pso2_suppresses_tweaker_and_starts_recovery(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = AppState()  # type: ignore[assignment]
+    window._on_game_detected(True)
+    window._controller.state = AppState(  # type: ignore[assignment]
+        auth_status=AuthStatus.AUTHENTICATED,
+        entitlement=Entitlement("product", EntitlementStatus.ACTIVE),
+        session_id="session-id",
+        game_process_running=True,
+    )
+
+    window._login_succeeded(None)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+    assert window._notice.get() == "ตรวจพบ PSO2 ที่กำลังทำงาน — กำลังเชื่อมต่อ..."
+
+
+def test_session_restore_with_existing_pso2_suppresses_tweaker_and_starts_recovery(
+    tmp_path: Path,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        game_process_running=True,
+    )
+
+    window._restore_completed(True)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+
+
+def test_successful_startup_recovery_reports_connected(tmp_path: Path) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        game_process_running=True,
+    )
+    window._login_succeeded(None)
+
+    def succeed() -> None:
+        window._controller.state = replace(  # type: ignore[assignment]
+            window._controller.state,
+            proxy_status=ProxyStatus.RUNNING,
+        )
+
+    window._submitted_work[0] = succeed  # type: ignore[attr-defined]
+    result = window._submitted_work[0]()  # type: ignore[attr-defined]
+    on_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    assert on_success is not None
+    on_success(result)
+
+    assert window._notice.get() == "เชื่อมต่อแล้ว"
+
+
+def test_new_session_can_retry_startup_recovery_without_tweaker(tmp_path: Path) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        game_process_running=True,
+    )
+
+    window._login_succeeded(None)
+    window._controller.state = replace(  # type: ignore[assignment]
+        window._controller.state,
+        session_id="replacement-session-id",
+        proxy_status=ProxyStatus.STOPPED,
+    )
+    window._login_succeeded(None)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        AppState(
+            auth_status=AuthStatus.SIGNED_OUT,
+            entitlement=Entitlement("product", EntitlementStatus.ACTIVE),
+            session_id="session-id",
+            game_process_running=True,
+        ),
+        AppState(
+            auth_status=AuthStatus.AUTHENTICATED,
+            entitlement=Entitlement("product", EntitlementStatus.ACTIVE),
+            session_id=None,
+            game_process_running=True,
+        ),
+        AppState(
+            auth_status=AuthStatus.AUTHENTICATED,
+            entitlement=Entitlement("product", EntitlementStatus.EXPIRED),
+            session_id="session-id",
+            game_process_running=True,
+        ),
+    ],
+)
+def test_startup_recovery_remains_fail_closed_without_all_authority_gates(
+    tmp_path: Path,
+    state: AppState,
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._controller.state = state  # type: ignore[assignment]
+
+    window._login_succeeded(None)
+
+    assert window._service.tweaker_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 0  # type: ignore[attr-defined]
 
 
 def test_authenticated_login_without_entitlement_clears_password(tmp_path: Path) -> None:

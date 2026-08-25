@@ -99,9 +99,9 @@ Get-Item .\dist\NekoLauncher.exe | Select-Object FullName,Length
 ไฟล์ที่ได้คือ `launcher\dist\NekoLauncher.exe` ดูขั้นตอนเต็มและ smoke test ที่
 [`current/build-windows-executable.md`](current/build-windows-executable.md)
 
-`ProxyCore/` เป็น optional controlled build input ต้องใช้เฉพาะ runtime ที่ทีม
-อนุมัติและตรวจ checksum แล้วเท่านั้น การ build สำเร็จไม่ถือเป็น production
-approval
+ProxyCore ไม่ใช่ Launcher build input และต้องไม่ถูกฝังใน EXE; runtime ที่ทีม
+อนุมัติจะติดตั้งแยกที่ `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\` และถูกจัดการ
+โดยทีมเท่านั้น การ build สำเร็จไม่ถือเป็น production approval
 
 ## 6. เครื่องมือเสริมตามงาน
 

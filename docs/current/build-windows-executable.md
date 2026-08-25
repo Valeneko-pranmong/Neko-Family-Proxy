@@ -20,11 +20,12 @@ Build บน Windows และใช้ Python `3.11` ขึ้นไป
 | ไอคอน | `icon_app.ico` | ไอคอนของ EXE |
 | โลโก้ | `image_11.png` | รูปที่แสดงในโปรแกรม |
 | ฟอนต์ภาษาไทย | `Sarabun-Regular.ttf`, `Sarabun-Bold.ttf` | ฟอนต์ Sarabun สำหรับแสดงผล UI |
-| ProxyCore ที่ได้รับอนุมัติ | `ProxyCore/` | runtime ที่จะถูกฝังเข้า EXE |
+| ProxyCore ที่ได้รับอนุมัติ | `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\` | runtime ภายนอกที่ทีมจัดการและแจกเอง |
 | Supabase client configuration | `launcher/src/neko_launcher/infrastructure/defaults.py` | URL และ publishable key |
 
-`ProxyCore/` เป็นไฟล์ runtime ที่แจกผ่านช่องทางควบคุมของทีมเท่านั้น
-ห้ามนำ runtime ที่ไม่ทราบแหล่งที่มาหรือไม่มี checksum มาใช้
+ProxyCore เป็น runtime ภายนอกที่แจกผ่านช่องทางควบคุมของทีมเท่านั้น ห้ามนำ
+runtime ที่ไม่ทราบแหล่งที่มาหรือไม่มี checksum มาใช้ และห้ามวาง
+ProxyCore หรือ V2Ray ลงใน PyInstaller payload ของ `NekoLauncher.exe`
 
 ## 2. เตรียม Python environment
 
@@ -60,22 +61,22 @@ Set-ExecutionPolicy -Scope Process Bypass
 - publishable key สามารถถูกดึงออกจาก EXE ได้โดยตั้งใจ และต้องไม่ใช้
   service-role/secret key
 
-## 4. วาง ProxyCore
+## 4. เตรียม ProxyCore แยกจาก EXE
 
 วาง runtime ที่ได้รับอนุมัติไว้ที่:
 
 ```text
-D:\Neko-Family-Proxy\ProxyCore\ProxyCore.exe
+%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe
 ```
 
 ถ้า ProxyCore มีโฟลเดอร์ประกอบ เช่น `bin`, `data`, `i18n`, `logging` หรือ
-`mode` ให้คงโครงสร้างเดิมไว้ เพราะ `NekoLauncher.spec` จะเก็บไฟล์ทั้งหมดใต้
-โฟลเดอร์ `ProxyCore/`
+`mode` ให้คงโครงสร้าง runtime ภายนอกเดิมไว้ `NekoLauncher.spec` ต้องไม่ฝัง
+ProxyCore หรือ V2Ray เข้า Launcher EXE
 
 ตรวจสอบไฟล์หลักก่อน Build:
 
 ```powershell
-Test-Path ..\ProxyCore\ProxyCore.exe
+Test-Path "$env:LOCALAPPDATA\NEKO FAMILY\ProxyCore\NekoProxyCore.exe"
 ```
 
 ควรได้ผลลัพธ์เป็น `True`
@@ -135,26 +136,19 @@ Start-Process .\dist\NekoLauncher.exe
 3. Redeem coupon แล้วจำนวนวันต้องเพิ่มขึ้น
 4. เลือก path ของ `Tweaker.exe`
 5. กด `เริ่มใช้งาน`
-6. ตรวจว่า `ProxyCore.exe` และ `Tweaker.exe` ทำงานตามลำดับ
+6. ตรวจว่า `NekoProxyCore.exe` จาก runtime ภายนอกและ `Tweaker.exe` ทำงานตามลำดับ
 7. กดหยุด Proxy/ปิดโปรแกรม แล้วตรวจว่าโปรเซสที่ launcher เปิดถูกปิด
 
-ถ้า EXE แจ้งว่าไม่พบ ProxyCore ให้ตรวจว่า Build มีโฟลเดอร์
-`ProxyCore/` อยู่ก่อนรัน PyInstaller หรือกำหนด path แยกผ่าน
-`NEKO_PROXY_CORE_PATH`
+ถ้า EXE แจ้งว่าไม่พบ ProxyCore ให้ตรวจ runtime ภายนอกที่
+`%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe` ห้ามแก้ spec เพื่อฝัง
+Core/V2Ray และห้ามใช้ environment-variable path override
 
 ## 8. การใช้ runtime แยกจาก EXE
 
-หากไม่ต้องการฝัง ProxyCore เข้า EXE ให้ Build โดยไม่มีโฟลเดอร์ `ProxyCore/`
-แล้วติดตั้ง runtime แยกไว้ที่:
+Launcher ใช้ runtime แยกจาก EXE เสมอ โดยติดตั้งไว้ที่:
 
 ```text
-%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\ProxyCore.exe
-```
-
-หรือกำหนด environment variable:
-
-```text
-NEKO_PROXY_CORE_PATH=C:\Path\To\ProxyCore.exe
+%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe
 ```
 
 สำหรับเครื่องลูกค้า แนะนำให้เก็บ runtime แยกเฉพาะเมื่อมีขั้นตอนติดตั้งและ
