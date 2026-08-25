@@ -20,9 +20,9 @@ RECONNECT_EXE_SHA256:        0daded67ec2a462823aa4316f3910cc0aa631bcbc5de177f570
 RECONNECT_LIVE_PROOF:        PASS (SUPPLEMENTAL_ATTEMPT_1)
 REOPEN_SOURCE_VERSION:       5.0.0a9
 REOPEN_EXISTING_PSO2:        IMPLEMENTED — LIVE PROOF PENDING
-REOPEN_EXE_SHA256:           f24c5f3f05350dcfc6ffa9fbc1370c93e2f457352cb80b382a961565e086874c
-REOPEN_FINAL_BUILD:          PASS
-REOPEN_ARTIFACT_SMOKE:       PASS
+REOPEN_EXE_SHA256:           ecaf9b500acf7498f87a3e01fae5ce84ffe6c7113d40f258509f151efa8d8435
+REOPEN_FINAL_BUILD:          PASS (re-verified at HEAD a6470bc)
+REOPEN_ARTIFACT_SMOKE:       PASS (re-verified at HEAD a6470bc)
 REOPEN_LIVE_PROOF:           PENDING
 REOPEN_FINAL_SHUTDOWN:       PENDING
 REOPEN_GIT_COMMIT:           PENDING
@@ -129,43 +129,52 @@ entry above stays `PENDING` until its own evidence is captured; therefore
 
 ### Final build and packaged-artifact smoke (2026-08-26)
 
-The final `5.0.0a9` Launcher EXE was built fresh from HEAD
-`ce6e01d5e3829040056624dd29f3ec473139fb04` with the documented procedure
-(`python -m PyInstaller --clean --noconfirm NekoLauncher.spec`, PyInstaller
-6.21.0, Python 3.11.15). Pre-build gates passed: `ruff check src tests` clean,
-`pytest -q -m "not integration"` = 610 passed, 5 deselected, and
-`compileall -q src` clean; a focused reopen/lifecycle/detector/window set of
-186 targeted tests also passed. No source file changed, so the version stayed
-`5.0.0a9`. The build log reported 0 errors and 5 benign tooling warnings
-(unresolved optional hidden imports such as `tzdata`, `pycparser.lextab`).
+The final `5.0.0a9` Launcher EXE was first built from HEAD
+`ce6e01d5e3829040056624dd29f3ec473139fb04` (SHA-256
+`f24c5f3f05350dcfc6ffa9fbc1370c93e2f457352cb80b382a961565e086874c`,
+29,862,857 bytes) with the documented procedure. After the documentation-only
+commits `0915c01` and `a6470bc` landed on `main`, the build and smoke were
+re-run in full at the new HEAD so the shipped artifact is traceable to current
+Git truth: HEAD `a6470bc149d9d6bb83e902b02bad763742c44a7b`, PyInstaller 6.21.0,
+Python 3.11.15, `python -m PyInstaller --clean --noconfirm NekoLauncher.spec`.
+Pre-build gates at `a6470bc`: `ruff check src tests` clean;
+`pytest -q -m "not integration"` = 609 passed, 1 skipped, 5 deselected;
+`compileall -q src` clean; a targeted reopen/lifecycle/detector/window/
+single-flight set of 243 tests passed. No source file changed between the two
+builds (the two commits touch only `.gitignore` and this runbook), so the
+version stayed `5.0.0a9`. The build log reported 0 errors and the same benign
+tooling warnings (unresolved optional hidden imports such as `tzdata`,
+`pycparser.lextab`; an AppKit ctypes-import notice).
 
 ```text
 REOPEN_FINAL_BUILD:   PASS
-FINAL_EXE:            launcher\dist\NekoLauncher.exe (29,862,857 bytes)
-REOPEN_EXE_SHA256:    f24c5f3f05350dcfc6ffa9fbc1370c93e2f457352cb80b382a961565e086874c
-TARGETED_TESTS:       PASS (186 focused reopen/lifecycle/detector/window tests)
+BUILD_SOURCE_HEAD:    a6470bc149d9d6bb83e902b02bad763742c44a7b
+FINAL_EXE:            launcher\dist\NekoLauncher.exe (29,863,010 bytes)
+REOPEN_EXE_SHA256:    ecaf9b500acf7498f87a3e01fae5ce84ffe6c7113d40f258509f151efa8d8435
+TARGETED_TESTS:       PASS (243 focused reopen/lifecycle/detector/window/single-flight tests)
 ```
 
-The packaged EXE (not the source launcher) then passed a packaged-artifact
-smoke in a sandboxed fresh context (`TEMP`/`LOCALAPPDATA` redirected, only the
-spawned EXE handle/PID tracked, `NEKO_DEBUG_MODE=1`). The debug session header
-identified `NekoLauncher-5.0.0a9 (Debug)`, `PACKAGED_VS_SOURCE = PACKAGED`, and
-the fresh extraction `_MEI338362`. The UI initialized fully (logo, Thai fonts,
-session restore, `v5.0.0a9` footer) with no startup crash, and the
-single-instance mutex correctly blocked a second launch attempt. Closing the
-window exited both onefile processes within 25 seconds, left no Launcher-owned
-Core, V2Ray, or Tweaker process, and the fresh `_MEI` contained only the
-Python runtime, dependencies, and declared assets (no
-`NekoProxyCore.exe`/`.dll`, `v2ray-sn.exe`, `runtime-settings.nkps`, driver,
-or `core-manifest.json` entries). A full recursive PyInstaller archive
-enumeration (2,224 entries via `pkg_archive_contents`) listed the declared
-`image_11.png` and `icon_app.ico` and contained no external-runtime entry;
-the Sarabun fonts and their OFL license text were confirmed present in the
-fresh `_MEI` extraction (`mei_top_entries_sample`). Finally, the
+The packaged EXE built at `a6470bc` (not the source launcher) then passed a
+packaged-artifact smoke in a sandboxed fresh context (`TEMP`/`LOCALAPPDATA`
+redirected, only the spawned EXE handle/PID tree tracked, `NEKO_DEBUG_MODE=1`).
+The debug session header identified `NekoLauncher-5.0.0a9 (Debug)`,
+`PACKAGED_VS_SOURCE = PACKAGED`, and a fresh extraction `_MEI172082`. The UI
+initialized (debug console enabled, normal WAITING_FOR_GAME poll started) with
+no startup crash, and the single-instance mutex correctly blocked a second
+launch attempt (duplicate exited immediately). Closing the window via its own
+UI path exited both onefile processes (bootloader + tracked child) within
+seconds, left no orphan in the exact tracked PID tree, and removed the fresh
+`_MEI` directory. The fresh `_MEI` contained only the Python runtime,
+dependencies, and declared assets (1,084 entries enumerated; no
+`NekoProxyCore.exe`/`.dll`, `v2ray-sn.exe`, `runtime-settings.nkps`, or
+`core-manifest.json` entries; both Sarabun fonts present). A full recursive
+PyInstaller archive enumeration (1,032 CArchive TOC entries + 1,192 PYZ
+modules) listed the declared `image_11.png` and `icon_app.ico` and contained
+no external-runtime entry. Finally, the
 `neko_launcher.infrastructure.defaults` module was extracted from the packaged
-PYZ and inspected: only the Supabase URL and the intentional publishable key
-are embedded — no service-role key, `sb_secret_` material, or private key
-block.
+PYZ and inspected: only the Supabase project URL, the control-room URL, and
+the intentional publishable key (`sb_publishable_…`) are embedded — no
+service-role key, `sb_secret_` material, or private key block.
 
 ```text
 REOPEN_ARTIFACT_SMOKE: PASS
