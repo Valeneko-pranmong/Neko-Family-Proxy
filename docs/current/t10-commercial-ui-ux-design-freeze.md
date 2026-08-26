@@ -38,7 +38,7 @@ The commercial Neko Family Proxy Launcher must strictly transition from a **deve
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The typical customer must never encounter raw network internals (such as *Named Pipes, SOCKS endpoints, redirectors, TCP connections, or raw packet counters*) on the primary screen. All technical observability tools remain fully accessible to support staff and power users under **Settings > Diagnostics**.
+The typical customer must never encounter raw network internals (such as *Named Pipes, SOCKS endpoints, redirectors, TCP connections, or raw packet counters*) on the primary screen. All technical observability tools remain fully accessible to support staff and power users under **การตั้งค่า > Status**.
 
 ---
 

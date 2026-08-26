@@ -102,7 +102,7 @@ def translate_customer_status(
     if state.proxy_status is ProxyStatus.FAILED or state.game_status is GameStatus.FAILED:
         return CustomerStatus(
             title="การเชื่อมต่อขัดข้อง",
-            subtitle="ไม่สามารถเริ่มระบบ Proxy ได้ (ดูรายละเอียดใน Settings > Diagnostics)",
+            subtitle="ไม่สามารถเริ่มระบบ Proxy ได้ (ดูรายละเอียดใน การตั้งค่า > Status)",
             role="danger",
             is_ready=False,
         )

@@ -50,8 +50,11 @@ UsePreviousAppDir=no
 
 PrivilegesRequired=lowest
 
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; PM decision D2 (closed-beta P1 batch, 2026-08-26): HARD BLOCK every
+; non-x64 host. "x64" excludes ARM64 even when Windows emulates it, so the
+; installer refuses to run anywhere except true x64 Windows.
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 
 Compression=lzma2
 SolidCompression=yes
@@ -82,6 +85,16 @@ Source: "{#PayloadDir}\CoreBundle\*"; \
     DestDir: "{app}\ProxyCore"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
+; .NET Desktop Runtime 6.x x64 bootstrapper (staged prerequisite).
+; Pinned version + SHA-256 are enforced by build_beta_installer.py, which
+; FAILS CLOSED before compiling when the approved EXE is absent from
+; {#PayloadDir}\Prereqs. Copied to {tmp} (auto-cleaned when Setup exits);
+; the post-install step runs it elevated+silent ONLY when detection says
+; the runtime is missing.
+Source: "{#PayloadDir}\Prereqs\windowsdesktop-runtime-*-win-x64.exe"; \
+    DestDir: "{tmp}\Prereqs"; \
+    Flags: ignoreversion
+
 ; Installer helper scripts (tracked, inspectable, removed by uninstall).
 Source: "scripts\verify-core-install.ps1"; \
     DestDir: "{app}\tools\installer"; \
@@ -107,6 +120,7 @@ const
 var
   g_CoreVerifyOK: Boolean;
   g_DriverOK: Boolean;
+  g_DotnetOK: Boolean;
   g_Detail: String;
 
 function B2S(B: Boolean): String;
@@ -148,13 +162,84 @@ end;
 
 function LaunchAllowed(): Boolean;
 begin
-  Result := g_CoreVerifyOK;
+  { The optional launch is suppressed unless the Core is verified AND the
+    .NET Desktop Runtime 6.x x64 prerequisite ended up present. }
+  Result := g_CoreVerifyOK and g_DotnetOK;
+end;
+
+{ Machine-wide x64 .NET runtime installs live under the NATIVE Program Files
+  dotnet tree. With ArchitecturesAllowed=x64 (D2), anything found there is
+  the x64 runtime, so a shared Microsoft.WindowsDesktop.App folder with a
+  6.x-or-newer version subdirectory is an honest detection of the required
+  Desktop Runtime. }
+function DesktopRuntimeSharedDir(): String;
+begin
+  Result := ExpandConstant('{pf}') + '\dotnet\shared\Microsoft.WindowsDesktop.App';
+end;
+
+function DesktopRuntime6X64Present(): Boolean;
+var
+  SharedFx, Entry, MajorText: String;
+  DotPos, Major: Integer;
+  FR: TFindRec;
+begin
+  Result := False;
+  SharedFx := DesktopRuntimeSharedDir();
+  Log('Desktop Runtime probe: ' + SharedFx);
+  if not DirExists(SharedFx) then begin
+    Log('Desktop Runtime probe: shared Microsoft.WindowsDesktop.App dir absent');
+    Exit;
+  end;
+  if FindFirst(SharedFx + '\*', FR) then begin
+    try
+      repeat
+        if (FR.Attributes and FILE_ATTRIBUTE_DIRECTORY) = FILE_ATTRIBUTE_DIRECTORY then begin
+          Entry := FR.Name;
+          if (Entry <> '.') and (Entry <> '..') then begin
+            DotPos := Pos('.', Entry);
+            if DotPos > 1 then begin
+              MajorText := Copy(Entry, 1, DotPos - 1);
+              Major := StrToIntDef(MajorText, 0);
+              if Major >= 6 then begin
+                Result := True;
+                Log('Desktop Runtime probe: found version ' + Entry);
+              end;
+            end;
+          end;
+        end;
+      until not FindNext(FR);
+    finally
+      FindClose(FR);
+    end;
+  end;
+end;
+
+function FindRuntimeBootstrapper(): String;
+var
+  PrereqDir: String;
+  FR: TFindRec;
+begin
+  Result := '';
+  PrereqDir := ExpandConstant('{tmp}\Prereqs');
+  if FindFirst(PrereqDir + '\windowsdesktop-runtime-*-win-x64.exe', FR) then begin
+    try
+      repeat
+        if (FR.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then begin
+          Result := PrereqDir + '\' + FR.Name;
+          Break;
+        end;
+      until not FindNext(FR);
+    finally
+      FindClose(FR);
+    end;
+  end;
 end;
 
 function InitializeSetup(): Boolean;
 begin
   g_CoreVerifyOK := False;
   g_DriverOK := False;
+  g_DotnetOK := False;
   g_Detail := '';
   Result := True;
 end;
@@ -163,6 +248,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   AppDir, CoreDir, BinDir, ToolsDir: String;
   VerifyScript, DriverScript, ResFile: String;
+  Bootstrapper: String;
   RC: Integer;
   Ok: Boolean;
   Msg: String;
@@ -196,7 +282,38 @@ begin
     end;
   end;
 
-  { ---- 2. netfilter2 driver readiness (elevation only when required) ---- }
+  { ---- 2. .NET Desktop Runtime 6 x64 readiness (elevation only when required) ---- }
+  g_DotnetOK := DesktopRuntime6X64Present();
+  if not g_DotnetOK then begin
+    Bootstrapper := FindRuntimeBootstrapper();
+    if Bootstrapper = '' then begin
+      AddDetail('internal error: staged .NET Desktop Runtime bootstrapper missing');
+      Log('no staged bootstrapper found in {tmp}\Prereqs');
+    end else begin
+      Log('requesting elevation for silent .NET Desktop Runtime install');
+      Ok := ShellExec('runas', Bootstrapper,
+        '/install /quiet /norestart',
+        '', HideCmd, ewWaitUntilTerminated, RC);
+      Log('elevated dotnet install: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
+      { Exit codes 0 and 3010 (reboot pending) are both acceptable here; the
+        fresh unelevated re-detection below remains authoritative either way. }
+    end;
+    { Authoritative outcome = re-detect the REAL machine state after any
+      elevated attempt (same fail-closed pattern as the netfilter2 step). }
+    g_DotnetOK := DesktopRuntime6X64Present();
+  end;
+  if not g_DotnetOK then begin
+    AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
+    SuppressibleMsgBox(
+      'Setup could not prepare the Microsoft .NET Desktop Runtime 6.x (x64). '#13#10#13#10 +
+      'ต้องติดตั้ง Microsoft .NET Desktop Runtime 6.x (x64) ก่อนจึงจะเริ่มใช้งานได้'#13#10#13#10 +
+      'Installation files are in place, but NEKO FAMILY PROXY cannot start its ' +
+      'runtime without it. Please install the runtime and run setup again.'#13#10#13#10 +
+      'The launch shortcut is disabled until the runtime is present.',
+      mbError, MB_OK, IDOK);
+  end;
+
+  { ---- 3. netfilter2 driver readiness (elevation only when required) ---- }
   if not FileExists(DriverScript) then begin
     AddDetail('internal error: ensure-netfilter2.ps1 missing');
   end else begin
@@ -238,6 +355,7 @@ begin
   end;
 
   Log('postinstall summary: core_verify=' + B2S(g_CoreVerifyOK) +
+      ' dotnet_ok=' + B2S(g_DotnetOK) +
       ' netfilter2_ok=' + B2S(g_DriverOK));
 end;
 

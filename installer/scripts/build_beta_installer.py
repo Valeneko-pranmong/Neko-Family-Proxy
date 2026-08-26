@@ -14,14 +14,15 @@ approved inputs and writes build outputs there.
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import os
 import subprocess
 import sys
 
-REPO = r"D:\Git\Neko-Family-Proxy"
-STAGE = r"D:\Build\NekoBetaInstaller"
+REPO = r"E:\Github\Neko-Family-Proxy"
+STAGE = r"E:\Github\NekoBetaInstaller"
 PAYLOAD = os.path.join(STAGE, "payload")
 CORE_BUNDLE = os.path.join(PAYLOAD, "CoreBundle")
 OUT_DIR = os.path.join(STAGE, "out")
@@ -29,12 +30,23 @@ ISS_PATH = os.path.join(REPO, "installer", "beta.iss")
 SETUP_NAME = "NekoFamilyProxy-Beta-Setup.exe"
 
 APPROVED_LAUNCHER_SHA256 = (
-    "985dd0c292b90c541128c29a895a97391c6b5260691044a45f8617068598f6b9"
+    "a508e398d70acf818465c32ae3a2196f39e9ea538550c5bdca361cd22b31f0a0"
 )
 CORE_AUTHORITY_COMMIT = "33f97ae0110075089f39b1e123890f931417d907"
 APPROVED_V2RAY_SHA256 = (
     "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
 )
+
+# ---- .NET Desktop Runtime 6 x64 bootstrapper pin ---------------------------
+# The approved bootstrapper EXE is NOT yet available to this repository, so
+# the pins stay UNSET and the prebuild gate below intentionally FAILS CLOSED.
+# To release: stage payload\\Prereqs\\windowsdesktop-runtime-<ver>-win-x64.exe
+# from an operator-approved copy, then record its version and the OFFICIAL
+# vendor SHA-256 here. Never download at build time; never weaken or bypass
+# this gate to ship an unverified binary.
+DOTNET_BOOTSTRAPPER_GLOB = "windowsdesktop-runtime-*-win-x64.exe"
+DOTNET_RUNTIME_VERSION_PIN: str | None = "6.0.36"
+DOTNET_RUNTIME_SHA256_PIN: str | None = "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
 
 
 def sha256_file(path: str) -> str:
@@ -105,7 +117,43 @@ def main() -> int:
         fail(f"v2ray-sn.exe sha mismatch: {got}")
     print("GATE v2ray-sn-sha256=PASS")
 
-    # ---- gate 4: secret hygiene on the payload ------------------------------
+    # ---- gate 4: pinned .NET Desktop Runtime 6 x64 bootstrapper -------------
+    prereq_dir = os.path.join(PAYLOAD, "Prereqs")
+    bootstrappers = sorted(
+        glob.glob(os.path.join(prereq_dir, DOTNET_BOOTSTRAPPER_GLOB))
+    )
+    if len(bootstrappers) != 1:
+        fail(
+            "ยังไม่มีไฟล์ .NET Desktop Runtime x64 bootstrapper ที่อนุมัติ — "
+            "missing approved .NET Desktop Runtime x64 bootstrapper: "
+            f"expected exactly one {DOTNET_BOOTSTRAPPER_GLOB} under {prereq_dir}, "
+            f"found {len(bootstrappers)}. Stage the approved EXE at that path, then "
+            "set DOTNET_RUNTIME_VERSION_PIN and DOTNET_RUNTIME_SHA256_PIN in this "
+            "script. Build refuses to continue without a verified binary."
+        )
+    if DOTNET_RUNTIME_VERSION_PIN is None or DOTNET_RUNTIME_SHA256_PIN is None:
+        fail(
+            ".NET Desktop Runtime pin ยังไม่ถูกบันทึก — .NET Runtime pin not "
+            "recorded: the staged bootstrapper exists but DOTNET_RUNTIME_VERSION_PIN / "
+            "DOTNET_RUNTIME_SHA256_PIN are unset. Record the approved version and its "
+            "official vendor SHA-256 before building; refusing to ship an unverified "
+            "binary."
+        )
+    bootstrapper = bootstrappers[0]
+    expected_name = (
+        f"windowsdesktop-runtime-{DOTNET_RUNTIME_VERSION_PIN}-win-x64.exe"
+    )
+    if os.path.basename(bootstrapper) != expected_name:
+        fail(
+            f"bootstrapper filename mismatch: staged "
+            f"{os.path.basename(bootstrapper)}, pinned {expected_name}"
+        )
+    got = sha256_file(bootstrapper)
+    if got != DOTNET_RUNTIME_SHA256_PIN.lower():
+        fail(f"dotnet-bootstrapper sha mismatch: {got}")
+    print("GATE dotnet-bootstrapper-sha256=PASS")
+
+    # ---- gate 5: secret hygiene on the payload ------------------------------
     if os.path.exists(os.path.join(CORE_BUNDLE, "runtime-settings.key")):
         fail("plaintext runtime-settings.key present in payload")
     nkps = [
@@ -133,7 +181,7 @@ def main() -> int:
         fail(f"secret-like tokens in payload: {hits[:3]}")
     print("GATE secret-hygiene=PASS")
 
-    # ---- gate 5: installer helper scripts present ---------------------------
+    # ---- gate 6: installer helper scripts present ---------------------------
     scripts_dir = os.path.join(REPO, "installer", "scripts")
     for s in ("verify-core-install.ps1", "ensure-netfilter2.ps1"):
         if not os.path.isfile(os.path.join(scripts_dir, s)):
@@ -175,6 +223,10 @@ def main() -> int:
         "launcher_sha256": APPROVED_LAUNCHER_SHA256,
         "core_authority": CORE_AUTHORITY_COMMIT,
         "v2ray_sha256": APPROVED_V2RAY_SHA256,
+        "dotnet_desktop_runtime": {
+            "version": DOTNET_RUNTIME_VERSION_PIN,
+            "sha256": DOTNET_RUNTIME_SHA256_PIN,
+        },
     }
     record_path = os.path.join(OUT_DIR, "build-record.json")
     with open(record_path, "w", encoding="utf-8") as fh:

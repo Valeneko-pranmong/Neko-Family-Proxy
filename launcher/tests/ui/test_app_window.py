@@ -384,11 +384,72 @@ def test_copy_debug_uses_existing_toast_authority(monkeypatch: Any) -> None:
     assert calls == [("Copied to clipboard!", False)]
 
 
-def test_open_debug_logs_failure_uses_existing_error_toast(
+def test_open_debug_logs_creates_missing_dir_then_opens(
+    tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
     window = object.__new__(AppWindow)
-    window._debug_log_dir = Path("missing-logs")
+    window._debug_log_dir = tmp_path / "NekoFamilyProxy" / "logs"
+    opened: list[Path] = []
+
+    def fake_startfile(path: object) -> None:
+        opened.append(Path(str(path)))  # type: ignore[arg-type]
+
+    monkeypatch.setattr("neko_launcher.ui.app_window.os.startfile", fake_startfile)
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "_show_toast",
+        lambda message, is_error: calls.append((message, is_error)),
+    )
+
+    window._open_debug_logs()
+
+    assert window._debug_log_dir.is_dir()
+    assert opened == [window._debug_log_dir]
+    assert calls == [("เปิดโฟลเดอร์ Logs แล้ว", False)]
+
+
+def test_open_debug_logs_reports_failure_when_dir_cannot_be_created(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    window = object.__new__(AppWindow)
+    blocker = tmp_path / "blocked"
+    blocker.write_text("regular file, not a directory", encoding="utf-8")
+    window._debug_log_dir = blocker / "logs"
+    started: list[Path] = []
+
+    def record_startfile(path: object) -> None:
+        started.append(Path(str(path)))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.os.startfile", record_startfile
+    )
+    calls: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "_show_toast",
+        lambda message, is_error: calls.append((message, is_error)),
+    )
+
+    window._open_debug_logs()
+
+    assert not window._debug_log_dir.exists()
+    assert started == []
+    assert len(calls) == 1
+    message, is_error = calls[0]
+    assert is_error is True
+    assert message.startswith("เปิดโฟลเดอร์ Logs ไม่สำเร็จ:")
+
+
+def test_open_debug_logs_failure_uses_existing_error_toast(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    window = object.__new__(AppWindow)
+    window._debug_log_dir = tmp_path / "existing-logs"
+    window._debug_log_dir.mkdir(parents=True)
     calls: list[tuple[str, bool]] = []
 
     def fail_to_open(_path: Path) -> None:
@@ -403,7 +464,10 @@ def test_open_debug_logs_failure_uses_existing_error_toast(
 
     window._open_debug_logs()
 
-    assert calls == [("Failed to open logs directory.", True)]
+    assert len(calls) == 1
+    message, is_error = calls[0]
+    assert is_error is True
+    assert message.startswith("เปิดโฟลเดอร์ Logs ไม่สำเร็จ:")
 
 
 def test_session_heartbeat_polling_interval_is_bounded_to_thirty_seconds() -> None:

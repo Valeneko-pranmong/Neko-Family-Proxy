@@ -391,3 +391,149 @@ production security migrations/contracts as part of this artifact rollback.
 A failure of the approved artifact hash, Core manifest/hash validation,
 authoritative session/entitlement behavior, or runtime lifecycle is a stop
 condition for further onboarding.
+
+## Addendum — local rebuild of Launcher `5.0.0a9` on the replacement machine (2026-08-26)
+
+The repository was migrated to a replacement Windows machine
+(`E:\Github\Neko-Family-Proxy`, branch `main` @
+`fd90e8440c5a92889e7350800d438590d5568a8d`, clean worktree before start). The
+range `a6470bc..fd90e84` touches only this runbook, so the Launcher source is
+unchanged and the version remains `5.0.0a9`. To stage the pending reopen live
+proof on this machine, the documented build procedure was re-run locally and the
+packaged artifact was re-smoked end-to-end here. No source file, version,
+`installer/` payload, Core/Admin component, or `%LOCALAPPDATA%\NEKO FAMILY`
+installed content was touched, and no commit was created. The prior-evidence
+EXE (`ecaf9b50…`) had been carried over into `launcher\dist\` by the migration;
+it was preserved byte-identical (SHA verified) outside the repository before the
+canonical build output path was rebuilt over it.
+
+Pre-build gates (from `launcher/`; environment provisioned with
+`uv sync --frozen --all-extras` against the committed `uv.lock`, Python 3.11.15):
+
+```text
+RUFF:        python -m ruff check src tests          -> clean
+PYTEST:      python -m pytest -q -m "not integration" -> 610 passed, 5 deselected
+             (same collection as the recorded 609+1-skip run; the one
+             environment-conditional skip did not trigger on this machine)
+COMPILEALL:  python -m compileall -q src              -> clean
+```
+
+Build (PyInstaller 6.21.0, Python 3.11.15):
+
+```text
+COMMAND:          python -m PyInstaller --clean --noconfirm NekoLauncher.spec
+RESULT:           PASS (exit 0, 0 errors)
+WARNINGS:         4 benign tooling warnings (unresolved optional hidden imports
+                  tzdata, pycparser.yacctab/lextab; darkdetect AppKit ctypes
+                  notice) — same class as the recorded final build
+LOCAL_ARTIFACT:   launcher\dist\NekoLauncher.exe (29,862,321 bytes)
+LOCAL_EXE_SHA256: 2d0ea3250f3acd5f9eea7488471e8abb837d7dec02ebc6b9c8967fa7313aba05
+```
+
+This local SHA-256 differs from `REOPEN_EXE_SHA256` above because PyInstaller
+one-file output is not byte-reproducible across machines; the source tree is
+identical (docs-only delta), so this is a rebuild of the same `5.0.0a9`
+artifact, not a new version. The recorded `ecaf9b50…` hash remains the
+authority for its own build; this addendum records the fresh local rebuild.
+
+Packaged-artifact smoke of the LOCAL rebuild (fresh sandboxed execution
+context: `TEMP`/`TMP`/`LOCALAPPDATA` redirected into a scratch directory,
+`NEKO_DEBUG_MODE=1`, only the spawned bootloader/child PID trees tracked):
+
+```text
+STARTUP_BOUNDED:     PASS (bootloader PID 14284 + extracted child PID 25136
+                     alive past the bounded startup window, no startup crash)
+DEBUG_IDENTITY:      PASS (session header NekoLauncher-5.0.0a9 (Debug);
+                     PACKAGED_VS_SOURCE = PACKAGED; log echoes the fresh _MEI)
+FRESH_MEI:           PASS (_MEI142842 created 2026-08-26T15:27:46 during the
+                     smoke; unique; prior-evidence _MEI172082 absent)
+FORBIDDEN_SWEEP:     PASS (1,084 extraction entries; no NekoProxyCore.exe/.dll,
+                     v2ray-sn.exe, runtime-settings.nkps, or core-manifest.json;
+                     image_11.png, icon_app.ico, Sarabun-Regular.ttf, and
+                     Sarabun-Bold.ttf all present)
+SINGLE_INSTANCE:     PASS (second launch while the first was alive was
+                     suppressed: it produced no second UI window, exited 0,
+                     the first instance stayed mutex owner throughout, and no
+                     persistent second _MEI remained)
+GRACEFUL_SHUTDOWN:   PASS (WM_CLOSE delivered to the NEKO FAMILY top-level
+                     window exited BOTH onefile processes — bootloader 14284
+                     and child 25136, exit code 0 — within the bound)
+MEI_CLEANUP:         PASS (the fresh _MEI directory was removed after close)
+ARCHIVE_ENUMERATION: PASS (1,032 CArchive TOC entries + 1,192 PYZ modules —
+                     identical counts to the recorded build; declared assets
+                     present; no external-runtime entry anywhere)
+SECRET_HYGIENE:      PASS (packaged neko_launcher.infrastructure.defaults
+                     contains only the Supabase project URL, control-room URL,
+                     product code, and the one intentional publishable key;
+                     no sb_secret_ material, no service-role key, no
+                     private-key block; URL hosts limited to the project
+                     *.supabase.co host and neko-control-room.vercel.app)
+LOCAL_SMOKE_VERDICT: ALL PASS (9/9 checks)
+```
+
+Scope unchanged: a rebuild plus packaged-artifact smoke still does not prove
+the live Core/reopen authorization path. This local `2d0ea325…` build is the
+staged artifact candidate on this machine; `REOPEN_LIVE_PROOF` remains
+`PENDING` until the approved Core runtime is provided through the supported
+channel, after which the live proof should run against either this freshly
+built, smoke-passed artifact or an operator-approved copy of the recorded
+`ecaf9b50…` build.
+
+## P1 fix batch — source 5.0.0a9 → 5.0.0a10 (2026-08-26)
+
+This is a Launcher/Installer SOURCE change batch against `main` @
+`fd90e84`. Binding PM decisions for this batch: **D1** — T10A nav labels are
+frozen; no nav category or page header was renamed, only the single error
+message string was corrected; **D2** — the Installer hard-blocks non-x64 via
+`ArchitecturesAllowed=x64` (not `x64compatible`), excluding ARM64 even when
+Windows emulates it.
+
+Fixed in this batch:
+
+1. Diagnostics "เปิดโฟลเดอร์" dead button (`AppWindow._open_debug_logs`):
+   `%LOCALAPPDATA%\NekoFamilyProxy\logs` is now created on demand
+   (`mkdir -p`) before `os.startfile`, and both outcomes show truthful Thai
+   feedback (`เปิดโฟลเดอร์ Logs แล้ว` / `เปิดโฟลเดอร์ Logs ไม่สำเร็จ: <reason>`),
+   replacing the swallowed English-only toast. Tests extended in
+   `tests/ui/test_app_window.py` (created-dir success, mkdir-failure,
+   startfile-failure) and `tests/ui/test_settings_window.py` (button stays
+   rendered/wired when the directory does not exist yet).
+2. Error-path message alignment: the Proxy-failure subtitle now points to the
+   real navigation path — `ดูรายละเอียดใน การตั้งค่า > Status` (was the stale
+   `Settings > Diagnostics`). The same stale reference was corrected in
+   `docs/current/t10-commercial-ui-ux-design-freeze.md` line ~41.
+3. Installer x64 hard block per D2 (`installer/beta.iss`):
+   `ArchitecturesAllowed=x64` and `ArchitecturesInstallIn64BitMode=x64`.
+4. .NET Desktop Runtime 6.x x64 bootstrap: `beta.iss` stages
+   `payload\Prereqs\windowsdesktop-runtime-*-win-x64.exe` into `{tmp}`,
+   detects any 6.x+ shared Desktop Runtime under
+   `%ProgramFiles%\dotnet\shared\Microsoft.WindowsDesktop.App` (x64-authoritative
+   under D2), requests exactly one elevation for `/install /quiet /norestart`
+   when missing, re-checks real machine state afterwards (same fail-closed
+   pattern as netfilter2), shows a clear error when still absent, and gates
+   `LaunchAllowed` on Core verification AND runtime presence.
+   `installer/scripts/build_beta_installer.py` gains prebuild gate 4 pinning
+   the bootstrapper version + SHA-256; because the approved EXE binary is not
+   available yet, the pins are deliberately UNSET and the gate FAILS CLOSED
+   (nothing is downloaded; an unverified binary cannot be packaged).
+   `installer/README.md` documents the behavior and required .NET evidence.
+
+Verification at this state (from `launcher/`, uv-managed Python 3.11.15):
+
+```text
+RUFF:        python -m ruff check src tests          -> clean
+PYTEST:      python -m pytest -q -m "not integration" -> 612 passed, 5 deselected
+             (baseline 610 passed; +2 net new regression tests)
+COMPILEALL:  python -m compileall -q src              -> clean
+STRING_SWEEP: zero remaining 'Settings > Diagnostics' under launcher/src
+INSTALLER_DRYRUN: build_beta_installer.py sandboxed dry run -> gates 1-3 PASS
+             then PREBUILD_GATE=FAIL exit 2 with the Thai/English fail-closed
+             message when the bootstrapper is absent, and again when staged
+             but unpinned (negative-proof harness run outside the repo)
+```
+
+Not done by design: no Installer EXE was rebuilt (the approved payload and
+bootstrapper binary are not available on this machine; rebuild stays
+`PENDING` behind the pinned-binary release step above), no live game/Core
+flows were exercised, no auth/session behavior was weakened, and no commit or
+push was created. The pre-existing addendum above is preserved unchanged.

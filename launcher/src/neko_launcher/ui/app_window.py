@@ -601,11 +601,18 @@ class AppWindow:
         self._show_toast("Copied to clipboard!", is_error=False)
 
     def _open_debug_logs(self) -> None:
-        if self._debug_log_dir:
-            try:
-                os.startfile(self._debug_log_dir)
-            except (OSError, AttributeError):
-                self._show_toast("Failed to open logs directory.", is_error=True)
+        if not self._debug_log_dir:
+            return
+        log_dir = Path(self._debug_log_dir)
+        try:
+            # The folder may not exist yet on a fresh machine; create it on
+            # demand so the button never dead-ends silently.
+            log_dir.mkdir(parents=True, exist_ok=True)
+            os.startfile(log_dir)
+        except (OSError, AttributeError) as exc:
+            self._show_toast(f"เปิดโฟลเดอร์ Logs ไม่สำเร็จ: {exc}", is_error=True)
+        else:
+            self._show_toast("เปิดโฟลเดอร์ Logs แล้ว", is_error=False)
 
     def _format_debug_snapshot(self, snapshot: Any) -> str:
         content = (

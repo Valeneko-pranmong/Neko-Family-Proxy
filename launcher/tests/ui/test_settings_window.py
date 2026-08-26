@@ -238,7 +238,9 @@ def test_pso2_page_is_detection_only_and_tweaker_uses_shared_path_actions() -> N
             pass
 
 
-def test_diagnostics_uses_existing_local_tools_with_debug_gate() -> None:
+def test_diagnostics_uses_existing_local_tools_with_debug_gate(
+    tmp_path: Path,
+) -> None:
     try:
         root = ctk.CTk()
         root.withdraw()
@@ -272,6 +274,25 @@ def test_diagnostics_uses_existing_local_tools_with_debug_gate() -> None:
         )
         debug_window._advanced_diagnostics_button.invoke()
         assert calls["advanced"] == 1
+        debug_window.destroy()
+
+        # The open-logs button stays rendered and wired even when the logs
+        # directory does not exist yet; AppWindow._open_debug_logs creates it
+        # on demand, so the callback contract must not depend on existence.
+        missing_dir_window = SettingsWindow(
+            root,
+            debug_mode=False,
+            debug_log_dir=tmp_path / "fresh" / "logs",
+            on_open_logs=lambda: calls.__setitem__("logs", calls["logs"] + 1),
+            on_show_advanced_diagnostics=lambda: calls.__setitem__(
+                "advanced", calls["advanced"] + 1
+            ),
+        )
+        assert hasattr(missing_dir_window, "_open_logs_button")
+        assert not (tmp_path / "fresh" / "logs").exists()
+        missing_dir_window._open_logs_button.invoke()
+        assert calls["logs"] == 2
+        missing_dir_window.destroy()
     finally:
         try:
             root.destroy()
