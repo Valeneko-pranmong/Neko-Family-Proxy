@@ -142,8 +142,11 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         recovery_gateway=recovery_gateway,
     )
     telemetry_client = NamedPipeCoreTelemetryClient(event_publisher=event_bus)
-    logo_path = root / "image_11.png"
-    icon_path = root / "icon_app.ico"
+    # Use approved project assets from Asset folder when available
+    asset_dir = root.parent.parent / "Asset"  # E:\Github\Neko-Family-Proxy\Asset
+    logo_path = (asset_dir / "setting.png") if asset_dir.is_dir() else (root / "image_11.png")
+    icon_path = (asset_dir / "setting.png" if asset_dir.is_exists() else None)  # Use setting.png as generic control icon
+    
     return AppWindow(
         controller,
         service,

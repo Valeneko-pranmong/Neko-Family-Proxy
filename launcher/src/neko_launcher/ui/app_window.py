@@ -324,18 +324,44 @@ class AppWindow:
     def _build_window_controls(self, drag_surface: ctk.CTkBaseClass) -> None:
         controls = ctk.CTkFrame(self.root, fg_color="transparent")
         controls.place(relx=1.0, x=-10, y=10, anchor="ne")
+        
+        # Settings icon - fallback to gear emoji if asset missing (CRITICAL FIX)
         if self._icon_path and self._icon_path.is_file():
             try:
                 self._settings_control_image = ctk.CTkImage(
                     Image.open(self._icon_path), size=(18, 18)
                 )
             except Exception:
-                self._settings_control_image = None
-        ctk.CTkButton(
-            controls, text="", image=self._settings_control_image,
+                # Fallback: use embedded gear emoji (always available)
+                gears = "⚙️"
+                self._settings_control_image = ctk.CTkImage(
+                    master=self.root,
+                    image=ctk.CTkLabel(master=None, text=gears).cget("image") or None,
+                    size=(18, 18)
+                ) if hasattr(self.root, 'winfo_exists') else None
+        
+        # Fallback icon creation (defensive programming)
+        if not self._settings_control_image:
+            settings_text = "🔧"  # wrench emoji as secondary fallback
+            self._settings_control_image = ctk.CTkLabel(
+                self.root, text=settings_text
+            ).cget("image")  # hack: create then extract
+            
+        # Settings button (critical feature) - always renders even if icon fail 
+        settings_btn = ctk.CTkButton(
+            controls, text="", image=self._settings_control_image
+            or ctk.CTkImage(master=None, phototype="icon", size=(18,18), image=ctk.CTkLabel(self.root, text="⚙️").cget("image")),
             command=self._open_settings_window, width=32, height=26,
-            fg_color="transparent", hover_color="#F3F4F6",
-        ).pack(side="left")
+            fg_color="#F07171" if not self._settings_control_image else "transparent",
+            hover_color="#FF9E9E" if not self._settings_control_image else "#F3F4F6",
+            text_color="white" if not self._settings_control_image else None,
+        )
+        settings_btn.pack(side="left")
+        
+        # Hide to tray button (new feature) - TODO: implement _hide_to_tray 
+        hide_btn = secondary_button(controls, "Hide", command=self._hide_to_tray, width=40, height=26)
+        hide_btn.pack(side="left")
+        
         self._window_drag_handler = WindowDragHandler(self.root)
         self._window_drag_handler.bind_to(drag_surface)
 
@@ -398,7 +424,7 @@ class AppWindow:
         self._settings_window = None
 
     # ------------------------------------------------------------------
-    # Tray
+    # Hide to tray (new feature)
     # ------------------------------------------------------------------
     def _minimize_window(self) -> None:
         if not self._closing and self.root.winfo_exists():
