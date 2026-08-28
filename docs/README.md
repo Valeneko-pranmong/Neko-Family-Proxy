@@ -1,6 +1,6 @@
 # Neko Family Launcher Documentation Index
 
-Last reviewed: **18 August 2026** (Phase PRE-T10 Repository Hygiene)
+Last reviewed: **28 August 2026** (Post-Beta Dashboard Redesign plan added)
 
 This is the canonical index for repository documentation. Documentation is organized by lifecycle so that active instructions are not mixed with historical evidence or superseded plans.
 
@@ -25,6 +25,7 @@ This is the canonical index for repository documentation. Documentation is organ
 | **[`current/debug-console.md`](current/debug-console.md)** | `CURRENT_OPERATIONAL` | Windows debug console, runtime logging, and IPC troubleshooting |
 | **[`current/repository-layout.md`](current/repository-layout.md)** | `CURRENT_OPERATIONAL` | Tracked source, local inputs, and component layout |
 | **[`current/runtime-distribution.md`](current/runtime-distribution.md)** | `CURRENT_OPERATIONAL` | Controlled Core runtime delivery and packaging policy |
+| **[`current/dashboard-redesign-plan.md`](current/dashboard-redesign-plan.md)** | `CURRENT_PLAN` | Dashboard UI redesign plan (6 phases) targeting v5.0.0a10+ post-beta |
 | **[`Tool.md`](Tool.md)** | `CURRENT_OPERATIONAL` | Developer tool installation and Windows environment checklist |
 
 ---
