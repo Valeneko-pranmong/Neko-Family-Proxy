@@ -142,11 +142,18 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         recovery_gateway=recovery_gateway,
     )
     telemetry_client = NamedPipeCoreTelemetryClient(event_publisher=event_bus)
-    # Use approved project assets from Asset folder when available
-    asset_dir = root.parent.parent / "Asset"  # E:\Github\Neko-Family-Proxy\Asset
-    logo_path = (asset_dir / "setting.png") if asset_dir.is_dir() else (root / "image_11.png")
-    icon_path = (asset_dir / "setting.png" if asset_dir.is_exists() else None)  # Use setting.png as generic control icon
-    
+    # Resolve the project Asset directory relative to application_root().
+    # In source mode root is the repo root and Asset is a direct child.
+    # In frozen mode (PyInstaller) root is sys._MEIPASS; the spec ships
+    # setting.png flat at "." so it lives at root, not under root/Asset.
+    asset_dir = root / "Asset"
+    if asset_dir.is_dir():
+        logo_path = asset_dir / "setting.png"
+        icon_path = asset_dir / "setting.png"
+    else:
+        logo_path = root / "setting.png"
+        icon_path = root / "setting.png"
+
     return AppWindow(
         controller,
         service,

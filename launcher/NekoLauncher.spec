@@ -8,6 +8,11 @@ repository_root = launcher_root.parent
 
 datas = [
     (str(repository_root / "Asset" / "setting.png"), "."),              # Settings icon from Asset folder
+    (str(repository_root / "image_11.png"), "."),
+    (str(repository_root / "icon_app.ico"), "."),
+    (str(repository_root / "Sarabun-Regular.ttf"), "."),
+    (str(repository_root / "Sarabun-Bold.ttf"), "."),
+    (str(repository_root / "Sarabun-OFL.txt"), "."),
 ]
 datas += collect_data_files("customtkinter")
 

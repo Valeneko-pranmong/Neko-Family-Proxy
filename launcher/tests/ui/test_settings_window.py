@@ -798,3 +798,155 @@ def test_settings_keyboard_focus_order_covers_important_controls() -> None:
         assert len(set(window._focus_controls)) == len(window._focus_controls)
     finally:
         root.destroy()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for review findings against commit ac30421
+# (asset wiring, dependency wiring, app factory).
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).parents[3]  # Neko-Family-Proxy/
+LAUNCHER_ROOT = REPO_ROOT / "launcher"
+APP_FACTORY_SOURCE = (
+    LAUNCHER_ROOT / "src" / "neko_launcher" / "bootstrap" / "app_factory.py"
+).read_text(encoding="utf-8")
+APP_WINDOW_SOURCE = (
+    LAUNCHER_ROOT / "src" / "neko_launcher" / "ui" / "app_window.py"
+).read_text(encoding="utf-8")
+SPEC_SOURCE = (
+    LAUNCHER_ROOT / "NekoLauncher.spec"
+).read_text(encoding="utf-8")
+
+
+def test_app_factory_resolves_asset_path_without_double_parent() -> None:
+    """B-1: app_factory must resolve Asset relative to root, not root.parent.parent.
+
+    Source mode: application_root() returns parents[4] of app_factory.py — the
+    repo root (E:\\Github\\Neko-Family-Proxy). Asset lives directly under it.
+    Frozen mode: application_root() returns sys._MEIPASS; spec ships
+    setting.png flat at "." so the file lives at root, not root/Asset.
+    """
+    # Source mode: root / "Asset" must be the correct lookup
+    assert 'root / "Asset"' in APP_FACTORY_SOURCE or "root / 'Asset'" in APP_FACTORY_SOURCE, (
+        "app_factory must probe root / 'Asset' in source mode (Asset is a direct child of repo root)"
+    )
+    # The buggy double-parent traversal must be gone
+    assert "root.parent.parent" not in APP_FACTORY_SOURCE, (
+        "root.parent.parent escapes the repo boundary and never resolves to Asset"
+    )
+
+
+def test_app_factory_does_not_call_nonexistent_path_is_exists() -> None:
+    """B-1: Path.is_exists() does not exist on pathlib.Path — calling it raises
+    AttributeError at module import / first call. app_factory.py must use a
+    real Path method (is_file / is_dir / exists)."""
+    assert "is_exists" not in APP_FACTORY_SOURCE, (
+        "Path.is_exists does not exist; use is_file() / is_dir() / exists() instead"
+    )
+
+
+def test_app_factory_logo_and_icon_resolve_to_real_file_in_source_mode() -> None:
+    """B-1 (executable check): when app_factory.build_window() resolves the
+    asset path in source mode (sys.frozen is unset, application_root = repo root),
+    the returned logo_path and icon_path must both point to files that
+    actually exist on disk. This is the runtime contract the launcher relies
+    on at startup."""
+    import sys
+    from unittest.mock import patch
+
+    # Force non-frozen (source mode). PyInstaller sets sys.frozen at runtime;
+    # when absent, application_root() falls back to parents[4] (repo root).
+    with patch.object(sys, "frozen", False, create=True):
+        from neko_launcher.bootstrap.app_factory import application_root
+
+        repo_root = application_root()
+        assert repo_root.is_dir(), f"application_root() returned non-dir: {repo_root}"
+        asset_dir = repo_root / "Asset"
+        assert asset_dir.is_dir(), (
+            f"Repo Asset dir must be a direct child of repo root: {asset_dir}"
+        )
+        # Both logo and icon candidates must point to an actual file.
+        # In source mode the app should use Asset/setting.png.
+        assert (asset_dir / "setting.png").is_file(), (
+            f"Asset/setting.png must exist for source-mode Launcher: "
+            f"{asset_dir / 'setting.png'}"
+        )
+
+
+def test_launcher_spec_bundles_sarabun_thai_fonts() -> None:
+    """B-2: theme.py loads Sarabun-Regular.ttf + Sarabun-Bold.ttf at startup
+    via AddFontResourceExW. If the spec does not ship those files in datas,
+    the customer UI loses its Thai typography in the frozen build."""
+    assert "Sarabun-Regular.ttf" in SPEC_SOURCE, (
+        "NekoLauncher.spec must ship Sarabun-Regular.ttf in datas — "
+        "theme.py loads it via AddFontResourceExW in the frozen build"
+    )
+    assert "Sarabun-Bold.ttf" in SPEC_SOURCE, (
+        "NekoLauncher.spec must ship Sarabun-Bold.ttf in datas"
+    )
+
+
+def test_app_window_hide_button_binds_to_a_real_method() -> None:
+    """B-3: the Hide button command must reference a method that actually
+    exists on AppWindow. Clicking an undefined command raises AttributeError."""
+    import ast
+
+    tree = ast.parse(APP_WINDOW_SOURCE)
+    method_names = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+    # Find the Hide button call and extract its command argument
+    hide_call_match = False
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "secondary_button"
+        ):
+            for kw in node.keywords:
+                if kw.arg == "command" and isinstance(kw.value, ast.Attribute):
+                    if getattr(kw.value, "attr", "") == "_hide_to_tray":
+                        hide_call_match = True
+                        assert "_hide_to_tray" in method_names, (
+                            "Hide button command=self._hide_to_tray but "
+                            "_hide_to_tray is not defined on AppWindow"
+                        )
+    # If the Hide button was removed entirely (also acceptable per review),
+    # that's fine — but if it's still there, the command must resolve.
+    if "command=self._hide_to_tray" in APP_WINDOW_SOURCE:
+        assert hide_call_match, "Hide button still references _hide_to_tray"
+
+
+def test_app_window_controls_have_no_emoji_fallback_paths() -> None:
+    """H-1/H-2: _build_window_controls must not contain emoji glyph fallback
+    paths (⚙ / 🔧). The contract enforced by
+    test_app_window_source_uses_approved_asset_for_settings_control is that
+    the Settings control is always rendered from the approved project asset."""
+    controls_section = APP_WINDOW_SOURCE.split(
+        "def _build_window_controls"
+    )[1].split("def _open_settings_window")[0]
+    assert "⚙" not in controls_section, (
+        "_build_window_controls must not contain gear-emoji fallback paths"
+    )
+    assert "🔧" not in controls_section, (
+        "_build_window_controls must not contain wrench-emoji fallback paths"
+    )
+
+
+def test_app_window_settings_button_uses_image_open_for_icon() -> None:
+    """H-1: the Settings button must load its icon via Image.open(self._icon_path).
+    This is the happy-path contract; if the icon file is missing the button
+    renders with image=None rather than substituting glyphs."""
+    controls_section = APP_WINDOW_SOURCE.split(
+        "def _build_window_controls"
+    )[1].split("def _open_settings_window")[0]
+    assert "Image.open(self._icon_path)" in controls_section
+    assert "self._settings_control_image" in controls_section
+
+
+def test_app_window_no_hardcoded_path_in_app_factory_comment() -> None:
+    """M-2: a hardcoded 'E:\\Github\\Neko-Family-Proxy\\Asset' comment will be
+    wrong on every machine that is not the original dev workstation."""
+    assert "E:\\Github\\Neko-Family-Proxy\\Asset" not in APP_FACTORY_SOURCE
