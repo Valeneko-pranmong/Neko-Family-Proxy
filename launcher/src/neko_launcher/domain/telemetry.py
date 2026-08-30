@@ -42,9 +42,15 @@ class CoreHealthSnapshot:
     shadowsocks_connected: bool = False
 
     dropped_telemetry_events: int = 0
+    proxy_rtt_ms: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CoreHealthSnapshot:
+        raw_rtt = data.get("proxy_rtt_ms")
+        proxy_rtt_ms: int | None = None
+        if isinstance(raw_rtt, int) and not isinstance(raw_rtt, bool) and raw_rtt >= 0:
+            proxy_rtt_ms = raw_rtt
+
         return cls(
             core_state=str(data.get("core_state", "stopped")),
             proxy_state=str(data.get("proxy_state", "disconnected")),
@@ -64,6 +70,7 @@ class CoreHealthSnapshot:
             local_socks_running=bool(data.get("local_socks_running", False)),
             shadowsocks_connected=bool(data.get("shadowsocks_connected", False)),
             dropped_telemetry_events=int(data.get("dropped_telemetry_events", 0)),
+            proxy_rtt_ms=proxy_rtt_ms,
         )
 
 
@@ -218,3 +225,17 @@ def format_uptime(uptime_ms: int) -> str:
     minutes = (total_seconds % 3600) // 60
     seconds = total_seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def format_latency(latency_ms: int | None) -> str:
+    """Format aggregate proxy round-trip time in milliseconds.
+
+    Contract:
+    - None -> '—'
+    - 0 -> '0 ms'
+    - positive -> 'N ms'
+    - negative -> '—' defensively
+    """
+    if latency_ms is None or latency_ms < 0:
+        return "—"
+    return f"{latency_ms} ms"

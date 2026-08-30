@@ -536,16 +536,50 @@ def test_close_stops_worker_and_quits_before_destroying_the_window() -> None:
 
 
 def test_show_program_view_packs_scrollable_frame_with_internal_manager() -> None:
+    from unittest.mock import Mock
     window = object.__new__(AppWindow)
+    window.root = Mock()
+    window.root.resizable = Mock()
+    window.root.minsize = Mock()
+    window.root.maxsize = Mock()
+    window.root.geometry = Mock()
+    window.root.winfo_screenwidth = Mock(return_value=1920)
+    window.root.winfo_screenheight = Mock(return_value=1080)
     window._auth_view = FakeView()  # type: ignore[assignment]
     window._dashboard_view = FakeView(manager="grid")  # type: ignore[assignment]
+    window._settings_button = Mock()
 
     window._show_program_view()
 
     assert window._auth_view.pack_forget_calls == 1
     assert window._dashboard_view.pack_calls == [
-        {"fill": "both", "expand": True, "padx": 8, "pady": (2, 6)}
+        {"fill": "both", "expand": True, "padx": 6, "pady": (2, 4)}
     ]
+    window._settings_button.pack.assert_called_with(side="left")
+    window.root.resizable.assert_called_with(True, True)
+
+def test_show_auth_view_compacts_window(monkeypatch: Any) -> None:
+    from unittest.mock import Mock
+    window = object.__new__(AppWindow)
+    window.root = Mock()
+    window.root.resizable = Mock()
+    window.root.winfo_screenwidth = Mock(return_value=1920)
+    window.root.winfo_screenheight = Mock(return_value=1080)
+    window.root.geometry = Mock()
+    window._auth_view = FakeView()  # type: ignore[assignment]
+    window._dashboard_view = FakeView()  # type: ignore[assignment]
+    window._settings_button = Mock()
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.fit_portrait_window",
+        lambda _root: (440, 592),
+    )
+
+    window._show_auth_view()
+
+    assert window._dashboard_view.pack_forget_calls == 1
+    window._settings_button.pack_forget.assert_called_once()
+    window.root.resizable.assert_called_with(False, False)
+    assert window._window_size == (440, 592)
 
 
 def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindow:
@@ -588,6 +622,7 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._download_speed = FakeVariable()  # type: ignore[assignment]
     window._upload_speed = FakeVariable()  # type: ignore[assignment]
     window._session_duration = FakeVariable()  # type: ignore[assignment]
+    window._latency = FakeVariable()  # type: ignore[assignment]
     window._status_title = FakeVariable()  # type: ignore[assignment]
     window._status_subtitle = FakeVariable()  # type: ignore[assignment]
     window._tray_manager = None
@@ -1169,21 +1204,41 @@ def test_render_telemetry_updates_vars(tmp_path: Path) -> None:
     assert "V2Ray ทำงาน" in window._telemetry_health.get()
     assert "SOCKS พร้อม" in window._telemetry_health.get()
     assert "Upstream เชื่อมต่อแล้ว" in window._telemetry_health.get()
+    assert window._download_speed.get() == "100.0 KB/s"
+    assert window._upload_speed.get() == "50.0 KB/s"
+    assert window._session_duration.get() == "00:02:05"
+    assert window._latency.get() == "—"
+
+    # With proxy_rtt_ms
+    s_rtt = replace(
+        s_conn,
+        snapshot=replace(snapshot, proxy_rtt_ms=45),
+    )
+    window._render_telemetry(s_rtt)
+    assert window._latency.get() == "45 ms"
 
     truthful_totals = window._telemetry_transfer.get()
+
     disconnected = replace(
         s_conn, connection_state=TelemetryConnectionState.DISCONNECTED
     )
     window._render_telemetry(disconnected)
     assert window._telemetry_transfer.get() == truthful_totals
     assert window._telemetry_session.get() == "เซสชัน: ไม่พร้อมใช้งาน"
-    assert window._session_duration.get() == "ไม่พร้อมใช้งาน"
+    assert window._download_speed.get() == "—"
+    assert window._upload_speed.get() == "—"
+    assert window._session_duration.get() == "—"
+    assert window._latency.get() == "—"
 
     stale = replace(s_conn, is_stale=True)
     window._render_telemetry(stale)
     assert window._telemetry_transfer.get() == truthful_totals
     assert window._telemetry_session.get() == "เซสชัน: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)"
-    assert window._session_duration.get() == "ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)"
+    assert window._download_speed.get() == "—"
+    assert window._upload_speed.get() == "—"
+    assert window._session_duration.get() == "—"
+    assert window._latency.get() == "—"
+
 
 
 def test_running_proxy_transport_disconnect_with_pso2_queues_reconnect(
@@ -1488,3 +1543,144 @@ def test_close_stops_telemetry_client(tmp_path: Path) -> None:
 
     window.close()
     assert stopped is True
+
+
+def test_main_window_is_responsive_and_landscape_first(monkeypatch: Any) -> None:
+    source = Path(__file__).parents[2].joinpath('src', 'neko_launcher', 'ui', 'app_window.py').read_text(encoding='utf-8')
+    assert 'self.root.resizable(True, True)' in source
+    assert 'self.root.minsize(480, 500)' in source
+
+
+# A18_NATIVE_MINIMIZE
+
+def test_a18_native_minimize_respects_hide_to_tray_preference() -> None:
+    from types import SimpleNamespace
+    from neko_launcher.ui.app_window import AppWindow
+
+    class Root:
+        def __init__(self, state: str) -> None:
+            self._state = state
+        def state(self) -> str:
+            return self._state
+
+    class Toggle:
+        def __init__(self, value: bool) -> None:
+            self.value = value
+        def get(self) -> bool:
+            return self.value
+
+    for enabled, iconic, closing, programmatic, expected in (
+        (False, True, False, False, 0),
+        (True, True, False, False, 1),
+        (True, False, False, False, 0),
+        (True, True, True, False, 0),
+        (True, True, False, True, 0),
+    ):
+        window = AppWindow.__new__(AppWindow)
+        window.root = Root("iconic" if iconic else "normal")
+        window._hide_to_tray = Toggle(enabled)
+        window._closing = closing
+        window._programmatic_withdraw = programmatic
+        calls: list[str] = []
+        window._minimize_window = lambda: calls.append("tray")
+        window._on_window_state_changed(SimpleNamespace(widget=window.root))
+        assert len(calls) == expected
+
+
+def test_a18_window_contract_uses_compact_dashboard_and_exact_title() -> None:
+    from pathlib import Path
+    source = Path(__file__).parents[2].joinpath("src", "neko_launcher", "ui", "app_window.py").read_text(encoding="utf-8")
+    assert 'self.root.title("NEKO FAMILY PROXY")' in source
+    assert 'self.root.minsize(480, 500)' in source
+    assert 'self.root.geometry("500x520")' in source
+    assert 'controls.pack(side="right", anchor="ne")' in source
+    assert 'controls, "Hide"' not in source
+
+
+# A21_VIEW_SWITCH_FLICKER
+
+def test_a21_dashboard_geometry_is_compact_and_single_step() -> None:
+    source = Path(__file__).parents[2].joinpath(
+        "src", "neko_launcher", "ui", "app_window.py"
+    ).read_text(encoding="utf-8")
+    program = source.split("def _show_program_view")[1].split("# Password dialog")[0]
+    assert 'width, height = (500, 520)' in program
+    assert 'self.root.minsize(480, 500)' in program
+    assert program.count("self.root.geometry(") == 1
+    assert "center_window(self.root" not in program
+    assert 'getattr(self, "_active_view", None) == "program"' in program
+
+
+def test_a21_cancel_recovery_immediately_routes_back_when_views_exist() -> None:
+    window = object.__new__(AppWindow)
+    window._service = FakeRecoveryService()  # type: ignore[assignment]
+    window._recovery_username = FakeVariable("tester")  # type: ignore[assignment]
+    window._recovery_code = FakeVariable("secret")  # type: ignore[assignment]
+    window._recovery_password = FakeVariable("secret")  # type: ignore[assignment]
+    window._recovery_password_confirm = FakeVariable("secret")  # type: ignore[assignment]
+    window._auth_view = object()
+    window._dashboard_view = object()
+    called: list[str] = []
+    window._show_auth_view = lambda: called.append("auth")  # type: ignore[method-assign]
+    window._cancel_account_recovery()
+    assert called == ["auth"]
+    assert window._active_view is None
+
+
+
+def test_a22_set_if_changed_deduplicates_visible_updates() -> None:
+    class Var:
+        def __init__(self) -> None:
+            self.value = "same"
+            self.calls = 0
+        def get(self) -> str:
+            return self.value
+        def set(self, value: str) -> None:
+            self.calls += 1
+            self.value = value
+    var = Var()
+    AppWindow._set_if_changed(var, "same")
+    assert var.calls == 0
+    AppWindow._set_if_changed(var, "new")
+    assert var.calls == 1
+    assert var.value == "new"
+
+
+# A24_HEADER_CENTERING
+def test_a24_header_uses_symmetric_fixed_slots() -> None:
+    source = Path(__file__).parents[2].joinpath(
+        "src", "neko_launcher", "ui", "app_window.py"
+    ).read_text(encoding="utf-8")
+    assert 'self._header_left_spacer = ctk.CTkFrame(' in source
+    assert 'header, fg_color="transparent", width=32, height=26' in source
+    assert 'self._header_left_spacer.pack_propagate(False)' in source
+    controls = source.split("def _build_window_controls")[1].split(
+        "def _open_settings_window"
+    )[0]
+    assert 'width=32, height=26' in controls
+    assert 'controls.pack_propagate(False)' in controls
+    assert 'self._window_controls = controls' in controls
+
+
+# A25_DASHBOARD_COMPACT
+def test_a25_dashboard_is_more_compact() -> None:
+    source = Path(__file__).parents[2].joinpath(
+        "src", "neko_launcher", "ui", "app_window.py"
+    ).read_text(encoding="utf-8")
+    program = source.split("def _show_program_view")[1].split("# Password dialog")[0]
+    assert 'width, height = (500, 520)' in program
+    assert 'self.root.minsize(480, 500)' in program
+
+
+# A25_REGISTER_CTA
+def test_a25_register_cta_is_large_enough() -> None:
+    source = Path(__file__).parents[2].joinpath(
+        "src", "neko_launcher", "ui", "views", "auth_view.py"
+    ).read_text(encoding="utf-8")
+    section = source.split('self._register_action = ctk.CTkFrame')[1].split('self._switch_tab("login")')[0]
+    assert "height=76" in section
+    assert "pack_propagate(False)" in section
+    assert "height=56" in section
+    assert "size=16" in section
+    assert 'side="bottom"' not in section
+    assert "corner_radius=12" in section

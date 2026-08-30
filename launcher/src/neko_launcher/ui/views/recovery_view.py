@@ -32,21 +32,28 @@ class RecoveryView:
     ) -> None:
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
         panel = card(self.frame)
-        panel.configure(height=540)
-        panel.pack_propagate(False)
+        panel.pack_configure(fill="both", expand=True, padx=8, pady=4)
+
+        # Keep navigation visible at the top. The old bottom-only button could
+        # be clipped by the compact portrait window because this panel used a
+        # fixed 540px height.
+        self._back_button = secondary_button(
+            panel, "← กลับไปหน้าเข้าสู่ระบบ", on_cancel, width=180, height=30
+        )
+        self._back_button.pack(anchor="w", padx=14, pady=(10, 2))
 
         ctk.CTkLabel(
             panel,
             text="กู้บัญชี",
             font=ctk.CTkFont(family=FONT_FAMILY, size=20, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(pady=(28, 4))
+        ).pack(pady=(8, 3))
         ctk.CTkLabel(
             panel,
             text="ใช้เฉพาะรหัสกู้บัญชีที่ได้รับจากผู้ดูแล",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
-        ).pack(pady=(0, 18))
+        ).pack(pady=(0, 8))
 
         self._code_frame = ctk.CTkFrame(panel, fg_color="transparent")
         field_label(self._code_frame, "ชื่อผู้ใช้")
@@ -66,10 +73,7 @@ class RecoveryView:
         self._verify_button = primary_button(
             self._code_frame, "ดำเนินการต่อ ➔", on_verify
         )
-        self._verify_button.pack(fill="x", padx=14, pady=(20, 8))
-        secondary_button(
-            self._code_frame, "กลับไปหน้าเข้าสู่ระบบ", on_cancel
-        ).pack(fill="x", padx=14, pady=(0, 12))
+        self._verify_button.pack(fill="x", padx=14, pady=(10, 8))
 
         self._password_frame = ctk.CTkFrame(panel, fg_color="transparent")
         ctk.CTkLabel(

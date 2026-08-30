@@ -6,7 +6,7 @@ import tkinter as tk
 import webbrowser
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 
 from neko_launcher import __version__
 from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
@@ -92,6 +92,8 @@ class SettingsWindow(ctk.CTkToplevel):
         telemetry_health_var: tk.StringVar | None = None,
         always_on_top_var: tk.BooleanVar | None = None,
         on_always_on_top_changed: Callable[[], None] | None = None,
+        hide_to_tray_var: tk.BooleanVar | None = None,
+        on_hide_to_tray_changed: Callable[[], None] | None = None,
         diagnostics: Any = None,
         debug_mode: bool = False,
         debug_log_dir: Path | None = None,
@@ -107,7 +109,9 @@ class SettingsWindow(ctk.CTkToplevel):
         super().__init__(parent)
         self._on_close_callback = on_close
         self._logo_path = logo_path
+        self._icon_path = icon_path
         self._about_logo_image = None
+        self._window_icon_photo = None
         self._account_var = account_var or tk.StringVar(value="")
         self._account_status_var = account_status_var or tk.StringVar(value="")
         self._entitlement_status_var = entitlement_status_var or tk.StringVar(value="")
@@ -142,6 +146,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self._telemetry_health_var = telemetry_health_var or tk.StringVar(value="ไม่พร้อมใช้งาน")
         self._always_on_top_var = always_on_top_var or tk.BooleanVar(value=False)
         self._on_always_on_top_changed = on_always_on_top_changed
+        self._hide_to_tray_var = hide_to_tray_var or tk.BooleanVar(value=False)
+        self._on_hide_to_tray_changed = on_hide_to_tray_changed
         self._customer_connection_var = tk.StringVar(
             value=customer_connection_status(self._proxy_connection_var.get())
         )
@@ -169,10 +175,11 @@ class SettingsWindow(ctk.CTkToplevel):
         self.configure(fg_color=PALETTE.background)
 
         if icon_path and icon_path.is_file():
-            try:
-                self.iconbitmap(icon_path)
-            except Exception:
-                pass
+            self._apply_window_icon()
+            # CTkToplevel installs its framework icon on Windows shortly after
+            # construction. Re-apply the product icon after that delayed hook.
+            self.after(300, self._apply_window_icon)
+            self.bind("<Map>", self._on_window_mapped, add="+")
 
         self.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -189,6 +196,23 @@ class SettingsWindow(ctk.CTkToplevel):
         self.bind("<Control-f>", self._focus_search)
         style_native_title_bar(self, PALETTE)
         apply_rounded_window_shape(self, radius=20)
+
+    def _apply_window_icon(self) -> None:
+        """Keep Settings on the same Windows taskbar icon as the Launcher."""
+        icon_path = getattr(self, "_icon_path", None)
+        if not icon_path or not icon_path.is_file():
+            return
+        try:
+            self.iconbitmap(icon_path)
+            image = Image.open(icon_path)
+            self._window_icon_photo = ImageTk.PhotoImage(image, master=self)
+            self.iconphoto(False, self._window_icon_photo)
+        except (tk.TclError, OSError):
+            pass
+
+    def _on_window_mapped(self, _event: tk.Event[Any]) -> None:
+        # Re-apply after restore/deiconify as some Windows/Tk paths reset it.
+        self.after_idle(self._apply_window_icon)
 
     def _build_layout(self) -> None:
         shell = ctk.CTkFrame(
@@ -349,6 +373,12 @@ class SettingsWindow(ctk.CTkToplevel):
             command=self._on_always_on_top_changed,
         )
         self._always_on_top_switch.pack(anchor="w", padx=16, pady=8)
+
+        self._hide_to_tray_switch = ctk.CTkSwitch(
+            c, text="Hide to tray", variable=self._hide_to_tray_var,
+            command=self._on_hide_to_tray_changed,
+        )
+        self._hide_to_tray_switch.pack(anchor="w", padx=16, pady=(0, 12))
         return page
 
     def _create_account_page(self) -> ctk.CTkFrame:

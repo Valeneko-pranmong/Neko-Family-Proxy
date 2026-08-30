@@ -168,8 +168,20 @@ class AuthView:
         self._register_password_confirm_entry.bind(
             "<Return>", lambda _event: on_register()
         )
-        self._register_button = primary_button(register, "สร้างบัญชี ➔", on_register)
-        self._register_button.pack(side="bottom", fill="x", padx=14, pady=(10, 14))
+        self._register_action = ctk.CTkFrame(
+            register, fg_color="transparent", height=76
+        )
+        self._register_action.pack(fill="x", padx=14, pady=(16, 12))
+        self._register_action.pack_propagate(False)
+        self._register_button = primary_button(
+            self._register_action, "สร้างบัญชี ➔", on_register
+        )
+        self._register_button.configure(
+            height=56,
+            corner_radius=12,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+        )
+        self._register_button.pack(fill="both", expand=True)
 
         self._switch_tab("login")
 

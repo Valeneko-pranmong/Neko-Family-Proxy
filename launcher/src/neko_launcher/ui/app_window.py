@@ -45,7 +45,7 @@ from .platform.window_chrome import (
     style_native_title_bar,
     WindowDragHandler,
 )
-from .platform.window_scaling import fit_portrait_window, center_window
+from .platform.window_scaling import center_window, fit_portrait_window
 from .platform.system_tray import SystemTrayManager, drain_tray_actions
 from .components.toast import ToastNotification
 from .components.buttons import secondary_button
@@ -53,7 +53,8 @@ from .views.auth_view import AuthView
 from .views.dashboard_view import DashboardView, open_password_dialog
 from .views.recovery_view import RecoveryView
 from .settings_window import SettingsWindow
-from .status_presentation import translate_customer_status
+from .status_presentation import translate_customer_status, get_server_status
+from .network_path_presentation import map_network_path
 
 
 HEARTBEAT_INTERVAL_MS = 30_000
@@ -70,18 +71,26 @@ class AppWindow:
         event_bus: EventBus,
         logo_path: Path | None = None,
         icon_path: Path | None = None,
+        settings_icon_path: Path | None = None,
         game_default_path: str = "",
         game_path_store: Path | None = None,
         diagnostics: Any = None,
         debug_mode: bool = False,
         debug_log_dir: Path | None = None,
         telemetry_client: Any = None,
+        proxy_status_client: Any = None,
     ) -> None:
         apply_theme()
         self._controller = controller
         self._service = service
         self._event_bus = event_bus
         self._telemetry_client = telemetry_client
+        self._proxy_status_client = proxy_status_client
+        self._proxy_status_refresh_pending = False
+        self._proxy_status_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="neko-proxy-status",
+        )
         self._executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="neko-launcher",
@@ -97,6 +106,7 @@ class AppWindow:
         self._settings_control_image = None
         self._logo_path = logo_path
         self._icon_path = icon_path
+        self._settings_icon_path = settings_icon_path
         self._password_dialog: ctk.CTkToplevel | None = None
         self._debug_dialog: ctk.CTkToplevel | None = None
         self._settings_window: SettingsWindow | None = None
@@ -122,12 +132,16 @@ class AppWindow:
         self._last_telemetry_state: Any = None
         self._last_truthful_telemetry_snapshot: Any = None
         self._redeem_in_flight = False
-        self._record_debug_status("LAUNCHER_START", message="Debug console enabled")
+        self._record_debug_status(
+            "LAUNCHER_START",
+            support_log="enabled",
+            debug_verbose=self._debug_mode,
+        )
 
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.root.title("NEKO FAMILY")
-        self.root.resizable(False, False)
+        self.root.title("NEKO FAMILY PROXY")
+        self.root.resizable(True, True)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
             try:
@@ -135,18 +149,27 @@ class AppWindow:
             except Exception:
                 pass
 
-        self._window_size = fit_portrait_window(self.root)
+        # Landscape-first geometry
+        self.root.minsize(480, 500)
+        self.root.geometry("500x520")
+        self._window_size = (500, 520)
 
         self._status = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._account = tk.StringVar(value="")
         self._entitlement = tk.StringVar(value="ยังไม่มีวันใช้งาน")
         self._status_title = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._status_subtitle = tk.StringVar(value="กำลังตรวจสอบการเข้าสู่ระบบ")
+        self._server_status = tk.StringVar(value="ออฟไลน์")
         self._entitlement_days = tk.StringVar(value="0 วัน")
         self._entitlement_expiry = tk.StringVar(value="ยังไม่มีวันใช้งาน")
-        self._download_speed = tk.StringVar(value="ไม่พร้อมใช้งาน")
-        self._upload_speed = tk.StringVar(value="ไม่พร้อมใช้งาน")
-        self._session_duration = tk.StringVar(value="ไม่พร้อมใช้งาน")
+        self._download_speed = tk.StringVar(value="—")
+        self._upload_speed = tk.StringVar(value="—")
+        self._session_duration = tk.StringVar(value="—")
+        self._latency = tk.StringVar(value="—")
+        self._server_load = tk.StringVar(value="ยังไม่มีข้อมูล")
+        self._server_avg_download = tk.StringVar(value="—")
+        self._server_avg_upload = tk.StringVar(value="—")
+        self._server_average_window = tk.StringVar(value="เฉลี่ย 30 นาที")
         self._error = tk.StringVar(value="")
         self._notice = tk.StringVar(value="")
         self._error.trace_add("write", self._update_message_visibility)
@@ -177,6 +200,9 @@ class AppWindow:
         self._always_on_top = tk.BooleanVar(
             value=self._program_preferences.always_on_top
         )
+        self._hide_to_tray = tk.BooleanVar(
+            value=self._program_preferences.hide_to_tray
+        )
         self._game_connection_status = tk.StringVar(value="รอให้เข้าเกม (pso2.exe)")
         self._proxy_connection_status = tk.StringVar(value="ProxyCore ยังไม่ทำงาน")
         self._telemetry_speed = tk.StringVar(value="ความเร็ว: ไม่พร้อมใช้งาน")
@@ -184,21 +210,24 @@ class AppWindow:
         self._telemetry_session = tk.StringVar(value="เซสชัน: ไม่พร้อมใช้งาน")
         self._telemetry_health = tk.StringVar(value="สถานะระบบ: ไม่พร้อมใช้งาน")
         self._process_detection_pending = False
-        self._process_detection_pending = False
+
+        self._programmatic_withdraw = False
+        self._active_view: str | None = None
 
         if self._telemetry_client is not None:
             self._telemetry_client.start()
 
         self._build_layout(logo_path)
-        self._window_size = fit_portrait_window(self.root)
         self.root.after(250, lambda: center_window(self.root, self._window_size))
         self.root.after(350, self._show_initial_window)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.bind("<Unmap>", self._on_window_state_changed)
         self.root.after(100, self._drain_events)
         self.root.after(100, lambda: drain_tray_actions(
             self._tray_actions, self.root, self.close,
         ))
         self.root.after(HEARTBEAT_INTERVAL_MS, self._heartbeat)
+        self.root.after(1_500, self._refresh_public_proxy_status)
         self.root.after(3_000, self._poll_game_process)
         self._submit(self._service.restore_session, self._restore_completed)
 
@@ -234,10 +263,19 @@ class AppWindow:
             corner_radius=14,
         )
         shell.pack(fill="both", expand=True, padx=8, pady=6)
-        self._build_window_controls(shell)
-
         header = ctk.CTkFrame(shell, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(6, 2))
+
+        # Keep the brand mathematically centered on every route. The right-side
+        # Settings slot stays a fixed 32 px wide even while its button is hidden;
+        # this matching left spacer prevents the Login/Recovery header from
+        # being pushed sideways by CustomTkinter's default frame width.
+        self._header_left_spacer = ctk.CTkFrame(
+            header, fg_color="transparent", width=32, height=26
+        )
+        self._header_left_spacer.pack(side="left")
+        self._header_left_spacer.pack_propagate(False)
+        self._build_window_controls(header)
 
         brand = ctk.CTkFrame(header, fg_color="transparent")
         brand.pack(side="left", fill="x", expand=True)
@@ -305,9 +343,15 @@ class AppWindow:
             account_var=self._account,
             entitlement_days_var=self._entitlement_days,
             entitlement_expiry_var=self._entitlement_expiry,
+            server_status_var=self._server_status,
             download_speed_var=self._download_speed,
             upload_speed_var=self._upload_speed,
             session_duration_var=self._session_duration,
+            latency_var=self._latency,
+            server_load_var=self._server_load,
+            server_avg_download_var=self._server_avg_download,
+            server_avg_upload_var=self._server_avg_upload,
+            server_average_window_var=self._server_average_window,
         )
         self._show_auth_view()
         self._update_message_visibility()
@@ -322,30 +366,28 @@ class AppWindow:
         footer.pack(pady=(0, 4))
 
     def _build_window_controls(self, drag_surface: ctk.CTkBaseClass) -> None:
-        controls = ctk.CTkFrame(self.root, fg_color="transparent")
-        controls.place(relx=1.0, x=-10, y=10, anchor="ne")
+        controls = ctk.CTkFrame(
+            drag_surface, fg_color="transparent", width=32, height=26
+        )
+        controls.pack(side="right", anchor="ne")
+        controls.pack_propagate(False)
+        self._window_controls = controls
 
-        # Settings control: always rendered from the approved project asset.
-        # If the icon file is missing we leave image=None (ctk falls back to a
-        # text-only button) — never substitute glyph fallbacks.
-        if self._icon_path and self._icon_path.is_file():
+        # Settings control uses its dedicated approved asset. It is hidden on
+        # signed-out/recovery views and shown only on the authenticated dashboard.
+        # If the icon file is missing we leave image=None; never substitute glyphs.
+        if self._settings_icon_path and self._settings_icon_path.is_file():
             self._settings_control_image = ctk.CTkImage(
-                Image.open(self._icon_path), size=(18, 18)
+                Image.open(self._settings_icon_path), size=(18, 18)
             )
         else:
             self._settings_control_image = None
-        ctk.CTkButton(
+        self._settings_button = ctk.CTkButton(
             controls, text="", image=self._settings_control_image,
             command=self._open_settings_window, width=32, height=26,
             fg_color="transparent", hover_color="#F3F4F6",
-        ).pack(side="left")
-
-        # Hide-to-tray button (wired to existing _minimize_window which
-        # withdraws the window and installs the SystemTrayManager on demand).
-        hide_btn = secondary_button(
-            controls, "Hide", command=self._minimize_window, width=40, height=26
         )
-        hide_btn.pack(side="left")
+        self._settings_button.pack(side="left")
 
         self._window_drag_handler = WindowDragHandler(self.root)
         self._window_drag_handler.bind_to(drag_surface)
@@ -384,6 +426,8 @@ class AppWindow:
             telemetry_health_var=self._telemetry_health,
             always_on_top_var=self._always_on_top,
             on_always_on_top_changed=self._apply_always_on_top,
+            hide_to_tray_var=self._hide_to_tray,
+            on_hide_to_tray_changed=self._apply_hide_to_tray,
             diagnostics=self._diagnostics,
             debug_mode=self._debug_mode,
             debug_log_dir=self._debug_log_dir,
@@ -405,12 +449,25 @@ class AppWindow:
         if self._settings_window is not None and self._settings_window.winfo_exists():
             self._settings_window.attributes("-topmost", enabled)
 
+    def _apply_hide_to_tray(self) -> None:
+        enabled = bool(self._hide_to_tray.get())
+        self._program_preferences.set_hide_to_tray(enabled)
+
     def _close_settings_window(self) -> None:
         self._settings_window = None
 
     # ------------------------------------------------------------------
     # Tray
     # ------------------------------------------------------------------
+    def _on_window_state_changed(self, event: tk.Event[Any]) -> None:
+        if str(event.widget) != str(self.root):
+            return
+        if self._closing or self._programmatic_withdraw:
+            return
+        # Transition to tray if hide_to_tray is enabled and the window is minimized
+        if self.root.state() == "iconic" and self._hide_to_tray.get():
+            self._minimize_window()
+
     def _minimize_window(self) -> None:
         if not self._closing and self.root.winfo_exists():
             if self._tray_manager is None:
@@ -418,7 +475,12 @@ class AppWindow:
                     self._icon_path, self._tray_actions,
                 )
                 self._tray_manager.setup()
+            self._programmatic_withdraw = True
             self.root.withdraw()
+            self.root.after(100, self._clear_programmatic_withdraw)
+
+    def _clear_programmatic_withdraw(self) -> None:
+        self._programmatic_withdraw = False
 
     # ------------------------------------------------------------------
     # Toast / messages
@@ -452,18 +514,34 @@ class AppWindow:
     # View switching
     # ------------------------------------------------------------------
     def _show_auth_view(self) -> None:
+        if getattr(self, "_active_view", None) == "auth":
+            return
         self._dashboard_view.frame.pack_forget()
         recovery_view = getattr(self, "_recovery_view", None)
         if recovery_view is not None:
             recovery_view.frame.pack_forget()
+        if hasattr(self, "_settings_button"):
+            self._settings_button.pack_forget()
+        if hasattr(self, "root") and hasattr(self.root, "resizable"):
+            self.root.resizable(False, False)
+            self._window_size = fit_portrait_window(self.root)
         self._auth_view.frame.pack(fill="both", expand=True, padx=8, pady=(0, 3))
+        self._active_view = "auth"
 
     def _show_recovery_view(self) -> None:
+        if getattr(self, "_active_view", None) == "recovery":
+            return
         self._auth_view.frame.pack_forget()
         self._dashboard_view.frame.pack_forget()
+        if hasattr(self, "_settings_button"):
+            self._settings_button.pack_forget()
+        if hasattr(self, "root") and hasattr(self.root, "resizable"):
+            self.root.resizable(False, False)
+            self._window_size = fit_portrait_window(self.root)
         self._recovery_view.frame.pack(
             fill="both", expand=True, padx=8, pady=(0, 3)
         )
+        self._active_view = "recovery"
 
     def _show_recovery_code_entry(self) -> None:
         self._recovery_password.set("")
@@ -471,11 +549,31 @@ class AppWindow:
         self._recovery_view.show_code_entry()
 
     def _show_program_view(self) -> None:
+        if getattr(self, "_active_view", None) == "program":
+            return
         self._auth_view.frame.pack_forget()
         recovery_view = getattr(self, "_recovery_view", None)
         if recovery_view is not None:
             recovery_view.frame.pack_forget()
-        self._dashboard_view.frame.pack(fill="both", expand=True, padx=8, pady=(2, 6))
+        if hasattr(self, "_settings_button"):
+            self._settings_button.pack(side="left")
+        if hasattr(self, "root") and hasattr(self.root, "resizable"):
+            width, height = (500, 520)
+            self.root.minsize(480, 500)
+            self.root.resizable(True, True)
+            self.root.maxsize(
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+            screen_w = int(self.root.winfo_screenwidth())
+            screen_h = int(self.root.winfo_screenheight())
+            x = max(0, (screen_w - width) // 2)
+            y = max(0, (screen_h - height) // 2)
+            self._window_size = (width, height)
+            # One geometry operation avoids visible resize-then-recenter flicker.
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self._dashboard_view.frame.pack(fill="both", expand=True, padx=6, pady=(2, 4))
+        self._active_view = "program"
 
     # ------------------------------------------------------------------
     # Password dialog
@@ -543,7 +641,7 @@ class AppWindow:
             font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
             text_color=PALETTE.primary,
         ).pack(side="left")
-        
+
         secondary_button(
             header,
             "Retry ProxyCore (Simulate Restart)",
@@ -552,13 +650,13 @@ class AppWindow:
 
         actions_frame = ctk.CTkFrame(frame, fg_color="transparent")
         actions_frame.pack(fill="x", pady=(0, 10))
-        
+
         secondary_button(
             actions_frame,
             "Copy Debug",
             self._copy_debug_to_clipboard,
         ).pack(side="left", padx=(0, 10))
-        
+
         if self._debug_log_dir:
             secondary_button(
                 actions_frame,
@@ -573,7 +671,7 @@ class AppWindow:
         )
         self._debug_text.pack(fill="both", expand=True, pady=(0, 10))
         self._debug_text.configure(state="disabled")
-        
+
         if self._debug_log_dir:
             ctk.CTkLabel(
                 frame,
@@ -590,13 +688,13 @@ class AppWindow:
         state = self._controller.state.proxy_status
         if state in (ProxyStatus.STARTING, ProxyStatus.RUNNING, ProxyStatus.STOPPING):
             return
-            
+
         self._debug_retry_pending = True
         self._submit(self._do_debug_retry, self._on_debug_retry_done)
 
     def _do_debug_retry(self) -> None:
         self._service.start_proxy()
-        
+
     def _on_debug_retry_done(self, _result: Any) -> None:
         self._debug_retry_pending = False
 
@@ -632,12 +730,12 @@ class AppWindow:
         )
         if snapshot.process_event:
             content += f"Event:      {snapshot.process_event}\n"
-        
+
         content += (
             f"PID:        {snapshot.pid}\n"
             f"Runtime:    {snapshot.runtime}\n"
         )
-        
+
         if snapshot.exit_code is not None:
             hex_exit = f"0x{snapshot.exit_code & 0xFFFFFFFF:08X}"
             content += f"Exit Code:  {snapshot.exit_code} (Hex: {hex_exit})\n"
@@ -655,7 +753,7 @@ class AppWindow:
                 "Transport:  "
                 f"{snapshot.authorized_start_transport_outcome}\n"
             )
-            
+
         content += (
             f"WinError:   {snapshot.winerror}\n"
             f"Core Path:  {snapshot.core_path}\n"
@@ -672,7 +770,7 @@ class AppWindow:
         if self._diagnostics:
             snapshot = self._diagnostics.snapshot()
             content = self._format_debug_snapshot(snapshot)
-            
+
             self._debug_text.configure(state="normal")
             self._debug_text.delete("1.0", "end")
             self._debug_text.insert("1.0", content)
@@ -740,6 +838,11 @@ class AppWindow:
         self._service.cancel_account_recovery()
         self._clear_recovery_sensitive_fields()
         self._recovery_username.set("")
+        # Navigation is immediate; the queued SIGNED_OUT event remains the
+        # state authority and will be idempotent when it arrives.
+        if hasattr(self, "_auth_view") and hasattr(self, "_dashboard_view"):
+            self._active_view = None
+            self._show_auth_view()
 
     def _clear_recovery_sensitive_fields(self) -> None:
         for name in (
@@ -998,6 +1101,61 @@ class AppWindow:
     # ------------------------------------------------------------------
     # Background work / event loop
     # ------------------------------------------------------------------
+
+    def _refresh_public_proxy_status(self) -> None:
+        if self._closing or self._proxy_status_client is None:
+            return
+        if self._proxy_status_refresh_pending:
+            if self.root.winfo_exists():
+                self.root.after(30_000, self._refresh_public_proxy_status)
+            return
+
+        self._proxy_status_refresh_pending = True
+        future = self._proxy_status_executor.submit(self._proxy_status_client.fetch)
+
+        def finish() -> None:
+            if not future.done():
+                if self.root.winfo_exists() and not self._closing:
+                    self.root.after(100, finish)
+                return
+            self._proxy_status_refresh_pending = False
+            try:
+                status = future.result()
+            except Exception as exc:
+                self._set_if_changed(self._server_load, "ยังไม่มีข้อมูล")
+                self._set_if_changed(self._server_avg_download, "—")
+                self._set_if_changed(self._server_avg_upload, "—")
+                self._set_if_changed(self._server_average_window, "เฉลี่ย 30 นาที")
+                self._record_debug_status(
+                    "PUBLIC_PROXY_STATUS_UNAVAILABLE",
+                    error=type(exc).__name__,
+                )
+            else:
+                from neko_launcher.infrastructure.proxy_status_client import format_bps
+
+                self._set_if_changed(self._server_load, status.load_label)
+                self._set_if_changed(self._server_avg_download, format_bps(status.avg_rx_bps))
+                self._set_if_changed(self._server_avg_upload, format_bps(status.avg_tx_bps))
+                window = (
+                    "เฉลี่ย 30 นาที"
+                    if status.covered_minutes >= 30
+                    else f"เฉลี่ยช่วงนี้ ({status.covered_minutes} นาที)"
+                    if status.covered_minutes > 0
+                    else "ค่าเฉลี่ยล่าสุด"
+                )
+                self._set_if_changed(self._server_average_window, window)
+                self._record_debug_status(
+                    "PUBLIC_PROXY_STATUS",
+                    host_status=status.host_status,
+                    load_level=status.load_level,
+                    sample_count=status.sample_count,
+                    age_seconds=status.age_seconds if status.age_seconds is not None else "unknown",
+                )
+            if self.root.winfo_exists() and not self._closing:
+                self.root.after(30_000, self._refresh_public_proxy_status)
+
+        self.root.after(100, finish)
+
     def _submit(
         self,
         work: Callable[[], Any],
@@ -1040,6 +1198,15 @@ class AppWindow:
         if self.root.winfo_exists():
             self.root.after(100, self._drain_events)
 
+    @staticmethod
+    def _set_if_changed(variable: Any, value: Any) -> None:
+        try:
+            if variable.get() == value:
+                return
+        except Exception:
+            pass
+        variable.set(value)
+
     # ------------------------------------------------------------------
     # State rendering
     # ------------------------------------------------------------------
@@ -1064,12 +1231,20 @@ class AppWindow:
         cust_status = translate_customer_status(
             state, getattr(self, "_last_telemetry_state", None)
         )
-        self._status_title.set(f"● {cust_status.title}")
-        self._status_subtitle.set(cust_status.subtitle)
+        srv_text, srv_role = get_server_status(
+            state, getattr(self, "_last_telemetry_state", None)
+        )
+        self._set_if_changed(self._status_title, f"● {cust_status.title}")
+        self._set_if_changed(self._status_subtitle, cust_status.subtitle)
+        if hasattr(self, "_server_status"):
+            self._set_if_changed(self._server_status, srv_text)
         if hasattr(self, "_dashboard_view") and hasattr(
             self._dashboard_view, "update_status_role"
         ):
             self._dashboard_view.update_status_role(cust_status.role)
+            self._dashboard_view.update_server_status_role(srv_role)
+            network_path = map_network_path(state, getattr(self, "_last_telemetry_state", None))
+            self._dashboard_view.set_network_path(network_path)
 
         recovery = state.auth_status in {
             AuthStatus.RECOVERY_CODE_ENTRY,
@@ -1192,8 +1367,6 @@ class AppWindow:
     # ------------------------------------------------------------------
     def _record_debug_status(self, stage: str, **details: Any) -> None:
         """Write useful launcher state transitions without flooding the log."""
-        if not getattr(self, "_debug_mode", False):
-            return
         diagnostics = getattr(self, "_diagnostics", None)
         if diagnostics is None:
             return
@@ -1347,6 +1520,7 @@ class AppWindow:
         from neko_launcher.domain.telemetry import (
             TelemetryConnectionState,
             format_bytes,
+            format_latency,
             format_speed,
             format_uptime,
         )
@@ -1354,22 +1528,42 @@ class AppWindow:
         self._last_telemetry_state = state
         self._observe_runtime_health(state)
 
+        # Refresh server status before any telemetry early-return so stale or
+        # disconnected data can never leave a previous online state visible.
+        srv_text, srv_role = get_server_status(self._controller.state, state)
+        if hasattr(self, "_server_status"):
+            self._set_if_changed(self._server_status, srv_text)
+        if hasattr(self, "_dashboard_view") and hasattr(
+            self._dashboard_view, "update_server_status_role"
+        ):
+            self._dashboard_view.update_server_status_role(srv_role)
+
         if state.connection_state != TelemetryConnectionState.CONNECTED:
             self._telemetry_speed.set("ความเร็ว: ไม่พร้อมใช้งาน")
             self._telemetry_session.set("เซสชัน: ไม่พร้อมใช้งาน")
             self._telemetry_health.set("สถานะระบบ: ไม่พร้อมใช้งาน (รอข้อมูลล่าสุด)")
-            self._download_speed.set("ไม่พร้อมใช้งาน")
-            self._upload_speed.set("ไม่พร้อมใช้งาน")
-            self._session_duration.set("ไม่พร้อมใช้งาน")
+            if hasattr(self, "_download_speed"):
+                self._set_if_changed(self._download_speed, "—")
+            if hasattr(self, "_upload_speed"):
+                self._set_if_changed(self._upload_speed, "—")
+            if hasattr(self, "_session_duration"):
+                self._set_if_changed(self._session_duration, "—")
+            if hasattr(self, "_latency"):
+                self._set_if_changed(self._latency, "—")
             return
 
         if state.is_stale:
             self._telemetry_speed.set("ความเร็ว: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
             self._telemetry_session.set("เซสชัน: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
             self._telemetry_health.set("สถานะระบบ: ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
-            self._download_speed.set("ไม่พร้อมใช้งาน")
-            self._upload_speed.set("ไม่พร้อมใช้งาน")
-            self._session_duration.set("ไม่พร้อมใช้งาน (ข้อมูลล้าสมัย)")
+            if hasattr(self, "_download_speed"):
+                self._set_if_changed(self._download_speed, "—")
+            if hasattr(self, "_upload_speed"):
+                self._set_if_changed(self._upload_speed, "—")
+            if hasattr(self, "_session_duration"):
+                self._set_if_changed(self._session_duration, "—")
+            if hasattr(self, "_latency"):
+                self._set_if_changed(self._latency, "—")
             return
         else:
             rx_speed = format_speed(state.rx_rate_bps)
@@ -1380,6 +1574,7 @@ class AppWindow:
         rx_total = format_bytes(state.snapshot.rx_bytes)
         tx_total = format_bytes(state.snapshot.tx_bytes)
         uptime = format_uptime(state.snapshot.uptime_ms)
+        latency = format_latency(state.snapshot.proxy_rtt_ms)
 
         self._telemetry_speed.set(f"ความเร็ว: ▼ {rx_speed} | ▲ {tx_speed}")
         self._telemetry_transfer.set(
@@ -1388,9 +1583,14 @@ class AppWindow:
         self._telemetry_session.set(
             f"เวลาเชื่อมต่อ: {uptime} | TCP: {state.snapshot.tcp_active} active | DNS: {state.snapshot.dns_query_total} | ข้อผิดพลาด: {state.snapshot.network_error_total}"
         )
-        self._download_speed.set(rx_speed)
-        self._upload_speed.set(tx_speed)
-        self._session_duration.set(uptime)
+        if hasattr(self, "_download_speed"):
+            self._set_if_changed(self._download_speed, rx_speed)
+        if hasattr(self, "_upload_speed"):
+            self._set_if_changed(self._upload_speed, tx_speed)
+        if hasattr(self, "_session_duration"):
+            self._set_if_changed(self._session_duration, uptime)
+        if hasattr(self, "_latency"):
+            self._set_if_changed(self._latency, latency)
 
         core_str = (
             "Core ปกติ"
@@ -1412,12 +1612,18 @@ class AppWindow:
 
         # Update customer hero status
         cust_status = translate_customer_status(self._controller.state, state)
-        self._status_title.set(f"● {cust_status.title}")
-        self._status_subtitle.set(cust_status.subtitle)
+        srv_text, srv_role = get_server_status(self._controller.state, state)
+        self._set_if_changed(self._status_title, f"● {cust_status.title}")
+        self._set_if_changed(self._status_subtitle, cust_status.subtitle)
+        if hasattr(self, "_server_status"):
+            self._server_status.set(srv_text)
         if hasattr(self, "_dashboard_view") and hasattr(
             self._dashboard_view, "update_status_role"
         ):
             self._dashboard_view.update_status_role(cust_status.role)
+            self._dashboard_view.update_server_status_role(srv_role)
+            network_path = map_network_path(self._controller.state, state)
+            self._dashboard_view.set_network_path(network_path)
 
     def _observe_runtime_health(self, telemetry: Any) -> None:
         reconnect_controller = getattr(self, "_reconnect_controller", None)

@@ -1,101 +1,209 @@
-# NEKO FAMILY PROXY — LAUNCHER COMPONENT STATUS & START HERE GUIDE
+# NEKO FAMILY PROXY — Launcher Component Status & Start Here
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PRODUCTION RELEASED
-PHASE:                          PRODUCTION RELEASE/CUTOVER CLOSED
-AUTHORITY:                      START bba655b3e6443ebcdf84a266e42cc918bdefe32f; CORE 862bfec463d06d57e1bee05c2bc490740eb714d4
-PHASE_2_5:                      CLOSED
-TECHNICAL_SECURITY_GATE:        PASS
-NEXT_ACTION:                    NORMAL DEVELOPMENT
-LAST_UPDATED:                  2026-08-23
-CURRENT_PHASE:                  T10 COMMERCIAL LAUNCHER UI/UX
-T10A:                           CLOSED
-T10B1:                          CLOSED — FUNCTIONAL + OWNER VISUAL APPROVAL PASS
-T10B1.2:                        CLOSED — CUSTOMER-SAFE VISUAL CLOSURE
-T10B2:                          CLOSED — ENGINEERING + AUTHENTICATED PACKAGED + OWNER REVIEW PASS
-T10B3:                          CLOSED — ENGINEERING + OWNER FINAL VISUAL REVIEW PASS
-T10B3.1:                        CLOSED
-T10B3_APPROVED_COMMIT:          1edfdb05042ed4a74128fc6826280f70f558b61d
-T10B4:                          CLOSED — APPROVED AUTHORITIES PRESERVED
-APPROVED_FEATURE_AUTHORITY:     e7f9530b1e9eb0536e10c04ad7b362ae7281f4d7
-APPROVED_EXE_SHA256:            4ae0aa676a41822033a6b00fdae9dde7ff3b900fc30ae39ca71dea6851411609
-CORE_DEPLOYED_ARTIFACT:         862bfec463d06d57e1bee05c2bc490740eb714d4
-SUCCESSOR:                      NORMAL DEVELOPMENT
-GLOBAL_STATUS:                  see Admin docs/current/README.md
-ACTIVE_BRANCH:                  main
-T10_BASE:                       8d4543553622f927d2d62dd054715a6523d82698
-RUNTIME_SOURCE_BASE:            8832429a7546ab57dd8ac3a48b40b93387cb9f19
-SERVER_OPERATIONS:              T1-T9 CLOSED (Production Verified on AWS Lightsail Japan)
-ACTIVE_PRODUCT_BRANCH:          main
-MAIN_BRANCH_STATUS:             PRODUCTION RELEASED
-PHASE_2_5_TECHNICAL_SECURITY_GATE: PASS
-PERMIT_CONTRACT:                LITE_V1
-SESSION_POLICY:                 LATEST_CLAIM_WINS
-PHASE_2_5_CLOSURE_EVIDENCE:     See phase-2-5-distinct-auth-session-future-permit-proof.md
-T10B3.1_EXE_SHA256:             E4E114E138845566F7D25172CB4E8EAAC862FC43948EBEB8AF79D2F3AC9378C2
-CLOSED_BETA_AUTHORITY:          CORE 33f97ae0110075089f39b1e123890f931417d907 — Tester-001 RUNNING_TO_NORMAL_STOP_PASS (2026-08-23); see closed-beta-runbook.md
+STATUS:                         ACTIVE DEVELOPMENT
+PRODUCT_BASELINE:               CLOSED BETA ACCEPTED
+CURRENT_WORKSTREAM:             DASHBOARD REDESIGN
+ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
+ACTIVE_DEV_HEAD:                0fc836d15399ddfd5dd9abc4661b0ba84d072571
+MAIN_HEAD:                      bde8389 (origin/main)
+BETA_HEAD:                      c9ab125 (origin/beta; accepted Closed Beta baseline)
+CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
+CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
+PHASE_2_5_TECHNICAL_GATE:       CLOSED / PASS
+| DASHBOARD_PLAN:                 v1.2 / PHASE 1 ENGINEERING PASS (uncommitted) / PHASE 2 NEXT |
+| NEXT_ACTION:                    PHASE 2 READ-ONLY AUDIT OF EXISTING UI/COMPONENT CONVENTIONS BEFORE ANY PHASE 2 IMPLEMENTATION |
+LAST_VERIFIED:                  2026-08-29 +07:00 (Asia/Bangkok)
 ```
 
----
-
-## 1. Quick Orientation: What is the Launcher Component Doing Now?
-
-**Neko Family Launcher** is the customer desktop interface and backend edge client for *Phantasy Star Online 2 (PSO2 JP)* proxy routing.
-
-The project infrastructure and operations milestones (**Phases T1 through T9**) are **CLOSED and verified in production**:
-- **Phase T1–T3 (Closed)**: Implemented Core local telemetry engine and Launcher local telemetry consumer via Windows Named Pipe `\\.\pipe\NekoProxyCoreTelemetry`.
-- **Phase T4–T6 (Closed)**: Live server metrics collection, time-series retention pruning via `pg_cron`, and historical range queries.
-- **Phase T7–T8 (Closed)**: Unified AWS Lightsail Discord worker daemon, crash recovery, and production operations hardening.
-- **Phase T9 (Closed)**: Weekly automated server maintenance and scheduled reboot lifecycle (Tuesdays 02:00 Asia/Bangkok).
-
-**Phase T10A (Commercial Launcher UI/UX Design Freeze)** is **CLOSED**. The commercial UI architecture, customer status translation layer, single-instance Settings window design, and capability matrix are frozen in [`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md).
-
-> [!IMPORTANT]
-> **Production release: COMPLETE.** Phase 2.5 is `CLOSED`, the technical security
-> gate is `PASS`, and the approved Launcher feature authority has been cut over to
-> production `main`. The next action is normal development.
-
-Original Edge evidence remains **A=MISSING, B=PASS, C=PASS**. Supplemental old-A
-Edge evidence remains **PASS**. `PROCESS_COMPLIANCE = FAIL — HISTORICAL FORCE-PUSH
-RECORDED` remains historical release evidence.
+> **Current-state rule:** verify Git branch, HEAD, status, and this directory before assigning work. The active feature branch is newer development state than older production/Closed-Beta status blocks. Frozen release evidence remains historical authority for the exact accepted artifacts only.
 
 ---
 
-## 2. Active Launcher Documentation (`docs/current/`)
+## 1. What is the Launcher doing now?
 
-| Document | Role / Content | Authority Level |
+The Launcher is in **post-Closed-Beta product development** on:
+
+```text
+feature/dashboard-redesign @ 0fc836d
+```
+
+The current implementation authority is [`dashboard-redesign-plan.md`](dashboard-redesign-plan.md) **v1.2**, reconciled against NekoProxyCore, legacy Netch runtime evidence, current telemetry, and the Owner mockup.
+
+Six phases remain:
+
+1. Foundation — semantic network models and theme tokens
+2. Reusable presentation components
+3. Dashboard layout restructure / window sizing
+4. Connection diagram, runtime mapping, and latency capability gate
+5. Statistics and visual polish
+6. Integration, packaged build, and smoke verification
+
+`main` remains at `bde8389`. `beta` remains at accepted Closed Beta baseline `c9ab125`. Dashboard work is not a new release identity until implementation, tests, packaged proof, and release gates complete.
+
+---
+
+## 2. Evidence-aligned dashboard semantics
+
+The four-node visual flow from the mockup is preserved, but it is a **service/status path**, not a fabricated physical traceroute:
+
+```text
+เครื่องของคุณ
+  -> NEKO Proxy Engine (local Core/Redirector/SOCKS/V2Ray stack)
+  -> Tokyo Proxy (remote selected/canonical proxy role)
+  -> PSO2 JP (semantic game network destination)
+```
+
+Important corrections from the earlier draft:
+
+- There is no verified separate **Bangkok remote proxy** hop in the proven data path.
+- Raw local/proxy/game IP fields are not part of the redesign display contract.
+- Current headless telemetry does not provide ping/RTT or per-hop latency.
+- Legacy Netch contains `Server.PingAsync()` for selected proxy RTT, but this is a dormant capability, not current production telemetry authority.
+- Numeric latency must remain `—` until a separately reviewed and tested local measurement path exists.
+
+---
+
+## 3. Non-regression contracts
+
+The redesign may change presentation, but it must preserve these product/security contracts:
+
+- External Core topology is intentional; do not embed ProxyCore back into the Launcher one-file EXE.
+- One active Launcher session per user; latest claim wins.
+- Auth/session/entitlement failures remain fail-closed.
+- Deep client telemetry remains local-only; do not upload PID/process lists/DNS/flow details/raw Core logs/proxy credentials.
+- Close, logout, reconnect, and reopen recovery must never kill `pso2.exe`.
+- Customer-visible telemetry must be truthful. Unknown measurements use `—` / unavailable, never fake `0 ms` or mockup values.
+- Raw proxy/server hostname, IP, port, credentials, and destination history are not customer-dashboard fields.
+- Source changes that produce a new Launcher build must follow the current versioning/release rule and must be tested using the new artifact.
+- Artifact SHA-256 mismatch is a hard stop.
+- Authority-vault updates remain a separate Owner-gated release operation after exact-artifact evidence and required smoke.
+
+---
+
+## 4. Phase 1 engineering status (2026-08-29)
+
+Phase 1 is **ENGINEERING PASS (uncommitted) / PHASE 2 NEXT**. Source/test/version changes exist on `feature/dashboard-redesign @ 0fc836d` and have NOT been committed. This is not a release/artifact pass — no build, no live proof, no authority update. Plan version remains v1.2; the Phase 1 contract is unchanged.
+
+Allowed Phase 1 source scope (unchanged from locked plan):
+
+```text
+launcher/src/neko_launcher/domain/models.py
+launcher/src/neko_launcher/ui/theme.py
+launcher/tests/test_network_hop_model.py
+launcher/tests/ui/test_palette_tokens.py
+```
+
+Explicitly out of scope for Phase 1 (unchanged):
+
+```text
+launcher/src/neko_launcher/domain/telemetry.py
+NekoProxyCore/*
+installer/*
+Admin/*
+authority/*
+```
+
+### 4.1 Implemented Phase 1 contract (matches plan §4.2 / §4.4)
+
+- `NetworkHopRole` (str + Enum): `LOCAL_DEVICE`, `LOCAL_PROXY_ENGINE`, `REMOTE_PROXY`, `GAME_NETWORK`.
+- `HopConnectionState` (str + Enum): `SUCCESS`, `CONNECTING`, `UNAVAILABLE`.
+- `NetworkHop` and `NetworkPath` are frozen/immutable dataclasses.
+- `NetworkPath.proxy_rtt_ms` accepts `None`, `0`, and positive integers; rejects negative with `ValueError`.
+- No `ip` / `hostname` / `port` / `bangkok` / `per_hop_latency_ms` field in either dataclass.
+- 8 semantic `PinkPalette` node tokens: `node_local`, `node_local_surface`, `node_engine`, `node_engine_surface`, `node_remote`, `node_remote_surface`, `node_game`, `node_game_surface` (strict `#RRGGBB`, semantic role names).
+
+### 4.2 TDD evidence (corrective pass)
+
+- First RED attempt was REJECTED because pytest stopped during collection with an `ImportError` (collection / test-framework error, not a valid failing-test signal).
+- Test import shape repaired: tests now import only the stable module and resolve Phase 1 symbols via `getattr` + `pytest.fail(...)` so a missing symbol becomes an assertion failure, not a collection error. All plan §1.3 behavioural coverage preserved.
+- VALID RED after temporary baseline restoration: 47 failed, 8 passed, 0 collection errors.
+- GREEN after reapplying minimal production implementation: 55 passed.
+
+### 4.3 Phase 2 first action (next gate)
+
+Phase 2 owns reusable presentation components. Before any Phase 2 implementation, perform a **read-only audit** of existing UI / component conventions and exact file paths, then create RED tests first. Phase 2 remains pure presentation with no network IO and no telemetry probing.
+
+Before changing source, re-verify current version. After the Phase 1 bump the current Launcher source version is `5.0.0a11`; the next source-build target under the existing versioning rule would be `5.0.0a12` once Phase 2 source changes are ready.
+
+---
+
+## 5. Phase 1 engineering evidence (2026-08-29)
+
+```text
+Python                       = 3.11.15
+Launcher source version      = 5.0.0a11 (5.0.0a10 -> 5.0.0a11, uncommitted)
+Branch                       = feature/dashboard-redesign
+HEAD                         = 0fc836d
+P1 suites                    = 55 passed
+Focused baseline             = 13 passed, 1 skipped (display-dependent dashboard test)
+RUFF                         = All checks passed
+COMPILEALL                   = clean
+Canonical non-integration    = 674 passed, 1 skipped, 5 deselected, 0 failed
+git diff --check             = PASS (benign LF/CRLF note on uv.lock only)
+```
+
+**Canonical non-integration test-run method on this host:** run with `env -u TCL_LIBRARY -u TK_LIBRARY .venv/Scripts/python.exe -m pytest -q -m "not integration"` (process-local env removal only). The host's persistent user/system environment is not modified. The contamination source is an external `Khai-Hub/_internal/_tcl_data` toolchain install that pins Tcl 8.6.15 against the system's Tcl 8.6.12, polluting the Tk init path. **Product source was NOT changed to work around this.** This run method must be carried forward into Phase 2-6 runs on the same machine.
+
+**Phase 1 TDD order followed:**
+
+1. Read existing patterns in `models.py` and `theme.py` (no edits).
+2. Created the two new test files first; tests failed at collection because Phase 1 symbols were missing — that RED was REJECTED as a collection error.
+3. Repaired test import shape (module import + missing-symbol `pytest.fail`).
+4. Temporarily restored production/version files to baseline (no git reset/checkout/stash/clean) to capture valid RED: 47 failed, 8 passed, 0 collection errors.
+5. Reapplied the minimal Phase 1 production contract exactly as plan §4.2 / §4.4 defines.
+6. Reapplied the version bump `5.0.0a10 -> 5.0.0a11` across all three metadata files.
+7. Re-ran P1 suites → 55 passed (GREEN).
+
+Build/live proof/authority = NOT performed in this pass; Phase 6 owns packaged integration smoke. `COMMIT = NOT_CREATED`, `PUSH = NOT_REQUESTED`.
+
+---
+
+## 6. Active Launcher documentation (`docs/current/`)
+
+| Document | Role / Content | Authority level |
 | :--- | :--- | :--- |
-| **[`README.md`](README.md)** | Component status, branch authority, and start here orientation | `CURRENT_STATUS` |
-| **[`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md)** | T10 commercial UI/UX architecture, Settings window design & capability matrix | `CURRENT_CONTRACT` |
+| **[`README.md`](README.md)** | Current Launcher component status and start-here orientation | `CURRENT_STATUS` |
+| **[`dashboard-redesign-plan.md`](dashboard-redesign-plan.md)** | Evidence-aligned six-phase dashboard redesign plan v1.2 | `CURRENT_PLAN` |
+| **[`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md)** | Previous commercial UI/UX architecture and non-regression constraints | `CURRENT_CONTRACT / HISTORICAL_FREEZE` |
 | **[`launcher-architecture.md`](launcher-architecture.md)** | Desktop application layered architecture, IPC, and controllers | `CURRENT_CONTRACT` |
 | **[`neko-auth-lite.md`](neko-auth-lite.md)** | NEKO-AUTH-LITE authentication, challenge-response, and permit flow | `CURRENT_CONTRACT` |
-| **[`final-windows-e2e-harness.md`](final-windows-e2e-harness.md)** | Windows E2E integration test harness and binary admission gates | `CURRENT_CONTRACT` |
-| **[`phase-2-5-distinct-auth-session-future-permit-proof.md`](phase-2-5-distinct-auth-session-future-permit-proof.md)** | Closed distinct auth session future permit security proof and evidence | `CURRENT_RELEASE_EVIDENCE` |
-| **[`build-windows-executable.md`](build-windows-executable.md)** | PyInstaller standalone packaging and secret-hygiene build instructions | `CURRENT_OPERATIONAL` |
+| **[`final-windows-e2e-harness.md`](final-windows-e2e-harness.md)** | Windows E2E integration harness and binary admission gates | `CURRENT_CONTRACT` |
+| **[`phase-2-5-distinct-auth-session-future-permit-proof.md`](phase-2-5-distinct-auth-session-future-permit-proof.md)** | Closed security proof/evidence | `CURRENT_RELEASE_EVIDENCE` |
+| **[`build-windows-executable.md`](build-windows-executable.md)** | PyInstaller packaging and secret-hygiene build instructions | `CURRENT_OPERATIONAL` |
 | **[`debug-console.md`](debug-console.md)** | Windows debug console, runtime logging, and IPC troubleshooting | `CURRENT_OPERATIONAL` |
 | **[`repository-layout.md`](repository-layout.md)** | File organization and component dependency layout | `CURRENT_OPERATIONAL` |
 | **[`runtime-distribution.md`](runtime-distribution.md)** | External Core runtime distribution policy | `CURRENT_OPERATIONAL` |
-| **[`closed-beta-runbook.md`](closed-beta-runbook.md)** | Approved closed-beta distribution, tester, rollback, and monitoring checklist | `CURRENT_OPERATIONAL` |
+| **[`closed-beta-runbook.md`](closed-beta-runbook.md)** | Closed-Beta distribution and accepted artifact evidence | `CURRENT_OPERATIONAL / RELEASE_HISTORY` |
 
 ---
 
-## 3. Global Cross-Repository Authority
+## 7. Cross-repository orientation
 
-For complete cross-component governance and global project phases, refer to the **Global Doc Authority**:
-- **Global Project Status:** `D:\Github\Neko-Family-Proxy-admin-tool\docs\current\README.md`
-- **Core Engine Source Authority:** `D:\Github\NekoProxyCore` (`feature/neko-auth-lite-v1-core`)
+Discover repository folders by name, then verify `.git`, branch, HEAD, remote, and expected project markers. Do not hard-code workstation drive letters into permanent instructions.
+
+| Component | Folder name | Current verified branch / HEAD |
+|---|---|---|
+| Launcher | `Neko-Family-Proxy` | `feature/dashboard-redesign` @ `0fc836d`; `main` @ `bde8389` |
+| Core | `NekoProxyCore` | `feature/neko-auth-lite-v1-core` @ `33f97ae` |
+| Admin | `Neko-Family-Proxy-admin-tool` | `main` @ `f240d44` |
+| Project manager | `Project manager` | read `CURRENT_STATUS.md` first |
 
 ---
 
-## 4. Historical Archive Index
+## 8. Closed-Beta / production history that remains valid
 
-Historical phase proposals, superseded AI prompts, and completed milestone evidence are preserved in `docs/archive/`:
+Infrastructure/security work through Phase 2.5 was closed and verified before this redesign stream. T1-T9 production operations, NEKO-AUTH-LITE, telemetry privacy, Core lifecycle, Closed-Beta installer work, reconnect/reopen proof, and accepted Beta artifact records remain preserved in detailed runbooks/history.
 
-- **[Telemetry Archive](../archive/telemetry/)**: [`launcher-telemetry-consumer-handoff.md`](../archive/telemetry/launcher-telemetry-consumer-handoff.md)
-- **[Prompts Archive](../archive/prompts/)**: [`backend-single-active-session-ai-prompt.md`](../archive/prompts/backend-single-active-session-ai-prompt.md), [`launcher-single-active-session-ai-prompt.md`](../archive/prompts/launcher-single-active-session-ai-prompt.md), [`backend-single-active-session-ai-prompt-root-duplicate.md`](../archive/prompts/backend-single-active-session-ai-prompt-root-duplicate.md)
-- **[Phase 2.5 Archive](../archive/phase-2-5/)**: [`phase-2-production-deployment-plan.md`](../archive/phase-2-5/phase-2-production-deployment-plan.md), [`phase-2-5-migration-history-reconciliation.md`](../archive/phase-2-5/phase-2-5-migration-history-reconciliation.md), [`phase-2-5-linked-parity.json`](../archive/phase-2-5/phase-2-5-linked-parity.json)
-- **[Historical Blocked Archive](../archive/blocked/)**: Resolved historical blocker proposals and handoffs.
-- **[Scratch Archive](../archive/scratch/)**: [`historical-phase25-work-progress-notes.md`](../archive/scratch/historical-phase25-work-progress-notes.md)
-- **[Backend Supabase Archive](../archive/backend-supabase/)**: [`issue-launch-permit-phase-1.md`](../archive/backend-supabase/issue-launch-permit-phase-1.md)
-- **[Historical S0 Archive](../archive/)**: [`launcher-s0-contract-proposal.md`](../archive/launcher-s0-contract-proposal.md), [`launcher-s0-connector-handoff.md`](../archive/launcher-s0-connector-handoff.md), [`s0-security-contract-freeze-request.md`](../archive/s0-security-contract-freeze-request.md)
+```text
+accepted beta artifact/history != current development branch
+```
+
+New distribution authority can only be created after source -> tests -> build -> exact-artifact smoke/live proof -> authority sequence.
+
+---
+
+## 9. Historical archive
+
+Historical proposals, superseded prompts, completed milestone evidence, blocked investigations, and scratch notes are preserved under `docs/archive/`. Do not rewrite historical failures into PASS and do not use archived artifact identifiers as current authority without re-verification.

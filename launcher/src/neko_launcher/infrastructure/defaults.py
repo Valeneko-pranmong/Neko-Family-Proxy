@@ -9,3 +9,5 @@ SUPABASE_URL = "https://miikoutrnxsunbndecqh.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_mMW9OyuaGxB6YKmiPJo7gA_FNZjDb7v"
 PRODUCT_CODE = "neko-family-proxy"
 ACCOUNT_RECOVERY_API_URL = "https://neko-control-room.vercel.app"
+
+PROXY_STATUS_API_URL = "https://neko-control-room.vercel.app/api/proxy/status"

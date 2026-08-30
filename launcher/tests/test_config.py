@@ -34,6 +34,7 @@ def test_packaged_runtime_defaults_to_local_app_data(
     assert config.supabase_url == "https://miikoutrnxsunbndecqh.supabase.co"
     assert config.supabase_publishable_key.startswith("sb_publishable_")
     assert config.account_recovery_api_url == "https://neko-control-room.vercel.app"
+    assert config.proxy_status_api_url == "https://neko-control-room.vercel.app/api/proxy/status"
 
 
 def test_runtime_ignores_bundled_neko_proxy_core(
@@ -99,3 +100,30 @@ def test_application_root_resolves_to_repository_root_in_source_mode(
     assert (root / "launcher").is_dir()
     assert (root / "image_11.png").is_file()
     assert (root / "icon_app.ico").is_file()
+
+
+# A18_HIDE_TO_TRAY_PREFS
+
+def test_hide_to_tray_defaults_false_for_missing_invalid_and_non_object(tmp_path: Path) -> None:
+    path = tmp_path / "program.json"
+    prefs = ProgramPreferences(path)
+    assert prefs.hide_to_tray is False
+    path.write_text("{not-json", encoding="utf-8")
+    assert prefs.hide_to_tray is False
+    path.write_text("[]", encoding="utf-8")
+    assert prefs.hide_to_tray is False
+
+
+def test_program_preferences_preserve_peer_setting(tmp_path: Path) -> None:
+    path = tmp_path / "program.json"
+    prefs = ProgramPreferences(path)
+    prefs.set_always_on_top(True)
+    prefs.set_hide_to_tray(True)
+    assert prefs.always_on_top is True
+    assert prefs.hide_to_tray is True
+    prefs.set_always_on_top(False)
+    assert prefs.always_on_top is False
+    assert prefs.hide_to_tray is True
+    prefs.set_hide_to_tray(False)
+    assert prefs.always_on_top is False
+    assert prefs.hide_to_tray is False

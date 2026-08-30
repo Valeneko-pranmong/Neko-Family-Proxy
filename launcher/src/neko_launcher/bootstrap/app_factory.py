@@ -27,6 +27,7 @@ from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAda
 from neko_launcher.infrastructure.core.core_telemetry_client import NamedPipeCoreTelemetryClient
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
+from neko_launcher.infrastructure.proxy_status_client import PublicProxyStatusClient
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
@@ -56,19 +57,20 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         secure_store,
     )
     recovery_gateway = HttpAccountRecoveryGateway(config.account_recovery_api_url)
+    proxy_status_client = PublicProxyStatusClient(config.proxy_status_api_url)
 
-    if config.debug_mode:
-        from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
+    from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
 
-        diagnostics_sink = DevelopmentLogger(config.debug_log_dir)
-        diagnostics_sink.log_session_header(
-            core_path=str(config.proxy_core_path),
-            workspace_root=str(root),
-        )
-    else:
-        from neko_launcher.application.diagnostics import NoopDiagnosticsSink
-
-        diagnostics_sink = NoopDiagnosticsSink()
+    # Support diagnostics are always-on. Debug mode only increases verbosity
+    # and exposes the advanced diagnostics UI; it no longer gates log creation.
+    diagnostics_sink = DevelopmentLogger(
+        config.debug_log_dir,
+        verbose=config.debug_mode,
+    )
+    diagnostics_sink.log_session_header(
+        core_path=str(config.proxy_core_path),
+        workspace_root=str(root),
+    )
 
     from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
 
@@ -148,22 +150,26 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     # setting.png flat at "." so it lives at root, not under root/Asset.
     asset_dir = root / "Asset"
     if asset_dir.is_dir():
-        logo_path = asset_dir / "setting.png"
-        icon_path = asset_dir / "setting.png"
+        logo_path = asset_dir / "logo.png"
+        icon_path = asset_dir / "icon_app.ico"
+        settings_icon_path = asset_dir / "setting.png"
     else:
-        logo_path = root / "setting.png"
-        icon_path = root / "setting.png"
+        logo_path = root / "logo.png"
+        icon_path = root / "icon_app.ico"
+        settings_icon_path = root / "setting.png"
 
     return AppWindow(
         controller,
         service,
         event_bus,
-        logo_path,
-        icon_path,
+        logo_path=logo_path,
+        icon_path=icon_path,
+        settings_icon_path=settings_icon_path,
         game_default_path=config.game_exe,
         game_path_store=config.game_path_store,
         diagnostics=diagnostics_recorder,
         debug_mode=config.debug_mode,
         debug_log_dir=config.debug_log_dir,
         telemetry_client=telemetry_client,
+        proxy_status_client=proxy_status_client,
     )

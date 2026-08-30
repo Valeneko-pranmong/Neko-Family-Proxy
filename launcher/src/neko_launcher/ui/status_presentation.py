@@ -94,15 +94,15 @@ def translate_customer_status(
     # 4. Proxy / Core Failures (Strict Truthfulness Check)
     if state.proxy_status is ProxyStatus.RECONNECTING:
         return CustomerStatus(
-            title="กำลังเชื่อมต่อใหม่...",
-            subtitle="การเชื่อมต่อขัดข้องชั่วคราว ระบบกำลังลองเชื่อมต่อให้อัตโนมัติ",
+            title="กำลังเชื่อมต่อใหม่",
+            subtitle="การเชื่อมต่อสะดุดนิดหน่อย กำลังต่อให้ใหม่อัตโนมัติ",
             role="warning",
             is_ready=False,
         )
     if state.proxy_status is ProxyStatus.FAILED or state.game_status is GameStatus.FAILED:
         return CustomerStatus(
-            title="การเชื่อมต่อขัดข้อง",
-            subtitle="ไม่สามารถเริ่มระบบ Proxy ได้ (ดูรายละเอียดใน การตั้งค่า > Status)",
+            title="เชื่อมต่อไม่ได้",
+            subtitle="ลองใหม่อีกครั้ง หรือดูรายละเอียดที่ Settings > Status",
             role="danger",
             is_ready=False,
         )
@@ -113,19 +113,19 @@ def translate_customer_status(
             if telemetry.is_stale:
                 return CustomerStatus(
                     title="เชื่อมต่อแล้ว",
-                    subtitle="Tokyo Proxy กำลังทำงาน (สถิติเครือข่ายไม่อัปเดตชั่วขณะ)",
+                    subtitle="เล่นต่อได้ แต่ข้อมูลเครือข่ายอัปเดตช้าชั่วคราว",
                     role="warning",
                     is_ready=False,
                 )
             return CustomerStatus(
                 title="เชื่อมต่อแล้ว",
-                subtitle="PSO2 กำลังทำงานผ่าน Tokyo Proxy อย่างปลอดภัย",
+                subtitle="พร้อมเล่น PSO2 แล้ว",
                 role="success",
                 is_ready=False,
             )
         return CustomerStatus(
             title="เชื่อมต่อแล้ว",
-            subtitle="Tokyo Proxy กำลังทำงาน (สถิติเครือข่ายขัดข้องชั่วคราว)",
+            subtitle="เล่นต่อได้ แต่ยังอ่านข้อมูลเครือข่ายไม่ได้",
             role="warning",
             is_ready=False,
         )
@@ -137,16 +137,53 @@ def translate_customer_status(
         or (state.game_process_running and state.proxy_status is ProxyStatus.STOPPED)
     ):
         return CustomerStatus(
-            title="กำลังเชื่อมต่อ...",
-            subtitle="ตรวจพบ PSO2 กำลังเริ่มระบบ Proxy อัตโนมัติ",
+            title="กำลังเชื่อมต่อ",
+            subtitle="เจอ PSO2 แล้ว กำลังเตรียม Neko Proxy",
             role="warning",
             is_ready=False,
         )
 
     # 7. Idle / Ready State (Healthy authenticated session with active entitlement, waiting for game)
     return CustomerStatus(
-        title="พร้อมใช้งาน",
-        subtitle="กำลังรอเปิด PSO2 (ระบบจะเชื่อมต่อให้อัตโนมัติ)",
+        title="พร้อมเล่นเกม",
+        subtitle="เปิด PSO2 ได้เลย เดี๋ยวระบบเชื่อมต่อให้เอง",
         role="success",
         is_ready=True,
     )
+
+
+def get_server_status(
+    state: AppState,
+    telemetry: TelemetryState | None = None,
+) -> tuple[str, str]:
+    """Map server status according to A18 requirements."""
+    if state.proxy_status is ProxyStatus.FAILED or state.game_status is GameStatus.FAILED:
+        return "ขัดข้อง", "danger"
+
+    if (
+        state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RECONNECTING}
+        or state.game_status is GameStatus.STARTING
+        or (state.game_process_running and state.proxy_status is ProxyStatus.STOPPED)
+    ):
+        return "กำลังเชื่อมต่อ", "warning"
+
+    if state.proxy_status is ProxyStatus.RUNNING:
+        if (
+            telemetry is None
+            or telemetry.connection_state != TelemetryConnectionState.CONNECTED
+            or telemetry.is_stale
+        ):
+            return "ข้อมูลสถานะไม่พร้อม", "warning"
+
+        snap = telemetry.snapshot
+        if (
+            snap.core_state == "running"
+            and snap.v2ray_running
+            and snap.local_socks_running
+            and snap.shadowsocks_connected
+        ):
+            return "ออนไลน์", "success"
+        else:
+            return "เชื่อมต่อไม่สมบูรณ์", "warning"
+
+    return "ออฟไลน์", "neutral"

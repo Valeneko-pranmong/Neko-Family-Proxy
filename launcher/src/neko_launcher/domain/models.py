@@ -127,3 +127,44 @@ def entitlement_is_active(entitlement: Entitlement | None) -> bool:
     if entitlement.valid_until is None:
         return True
     return entitlement.valid_until > datetime.now(entitlement.valid_until.tzinfo)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — Semantic network presentation-domain models
+# (docs/current/dashboard-redesign-plan.md v1.2, sections 4.2 and 1.3)
+# ---------------------------------------------------------------------------
+#
+# These types are pure presentation-domain foundations. They do NOT introduce
+# a producer for any network measurement and they do NOT add raw address
+# fields (no ip, hostname, port, bangkok, per_hop_latency_ms).
+
+
+class NetworkHopRole(str, Enum):
+    LOCAL_DEVICE = "local_device"
+    LOCAL_PROXY_ENGINE = "local_proxy_engine"
+    REMOTE_PROXY = "remote_proxy"
+    GAME_NETWORK = "game_network"
+
+
+class HopConnectionState(str, Enum):
+    SUCCESS = "success"
+    CONNECTING = "connecting"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class NetworkHop:
+    role: NetworkHopRole
+    label: str
+    location: str | None = None
+    connection_state: HopConnectionState = HopConnectionState.UNAVAILABLE
+
+
+@dataclass(frozen=True)
+class NetworkPath:
+    hops: tuple[NetworkHop, ...] = ()
+    proxy_rtt_ms: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.proxy_rtt_ms is not None and self.proxy_rtt_ms < 0:
+            raise ValueError("proxy_rtt_ms must be non-negative or None")

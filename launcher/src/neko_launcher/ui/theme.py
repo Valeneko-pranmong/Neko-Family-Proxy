@@ -32,6 +32,17 @@ class PinkPalette:
     warning_surface: str = "#FFFBEB"
     danger: str = "#EF4444"
     danger_surface: str = "#FEF2F2"
+    # Phase 1 — semantic connection-diagram node tokens
+    # (docs/current/dashboard-redesign-plan.md v1.2, sections 4.4 and 1.3).
+    # Names use semantic roles; no raw address or infrastructure fields.
+    node_local: str = "#10B981"
+    node_local_surface: str = "#F0FDF4"
+    node_engine: str = "#3B82F6"
+    node_engine_surface: str = "#EFF6FF"
+    node_remote: str = "#8B5CF6"
+    node_remote_surface: str = "#F5F3FF"
+    node_game: str = "#F84B93"
+    node_game_surface: str = "#FCE7F0"
 
 
 PALETTE = PinkPalette()

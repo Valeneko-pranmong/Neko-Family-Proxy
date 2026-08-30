@@ -93,7 +93,7 @@ def test_status_core_failure_never_reports_ready() -> None:
         game_process_running=False,
     )
     status = translate_customer_status(state)
-    assert status.title == "การเชื่อมต่อขัดข้อง"
+    assert status.title == "เชื่อมต่อไม่ได้"
     assert status.role == "danger"
     assert status.is_ready is False
 
@@ -107,7 +107,7 @@ def test_status_game_detected_connecting() -> None:
         game_process_running=True,
     )
     status = translate_customer_status(state)
-    assert status.title == "กำลังเชื่อมต่อ..."
+    assert status.title == "กำลังเชื่อมต่อ"
     assert status.role == "warning"
     assert status.is_ready is False
 
@@ -124,7 +124,7 @@ def test_status_reconnecting_is_truthful_and_actionable() -> None:
 
     status = translate_customer_status(state)
 
-    assert status.title == "กำลังเชื่อมต่อใหม่..."
+    assert status.title == "กำลังเชื่อมต่อใหม่"
     assert "อัตโนมัติ" in status.subtitle
     assert status.role == "warning"
     assert status.is_ready is False
@@ -164,7 +164,7 @@ def test_status_connected_stale_telemetry() -> None:
     )
     status = translate_customer_status(state, telemetry)
     assert status.title == "เชื่อมต่อแล้ว"
-    assert "ไม่อัปเดตชั่วขณะ" in status.subtitle
+    assert "อัปเดตช้าชั่วคราว" in status.subtitle
     assert status.role == "warning"
 
 
@@ -178,7 +178,7 @@ def test_status_ready_healthy_idle() -> None:
         game_process_running=False,
     )
     status = translate_customer_status(state)
-    assert status.title == "พร้อมใช้งาน"
-    assert "กำลังรอเปิด PSO2" in status.subtitle
+    assert status.title == "พร้อมเล่นเกม"
+    assert "เปิด PSO2 ได้เลย" in status.subtitle
     assert status.role == "success"
     assert status.is_ready is True

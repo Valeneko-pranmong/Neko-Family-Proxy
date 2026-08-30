@@ -51,6 +51,7 @@ def test_core_health_snapshot_from_dict_complete() -> None:
     assert snapshot.local_socks_running is True
     assert snapshot.shadowsocks_connected is True
     assert snapshot.dropped_telemetry_events == 0
+    assert snapshot.proxy_rtt_ms is None
 
 
 def test_core_health_snapshot_from_dict_defaults_on_missing_fields() -> None:
@@ -65,6 +66,34 @@ def test_core_health_snapshot_from_dict_defaults_on_missing_fields() -> None:
     assert snapshot.v2ray_running is False
     assert snapshot.local_socks_running is False
     assert snapshot.shadowsocks_connected is False
+    assert snapshot.proxy_rtt_ms is None
+
+
+def test_core_health_snapshot_from_dict_proxy_rtt_ms_cases() -> None:
+    # 1. missing field -> None
+    assert CoreHealthSnapshot.from_dict({}).proxy_rtt_ms is None
+
+    # 2. explicit null -> None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": None}).proxy_rtt_ms is None
+
+    # 3. 0 -> 0
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": 0}).proxy_rtt_ms == 0
+
+    # 4. positive integer -> positive integer
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": 42}).proxy_rtt_ms == 42
+
+    # 5. negative integer -> None (normalize/reject invalid RTT, safe from NetworkPath ValueError)
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": -1}).proxy_rtt_ms is None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": -100}).proxy_rtt_ms is None
+
+    # 6. wrong type / non-integer -> None (no float/string coercion)
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": "42"}).proxy_rtt_ms is None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": 42.5}).proxy_rtt_ms is None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": True}).proxy_rtt_ms is None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": False}).proxy_rtt_ms is None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": []}).proxy_rtt_ms is None
+    assert CoreHealthSnapshot.from_dict({"proxy_rtt_ms": {}}).proxy_rtt_ms is None
+
 
 
 def test_telemetry_state_health_mapping() -> None:
@@ -265,3 +294,15 @@ def test_format_uptime() -> None:
     assert format_uptime(5000) == "00:00:05"
     assert format_uptime(65000) == "00:01:05"
     assert format_uptime(3665000) == "01:01:05"
+    assert format_uptime(86400000) == "24:00:00"
+
+
+def test_format_latency() -> None:
+    from neko_launcher.domain.telemetry import format_latency
+
+    assert format_latency(None) == "—"
+    assert format_latency(0) == "0 ms"
+    assert format_latency(38) == "38 ms"
+    assert format_latency(150) == "150 ms"
+    assert format_latency(-1) == "—"
+    assert format_latency(-100) == "—"

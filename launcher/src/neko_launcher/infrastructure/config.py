@@ -8,6 +8,7 @@ from pathlib import Path
 from .defaults import (
     ACCOUNT_RECOVERY_API_URL,
     PRODUCT_CODE,
+    PROXY_STATUS_API_URL,
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
 )
@@ -29,10 +30,41 @@ class ProgramPreferences:
             return False
         return value.get("always_on_top") is True
 
+    @property
+    def hide_to_tray(self) -> bool:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return False
+        if not isinstance(value, dict):
+            return False
+        return value.get("hide_to_tray") is True
+
     def set_always_on_top(self, enabled: bool) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                current = {}
+        except (OSError, ValueError, TypeError):
+            current = {}
+        current["always_on_top"] = bool(enabled)
         self.path.write_text(
-            json.dumps({"always_on_top": bool(enabled)}, ensure_ascii=False),
+            json.dumps(current, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def set_hide_to_tray(self, enabled: bool) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                current = {}
+        except (OSError, ValueError, TypeError):
+            current = {}
+        current["hide_to_tray"] = bool(enabled)
+        self.path.write_text(
+            json.dumps(current, ensure_ascii=False),
             encoding="utf-8",
         )
 
@@ -47,6 +79,7 @@ class LauncherConfig:
     supabase_url: str
     supabase_publishable_key: str
     account_recovery_api_url: str
+    proxy_status_api_url: str
     debug_mode: bool
     debug_log_dir: Path
 
@@ -83,6 +116,7 @@ class LauncherConfig:
             supabase_url=SUPABASE_URL,
             supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
             account_recovery_api_url=ACCOUNT_RECOVERY_API_URL,
+            proxy_status_api_url=PROXY_STATUS_API_URL,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )

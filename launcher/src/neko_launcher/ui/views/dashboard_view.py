@@ -14,6 +14,8 @@ from neko_launcher.ui.components.buttons import (
     toggle_password_visibility,
 )
 from neko_launcher.ui.platform.window_chrome import apply_rounded_window_shape
+from neko_launcher.ui.components.connection_diagram import ConnectionDiagram
+from neko_launcher.domain.models import NetworkPath
 
 
 def _entry(
@@ -47,19 +49,29 @@ class DashboardView:
         account_var: tk.StringVar,
         entitlement_days_var: tk.StringVar,
         entitlement_expiry_var: tk.StringVar,
+        server_status_var: tk.StringVar,
         download_speed_var: tk.StringVar,
         upload_speed_var: tk.StringVar,
         session_duration_var: tk.StringVar,
+        latency_var: tk.StringVar,
+        server_load_var: tk.StringVar | None = None,
+        server_avg_download_var: tk.StringVar | None = None,
+        server_avg_upload_var: tk.StringVar | None = None,
+        server_average_window_var: tk.StringVar | None = None,
     ) -> None:
         self._root = root
+        _ = server_status_var
+        _ = session_duration_var
+        _ = latency_var
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
 
         # --------------------------------------------------------------
-        # 1. Connection Hero Card
+        # 1. Compact connection hero
         # --------------------------------------------------------------
         hero_card = card(self.frame)
+        hero_card.pack_configure(padx=6, pady=2)
         hero_inner = ctk.CTkFrame(hero_card, fg_color="transparent")
-        hero_inner.pack(fill="x", padx=14, pady=(10, 10))
+        hero_inner.pack(fill="x", padx=10, pady=7)
 
         self._status_pill = ctk.CTkFrame(
             hero_inner,
@@ -68,7 +80,7 @@ class DashboardView:
             border_width=1,
             corner_radius=12,
         )
-        self._status_pill.pack(anchor="center", pady=(0, 4))
+        self._status_pill.pack(anchor="center", pady=(0, 3))
 
         self._status_title_label = ctk.CTkLabel(
             self._status_pill,
@@ -85,29 +97,43 @@ class DashboardView:
             textvariable=status_subtitle_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-            wraplength=360,
+            wraplength=520,
             justify="center",
         )
         self._status_subtitle_label.pack(anchor="center")
 
         # --------------------------------------------------------------
-        # 2. Membership Summary Card
+        # 2. Truthful compact connection strip
+        # Neko Core -> verified aggregate RTT -> Neko Proxy -> PSO2
+        # Download/Upload are aggregate telemetry, not per-hop measurements.
+        # --------------------------------------------------------------
+        self._connection_diagram = ConnectionDiagram(
+            self.frame,
+            download_var=download_speed_var,
+            upload_var=upload_speed_var,
+            server_load_var=server_load_var,
+            server_avg_download_var=server_avg_download_var,
+            server_avg_upload_var=server_avg_upload_var,
+            server_average_window_var=server_average_window_var,
+        )
+        self._connection_diagram.pack(fill="x", padx=6, pady=2)
+
+        # --------------------------------------------------------------
+        # 3. Membership summary
         # --------------------------------------------------------------
         membership_card = card(self.frame)
+        membership_card.pack_configure(padx=6, pady=2)
         membership_inner = ctk.CTkFrame(membership_card, fg_color="transparent")
-        membership_inner.pack(fill="x", padx=14, pady=(8, 8))
+        membership_inner.pack(fill="x", padx=10, pady=6)
 
         header_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        header_row.pack(fill="x", pady=(0, 4))
-
+        header_row.pack(fill="x", pady=(0, 3))
         ctk.CTkLabel(
             header_row,
             text="สมาชิก",
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             text_color=PALETTE.text,
         ).pack(side="left")
-
-        # Status badge (Truthful plan/state authority: ใช้งานได้)
         self._tier_badge = ctk.CTkLabel(
             header_row,
             text="ใช้งานได้",
@@ -123,14 +149,12 @@ class DashboardView:
         user_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
         user_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
-            user_row,
-            text="ชื่อผู้ใช้",
+            user_row, text="ชื่อผู้ใช้",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
-            user_row,
-            textvariable=account_var,
+            user_row, textvariable=account_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.text,
         ).pack(side="right")
@@ -138,14 +162,12 @@ class DashboardView:
         days_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
         days_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
-            days_row,
-            text="วันคงเหลือ",
+            days_row, text="วันคงเหลือ",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         self._entitlement_days_label = ctk.CTkLabel(
-            days_row,
-            textvariable=entitlement_days_var,
+            days_row, textvariable=entitlement_days_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.success,
         )
@@ -154,90 +176,29 @@ class DashboardView:
         expiry_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
         expiry_row.pack(fill="x", pady=1)
         ctk.CTkLabel(
-            expiry_row,
-            text="วันหมดอายุ",
+            expiry_row, text="วันหมดอายุ",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
-            expiry_row,
-            textvariable=entitlement_expiry_var,
+            expiry_row, textvariable=entitlement_expiry_var,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
         ).pack(side="right")
 
         # --------------------------------------------------------------
-        # 3. Network Summary Card
-        # --------------------------------------------------------------
-        network_card = card(self.frame)
-        network_inner = ctk.CTkFrame(network_card, fg_color="transparent")
-        network_inner.pack(fill="x", padx=14, pady=(8, 8))
-
-        ctk.CTkLabel(
-            network_inner,
-            text="เครือข่าย",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
-            text_color=PALETTE.text,
-        ).pack(anchor="w", pady=(0, 4))
-
-        dl_row = ctk.CTkFrame(network_inner, fg_color="transparent")
-        dl_row.pack(fill="x", pady=1)
-        ctk.CTkLabel(
-            dl_row,
-            text="ดาวน์โหลด",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            dl_row,
-            textvariable=download_speed_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-            text_color=PALETTE.primary,
-        ).pack(side="right")
-
-        ul_row = ctk.CTkFrame(network_inner, fg_color="transparent")
-        ul_row.pack(fill="x", pady=1)
-        ctk.CTkLabel(
-            ul_row,
-            text="อัปโหลด",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            ul_row,
-            textvariable=upload_speed_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-            text_color=PALETTE.text,
-        ).pack(side="right")
-
-        uptime_row = ctk.CTkFrame(network_inner, fg_color="transparent")
-        uptime_row.pack(fill="x", pady=1)
-        ctk.CTkLabel(
-            uptime_row,
-            text="เวลาเชื่อมต่อ",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            uptime_row,
-            textvariable=session_duration_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=PALETTE.text_muted,
-        ).pack(side="right")
-
-        # --------------------------------------------------------------
-        # 4. Passive Guidance Card
+        # 4. Passive guidance — directly follows membership, no empty metric row.
         # --------------------------------------------------------------
         guidance_card = card(self.frame)
+        guidance_card.pack_configure(padx=6, pady=2)
         guidance_inner = ctk.CTkFrame(guidance_card, fg_color="transparent")
-        guidance_inner.pack(fill="x", padx=14, pady=(6, 6))
-
+        guidance_inner.pack(fill="x", padx=10, pady=5)
         ctk.CTkLabel(
             guidance_inner,
-            text="💡 ระบบจะเชื่อมต่อ Tokyo Proxy อัตโนมัติเมื่อเปิดเกม PSO2",
+            text="💡 ระบบจะเชื่อมต่อ Neko Proxy อัตโนมัติเมื่อเปิดเกม PSO2",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-            wraplength=360,
+            wraplength=520,
             justify="center",
         ).pack(anchor="center")
 
@@ -268,6 +229,10 @@ class DashboardView:
             )
             self._status_title_label.configure(text_color=PALETTE.text_muted)
 
+    def update_server_status_role(self, role: str) -> None:
+        """Compatibility no-op; server status is represented by path state."""
+        _ = role
+
     def set_tier_badge(self, text: str, role: str = "success") -> None:
         if role == "success":
             self._tier_badge.configure(
@@ -296,6 +261,10 @@ class DashboardView:
 
     def set_entitlement_style(self, text_color: str) -> None:
         self._entitlement_days_label.configure(text_color=text_color)
+
+    def set_network_path(self, path: NetworkPath) -> None:
+        """Update the connection diagram topology."""
+        self._connection_diagram.set_path(path)
 
 
 def open_password_dialog(

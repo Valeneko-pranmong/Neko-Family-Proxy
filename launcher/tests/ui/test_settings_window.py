@@ -585,7 +585,7 @@ def test_app_window_source_uses_approved_asset_for_settings_control() -> None:
     ).read_text(encoding="utf-8")
 
     assert "self._settings_control_image" in source
-    assert "Image.open(self._icon_path)" in source
+    assert "Image.open(self._settings_icon_path)" in source
     assert "⚙" not in source
     assert "self._open_settings_window" in source
     assert "self._settings_window" in source
@@ -865,12 +865,20 @@ def test_app_factory_logo_and_icon_resolve_to_real_file_in_source_mode() -> None
         assert asset_dir.is_dir(), (
             f"Repo Asset dir must be a direct child of repo root: {asset_dir}"
         )
-        # Both logo and icon candidates must point to an actual file.
-        # In source mode the app should use Asset/setting.png.
-        assert (asset_dir / "setting.png").is_file(), (
-            f"Asset/setting.png must exist for source-mode Launcher: "
-            f"{asset_dir / 'setting.png'}"
-        )
+        # Source mode keeps the three UI assets separate and explicit.
+        for name in ("logo.png", "icon_app.ico", "setting.png", "computer.png", "internet.png", "server.png"):
+            candidate = asset_dir / name
+            assert candidate.is_file(), (
+                f"Asset/{name} must exist for source-mode Launcher: {candidate}"
+            )
+
+        # Frozen mode ships the same three names at the PyInstaller root.
+        assert 'Asset" / "logo.png"' in SPEC_SOURCE
+        assert 'Asset" / "icon_app.ico"' in SPEC_SOURCE
+        assert 'Asset" / "setting.png"' in SPEC_SOURCE
+        assert 'Asset" / "computer.png"' in SPEC_SOURCE
+        assert 'Asset" / "internet.png"' in SPEC_SOURCE
+        assert 'Asset" / "server.png"' not in SPEC_SOURCE
 
 
 def test_launcher_spec_bundles_sarabun_thai_fonts() -> None:
@@ -942,7 +950,7 @@ def test_app_window_settings_button_uses_image_open_for_icon() -> None:
     controls_section = APP_WINDOW_SOURCE.split(
         "def _build_window_controls"
     )[1].split("def _open_settings_window")[0]
-    assert "Image.open(self._icon_path)" in controls_section
+    assert "Image.open(self._settings_icon_path)" in controls_section
     assert "self._settings_control_image" in controls_section
 
 
@@ -950,3 +958,28 @@ def test_app_window_no_hardcoded_path_in_app_factory_comment() -> None:
     """M-2: a hardcoded 'E:\\Github\\Neko-Family-Proxy\\Asset' comment will be
     wrong on every machine that is not the original dev workstation."""
     assert "E:\\Github\\Neko-Family-Proxy\\Asset" not in APP_FACTORY_SOURCE
+
+
+# A18_HIDE_TO_TRAY_SETTINGS
+
+def test_a18_program_settings_exposes_hide_to_tray_switch() -> None:
+    source = Path(__file__).parents[2].joinpath("src", "neko_launcher", "ui", "settings_window.py").read_text(encoding="utf-8")
+    assert 'text="Hide to tray"' in source
+    assert 'variable=self._hide_to_tray_var' in source
+    assert 'command=self._on_hide_to_tray_changed' in source
+
+
+# A19_SETTINGS_TASKBAR_ICON
+
+def test_a19_settings_reapplies_product_icon_after_ctk_delayed_icon() -> None:
+    source = Path(__file__).parents[2].joinpath(
+        "src", "neko_launcher", "ui", "settings_window.py"
+    ).read_text(encoding="utf-8")
+    assert "self._icon_path = icon_path" in source
+    assert "self._apply_window_icon()" in source
+    assert "self.after(300, self._apply_window_icon)" in source
+    assert 'self.bind("<Map>", self._on_window_mapped, add="+")' in source
+    assert "self.after_idle(self._apply_window_icon)" in source
+    assert "self.iconbitmap(icon_path)" in source
+    assert "ImageTk.PhotoImage" in source
+    assert "self.iconphoto(False, self._window_icon_photo)" in source
