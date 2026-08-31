@@ -2,9 +2,9 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         ACCEPTED_FOR_BETA_DISTRIBUTION (5.0.0a29)
-PRODUCT_BASELINE:               CLOSED BETA ACCEPTED (5.0.0a29)
-CURRENT_WORKSTREAM:             AUTHORITY FREEZE & BETA RELEASE ACCEPTANCE COMPLETE
+STATUS:                         PRE_FREEZE_VALIDATION_PASS (5.0.0a29 CANDIDATE)
+PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a29 — NOT FROZEN)
+CURRENT_WORKSTREAM:             PRE-FREEZE VALIDATION GATE (5.0.0a29)
 ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
 ACTIVE_DEV_HEAD:                891e5fc6a97b79ac49c88c6174ff196206d2628e
 LAUNCHER_SOURCE_COMMIT:         084289e8ed1b7e927e29e9f1189189ad37913297
@@ -14,14 +14,24 @@ BETA_HEAD:                      c9ab125 (origin/beta; previous Closed Beta basel
 CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
 CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
 LAUNCHER_SOURCE_VERSION:        5.0.0a29
-ACCEPTED_LAUNCHER_EXE_SHA256:   0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
-INSTALLER_FILE:                 NekoFamilyProxy-Beta-Setup.exe
-INSTALLER_SIZE:                 104213403 bytes
-ACCEPTED_INSTALLER_SHA256:      7e6450b904b9d879f8041f652fcc2c3ed8e342252f31b4a8f31aa17c117a3099
-INSTALLER_SMOKE_RESULT:         CLEAN_MACHINE_SMOKE_PASS
-AUTHORITY_UPDATE:               DONE
-DISTRIBUTION_STATUS:            ACCEPTED_FOR_BETA_DISTRIBUTION
-NEXT_ACTION:                    Customer Closed Beta distribution of 5.0.0a29 installer
+CANDIDATE_LAUNCHER_EXE_SHA256:  0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
+CANDIDATE_INSTALLER_FILE:       NekoFamilyProxy-Beta-Setup.exe
+CANDIDATE_INSTALLER_SIZE:       104213403 bytes
+CANDIDATE_INSTALLER_SHA256:     7e6450b904b9d879f8041f652fcc2c3ed8e342252f31b4a8f31aa17c117a3099
+CLEAN_INSTALL:                  PASS
+FIRST_RUN:                      PASS
+AUTH_FLOW:                      PASS
+PROXY_FLOW:                     PASS
+CLOSE_GAME_INVARIANT:           PASS
+REOPEN_GAME_INVARIANT:          PASS
+LONG_RUN_TEST:                  PASS
+SECURITY_SCAN:                  PASS (0 secrets, fail-closed auth)
+P0_BLOCKERS:                    0
+P1_ISSUES:                      0
+AUTHORITY_UPDATE:               NOT_PERFORMED
+CURRENT_STATUS:                 RELEASE_CANDIDATE_NOT_FROZEN
+FREEZE_READY:                   YES
+NEXT_ACTION:                    Owner final authority freeze and distribution authorization gate
 LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 ```
 
