@@ -263,6 +263,11 @@ def test_opaque_permit_never_reveals_value() -> None:
     assert "sentinel-permit" not in repr(permit)
     assert "sentinel-permit" not in str(permit)
     assert permit.reveal_for_transport() == "sentinel-permit"
+    assert permit.diagnostic_length == len("sentinel-permit")
+
+    with pytest.raises(AuthorizedCoreError) as exc_info:
+        OpaquePermit("")
+    assert exc_info.value.code is AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE
 
 
 @pytest.mark.parametrize(
@@ -592,6 +597,109 @@ def test_successful_start_records_terminal_typed_running_stage() -> None:
         ("RUNNING_VERIFY", {}),
         ("CORE_STATUS", {"status": "CoreStatus.RUNNING"}),
     ]
+
+
+def test_permit_received_stage_records_actual_length_without_revealing_permit() -> None:
+    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
+
+    class RecordingSink:
+        def __init__(self) -> None:
+            self.stages: list[tuple[str, dict[str, object]]] = []
+
+        def begin_attempt(self, attempt_id: str) -> None:
+            pass
+
+        def record_stage(self, stage: str, **kwargs: object) -> None:
+            self.stages.append((stage, kwargs))
+
+        def record_process_event(self, event: str, **kwargs: object) -> None:
+            pass
+
+        def record_exception(self, exc: Exception, stage: str) -> None:
+            pass
+
+    orchestrator, _, _, _ = build_orchestrator()
+    sink = RecordingSink()
+    orchestrator._diagnostics = CoreDiagnosticsRecorder(sink)
+
+    raw_permit_secret = "sensitive-opaque-jwt-token-string-12345678"
+    orchestrator._permits.issue_launch_permit = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: OpaquePermit(raw_permit_secret)
+    )
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    permit_received_stages = [
+        (stage, kwargs) for stage, kwargs in sink.stages if stage == "PERMIT_RECEIVED"
+    ]
+    assert len(permit_received_stages) == 1
+    stage_name, kwargs = permit_received_stages[0]
+    assert kwargs.get("PERMIT_RECEIVED") is True
+    assert kwargs.get("PERMIT_LENGTH") == len(raw_permit_secret)
+    assert raw_permit_secret not in str(kwargs)
+
+
+def test_typed_core_start_failure_records_core_error_code_in_diagnostics() -> None:
+    from neko_launcher.application.diagnostics import (
+        CoreDiagnosticsRecorder,
+        NoopDiagnosticsSink,
+    )
+
+    orchestrator, calls, _, channel = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator._diagnostics = recorder
+    channel.status = CoreStatus(CoreStatusKind.FAILED, "AuthorizationInvalid")
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.AUTHORIZATION_INVALID
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_failure_category == "START_TYPED_FAILURE"
+    assert snapshot.authorized_start_core_alive is True
+    assert snapshot.authorized_start_transport_outcome == "START_TYPED_FAILURE"
+    assert snapshot.authorized_start_core_error_code == "AuthorizationInvalid"
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+
+
+def test_untrusted_core_error_code_is_dropped_from_diagnostics() -> None:
+    from neko_launcher.application.diagnostics import (
+        CoreDiagnosticsRecorder,
+        NoopDiagnosticsSink,
+    )
+
+    orchestrator, calls, _, channel = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator._diagnostics = recorder
+    channel.status = CoreStatus(CoreStatusKind.FAILED, "UNTRUSTED_UNKNOWN_ERROR")
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_failure_category == "START_TYPED_FAILURE"
+    assert snapshot.authorized_start_core_error_code is None
+
+
+def test_successful_start_has_no_core_error_code_in_diagnostics() -> None:
+    from neko_launcher.application.diagnostics import (
+        CoreDiagnosticsRecorder,
+        NoopDiagnosticsSink,
+    )
+
+    orchestrator, calls, _, channel = build_orchestrator()
+    recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
+    orchestrator._diagnostics = recorder
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_failure_category == "START_TYPED_SUCCESS"
+    assert snapshot.authorized_start_core_alive is True
+    assert snapshot.authorized_start_transport_outcome == "START_TYPED_SUCCESS"
+    assert snapshot.authorized_start_core_error_code is None
+
 
 
 def test_start_timeout_diagnostics_distinguish_live_core_without_response() -> None:

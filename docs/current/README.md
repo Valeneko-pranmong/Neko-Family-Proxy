@@ -2,19 +2,18 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         ACTIVE DEVELOPMENT
+STATUS:                         ACTIVE DEVELOPMENT / P0 PROXY CONNECTION INVESTIGATION & FIX
 PRODUCT_BASELINE:               CLOSED BETA ACCEPTED
-CURRENT_WORKSTREAM:             DASHBOARD REDESIGN
+CURRENT_WORKSTREAM:             DASHBOARD REDESIGN / P0 REMEDIATION
 ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
-ACTIVE_DEV_HEAD:                0fc836d15399ddfd5dd9abc4661b0ba84d072571
+ACTIVE_DEV_HEAD:                45b93787b6b8788cb34148240c9a05240f36217a
 MAIN_HEAD:                      bde8389 (origin/main)
 BETA_HEAD:                      c9ab125 (origin/beta; accepted Closed Beta baseline)
 CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
 CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
-PHASE_2_5_TECHNICAL_GATE:       CLOSED / PASS
-| DASHBOARD_PLAN:                 v1.2 / PHASE 1 ENGINEERING PASS (uncommitted) / PHASE 2 NEXT |
-| NEXT_ACTION:                    PHASE 2 READ-ONLY AUDIT OF EXISTING UI/COMPONENT CONVENTIONS BEFORE ANY PHASE 2 IMPLEMENTATION |
-LAST_VERIFIED:                  2026-08-29 +07:00 (Asia/Bangkok)
+LAUNCHER_SOURCE_VERSION:        5.0.0a29 (uncommitted on 45b9378)
+CANDIDATE_LAUNCHER_EXE_SHA256:  0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
+LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 ```
 
 > **Current-state rule:** verify Git branch, HEAD, status, and this directory before assigning work. The active feature branch is newer development state than older production/Closed-Beta status blocks. Frozen release evidence remains historical authority for the exact accepted artifacts only.

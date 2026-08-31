@@ -303,6 +303,12 @@ class OpaquePermit:
         """Return the permit only at the direct transport serialization boundary."""
         return self._value
 
+    @property
+    def diagnostic_length(self) -> int:
+        """Return length of permit for non-secret diagnostic telemetry."""
+        return len(self._value)
+
+
 
 @dataclass(frozen=True)
 class CoreChallenge:
@@ -762,7 +768,7 @@ class AuthorizedCoreOrchestrator:
                     self._diagnostics.record_stage(
                         "PERMIT_RECEIVED",
                         PERMIT_RECEIVED=True,
-                        PERMIT_LENGTH=len(permit.permit_jwt) if hasattr(permit, "permit_jwt") else 0,
+                        PERMIT_LENGTH=permit.diagnostic_length,
                     )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
@@ -928,6 +934,7 @@ class AuthorizedCoreOrchestrator:
             core_pid=owned_pid,
             core_alive=(self._process.owned_process_id() == owned_pid and owned_pid is not None),
             transport_outcome=classification,
+            core_error_code=status.error_code if status.kind is CoreStatusKind.FAILED else None,
         )
         return status
 
@@ -939,18 +946,25 @@ class AuthorizedCoreOrchestrator:
         core_pid: int | None,
         core_alive: bool,
         transport_outcome: str,
+        core_error_code: str | None = None,
     ) -> None:
         if not self._diagnostics:
             return
         elapsed_ms = max(0, int((monotonic() - started_at) * 1000))
+        kwargs: dict[str, object] = {
+            "elapsed_ms": elapsed_ms,
+            "failure_category": failure_category,
+            "core_pid": core_pid,
+            "core_alive": core_alive,
+            "transport_outcome": transport_outcome,
+        }
+        if core_error_code is not None:
+            kwargs["core_error_code"] = core_error_code
         self._diagnostics.record_stage(
             "AUTHORIZED_START_RESULT",
-            elapsed_ms=elapsed_ms,
-            failure_category=failure_category,
-            core_pid=core_pid,
-            core_alive=core_alive,
-            transport_outcome=transport_outcome,
+            **kwargs,
         )
+
 
     @staticmethod
     def _require_not_cancelled(cancellation: Event) -> None:

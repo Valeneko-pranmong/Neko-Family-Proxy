@@ -1766,6 +1766,11 @@ class AppWindow:
         except Exception:
             pass
         self._executor.shutdown(wait=False, cancel_futures=True)
+        if getattr(self, "_proxy_status_executor", None) is not None:
+            try:
+                self._proxy_status_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
         if self._tray_manager is not None:
             self._tray_manager.stop()
         self.root.quit()

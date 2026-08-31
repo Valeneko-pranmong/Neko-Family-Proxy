@@ -20,6 +20,28 @@ AUTHORIZED_START_CLASSIFICATIONS = frozenset(
     }
 )
 
+KNOWN_CORE_PROTOCOL_ERROR_CODES = frozenset(
+    {
+        "AuthorizationRequired",
+        "AuthorizationInvalid",
+        "AuthorizationExpired",
+        "AuthorizationReplay",
+        "AuthorizationUnavailable",
+        "SessionInactive",
+        "EntitlementInactive",
+        "HeartbeatStale",
+        "ProcessNotFound",
+        "ProcessExited",
+        "ConfigurationMismatch",
+        "AlreadyRunning",
+        "ProtocolInvalid",
+        "StartTimeout",
+        "Cancelled",
+        "StartFailed",
+        "StopFailed",
+    }
+)
+
 
 def safe_authorized_start_details(details: dict[str, Any]) -> dict[str, object]:
     """Allow only non-secret, bounded fields for AUTHORIZED_START diagnostics."""
@@ -44,7 +66,12 @@ def safe_authorized_start_details(details: dict[str, Any]) -> dict[str, object]:
     transport_outcome = details.get("transport_outcome")
     if transport_outcome in AUTHORIZED_START_CLASSIFICATIONS:
         safe["transport_outcome"] = transport_outcome
+
+    core_error_code = details.get("core_error_code")
+    if core_error_code in KNOWN_CORE_PROTOCOL_ERROR_CODES:
+        safe["core_error_code"] = core_error_code
     return safe
+
 
 
 def sanitize_diagnostic_text(text: str) -> str:
@@ -149,6 +176,7 @@ class CoreDiagnosticsSnapshot:
     authorized_start_failure_category: str | None = None
     authorized_start_core_alive: bool | None = None
     authorized_start_transport_outcome: str | None = None
+    authorized_start_core_error_code: str | None = None
 
 
 class DiagnosticsSink(Protocol):
@@ -180,6 +208,7 @@ class CoreDiagnosticsRecorder:
         self._authorized_start_failure_category: str | None = None
         self._authorized_start_core_alive: bool | None = None
         self._authorized_start_transport_outcome: str | None = None
+        self._authorized_start_core_error_code: str | None = None
 
     def snapshot(self) -> CoreDiagnosticsSnapshot:
         with self._lock:
@@ -197,6 +226,7 @@ class CoreDiagnosticsRecorder:
                 authorized_start_failure_category=(self._authorized_start_failure_category),
                 authorized_start_core_alive=self._authorized_start_core_alive,
                 authorized_start_transport_outcome=(self._authorized_start_transport_outcome),
+                authorized_start_core_error_code=(self._authorized_start_core_error_code),
             )
 
     @property
@@ -219,6 +249,7 @@ class CoreDiagnosticsRecorder:
             self._authorized_start_failure_category = None
             self._authorized_start_core_alive = None
             self._authorized_start_transport_outcome = None
+            self._authorized_start_core_error_code = None
             self._sink.begin_attempt(attempt_id)
 
     def record_stage(self, stage: str, **kwargs: Any) -> None:
@@ -238,6 +269,10 @@ class CoreDiagnosticsRecorder:
                 self._authorized_start_transport_outcome = kwargs.get(  # type: ignore[assignment]
                     "transport_outcome"
                 )
+                self._authorized_start_core_error_code = kwargs.get(  # type: ignore[assignment]
+                    "core_error_code"
+                )
+
             if "core_path" in kwargs:
                 self._core_path = kwargs["core_path"]
             if "pid" in kwargs:

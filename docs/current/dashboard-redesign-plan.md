@@ -604,6 +604,27 @@ M launcher/uv.lock                                 (root project version 5.0.0a1
 
 ---
 
-| **สถานะ:** `v1.2 / PHASE 1 ENGINEERING PASS (uncommitted) / PHASE 2 NEXT` |
+| **สถานะ:** `v1.2 / P0 PROXY CONNECTION INVESTIGATION & FIX COMPLETED / LAUNCHER 5.0.0a29 CANDIDATE BUILT` |
 
-**Next action:** Phase 2 (reusable presentation components) is the next gate; do NOT begin Phase 2 implementation before completing Phase 2 read-only audit of existing UI/component conventions and exact file paths. Phase 1 source/test/version mutations remain uncommitted on `feature/dashboard-redesign @ 0fc836d`; commit/push is an explicit Owner decision.
+---
+
+## 11. P0 Proxy Connection Regression Audit & Remediation (2026-08-31)
+
+### 11.1 Investigation & Hypotheses
+1. **H1 (Diagnostics regression)**: `ELIMINATED` — `DevelopmentLogger` writes are wrapped in `try...except OSError: pass`, hashing occurs once at bootstrap, logging overhead <0.1ms, isolated from functional control path.
+2. **H2 (Public proxy status integration)**: `ELIMINATED` — `PublicProxyStatusClient` executes on a dedicated background thread pool (`_proxy_status_executor`), isolated from `_executor`, updates presentation StringVars only.
+3. **H3 (Telemetry/state regression)**: `ELIMINATED` — `map_network_path()`, `get_server_status()`, and `translate_customer_status()` are read-only presentation mappers. Automatic reconnect is not armed until proxy reaches `RUNNING`.
+4. **H4 (Version/protocol mismatch)**: `ELIMINATED` — `__version__` bump does not participate in backend, permit, or Core Named Pipe handshake.
+5. **H5 (Unrelated runtime changes)**: `ELIMINATED` — Proxy connection orchestration pipeline (`controller.py`, `services.py`, `authorized_core.py`, `core_process.py`, `core_control_channel.py`) is verified intact and passes all 760 unit/contract tests.
+
+### 11.2 Remediations & Observability Improvements
+- **Diagnostics Observability (`OpaquePermit.diagnostic_length`)**: Fixed permit length logging in `authorized_core.py` to record `permit.diagnostic_length` (previously evaluated `hasattr(permit, "permit_jwt")` returning 0).
+- **Core Error Code Allow-list**: Allow-listed non-secret `core_error_code` strings from failed Core START responses to be recorded in `AUTHORIZED_START_RESULT` diagnostics without exposing tokens or secrets.
+- **Thread Pool Lifecycle (`app_window.py`)**: Added `_proxy_status_executor.shutdown(wait=False, cancel_futures=True)` to `_perform_close()` to guarantee graceful shutdown and avoid hanging worker threads.
+- **Version Bump**: Bapped Launcher version from `5.0.0a28` to `5.0.0a29` (`pyproject.toml`, `__init__.py`, `uv.lock`).
+
+### 11.3 Verification Evidence
+- Full unit & contract test suite: **760 passed, 1 skipped, 5 deselected, 4 warnings** in 5.93s.
+- Code quality & linting: Ruff check PASS (all checks passed), compileall clean, `git diff --check` PASS.
+- PyInstaller executable candidate built: `launcher/dist/NekoLauncher.exe` (SHA256: `0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb`, size: 30,176,144 bytes).
+- Packaged startup smoke test: verified real window appearance (`NEKO FAMILY PROXY`), graceful `WM_CLOSE` handling, clean bootloader process exit code 0, and complete `_MEI` temp directory extraction and cleanup.

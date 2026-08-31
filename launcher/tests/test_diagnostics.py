@@ -197,6 +197,80 @@ def test_authorized_start_stage_logs_only_allow_listed_fields(tmp_path):
     assert "challenge" not in log_text.lower()
 
 
+def test_authorized_start_stage_logs_valid_core_error_code(tmp_path):
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("DBG-123")
+
+    logger.record_stage(
+        "AUTHORIZED_START_RESULT",
+        elapsed_ms=100,
+        failure_category="START_TYPED_FAILURE",
+        core_pid=1234,
+        core_alive=True,
+        transport_outcome="START_TYPED_FAILURE",
+        core_error_code="AuthorizationInvalid",
+    )
+
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "failure_category=START_TYPED_FAILURE" in log_text
+    assert "core_error_code=AuthorizationInvalid" in log_text
+
+
+def test_authorized_start_stage_drops_untrusted_core_error_code(tmp_path):
+    logger = DevelopmentLogger(tmp_path)
+    logger.begin_attempt("DBG-123")
+
+    logger.record_stage(
+        "AUTHORIZED_START_RESULT",
+        elapsed_ms=100,
+        failure_category="START_TYPED_FAILURE",
+        core_pid=1234,
+        core_alive=True,
+        transport_outcome="START_TYPED_FAILURE",
+        core_error_code="UNTRUSTED_SECRET_CODE_sentinel_xyz",
+    )
+
+    log_text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "UNTRUSTED_SECRET_CODE" not in log_text
+    assert "core_error_code" not in log_text
+
+
+def test_core_diagnostics_recorder_tracks_authorized_start_core_error_code():
+    sink = NoopDiagnosticsSink()
+    recorder = CoreDiagnosticsRecorder(sink)
+    recorder.begin_attempt("DBG-123")
+
+    recorder.record_stage(
+        "AUTHORIZED_START_RESULT",
+        elapsed_ms=120,
+        failure_category="START_TYPED_FAILURE",
+        core_pid=5555,
+        core_alive=True,
+        transport_outcome="START_TYPED_FAILURE",
+        core_error_code="AuthorizationInvalid",
+    )
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_failure_category == "START_TYPED_FAILURE"
+    assert snapshot.authorized_start_core_error_code == "AuthorizationInvalid"
+
+    recorder.begin_attempt("DBG-124")
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_core_error_code is None
+
+    recorder.record_stage(
+        "AUTHORIZED_START_RESULT",
+        elapsed_ms=120,
+        failure_category="START_TYPED_FAILURE",
+        core_pid=5555,
+        core_alive=True,
+        transport_outcome="START_TYPED_FAILURE",
+        core_error_code="INJECTION_ATTEMPT_123",
+    )
+    snapshot = recorder.snapshot()
+    assert snapshot.authorized_start_core_error_code is None
+
+
+
 def test_secret_redaction_unit_gate(tmp_path, capsys):
     """SECRET REDACTION UNIT GATE: verify all synthetic secrets are redacted before write."""
     synthetic_bearer = "Bearer synthetic_bearer_token_xyz987"
