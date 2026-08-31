@@ -2,12 +2,13 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         UI_POLISH_PASS (5.0.0a30 CANDIDATE)
-PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a30 — NOT FROZEN)
-CURRENT_WORKSTREAM:             PRE-FREEZE UI POLISH (5.0.0a30)
+STATUS:                         COMPLETED (READY_FOR_MERGE)
+PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a30)
+CURRENT_WORKSTREAM:             DASHBOARD REDESIGN BRANCH CLOSURE & MAIN MERGE PREPARATION
 ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
-ACTIVE_DEV_HEAD:                17540c26262bbd5dcf37bc33a2a2038e42698ad5
-LAUNCHER_SOURCE_VERSION:        5.0.0a30
+FEATURE_BRANCH_STATUS:          COMPLETED
+FINAL_VERSION:                  5.0.0a30
+FINAL_COMMIT:                   32b1b68d821f80eaa594938aceea2fa8d3b5c37f
 CANDIDATE_LAUNCHER_EXE_FILE:    NekoLauncher.exe
 CANDIDATE_LAUNCHER_EXE_SIZE:    30176905 bytes
 CANDIDATE_LAUNCHER_EXE_SHA256:  f43354d00fc28642fb1f3e038297bc7d5fa77d4bc350ef3cd8352c3ca27ad850
@@ -25,10 +26,10 @@ LONG_RUN_TEST:                  PASS
 SECURITY_SCAN:                  PASS (0 secrets, fail-closed auth)
 P0_BLOCKERS:                    0
 P1_ISSUES:                      0
-AUTHORITY_UPDATE:               NOT_PERFORMED
-CURRENT_STATUS:                 RELEASE_CANDIDATE_NOT_FROZEN
-FREEZE_READY:                   YES
-NEXT_ACTION:                    Review candidate 5.0.0a30 UI polish before freeze
+MERGE_TARGET:                   main
+MERGE_READY:                    YES
+CONFLICT_RISK:                  LOW
+NEXT_DEVELOPMENT_STREAM:        feature/live-update
 LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 ```
 
@@ -38,24 +39,15 @@ LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 
 ## 1. What is the Launcher doing now?
 
-The Launcher is in **post-Closed-Beta product development** on:
+The Launcher has **completed the dashboard-redesign stream** on:
 
 ```text
-feature/dashboard-redesign @ 0fc836d
+feature/dashboard-redesign @ 32b1b68
 ```
 
-The current implementation authority is [`dashboard-redesign-plan.md`](dashboard-redesign-plan.md) **v1.2**, reconciled against NekoProxyCore, legacy Netch runtime evidence, current telemetry, and the Owner mockup.
+All 6 implementation phases and UI polish gates from [`dashboard-redesign-plan.md`](dashboard-redesign-plan.md) and [`dashboard-redesign-completion.md`](dashboard-redesign-completion.md) are **PASS**.
 
-Six phases remain:
-
-1. Foundation — semantic network models and theme tokens
-2. Reusable presentation components
-3. Dashboard layout restructure / window sizing
-4. Connection diagram, runtime mapping, and latency capability gate
-5. Statistics and visual polish
-6. Integration, packaged build, and smoke verification
-
-`main` remains at `bde8389`. `beta` remains at accepted Closed Beta baseline `c9ab125`. Dashboard work is not a new release identity until implementation, tests, packaged proof, and release gates complete.
+The branch is closed and prepared for merge into `main`. The next stream (`feature/live-update`) will branch from `main` following merge completion.
 
 ---
 
@@ -180,7 +172,8 @@ Build/live proof/authority = NOT performed in this pass; Phase 6 owns packaged i
 | Document | Role / Content | Authority level |
 | :--- | :--- | :--- |
 | **[`README.md`](README.md)** | Current Launcher component status and start-here orientation | `CURRENT_STATUS` |
-| **[`dashboard-redesign-plan.md`](dashboard-redesign-plan.md)** | Evidence-aligned six-phase dashboard redesign plan v1.2 | `CURRENT_PLAN` |
+| **[`dashboard-redesign-completion.md`](dashboard-redesign-completion.md)** | Dashboard redesign completion, validation evidence, and merge readiness | `FEATURE_COMPLETION_RECORD` |
+| **[`dashboard-redesign-plan.md`](dashboard-redesign-plan.md)** | Evidence-aligned six-phase dashboard redesign plan v1.2 | `HISTORICAL_PLAN / COMPLETED` |
 | **[`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md)** | Previous commercial UI/UX architecture and non-regression constraints | `CURRENT_CONTRACT / HISTORICAL_FREEZE` |
 | **[`launcher-architecture.md`](launcher-architecture.md)** | Desktop application layered architecture, IPC, and controllers | `CURRENT_CONTRACT` |
 | **[`neko-auth-lite.md`](neko-auth-lite.md)** | NEKO-AUTH-LITE authentication, challenge-response, and permit flow | `CURRENT_CONTRACT` |
