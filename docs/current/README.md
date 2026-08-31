@@ -2,23 +2,26 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         INSTALLER_CANDIDATE_READY / SMOKE_GATE_PASS (5.0.0a29)
-PRODUCT_BASELINE:               CLOSED BETA ACCEPTED
-CURRENT_WORKSTREAM:             INSTALLER CANDIDATE BUILD & CLEAN MACHINE SMOKE PASS
+STATUS:                         ACCEPTED_FOR_BETA_DISTRIBUTION (5.0.0a29)
+PRODUCT_BASELINE:               CLOSED BETA ACCEPTED (5.0.0a29)
+CURRENT_WORKSTREAM:             AUTHORITY FREEZE & BETA RELEASE ACCEPTANCE COMPLETE
 ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
-ACTIVE_DEV_HEAD:                084289e8ed1b7e927e29e9f1189189ad37913297
+ACTIVE_DEV_HEAD:                891e5fc6a97b79ac49c88c6174ff196206d2628e
+LAUNCHER_SOURCE_COMMIT:         084289e8ed1b7e927e29e9f1189189ad37913297
+INSTALLER_SOURCE_COMMIT:        891e5fc6a97b79ac49c88c6174ff196206d2628e
 MAIN_HEAD:                      bde8389 (origin/main)
-BETA_HEAD:                      c9ab125 (origin/beta; accepted Closed Beta baseline)
+BETA_HEAD:                      c9ab125 (origin/beta; previous Closed Beta baseline)
 CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
 CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
 LAUNCHER_SOURCE_VERSION:        5.0.0a29
-CANDIDATE_LAUNCHER_EXE_SHA256:  0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
-INSTALLER_CANDIDATE_FILE:       NekoFamilyProxy-Beta-Setup.exe
-INSTALLER_CANDIDATE_SIZE:       104213403 bytes
-INSTALLER_CANDIDATE_SHA256:     7e6450b904b9d879f8041f652fcc2c3ed8e342252f31b4a8f31aa17c117a3099
+ACCEPTED_LAUNCHER_EXE_SHA256:   0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
+INSTALLER_FILE:                 NekoFamilyProxy-Beta-Setup.exe
+INSTALLER_SIZE:                 104213403 bytes
+ACCEPTED_INSTALLER_SHA256:      7e6450b904b9d879f8041f652fcc2c3ed8e342252f31b4a8f31aa17c117a3099
 INSTALLER_SMOKE_RESULT:         CLEAN_MACHINE_SMOKE_PASS
-AUTHORITY_UPDATE:               DEFERRED
-NEXT_GATE:                      Owner Final Review & Authority Vault Update Decision
+AUTHORITY_UPDATE:               DONE
+DISTRIBUTION_STATUS:            ACCEPTED_FOR_BETA_DISTRIBUTION
+NEXT_ACTION:                    Customer Closed Beta distribution of 5.0.0a29 installer
 LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 ```
 
