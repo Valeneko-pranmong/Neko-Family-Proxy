@@ -2,17 +2,23 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         ACTIVE DEVELOPMENT / P0 PROXY CONNECTION INVESTIGATION & FIX
+STATUS:                         INSTALLER_CANDIDATE_READY / SMOKE_GATE_PASS (5.0.0a29)
 PRODUCT_BASELINE:               CLOSED BETA ACCEPTED
-CURRENT_WORKSTREAM:             DASHBOARD REDESIGN / P0 REMEDIATION
+CURRENT_WORKSTREAM:             INSTALLER CANDIDATE BUILD & CLEAN MACHINE SMOKE PASS
 ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
-ACTIVE_DEV_HEAD:                45b93787b6b8788cb34148240c9a05240f36217a
+ACTIVE_DEV_HEAD:                084289e8ed1b7e927e29e9f1189189ad37913297
 MAIN_HEAD:                      bde8389 (origin/main)
 BETA_HEAD:                      c9ab125 (origin/beta; accepted Closed Beta baseline)
 CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
 CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
-LAUNCHER_SOURCE_VERSION:        5.0.0a29 (uncommitted on 45b9378)
+LAUNCHER_SOURCE_VERSION:        5.0.0a29
 CANDIDATE_LAUNCHER_EXE_SHA256:  0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
+INSTALLER_CANDIDATE_FILE:       NekoFamilyProxy-Beta-Setup.exe
+INSTALLER_CANDIDATE_SIZE:       104213403 bytes
+INSTALLER_CANDIDATE_SHA256:     7e6450b904b9d879f8041f652fcc2c3ed8e342252f31b4a8f31aa17c117a3099
+INSTALLER_SMOKE_RESULT:         CLEAN_MACHINE_SMOKE_PASS
+AUTHORITY_UPDATE:               DEFERRED
+NEXT_GATE:                      Owner Final Review & Authority Vault Update Decision
 LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 ```
 
