@@ -1548,7 +1548,7 @@ def test_close_stops_telemetry_client(tmp_path: Path) -> None:
 def test_main_window_is_responsive_and_landscape_first(monkeypatch: Any) -> None:
     source = Path(__file__).parents[2].joinpath('src', 'neko_launcher', 'ui', 'app_window.py').read_text(encoding='utf-8')
     assert 'self.root.resizable(True, True)' in source
-    assert 'self.root.minsize(480, 500)' in source
+    assert 'self.root.minsize(480, 580)' in source
 
 
 # A18_NATIVE_MINIMIZE
@@ -1591,8 +1591,8 @@ def test_a18_window_contract_uses_compact_dashboard_and_exact_title() -> None:
     from pathlib import Path
     source = Path(__file__).parents[2].joinpath("src", "neko_launcher", "ui", "app_window.py").read_text(encoding="utf-8")
     assert 'self.root.title("NEKO FAMILY PROXY")' in source
-    assert 'self.root.minsize(480, 500)' in source
-    assert 'self.root.geometry("500x520")' in source
+    assert 'self.root.minsize(480, 580)' in source
+    assert 'self.root.geometry("500x640")' in source
     assert 'controls.pack(side="right", anchor="ne")' in source
     assert 'controls, "Hide"' not in source
 
@@ -1604,8 +1604,8 @@ def test_a21_dashboard_geometry_is_compact_and_single_step() -> None:
         "src", "neko_launcher", "ui", "app_window.py"
     ).read_text(encoding="utf-8")
     program = source.split("def _show_program_view")[1].split("# Password dialog")[0]
-    assert 'width, height = (500, 520)' in program
-    assert 'self.root.minsize(480, 500)' in program
+    assert 'width, height = (500, 640)' in program
+    assert 'self.root.minsize(480, 580)' in program
     assert program.count("self.root.geometry(") == 1
     assert "center_window(self.root" not in program
     assert 'getattr(self, "_active_view", None) == "program"' in program
@@ -1668,8 +1668,8 @@ def test_a25_dashboard_is_more_compact() -> None:
         "src", "neko_launcher", "ui", "app_window.py"
     ).read_text(encoding="utf-8")
     program = source.split("def _show_program_view")[1].split("# Password dialog")[0]
-    assert 'width, height = (500, 520)' in program
-    assert 'self.root.minsize(480, 500)' in program
+    assert 'width, height = (500, 640)' in program
+    assert 'self.root.minsize(480, 580)' in program
 
 
 # A25_REGISTER_CTA

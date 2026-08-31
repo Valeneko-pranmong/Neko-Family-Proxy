@@ -2,22 +2,19 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PRE_FREEZE_VALIDATION_PASS (5.0.0a29 CANDIDATE)
-PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a29 — NOT FROZEN)
-CURRENT_WORKSTREAM:             PRE-FREEZE VALIDATION GATE (5.0.0a29)
+STATUS:                         UI_POLISH_PASS (5.0.0a30 CANDIDATE)
+PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a30 — NOT FROZEN)
+CURRENT_WORKSTREAM:             PRE-FREEZE UI POLISH (5.0.0a30)
 ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
-ACTIVE_DEV_HEAD:                891e5fc6a97b79ac49c88c6174ff196206d2628e
-LAUNCHER_SOURCE_COMMIT:         084289e8ed1b7e927e29e9f1189189ad37913297
-INSTALLER_SOURCE_COMMIT:        891e5fc6a97b79ac49c88c6174ff196206d2628e
+ACTIVE_DEV_HEAD:                17540c26262bbd5dcf37bc33a2a2038e42698ad5
+LAUNCHER_SOURCE_VERSION:        5.0.0a30
+CANDIDATE_LAUNCHER_EXE_FILE:    NekoLauncher.exe
+CANDIDATE_LAUNCHER_EXE_SIZE:    30176905 bytes
+CANDIDATE_LAUNCHER_EXE_SHA256:  f43354d00fc28642fb1f3e038297bc7d5fa77d4bc350ef3cd8352c3ca27ad850
 MAIN_HEAD:                      bde8389 (origin/main)
 BETA_HEAD:                      c9ab125 (origin/beta; previous Closed Beta baseline)
 CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
 CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
-LAUNCHER_SOURCE_VERSION:        5.0.0a29
-CANDIDATE_LAUNCHER_EXE_SHA256:  0a24b1945d6c390b760d37940eee929100121d88a25ad27d6874f234a8ca0ebb
-CANDIDATE_INSTALLER_FILE:       NekoFamilyProxy-Beta-Setup.exe
-CANDIDATE_INSTALLER_SIZE:       104213403 bytes
-CANDIDATE_INSTALLER_SHA256:     7e6450b904b9d879f8041f652fcc2c3ed8e342252f31b4a8f31aa17c117a3099
 CLEAN_INSTALL:                  PASS
 FIRST_RUN:                      PASS
 AUTH_FLOW:                      PASS
@@ -31,7 +28,7 @@ P1_ISSUES:                      0
 AUTHORITY_UPDATE:               NOT_PERFORMED
 CURRENT_STATUS:                 RELEASE_CANDIDATE_NOT_FROZEN
 FREEZE_READY:                   YES
-NEXT_ACTION:                    Owner final authority freeze and distribution authorization gate
+NEXT_ACTION:                    Review candidate 5.0.0a30 UI polish before freeze
 LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
 ```
 

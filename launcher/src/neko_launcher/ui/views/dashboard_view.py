@@ -124,10 +124,10 @@ class DashboardView:
         membership_card = card(self.frame)
         membership_card.pack_configure(padx=6, pady=2)
         membership_inner = ctk.CTkFrame(membership_card, fg_color="transparent")
-        membership_inner.pack(fill="x", padx=10, pady=6)
+        membership_inner.pack(fill="x", padx=14, pady=10)
 
         header_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        header_row.pack(fill="x", pady=(0, 3))
+        header_row.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(
             header_row,
             text="สมาชิก",
@@ -137,52 +137,52 @@ class DashboardView:
         self._tier_badge = ctk.CTkLabel(
             header_row,
             text="ใช้งานได้",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=10, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=PALETTE.success,
             fg_color=PALETTE.success_surface,
             corner_radius=6,
-            padx=8,
-            pady=1,
+            padx=10,
+            pady=2,
         )
         self._tier_badge.pack(side="right")
 
         user_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        user_row.pack(fill="x", pady=1)
+        user_row.pack(fill="x", pady=3)
         ctk.CTkLabel(
             user_row, text="ชื่อผู้ใช้",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             user_row, textvariable=account_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.text,
         ).pack(side="right")
 
         days_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        days_row.pack(fill="x", pady=1)
+        days_row.pack(fill="x", pady=3)
         ctk.CTkLabel(
             days_row, text="วันคงเหลือ",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         self._entitlement_days_label = ctk.CTkLabel(
             days_row, textvariable=entitlement_days_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             text_color=PALETTE.success,
         )
         self._entitlement_days_label.pack(side="right")
 
         expiry_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
-        expiry_row.pack(fill="x", pady=1)
+        expiry_row.pack(fill="x", pady=3)
         ctk.CTkLabel(
             expiry_row, text="วันหมดอายุ",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="left")
         ctk.CTkLabel(
             expiry_row, textvariable=entitlement_expiry_var,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=PALETTE.text_muted,
         ).pack(side="right")
 
@@ -192,7 +192,7 @@ class DashboardView:
         guidance_card = card(self.frame)
         guidance_card.pack_configure(padx=6, pady=2)
         guidance_inner = ctk.CTkFrame(guidance_card, fg_color="transparent")
-        guidance_inner.pack(fill="x", padx=10, pady=5)
+        guidance_inner.pack(fill="x", padx=10, pady=6)
         ctk.CTkLabel(
             guidance_inner,
             text="💡 ระบบจะเชื่อมต่อ Neko Proxy อัตโนมัติเมื่อเปิดเกม PSO2",

@@ -150,9 +150,9 @@ class AppWindow:
                 pass
 
         # Landscape-first geometry
-        self.root.minsize(480, 500)
-        self.root.geometry("500x520")
-        self._window_size = (500, 520)
+        self.root.minsize(480, 580)
+        self.root.geometry("500x640")
+        self._window_size = (500, 640)
 
         self._status = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._account = tk.StringVar(value="")
@@ -558,8 +558,8 @@ class AppWindow:
         if hasattr(self, "_settings_button"):
             self._settings_button.pack(side="left")
         if hasattr(self, "root") and hasattr(self.root, "resizable"):
-            width, height = (500, 520)
-            self.root.minsize(480, 500)
+            width, height = (500, 640)
+            self.root.minsize(480, 580)
             self.root.resizable(True, True)
             self.root.maxsize(
                 self.root.winfo_screenwidth(),
