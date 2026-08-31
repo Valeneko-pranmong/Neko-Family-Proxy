@@ -54,6 +54,8 @@ class ConnectionDiagram:
         *,
         download_var: tk.StringVar | None = None,
         upload_var: tk.StringVar | None = None,
+        server_status_var: tk.StringVar | None = None,
+        latency_var: tk.StringVar | None = None,
         server_load_var: tk.StringVar | None = None,
         server_avg_download_var: tk.StringVar | None = None,
         server_avg_upload_var: tk.StringVar | None = None,
@@ -63,18 +65,16 @@ class ConnectionDiagram:
         self._path = NetworkPath()
         self._download_var = download_var or tk.StringVar(master=master, value="—")
         self._upload_var = upload_var or tk.StringVar(master=master, value="—")
-        self._server_load_var = server_load_var or tk.StringVar(
-            master=master, value="ยังไม่มีข้อมูล"
+        self._server_status_var = server_status_var or tk.StringVar(
+            master=master, value="ออฟไลน์"
         )
-        self._server_avg_download_var = server_avg_download_var or tk.StringVar(
+        self._latency_var = latency_var or tk.StringVar(
             master=master, value="—"
         )
-        self._server_avg_upload_var = server_avg_upload_var or tk.StringVar(
-            master=master, value="—"
-        )
-        self._server_average_window_var = server_average_window_var or tk.StringVar(
-            master=master, value="เฉลี่ย 30 นาที"
-        )
+        self._server_load_var = server_load_var
+        self._server_avg_download_var = server_avg_download_var
+        self._server_avg_upload_var = server_avg_upload_var
+        self._server_average_window_var = server_average_window_var
 
         self.frame = ctk.CTkFrame(
             master,
@@ -132,32 +132,21 @@ class ConnectionDiagram:
             core_metrics, "Upload", self._upload_var, value_bold=True
         ).pack(anchor="center")
 
-        # Aggregate infrastructure status belongs under Neko Proxy.
+        # Proxy server status and ping belong under Neko Proxy.
         proxy_metrics = ctk.CTkFrame(self._grid, fg_color="transparent")
         proxy_metrics.grid(row=1, column=2, sticky="ew", pady=(4, 0))
         self._metric_line(
-            proxy_metrics, "Server Load", self._server_load_var, value_bold=True
-        ).pack(anchor="center")
-        ctk.CTkLabel(
             proxy_metrics,
-            textvariable=self._server_average_window_var,
-            text_color=PALETTE.text_muted,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=9),
-        ).pack(anchor="center", pady=(2, 0))
-        avg_row = ctk.CTkFrame(proxy_metrics, fg_color="transparent")
-        avg_row.pack(anchor="center")
-        self._small_label(avg_row, text="↓").pack(side="left")
-        self._small_label(
-            avg_row,
-            textvariable=self._server_avg_download_var,
-            bold=True,
-        ).pack(side="left", padx=(2, 6))
-        self._small_label(avg_row, text="↑").pack(side="left")
-        self._small_label(
-            avg_row,
-            textvariable=self._server_avg_upload_var,
-            bold=True,
-        ).pack(side="left", padx=(2, 0))
+            "NEKO PROXY SERVER Status :",
+            self._server_status_var,
+            value_bold=True,
+        ).pack(anchor="center")
+        self._metric_line(
+            proxy_metrics,
+            "PING :",
+            self._latency_var,
+            value_bold=True,
+        ).pack(anchor="center")
 
         self.set_path(path or NetworkPath())
 
@@ -179,6 +168,10 @@ class ConnectionDiagram:
             self._download_value_label = value_label
         elif name == "Upload":
             self._upload_value_label = value_label
+        elif "Status" in name:
+            self._server_status_value_label = value_label
+        elif "PING" in name:
+            self._latency_value_label = value_label
         return row
 
     def _small_label(

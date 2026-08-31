@@ -86,9 +86,11 @@ def test_dashboard_view_construction_and_bindings() -> None:
         assert str(view._status_subtitle_label.cget("textvariable")) == str(status_subtitle_var)
         assert str(view._entitlement_days_label.cget("textvariable")) == str(entitlement_days_var)
 
-        # Aggregate traffic lives inside the connection section.
+        # Aggregate traffic and server status live inside the connection section.
         assert str(view._connection_diagram._download_value_label.cget("textvariable")) == str(download_speed_var)
         assert str(view._connection_diagram._upload_value_label.cget("textvariable")) == str(upload_speed_var)
+        assert str(view._connection_diagram._server_status_value_label.cget("textvariable")) == str(server_status_var)
+        assert str(view._connection_diagram._latency_value_label.cget("textvariable")) == str(latency_var)
         assert not hasattr(view, "_dl_metric")
         assert not hasattr(view, "_uptime_metric")
         assert not hasattr(view, "_latency_metric")

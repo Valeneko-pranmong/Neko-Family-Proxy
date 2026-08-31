@@ -60,9 +60,7 @@ class DashboardView:
         server_average_window_var: tk.StringVar | None = None,
     ) -> None:
         self._root = root
-        _ = server_status_var
         _ = session_duration_var
-        _ = latency_var
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
 
         # --------------------------------------------------------------
@@ -106,11 +104,14 @@ class DashboardView:
         # 2. Truthful compact connection strip
         # Neko Core -> verified aggregate RTT -> Neko Proxy -> PSO2
         # Download/Upload are aggregate telemetry, not per-hop measurements.
+        # Right metrics box displays Proxy Server Status and Ping.
         # --------------------------------------------------------------
         self._connection_diagram = ConnectionDiagram(
             self.frame,
             download_var=download_speed_var,
             upload_var=upload_speed_var,
+            server_status_var=server_status_var,
+            latency_var=latency_var,
             server_load_var=server_load_var,
             server_avg_download_var=server_avg_download_var,
             server_avg_upload_var=server_avg_upload_var,

@@ -23,10 +23,8 @@ def test_connection_diagram_two_node_semantics_and_metrics() -> None:
     try:
         download = tk.StringVar(master=root, value="2.50 MB/s")
         upload = tk.StringVar(master=root, value="1.25 MB/s")
-        load = tk.StringVar(master=root, value="ปานกลาง")
-        avg_down = tk.StringVar(master=root, value="12.0 Mbps")
-        avg_up = tk.StringVar(master=root, value="3.0 Mbps")
-        avg_window = tk.StringVar(master=root, value="เฉลี่ย 30 นาที")
+        server_status = tk.StringVar(master=root, value="ออนไลน์")
+        latency = tk.StringVar(master=root, value="42 ms")
         path = NetworkPath(
             hops=(
                 NetworkHop(NetworkHopRole.LOCAL_DEVICE, "device", connection_state=HopConnectionState.SUCCESS),
@@ -41,10 +39,8 @@ def test_connection_diagram_two_node_semantics_and_metrics() -> None:
             path=path,
             download_var=download,
             upload_var=upload,
-            server_load_var=load,
-            server_avg_download_var=avg_down,
-            server_avg_upload_var=avg_up,
-            server_average_window_var=avg_window,
+            server_status_var=server_status,
+            latency_var=latency,
         )
         assert diagram.visible_roles == (
             NetworkHopRole.LOCAL_PROXY_ENGINE,
@@ -57,6 +53,8 @@ def test_connection_diagram_two_node_semantics_and_metrics() -> None:
         assert len(diagram._connector_widgets) == 1
         assert str(diagram._download_value_label.cget("textvariable")) == str(download)
         assert str(diagram._upload_value_label.cget("textvariable")) == str(upload)
+        assert str(diagram._server_status_value_label.cget("textvariable")) == str(server_status)
+        assert str(diagram._latency_value_label.cget("textvariable")) == str(latency)
     finally:
         root.destroy()
 

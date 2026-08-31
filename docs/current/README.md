@@ -2,20 +2,20 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         COMPLETED (READY_FOR_MERGE)
-PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a30)
-CURRENT_WORKSTREAM:             DASHBOARD REDESIGN BRANCH CLOSURE & MAIN MERGE PREPARATION
-ACTIVE_DEV_BRANCH:              feature/dashboard-redesign
-FEATURE_BRANCH_STATUS:          COMPLETED
-FINAL_VERSION:                  5.0.0a30
-FINAL_COMMIT:                   32b1b68d821f80eaa594938aceea2fa8d3b5c37f
+STATUS:                         COMPLETED (UI_LAYOUT_FIX_APPLIED)
+PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a31)
+CURRENT_WORKSTREAM:             DASHBOARD METRICS RELOCATION (PROXY STATUS & PING)
+ACTIVE_DEV_BRANCH:              main
+FEATURE_BRANCH_STATUS:          MERGED_TO_MAIN
+FINAL_VERSION:                  5.0.0a31
+FINAL_COMMIT:                   PENDING_COMMIT
 CANDIDATE_LAUNCHER_EXE_FILE:    NekoLauncher.exe
-CANDIDATE_LAUNCHER_EXE_SIZE:    30176905 bytes
-CANDIDATE_LAUNCHER_EXE_SHA256:  f43354d00fc28642fb1f3e038297bc7d5fa77d4bc350ef3cd8352c3ca27ad850
-MAIN_HEAD:                      bde8389 (origin/main)
+CANDIDATE_LAUNCHER_EXE_SIZE:    36822089 bytes
+CANDIDATE_LAUNCHER_EXE_SHA256:  106b9533494b82dd7ed77d88142e8eab0ecbe3fffe64c0cce784cfb9257db2fb
+MAIN_HEAD:                      091a0db (origin/main)
 BETA_HEAD:                      c9ab125 (origin/beta; previous Closed Beta baseline)
 CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
-CORE_HEAD:                      33f97ae0110075089f39b1e123890f931417d907
+CORE_HEAD:                      ec2af36f04ce945f3c1bf3f7528e14e1a0678c2e
 CLEAN_INSTALL:                  PASS
 FIRST_RUN:                      PASS
 AUTH_FLOW:                      PASS
