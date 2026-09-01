@@ -1424,6 +1424,7 @@ class AppWindow:
                 self._startup_route_completed = True
                 self._auto_launch_tweaker()
             self._cancel_automatic_reconnect(reset_attempts=True)
+            self._submit(self._service.stop_proxy)
             self._proxy_start_attempted_for_detected_game = False
             self._proxy_retry_suppression_logged = False
             self._record_debug_status(

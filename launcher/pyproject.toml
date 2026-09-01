@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neko-family-launcher"
-version = "5.0.0a31"
+version = "5.0.0a33"
 description = "Neko Family Proxy desktop launcher"
 requires-python = ">=3.11"
 dependencies = [

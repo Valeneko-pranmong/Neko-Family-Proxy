@@ -200,17 +200,21 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         )
 
     def heartbeat_session(self, session_id: str) -> bool:
-        try:
-            response = self._client.rpc(
-                "heartbeat_session", {"p_session_id": session_id}
-            ).execute()
-        except Exception as exc:
-            if self._heartbeat_auth_is_invalid(exc):
-                raise HeartbeatAuthInvalid(
-                    "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่"
-                ) from exc
-            raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
-        return response.data is True
+        for attempt in range(2):
+            try:
+                response = self._client.rpc(
+                    "heartbeat_session", {"p_session_id": session_id}
+                ).execute()
+                return response.data is True
+            except Exception as exc:
+                if self._heartbeat_auth_is_invalid(exc):
+                    raise HeartbeatAuthInvalid(
+                        "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+                    ) from exc
+                if attempt == 0:
+                    continue
+                raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
+        return False
 
     def heartbeat_session_with_timeout(self, session_id: str, timeout: float) -> bool:
         from neko_launcher.infrastructure.core.launch_permit_gateway import (
