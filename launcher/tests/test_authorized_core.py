@@ -28,6 +28,42 @@ from neko_launcher.application.authorized_core import (
     RuntimeConfigurationCandidate,
     TargetBoundStartCommand,
 )
+from neko_launcher.application.runtime_proxy_config import (
+    LaunchAuthorizationBundle,
+    OpaqueRuntimeCredential,
+    RuntimeProxyConfig,
+)
+
+SENTINEL_PROXY_SECRET_42 = "SENTINEL_PROXY_SECRET_42"
+
+
+def _make_test_runtime_config(**overrides: object) -> RuntimeProxyConfig:
+    data = {
+        "schema_version": 1,
+        "config_version": 18,
+        "endpoint_id": "japan-vps-1",
+        "host": "127.0.0.1",
+        "port": 8389,
+        "protocol": "shadowsocks",
+        "cipher": "aes-256-gcm",
+        "credential": OpaqueRuntimeCredential(SENTINEL_PROXY_SECRET_42),
+        "issued_at": 1000,
+        "expires_at": 1120,
+    }
+    data.update(overrides)
+    return RuntimeProxyConfig(**data)  # type: ignore[arg-type]
+
+
+def _make_test_bundle(
+    *,
+    permit: str = "sentinel-permit",
+    runtime_config: RuntimeProxyConfig | None = None,
+) -> LaunchAuthorizationBundle:
+    return LaunchAuthorizationBundle(
+        permit=OpaquePermit(permit),
+        runtime_config=runtime_config or _make_test_runtime_config(),
+    )
+
 
 
 @dataclass(frozen=True)
@@ -76,6 +112,7 @@ class FakeDetector:
         self.running = True
         self.wait_calls = 0
         self.timeout: float | None = None
+        self.recheck_calls: list[str] = []
 
     def wait_for_exact_pso2(self, timeout: float, cancellation: Event) -> Target | None:
         self.wait_calls += 1
@@ -83,7 +120,9 @@ class FakeDetector:
         return self.target
 
     def is_same_target_still_running(self, target: Target) -> bool:
+        self.recheck_calls.append("target.recheck")
         return self.running and target is self.target
+
 
 
 class FakeProcess:
@@ -164,11 +203,13 @@ class FakeChannel:
     def start_authorized(
         self,
         command: object,
-        permit: OpaquePermit,
+        authorization: LaunchAuthorizationBundle,
         correlation_id: str,
         timeout: float,
     ) -> CoreStatus:
-        assert "sentinel-permit" not in repr(permit)
+        assert "sentinel-permit" not in repr(authorization)
+        assert SENTINEL_PROXY_SECRET_42 not in repr(authorization)
+        assert SENTINEL_PROXY_SECRET_42 not in str(authorization)
         self.start_command = command
         self.start_timeout = timeout
         self.calls.append("core.start")
@@ -208,13 +249,13 @@ class FakePermitGateway:
         self.calls = calls
         self.request: dict[str, object] | None = None
 
-    def issue_launch_permit(
+    def issue_launch_authorization(
         self,
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
         timeout: float,
-    ) -> OpaquePermit:
+    ) -> LaunchAuthorizationBundle:
         self.request = {
             "authenticated_transport": authenticated_transport,
             "correlation_id": correlation_id,
@@ -222,7 +263,22 @@ class FakePermitGateway:
             "timeout": timeout,
         }
         self.calls.append("backend.permit")
-        return OpaquePermit("sentinel-permit")
+        return _make_test_bundle()
+
+    def issue_launch_permit(
+        self,
+        authenticated_transport: object,
+        correlation_id: str,
+        challenge: CoreChallenge,
+        timeout: float,
+    ) -> OpaquePermit:
+        bundle = self.issue_launch_authorization(
+            authenticated_transport,
+            correlation_id,
+            challenge,
+            timeout,
+        )
+        return bundle.permit
 
 
 def build_orchestrator(
@@ -300,10 +356,10 @@ def test_invalid_opaque_references_fail_before_activation(
 def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
     orchestrator, _, _, _ = build_orchestrator()
 
-    def leak(*args: object, **kwargs: object) -> OpaquePermit:
+    def leak(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
         raise RuntimeError("sentinel-backend-token")
 
-    orchestrator._permits.issue_launch_permit = leak  # type: ignore[method-assign]
+    orchestrator._permits.issue_launch_authorization = leak  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -317,7 +373,7 @@ def test_backend_exception_detail_is_not_retained_in_public_failure() -> None:
 def test_permit_failure_preserves_only_sanitized_development_diagnostics() -> None:
     orchestrator, _, _, _ = build_orchestrator()
 
-    def unavailable(*args: object, **kwargs: object) -> OpaquePermit:
+    def unavailable(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
         raise AuthorizedCoreError(
             AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
             diagnostic_code=PermitDiagnosticCode.PERMIT_FUNCTION_NOT_FOUND,
@@ -328,7 +384,7 @@ def test_permit_failure_preserves_only_sanitized_development_diagnostics() -> No
             },
         )
 
-    orchestrator._permits.issue_launch_permit = unavailable  # type: ignore[method-assign]
+    orchestrator._permits.issue_launch_authorization = unavailable  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -346,7 +402,7 @@ def test_permit_adapter_cannot_spoof_a_public_condition_by_typed_code() -> None:
     def spoof(*args: object, **kwargs: object) -> object:
         raise AuthorizedCoreError(AuthorizedCoreErrorCode.TARGET_EXITED)
 
-    orchestrator._permits.issue_launch_permit = spoof  # type: ignore[method-assign]
+    orchestrator._permits.issue_launch_authorization = spoof  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError) as raised:
         orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -623,8 +679,8 @@ def test_permit_received_stage_records_actual_length_without_revealing_permit() 
     orchestrator._diagnostics = CoreDiagnosticsRecorder(sink)
 
     raw_permit_secret = "sensitive-opaque-jwt-token-string-12345678"
-    orchestrator._permits.issue_launch_permit = (  # type: ignore[method-assign]
-        lambda *args, **kwargs: OpaquePermit(raw_permit_secret)
+    orchestrator._permits.issue_launch_authorization = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: _make_test_bundle(permit=raw_permit_secret)
     )
 
     orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -636,7 +692,10 @@ def test_permit_received_stage_records_actual_length_without_revealing_permit() 
     stage_name, kwargs = permit_received_stages[0]
     assert kwargs.get("PERMIT_RECEIVED") is True
     assert kwargs.get("PERMIT_LENGTH") == len(raw_permit_secret)
+    assert kwargs.get("RUNTIME_CONFIG_VERSION") == 18
     assert raw_permit_secret not in str(kwargs)
+    assert SENTINEL_PROXY_SECRET_42 not in str(kwargs)
+    assert SENTINEL_PROXY_SECRET_42 not in repr(sink.stages)
 
 
 def test_typed_core_start_failure_records_core_error_code_in_diagnostics() -> None:
@@ -896,6 +955,128 @@ def test_unique_runtime_configuration_identity_is_frozen_for_runtime_start_only(
     assert calls.index("backend.permit") < calls.index("core.start")
 
 
+def test_orchestrator_order_and_target_recheck_around_authorization() -> None:
+    order: list[str] = []
+    orchestrator, calls, detector, channel = build_orchestrator()
+
+    orig_req_challenge = channel.request_challenge
+    def tracking_challenge(cid: str, timeout: float) -> CoreChallenge:
+        order.append("core.challenge")
+        return orig_req_challenge(cid, timeout)
+    channel.request_challenge = tracking_challenge
+
+    orig_issue_auth = orchestrator._permits.issue_launch_authorization
+    def tracking_issue_auth(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
+        order.append("backend.issue_launch_authorization")
+        return orig_issue_auth(*args, **kwargs)
+    orchestrator._permits.issue_launch_authorization = tracking_issue_auth  # type: ignore[method-assign]
+
+    orig_target_check = detector.is_same_target_still_running
+    def tracking_target_check(target: Target) -> bool:
+        order.append("target.recheck")
+        return orig_target_check(target)
+    detector.is_same_target_still_running = tracking_target_check
+
+    orig_start = channel.start_authorized
+    def tracking_start(*args: object, **kwargs: object) -> CoreStatus:
+        order.append("core.start")
+        return orig_start(*args, **kwargs)
+    channel.start_authorized = tracking_start
+
+    status = orchestrator.start(valid_command(), valid_access_context(), Event())
+    assert status.kind is CoreStatusKind.RUNNING
+
+    # Required order:
+    # 1. core.challenge
+    # 2. backend.issue_launch_authorization
+    # 3. target.recheck (final target identity recheck after auth and before start)
+    # 4. core.start
+    c_idx = order.index("core.challenge")
+    auth_idx = order.index("backend.issue_launch_authorization")
+    assert c_idx < auth_idx
+
+    # Find the target.recheck that happens AFTER auth
+    post_auth_rechecks = [i for i, step in enumerate(order) if step == "target.recheck" and i > auth_idx]
+    assert len(post_auth_rechecks) >= 1
+    start_idx = order.index("core.start")
+    assert post_auth_rechecks[0] < start_idx
+
+
+def test_authorization_failure_cleans_owned_host_and_never_calls_start() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+
+    def fail_auth(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
+        raise AuthorizedCoreError(
+            AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE,
+            diagnostic_code=PermitDiagnosticCode.PERMIT_HTTP_500,
+            diagnostic_context={"http_status": 500},
+        )
+
+    orchestrator._permits.issue_launch_authorization = fail_auth  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE
+    assert "core.start" not in calls
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+
+
+def test_runtime_config_invalid_failure_cleans_owned_host_and_never_calls_start() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+
+    def invalid_bundle(*args: object, **kwargs: object) -> object:
+        # returns an invalid object
+        return object()
+
+    orchestrator._permits.issue_launch_authorization = invalid_bundle  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert raised.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+    assert "core.start" not in calls
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+
+
+def test_diagnostics_records_only_runtime_config_version_never_secret() -> None:
+    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
+
+    class RecordingSink:
+        def __init__(self) -> None:
+            self.stages: list[tuple[str, dict[str, object]]] = []
+
+        def begin_attempt(self, attempt_id: str) -> None:
+            pass
+
+        def record_stage(self, stage: str, **kwargs: object) -> None:
+            self.stages.append((stage, kwargs))
+
+        def record_process_event(self, event: str, **kwargs: object) -> None:
+            pass
+
+        def record_exception(self, exc: Exception, stage: str) -> None:
+            pass
+
+    orchestrator, _, _, _ = build_orchestrator()
+    sink = RecordingSink()
+    orchestrator._diagnostics = CoreDiagnosticsRecorder(sink)
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    recorded_stages = sink.stages
+    # Verify SENTINEL_PROXY_SECRET_42 never leaked in any recorded stage
+    for stage_name, kwargs in recorded_stages:
+        assert SENTINEL_PROXY_SECRET_42 not in str(kwargs)
+        assert SENTINEL_PROXY_SECRET_42 not in repr(kwargs)
+
+    permit_stages = [kw for stage, kw in recorded_stages if stage == "PERMIT_RECEIVED"]
+    assert len(permit_stages) == 1
+    assert permit_stages[0].get("RUNTIME_CONFIG_VERSION") == 18
+    assert permit_stages[0].get("PERMIT_RECEIVED") is True
+
+
+
 @pytest.mark.parametrize(
     ("candidates", "expected_code"),
     [
@@ -956,14 +1137,14 @@ def test_target_observation_failure_is_not_reported_as_target_exit() -> None:
 
 def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
     orchestrator, calls, detector, _ = build_orchestrator()
-    original = orchestrator._permits.issue_launch_permit
+    original = orchestrator._permits.issue_launch_authorization
 
-    def issue_and_exit(*args: object, **kwargs: object) -> OpaquePermit:
-        permit = original(*args, **kwargs)
+    def issue_and_exit(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
+        bundle = original(*args, **kwargs)
         detector.running = False
-        return permit
+        return bundle
 
-    orchestrator._permits.issue_launch_permit = issue_and_exit  # type: ignore[method-assign]
+    orchestrator._permits.issue_launch_authorization = issue_and_exit  # type: ignore[method-assign]
 
     with pytest.raises(AuthorizedCoreError, match="target process exited"):
         orchestrator.start(valid_command(), valid_access_context(), Event())
@@ -1319,10 +1500,10 @@ def test_debug_mode_equivalence_on_failure() -> None:
     # Test OFF
     orchestrator_off, _, _, _ = build_orchestrator()
 
-    def leak_off(*args: object, **kwargs: object) -> OpaquePermit:
+    def leak_off(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
         raise RuntimeError("backend_error")
 
-    orchestrator_off._permits.issue_launch_permit = leak_off  # type: ignore
+    orchestrator_off._permits.issue_launch_authorization = leak_off  # type: ignore
     with pytest.raises(AuthorizedCoreError) as raised_off:
         orchestrator_off.start(valid_command(), valid_access_context(), Event())
 
@@ -1331,10 +1512,10 @@ def test_debug_mode_equivalence_on_failure() -> None:
     recorder = CoreDiagnosticsRecorder(NoopDiagnosticsSink())
     orchestrator_on._diagnostics = recorder
 
-    def leak_on(*args: object, **kwargs: object) -> OpaquePermit:
+    def leak_on(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
         raise RuntimeError("backend_error")
 
-    orchestrator_on._permits.issue_launch_permit = leak_on  # type: ignore
+    orchestrator_on._permits.issue_launch_authorization = leak_on  # type: ignore
     with pytest.raises(AuthorizedCoreError) as raised_on:
         orchestrator_on.start(valid_command(), valid_access_context(), Event())
 

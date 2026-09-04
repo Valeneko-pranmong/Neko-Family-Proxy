@@ -392,7 +392,7 @@ class NamedPipeCoreControlChannel:
     def start_authorized(
         self,
         command: object,
-        permit: OpaquePermit,
+        authorization: object,
         correlation_id: str,
         timeout: float,
     ) -> CoreStatus:
@@ -400,16 +400,35 @@ class NamedPipeCoreControlChannel:
         # avoid a circular import.
         if not hasattr(command, "mode"):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        from neko_launcher.application.runtime_proxy_config import (
+            LaunchAuthorizationBundle,
+        )
+        if not isinstance(authorization, LaunchAuthorizationBundle):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+
+        cfg = authorization.runtime_config
         msg = {
             "type": "start",
             "correlationId": correlation_id,
-            "protocolVersion": 2,
+            "protocolVersion": 3,
             "mode": command.mode,  # type: ignore[attr-defined]
             "processName": command.process_name,  # type: ignore[attr-defined]
             "targetPid": command.target_pid,  # type: ignore[attr-defined]
             "profileReference": command.profile_reference,  # type: ignore[attr-defined]
             "serverReference": command.server_reference,  # type: ignore[attr-defined]
-            "permit": permit.reveal_for_transport(),
+            "permit": authorization.permit.reveal_for_transport(),
+            "runtimeConfig": {
+                "schemaVersion": cfg.schema_version,
+                "configVersion": cfg.config_version,
+                "endpointId": cfg.endpoint_id,
+                "host": cfg.host,
+                "port": cfg.port,
+                "protocol": cfg.protocol,
+                "cipher": cfg.cipher,
+                "credential": cfg.credential.reveal_for_transport(),
+                "issuedAt": cfg.issued_at,
+                "expiresAt": cfg.expires_at,
+            },
         }
 
         res = self._send_and_receive(msg, timeout)

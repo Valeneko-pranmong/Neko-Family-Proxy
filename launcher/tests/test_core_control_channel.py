@@ -19,7 +19,43 @@ from neko_launcher.application.authorized_core import (
     CoreStatusKind,
     OpaquePermit,
 )
+from neko_launcher.application.runtime_proxy_config import (
+    LaunchAuthorizationBundle,
+    OpaqueRuntimeCredential,
+    RuntimeProxyConfig,
+)
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
+
+SENTINEL_SECRET = "SENTINEL_PROXY_SECRET_42"
+
+
+def _valid_runtime_config(**overrides: Any) -> RuntimeProxyConfig:
+    data = {
+        "schema_version": 1,
+        "config_version": 18,
+        "endpoint_id": "japan-vps-1",
+        "host": "127.0.0.1",
+        "port": 8389,
+        "protocol": "shadowsocks",
+        "cipher": "aes-256-gcm",
+        "credential": OpaqueRuntimeCredential(SENTINEL_SECRET),
+        "issued_at": 1000,
+        "expires_at": 1120,
+    }
+    data.update(overrides)
+    return RuntimeProxyConfig(**data)
+
+
+def _valid_bundle(
+    *,
+    permit: str = "header.payload.signature",
+    runtime_config: RuntimeProxyConfig | None = None,
+) -> LaunchAuthorizationBundle:
+    return LaunchAuthorizationBundle(
+        permit=OpaquePermit(permit),
+        runtime_config=runtime_config or _valid_runtime_config(),
+    )
+
 
 
 @pytest.fixture(autouse=True)
@@ -388,7 +424,7 @@ def test_start_accepts_every_released_core_failure_code(
 
     status = _channel().start_authorized(
         Command(),
-        OpaquePermit("header.payload.signature"),
+        _valid_bundle(permit="header.payload.signature"),
         "0123456789abcdef0123456789abcdef",
         1.0,
     )
@@ -419,7 +455,7 @@ def test_start_rejects_removed_timeout_error_code(monkeypatch: Any) -> None:
     with pytest.raises(AuthorizedCoreError) as raised:
         _channel().start_authorized(
             Command(),
-            OpaquePermit("header.payload.signature"),
+            _valid_bundle(permit="header.payload.signature"),
             "0123456789abcdef0123456789abcdef",
             1.0,
         )
@@ -477,7 +513,7 @@ def test_start_failure_response_fails_closed_when_not_exact(
     with pytest.raises(AuthorizedCoreError) as raised:
         _channel().start_authorized(
             Command(),
-            OpaquePermit("header.payload.signature"),
+            _valid_bundle(permit="header.payload.signature"),
             "0123456789abcdef0123456789abcdef",
             1.0,
         )
@@ -502,7 +538,7 @@ def test_start_rejects_malformed_json_response(monkeypatch: Any) -> None:
     with pytest.raises(AuthorizedCoreError) as raised:
         _channel().start_authorized(
             Command(),
-            OpaquePermit("header.payload.signature"),
+            _valid_bundle(permit="header.payload.signature"),
             "0123456789abcdef0123456789abcdef",
             1.0,
         )
@@ -530,7 +566,7 @@ def test_start_uses_released_core_wire_contract(monkeypatch: Any) -> None:
 
     status = _channel().start_authorized(
         Command(),
-        OpaquePermit("header.payload.signature"),
+        _valid_bundle(permit="header.payload.signature"),
         "0123456789abcdef0123456789abcdef",
         1.0,
     )
@@ -540,13 +576,25 @@ def test_start_uses_released_core_wire_contract(monkeypatch: Any) -> None:
     assert payload == {
         "type": "start",
         "correlationId": "0123456789abcdef0123456789abcdef",
-        "protocolVersion": 2,
+        "protocolVersion": 3,
         "mode": "ProcessMode",
         "processName": "pso2.exe",
         "targetPid": 1234,
         "profileReference": "profile-0",
         "serverReference": "server-0",
         "permit": "header.payload.signature",
+        "runtimeConfig": {
+            "schemaVersion": 1,
+            "configVersion": 18,
+            "endpointId": "japan-vps-1",
+            "host": "127.0.0.1",
+            "port": 8389,
+            "protocol": "shadowsocks",
+            "cipher": "aes-256-gcm",
+            "credential": SENTINEL_SECRET,
+            "issuedAt": 1000,
+            "expiresAt": 1120,
+        },
     }
 
 
@@ -723,3 +771,49 @@ def test_write_all_payload_integrity_large_frame() -> None:
     NamedPipeCoreControlChannel._write_all(handle, random_payload, deadline)
     assert bytes(handle.written) == random_payload
     assert len(handle.written) == 5000
+
+
+def test_start_rejects_oversized_payload_before_write(monkeypatch: Any) -> None:
+    handle = _PipeHandle(_challenge_response())
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    # Construct an oversized permit payload that causes json to exceed _MAX_PAYLOAD_BYTES (8192)
+    oversized_permit = "a" * 8200
+    bundle = _valid_bundle(permit=oversized_permit)
+
+    with pytest.raises(CoreControlError) as exc_info:
+        _channel().start_authorized(
+            Command(),
+            bundle,
+            "0123456789abcdef0123456789abcdef",
+            1.0,
+        )
+
+    assert exc_info.value.control_code is CoreControlFailureCode.RESPONSE_REJECTED
+    assert handle.written == b""
+
+
+def test_start_rejects_non_bundle_authorization() -> None:
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    with pytest.raises(AuthorizedCoreError) as exc_info:
+        _channel().start_authorized(
+            Command(),
+            OpaquePermit("header.payload.signature"),  # type: ignore[arg-type]
+            "0123456789abcdef0123456789abcdef",
+            1.0,
+        )
+
+    assert exc_info.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
