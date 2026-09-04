@@ -15,6 +15,8 @@ from neko_launcher.application.runtime_proxy_config import (
 
 SENTINEL_SECRET = "SENTINEL_PROXY_SECRET_42"
 EXPECTED_DIGEST = "02060535a1e3c4db74edffc8d0b1f5bfd6feee948980669ff06acab9afdecf4d"
+MAX_SAFE_INTEGER = 9007199254740991
+
 
 
 def sample_runtime_config(
@@ -128,6 +130,49 @@ def test_runtime_proxy_config_validates_bounds_and_invariants(field: str, bad_va
     with pytest.raises(AuthorizedCoreError) as exc_info:
         sample_runtime_config(**{field: bad_value})
     assert exc_info.value.code == AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "desc"),
+    [
+        ({"config_version": MAX_SAFE_INTEGER + 1}, "config_version > MAX_SAFE_INTEGER"),
+        ({"config_version": True}, "config_version bool True"),
+        ({"config_version": False}, "config_version bool False"),
+        (
+            {"issued_at": MAX_SAFE_INTEGER + 1, "expires_at": MAX_SAFE_INTEGER + 121},
+            "issued_at > MAX_SAFE_INTEGER",
+        ),
+        (
+            {"issued_at": MAX_SAFE_INTEGER - 119, "expires_at": MAX_SAFE_INTEGER + 1},
+            "issued_at + 120 > MAX_SAFE_INTEGER",
+        ),
+        (
+            {"issued_at": MAX_SAFE_INTEGER, "expires_at": MAX_SAFE_INTEGER + 120},
+            "expires_at > MAX_SAFE_INTEGER",
+        ),
+        ({"issued_at": True, "expires_at": 121}, "issued_at bool True"),
+        ({"issued_at": False, "expires_at": 120}, "issued_at bool False"),
+        ({"issued_at": 1000, "expires_at": True}, "expires_at bool True"),
+        ({"issued_at": 1000, "expires_at": False}, "expires_at bool False"),
+    ],
+)
+def test_runtime_proxy_config_rejects_unsafe_integers_and_booleans(kwargs: dict[str, object], desc: str):
+    with pytest.raises(AuthorizedCoreError) as exc_info:
+        sample_runtime_config(**kwargs)
+    assert exc_info.value.code == AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE
+
+
+def test_runtime_proxy_config_accepts_safe_integer_boundary_with_exact_lifetime():
+    config = sample_runtime_config(
+        config_version=MAX_SAFE_INTEGER,
+        issued_at=MAX_SAFE_INTEGER - 120,
+        expires_at=MAX_SAFE_INTEGER,
+    )
+    assert config.config_version == MAX_SAFE_INTEGER
+    assert config.issued_at == MAX_SAFE_INTEGER - 120
+    assert config.expires_at == MAX_SAFE_INTEGER
+    assert (config.expires_at - config.issued_at) == 120
+
 
 
 def test_runtime_proxy_config_from_dict_strict():

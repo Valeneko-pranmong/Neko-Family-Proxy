@@ -11,6 +11,9 @@ from neko_launcher.application.authorized_core import (
 )
 
 
+MAX_SAFE_INTEGER = 9007199254740991
+
+
 class OpaqueRuntimeCredential:
     """Sensitive runtime proxy credential whose str and repr never expose its value."""
 
@@ -76,7 +79,7 @@ class RuntimeProxyConfig:
             type(self.schema_version) is not int
             or self.schema_version != 1
             or type(self.config_version) is not int
-            or self.config_version <= 0
+            or not (1 <= self.config_version <= MAX_SAFE_INTEGER)
             or type(self.endpoint_id) is not str
             or not (1 <= len(self.endpoint_id) <= 64)
             or not self.endpoint_id.isascii()
@@ -94,9 +97,9 @@ class RuntimeProxyConfig:
             or any(ord(c) < 32 or ord(c) > 126 for c in self.cipher)
             or not isinstance(self.credential, OpaqueRuntimeCredential)
             or type(self.issued_at) is not int
-            or self.issued_at < 0
+            or not (0 <= self.issued_at <= MAX_SAFE_INTEGER - 120)
             or type(self.expires_at) is not int
-            or self.expires_at <= self.issued_at
+            or not (0 <= self.expires_at <= MAX_SAFE_INTEGER)
             or (self.expires_at - self.issued_at) != 120
         ):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.RUNTIME_CONFIGURATION_UNAVAILABLE)
