@@ -93,3 +93,40 @@ def test_connection_diagram_role_icons_and_privacy_boundary() -> None:
             assert forbidden not in source
     finally:
         root.destroy()
+
+
+def test_connection_diagram_server_status_color_roles() -> None:
+    from neko_launcher.ui.theme import PALETTE
+
+    root = _root()
+    try:
+        diagram = ConnectionDiagram(root)
+        label = diagram._server_status_value_label
+        download_label = diagram._download_value_label
+        upload_label = diagram._upload_value_label
+        latency_label = diagram._latency_value_label
+
+        # Initial default role is neutral
+        assert label.cget("text_color") == PALETTE.text_muted
+
+        roles_to_colors = [
+            ("success", PALETTE.success),
+            ("danger", PALETTE.danger),
+            ("warning", PALETTE.warning),
+            ("neutral", PALETTE.text_muted),
+        ]
+
+        for role, expected_color in roles_to_colors:
+            dl_color_before = download_label.cget("text_color")
+            ul_color_before = upload_label.cget("text_color")
+            lat_color_before = latency_label.cget("text_color")
+
+            diagram.update_server_status_color(role)
+            assert label.cget("text_color") == expected_color
+
+            # Only server status value label changes; other metric labels remain unchanged
+            assert download_label.cget("text_color") == dl_color_before
+            assert upload_label.cget("text_color") == ul_color_before
+            assert latency_label.cget("text_color") == lat_color_before
+    finally:
+        root.destroy()

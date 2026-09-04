@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,7 +13,23 @@ from neko_launcher.domain.models import (
     GameStatus,
     ProxyStatus,
 )
+from neko_launcher.infrastructure.process.process_detector import (
+    ProcessObservationUnavailable,
+    TargetProcess,
+)
 from neko_launcher.ui.app_window import AppWindow, HEARTBEAT_INTERVAL_MS
+
+
+@pytest.fixture(autouse=True)
+def exact_pso2_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.observe_exact_pso2",
+        lambda: TargetProcess(42, "pso2.exe", 100),
+    )
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_same_target_still_running",
+        lambda target: target == TargetProcess(42, "pso2.exe", 100),
+    )
 from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.application.reconnect import (
     AutomaticProxyReconnectController,
@@ -135,9 +152,13 @@ class FakeService:
     def __init__(self) -> None:
         self.started: list[str] = []
         self.proxy_started = 0
+        self.proxy_stopped = 0
         self.tweaker_started = 0
         self.sign_ins: list[tuple[str, str]] = []
         self.sign_outs = 0
+
+    def stop_proxy(self) -> None:
+        self.proxy_stopped += 1
 
     def sign_in(self, username: str, password: str) -> None:
         self.sign_ins.append((username, password))
@@ -175,7 +196,22 @@ class FakeController:
 
     def dispatch(self, event: object) -> None:
         if isinstance(event, GameProcessStateChanged):
-            self.state = replace(self.state, game_process_running=event.running)
+            new_proxy_status = (
+                ProxyStatus.STOPPED
+                if not event.running
+                and self.state.proxy_status
+                in {
+                    ProxyStatus.STARTING,
+                    ProxyStatus.RECONNECTING,
+                    ProxyStatus.RUNNING,
+                }
+                else self.state.proxy_status
+            )
+            self.state = replace(
+                self.state,
+                game_process_running=event.running,
+                proxy_status=new_proxy_status,
+            )
 
     def mark_proxy_reconnecting(self) -> None:
         self.state = replace(self.state, proxy_status=ProxyStatus.RECONNECTING)
@@ -197,12 +233,12 @@ class FakeAuthView:
         self.login_button_state = ""
         self.register_button_state = ""
         self.status_signed_in = False
-    
+
     def set_actions_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
         state = "normal" if not signed_in and not authenticating else "disabled"
         self.login_button_state = state
         self.register_button_state = state
-        
+
     def set_status_signed_in(self, signed_in: bool) -> None:
         self.status_signed_in = signed_in
 
@@ -599,6 +635,7 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._error = FakeVariable()  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
     window._login_password = FakeVariable("password")  # type: ignore[assignment]
+    window._bound_target = None
     window._proxy_start_attempted_for_detected_game = False
     window._proxy_retry_suppression_logged = False
     window._startup_recovery_in_progress = False
@@ -696,7 +733,10 @@ def test_detected_pso2_attempts_proxy_only_once_until_game_exits(tmp_path: Path)
     window._on_game_detected(False)
     window._on_game_detected(True)
 
-    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
+    assert window._submitted_work == [  # type: ignore[attr-defined]
+        window._service.start_proxy,
+        window._service.start_proxy,
+    ]
 
 
 def test_repeated_startup_auth_callbacks_do_not_request_duplicate_proxy_start(
@@ -1108,19 +1148,19 @@ def test_missing_tweaker_is_reported_before_starting_proxy(tmp_path: Path) -> No
 def test_debug_window_retry_submits_to_executor(tmp_path: Path) -> None:
     window = build_tweaker_window(tmp_path / "Tweaker.exe")
     window._debug_retry_pending = False
-    
+
     # Mock submit
     submitted_tasks = []
     def fake_submit(task: Any, callback: Any = None) -> None:
         submitted_tasks.append(task)
-    
+
     window._submit = fake_submit  # type: ignore[method-assign]
-    
+
     window._retry_proxy_core_debug()
-    
+
     assert len(submitted_tasks) == 1
     assert window._debug_retry_pending is True
-    
+
     # Duplicate should not queue again
     window._retry_proxy_core_debug()
     assert len(submitted_tasks) == 1
@@ -1128,7 +1168,7 @@ def test_debug_window_retry_submits_to_executor(tmp_path: Path) -> None:
 def test_debug_window_hex_format(tmp_path: Path) -> None:
     window = build_tweaker_window(tmp_path / "Tweaker.exe")
     from neko_launcher.application.diagnostics import CoreDiagnosticsSnapshot
-    
+
     snapshot = CoreDiagnosticsSnapshot(
         attempt_id="TEST",
         stage="STAGE",
@@ -1140,10 +1180,10 @@ def test_debug_window_hex_format(tmp_path: Path) -> None:
         winerror=None,
         last_diagnostic=None
     )
-    
+
     content = window._format_debug_snapshot(snapshot)
     assert "Hex: 0xC0000005" in content
-    
+
     snapshot_zero = CoreDiagnosticsSnapshot(
         attempt_id="TEST",
         stage="STAGE",
@@ -1684,3 +1724,367 @@ def test_a25_register_cta_is_large_enough() -> None:
     assert "size=16" in section
     assert 'side="bottom"' not in section
     assert "corner_radius=12" in section
+
+
+def test_positive_poll_requires_unconditional_exact_revalidation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.observe_exact_pso2",
+        lambda: None,
+    )
+
+    window._on_game_detected(True)
+
+    assert window._controller.state.game_process_running is False
+    assert window._service.proxy_started == 0  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 0
+
+
+def test_confirmed_absence_clears_state_cancels_and_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(
+        window._controller.state,
+        game_process_running=True,
+        proxy_status=ProxyStatus.RUNNING,
+    )
+    window._reconnect_controller.observe_running()
+    monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", lambda: None)
+
+    window._on_game_detected(True)
+
+    assert window._controller.state.game_process_running is False
+    assert window._reconnect_controller.owns_recovery is False
+    assert len(window._submitted_work) == 0
+
+
+def test_delayed_reconnect_is_inert_after_confirmed_disappearance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(
+        window._controller.state,
+        game_process_running=True,
+        proxy_status=ProxyStatus.RUNNING,
+    )
+    window._reconnect_controller.observe_running()
+    window._observe_runtime_health(SimpleNamespace(is_healthy=False))
+    _, delayed_reconnect = window._scheduled_reconnects[0]
+    monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", lambda: None)
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_same_target_still_running",
+        lambda _: False,
+    )
+
+    window._on_game_detected(True)
+    delayed_reconnect()
+
+    assert window._controller.state.game_process_running is False
+    assert len(window._submitted_work) == 0
+    assert window._service.proxy_started == 0
+
+
+def test_unhealthy_telemetry_with_stale_game_does_not_reconnect(monkeypatch, tmp_path) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot, TelemetryConnectionState, TelemetryState
+    )
+
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._controller.state = replace(
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running", proxy_state="connected", v2ray_running=True,
+            local_socks_running=True, shadowsocks_connected=True,
+        )
+    )
+    window._render_telemetry(healthy)
+
+    monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", lambda: None)
+
+    unhealthy = replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    window._render_telemetry(unhealthy)
+
+
+
+    assert window._controller.state.game_process_running is False
+    assert len(window._submitted_work) == 0
+    assert window._service.proxy_stopped == 0
+    assert len(window._scheduled_reconnects) == 0
+
+
+def test_unhealthy_telemetry_with_unknown_game_preserves_reconnect(monkeypatch, tmp_path) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot, TelemetryConnectionState, TelemetryState
+    )
+
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    window._controller.state = replace(
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running", proxy_state="connected", v2ray_running=True,
+            local_socks_running=True, shadowsocks_connected=True,
+        )
+    )
+    window._render_telemetry(healthy)
+
+    def fail_observation():
+        raise ProcessObservationUnavailable
+    monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", fail_observation)
+
+    unhealthy = replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    window._render_telemetry(unhealthy)
+
+    assert window._controller.state.game_process_running is True
+    assert len(window._scheduled_reconnects) == 0
+    assert window._controller.state.proxy_status is ProxyStatus.RUNNING
+
+def test_confirmed_absence_invokes_real_controller_and_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from neko_launcher.application.controller import ApplicationController
+    from neko_launcher.domain.events import GameProcessStateChanged
+    from neko_launcher.domain.models import AppState, AuthStatus, Entitlement, EntitlementStatus, ProxyStatus
+
+    class FakeGateway:
+        def __init__(self) -> None:
+            self.stop_count = 0
+            self.starts = 0
+        def start_proxy(self, **kwargs: Any) -> None:
+            self.starts += 1
+        def stop(self) -> None:
+            self.stop_count += 1
+        def stop_proxy(self) -> None:
+            pass
+
+    gateway = FakeGateway()
+    state = AppState(
+        auth_status=AuthStatus.AUTHENTICATED,
+        entitlement=Entitlement("pso2-proxy", EntitlementStatus.ACTIVE),
+        session_id="session",
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+
+    class FakeCoreDiagnosticsService:
+        def record_stage(self, stage: str, **kwargs: Any) -> None:
+            pass
+
+    class FakeEventPublisher:
+        def publish(self, event: Any) -> None:
+            pass
+
+    real_controller = ApplicationController(
+        event_bus=FakeEventPublisher(),  # type: ignore
+        proxy_gateway=gateway,  # type: ignore
+        game_gateway=None,  # type: ignore
+    )
+    real_controller._state = state
+
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller = real_controller  # type: ignore
+
+    monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", lambda: None)
+
+    # 1. First trigger
+    window._on_game_detected(True)
+    # Because we're verifying real controller side-effects without the event bus integration,
+    # manually dispatch the GameProcessStateChanged event just as AppWindow would when calling
+    # self._event_bus.publish(GameProcessStateChanged(running=False)) inside _on_game_detected
+    window._controller.dispatch(GameProcessStateChanged(running=False))
+
+    assert real_controller.state.game_process_running is False
+    assert gateway.stop_count == 1
+
+    # Assert queued service work wasn't populated bypassing controller
+    assert len(window._submitted_work) == 0
+    assert window._service.proxy_stopped == 0
+
+    # 2. Second trigger (should not stop again if state is already stopped)
+    window._on_game_detected(True)
+    assert gateway.stop_count == 1
+
+
+def test_bound_pso2_session_liveness_ignores_transient_window_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    target1 = TargetProcess(101, "pso2.exe", 1001)
+    target2 = TargetProcess(202, "pso2.exe", 2002)
+
+    active_target: TargetProcess | None = target1
+    window_visible = True
+
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.observe_exact_pso2",
+        lambda: active_target if window_visible else None,
+    )
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_same_target_still_running",
+        lambda target: active_target is not None and target == active_target,
+        raising=False,
+    )
+
+    # 1. Initial target bind -> running
+    window._on_game_detected(True)
+    assert window._controller.state.game_process_running is True
+    assert getattr(window, "_bound_target", None) == target1
+    assert len(window._submitted_work) == 1
+    assert window._service.proxy_started == 0
+    window._submitted_work[0]()
+    assert window._service.proxy_started == 1
+
+    window._controller.state = replace(
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+    )
+    window._reconnect_controller.observe_running()
+
+    # 2. Transient window unavailable: observe_exact_pso2 returns None, but target1 is still running
+    window_visible = False
+    window._on_game_detected(True)
+
+    # Must NOT stop, reset, or start second proxy
+    assert window._controller.state.game_process_running is True
+    assert getattr(window, "_bound_target", None) == target1
+    assert window._service.proxy_stopped == 0
+    assert len(window._submitted_work) == 1
+    assert window._proxy_start_attempted_for_detected_game is True
+
+    # 3. Telemetry unhealthy path regression
+    window._observe_runtime_health(SimpleNamespace(is_healthy=False))
+    assert window._controller.state.game_process_running is True
+    assert getattr(window, "_bound_target", None) == target1
+    assert window._service.proxy_stopped == 0
+    assert len(window._scheduled_reconnects) == 1
+
+    # 4. Exact target disappears: target1 exits
+    active_target = None
+    window._on_game_detected(True)
+
+    assert window._controller.state.game_process_running is False
+    assert getattr(window, "_bound_target", None) is None
+    assert window._proxy_start_attempted_for_detected_game is False
+    assert window._reconnect_controller.owns_recovery is False
+
+    # 5. New game identity after real exit may start once
+    active_target = target2
+    window_visible = True
+    window._on_game_detected(True)
+
+    assert window._controller.state.game_process_running is True
+    assert getattr(window, "_bound_target", None) == target2
+    assert len(window._submitted_work) == 2
+    window._submitted_work[1]()
+    assert window._service.proxy_started == 2
+
+
+def test_unhealthy_telemetry_with_bound_target_ignores_window_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from neko_launcher.domain.telemetry import (
+        CoreHealthSnapshot,
+        TelemetryConnectionState,
+        TelemetryState,
+    )
+
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    target = TargetProcess(101, "pso2.exe", 1001)
+    active_target: TargetProcess | None = target
+    window_visible = True
+
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.observe_exact_pso2",
+        lambda: active_target if window_visible else None,
+    )
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_same_target_still_running",
+        lambda t: active_target is not None and t == active_target,
+        raising=False,
+    )
+
+    window._on_game_detected(True)
+    assert window._controller.state.game_process_running is True
+    window._controller.state = replace(
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+    )
+    window._reconnect_controller.observe_running()
+
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+
+    window_visible = False
+    unhealthy = replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    window._render_telemetry(unhealthy)
+
+    assert window._controller.state.game_process_running is True
+    assert getattr(window, "_bound_target", None) == target
+    assert len(window._scheduled_reconnects) == 1
+
+
+def test_bound_target_observation_failure_preserves_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+
+    target = TargetProcess(101, "pso2.exe", 1001)
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.observe_exact_pso2",
+        lambda: target,
+    )
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_same_target_still_running",
+        lambda t: True,
+        raising=False,
+    )
+
+    window._on_game_detected(True)
+    assert window._controller.state.game_process_running is True
+
+    def fail_running(_target: Any) -> bool:
+        raise ProcessObservationUnavailable("tasklist failed")
+
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_same_target_still_running",
+        fail_running,
+        raising=False,
+    )
+
+    window._on_game_detected(True)
+    assert window._controller.state.game_process_running is True
+    assert getattr(window, "_bound_target", None) == target

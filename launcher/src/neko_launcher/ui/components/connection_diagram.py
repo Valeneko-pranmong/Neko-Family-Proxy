@@ -170,9 +170,20 @@ class ConnectionDiagram:
             self._upload_value_label = value_label
         elif "Status" in name:
             self._server_status_value_label = value_label
+            self.update_server_status_color("neutral")
         elif "PING" in name:
             self._latency_value_label = value_label
         return row
+
+    def update_server_status_color(self, role: str) -> None:
+        color_map = {
+            "success": PALETTE.success,
+            "danger": PALETTE.danger,
+            "warning": PALETTE.warning,
+            "neutral": PALETTE.text_muted
+        }
+        if hasattr(self, "_server_status_value_label"):
+            self._server_status_value_label.configure(text_color=color_map.get(role, PALETTE.text_muted))
 
     def _small_label(
         self,

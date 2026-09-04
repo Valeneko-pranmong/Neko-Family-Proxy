@@ -108,6 +108,7 @@ def test_status_game_detected_connecting() -> None:
     )
     status = translate_customer_status(state)
     assert status.title == "กำลังเชื่อมต่อ"
+    assert status.subtitle == "พบ pso2.exe แล้ว กำลังเชื่อมต่อ Neko Core"
     assert status.role == "warning"
     assert status.is_ready is False
 
@@ -145,6 +146,7 @@ def test_status_connected_running_healthy() -> None:
     )
     status = translate_customer_status(state, telemetry)
     assert status.title == "เชื่อมต่อแล้ว"
+    assert status.subtitle == "Neko Core และ Neko Proxy ทำงานอย่างสมบูรณ์ Enjoy!"
     assert status.role == "success"
     assert status.is_ready is False
 
@@ -178,7 +180,35 @@ def test_status_ready_healthy_idle() -> None:
         game_process_running=False,
     )
     status = translate_customer_status(state)
-    assert status.title == "พร้อมเล่นเกม"
-    assert "เปิด PSO2 ได้เลย" in status.subtitle
+    assert status.title == "กำลังรอ PSO2"
+    assert "กำลังรอ pso2.exe" in status.subtitle
     assert status.role == "success"
     assert status.is_ready is True
+
+def test_tweaker_starting_alone_does_not_report_connecting_status() -> None:
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    state = AppState(
+        auth_status=AuthStatus.AUTHENTICATED,
+        entitlement=Entitlement("pso2-proxy", EntitlementStatus.ACTIVE, future),
+        proxy_status=ProxyStatus.STOPPED,
+        game_status=GameStatus.STARTING,
+        game_process_running=False,
+    )
+    status = translate_customer_status(state)
+    assert status.title == "กำลังรอ PSO2"
+    assert status.role == "success"
+    assert status.is_ready is True
+
+def test_tweaker_starting_alone_does_not_report_server_connecting_status() -> None:
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    state = AppState(
+        auth_status=AuthStatus.AUTHENTICATED,
+        entitlement=Entitlement("pso2-proxy", EntitlementStatus.ACTIVE, future),
+        proxy_status=ProxyStatus.STOPPED,
+        game_status=GameStatus.STARTING,
+        game_process_running=False,
+    )
+    from neko_launcher.ui.status_presentation import get_server_status
+    text, role = get_server_status(state)
+    assert text == "OFFLINE"
+    assert role == "danger"

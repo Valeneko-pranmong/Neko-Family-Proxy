@@ -6,7 +6,7 @@ import urllib.request
 from dataclasses import dataclass
 
 
-_ALLOWED_HOST_STATUSES = frozenset({"ONLINE", "DEGRADED", "STALE", "UNKNOWN"})
+_ALLOWED_HOST_STATUSES = frozenset({"ONLINE", "DEGRADED", "STALE", "UNKNOWN", "OFFLINE"})
 _ALLOWED_LOAD_LEVELS = frozenset({"light", "moderate", "heavy", "full", "unknown"})
 
 
