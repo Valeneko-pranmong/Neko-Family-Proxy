@@ -116,21 +116,6 @@ class IssueLaunchPermitGateway:
             runtime_config=runtime_config,
         )
 
-    def issue_launch_permit(
-        self,
-        authenticated_transport: object,
-        correlation_id: str,
-        challenge: CoreChallenge,
-        timeout: float,
-    ) -> OpaquePermit:
-        bundle = self.issue_launch_authorization(
-            authenticated_transport,
-            correlation_id,
-            challenge,
-            timeout,
-        )
-        return bundle.permit
-
     @staticmethod
     def _is_valid_success_response(
         response: dict[object, object],

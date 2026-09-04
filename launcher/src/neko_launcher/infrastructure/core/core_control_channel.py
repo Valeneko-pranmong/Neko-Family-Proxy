@@ -87,11 +87,11 @@ _ERROR_CODES = frozenset(
 
 
 class NamedPipeCoreControlChannel:
-    """Protocol v2, newline-delimited JSON over Windows Named Pipes.
+    """Newline-delimited JSON over Windows Named Pipes.
 
     Pipe name: ``NekoProxyCoreControl`` (Core = server, Launcher = client).
-    The permit is serialized *only* inside the ``start`` frame and is never
-    logged, cached, or stored.
+    Authorized START uses protocol v3. The permit is serialized *only* inside
+    the ``start`` frame and is never logged, cached, or stored.
     """
 
     _MAX_PAYLOAD_BYTES = 8192

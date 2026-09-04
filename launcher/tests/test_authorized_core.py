@@ -266,21 +266,6 @@ class FakePermitGateway:
         self.calls.append("backend.permit")
         return _make_test_bundle()
 
-    def issue_launch_permit(
-        self,
-        authenticated_transport: object,
-        correlation_id: str,
-        challenge: CoreChallenge,
-        timeout: float,
-    ) -> OpaquePermit:
-        bundle = self.issue_launch_authorization(
-            authenticated_transport,
-            correlation_id,
-            challenge,
-            timeout,
-        )
-        return bundle.permit
-
 
 def build_orchestrator(
     *, detector: FakeDetector | None = None

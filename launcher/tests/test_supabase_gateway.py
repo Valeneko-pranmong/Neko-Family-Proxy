@@ -11,10 +11,20 @@ from neko_launcher.application.errors import HeartbeatAuthInvalid, LauncherServi
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     CoreChallenge,
+    LaunchPermitGateway,
     PermitDiagnosticCode,
 )
 from neko_launcher.domain.models import SessionTerminationReason
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.core.launch_permit_gateway import (
+    IssueLaunchPermitGateway,
+)
+
+
+def test_production_authorization_api_excludes_permit_only_method() -> None:
+    assert not hasattr(IssueLaunchPermitGateway, "issue_launch_permit")
+    assert not hasattr(SupabaseGateway, "issue_launch_permit")
+    assert not hasattr(LaunchPermitGateway, "issue_launch_permit")
 
 
 class MemoryStore:
@@ -350,19 +360,21 @@ def test_authorization_rejects_foreign_authenticated_transport_before_invocation
     assert client.functions.function_name == ""
 
 
-def test_legacy_permit_wrapper_returns_only_permit() -> None:
+def test_authorization_returns_permit_and_runtime_config() -> None:
     client = FakeRpcClient(None)
     client.functions = FakeFunctions()
     gateway = build_gateway(client)
 
-    permit = gateway.issue_launch_permit(
+    bundle = gateway.issue_launch_authorization(
         gateway,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
         10.0,
     )
 
-    assert permit.reveal_for_transport() == "opaque-permit"
+    assert bundle.permit.reveal_for_transport() == "opaque-permit"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.endpoint_id == "japan-vps-1"
 
 
 def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
@@ -420,7 +432,7 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
         client=client,
     )
 
-    permit = gateway.issue_launch_permit(
+    bundle = gateway.issue_launch_authorization(
         gateway,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
@@ -441,7 +453,9 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
         "correlationId": "0123456789abcdef0123456789abcdef",
         "challenge": "a" * 43,
     }
-    assert permit.reveal_for_transport() == "opaque-sdk-permit"
+    assert bundle.permit.reveal_for_transport() == "opaque-sdk-permit"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.endpoint_id == "japan-vps-1"
 
 
 def test_current_session_heartbeat_applies_requested_http_timeout(
@@ -582,7 +596,7 @@ def test_pinned_supabase_sdk_http_failures_are_classified_fail_closed(
     )
 
     with pytest.raises(AuthorizedCoreError) as raised:
-        gateway.issue_launch_permit(
+        gateway.issue_launch_authorization(
             gateway,
             "0123456789abcdef0123456789abcdef",
             CoreChallenge("a" * 43),

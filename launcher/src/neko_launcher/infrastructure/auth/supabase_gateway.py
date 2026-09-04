@@ -31,7 +31,7 @@ from neko_launcher.domain.models import (
 from neko_launcher.infrastructure.storage.secure_store import SupabaseAuthStorage
 
 if TYPE_CHECKING:
-    from neko_launcher.application.authorized_core import CoreChallenge, OpaquePermit
+    from neko_launcher.application.authorized_core import CoreChallenge
     from neko_launcher.application.runtime_proxy_config import LaunchAuthorizationBundle
 
 
@@ -342,21 +342,6 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             challenge,
             timeout,
         )
-
-    def issue_launch_permit(
-        self,
-        authenticated_transport: object,
-        correlation_id: str,
-        challenge: "CoreChallenge",
-        timeout: float,
-    ) -> "OpaquePermit":
-        """Compatibility wrapper; production orchestration uses the bundle API."""
-        return self.issue_launch_authorization(
-            authenticated_transport,
-            correlation_id,
-            challenge,
-            timeout,
-        ).permit
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
         try:
