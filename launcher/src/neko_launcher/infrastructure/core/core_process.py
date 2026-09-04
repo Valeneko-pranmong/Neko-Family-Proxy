@@ -645,7 +645,7 @@ class WindowsCoreProcessAdapter:
                 subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
             )
             return job.spawn(
-                [str(executable)],
+                [str(executable), "--launcher-pid", str(os.getpid())],
                 cwd=str(executable.parent),
                 creationflags=creationflags,
                 env=self._clean_env(),
