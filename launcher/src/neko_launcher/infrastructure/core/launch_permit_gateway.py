@@ -89,25 +89,17 @@ class IssueLaunchPermitGateway:
                 correlation_id,
                 started_at,
             )
-        
-        if not self._is_valid_success_response(response, correlation_id, permit):
-            raise self._failure(
-                PermitDiagnosticCode.PERMIT_INVALID_RESPONSE,
-                correlation_id,
-                started_at,
-            )
-            
-        if response.get("contractRevision") != _CONTRACT_REVISION:
-            raise self._failure(
-                PermitDiagnosticCode.PERMIT_INVALID_RESPONSE,
-                correlation_id,
-                started_at,
-            )
-            
+
         runtime_config_raw = response.get("runtimeConfig")
         if not isinstance(runtime_config_raw, dict):
             raise self._failure(
                 PermitDiagnosticCode.PERMIT_MISSING_FIELD,
+                correlation_id,
+                started_at,
+            )
+        if not self._is_valid_success_response(response, correlation_id, permit):
+            raise self._failure(
+                PermitDiagnosticCode.PERMIT_INVALID_RESPONSE,
                 correlation_id,
                 started_at,
             )
@@ -145,18 +137,7 @@ class IssueLaunchPermitGateway:
         correlation_id: str,
         permit: str,
     ) -> bool:
-        if not {"version", "contractRevision", "correlationId", "succeeded", "permit", "expiresInSeconds"}.issubset(set(response)):
-            return False
-            
-        rev = response.get("contractRevision")
-        if rev == "lite-v1" and "runtimeConfig" not in response:
-            return False # Contract updated, lite-v1 no longer valid here, fail at caller
-        elif rev == "runtime-config-v1" and "runtimeConfig" not in response:
-            return False
-        elif rev not in ("lite-v1", "runtime-config-v1"):
-            return False
-            
-        allowed = {
+        required = {
             "version",
             "contractRevision",
             "correlationId",
@@ -165,18 +146,18 @@ class IssueLaunchPermitGateway:
             "expiresInSeconds",
             "runtimeConfig",
         }
-        if not set(response).issubset(allowed):
-            return False
-            
         return (
-            type(response["version"]) is int
+            set(response) == required
+            and type(response["version"]) is int
             and response["version"] == 1
+            and response["contractRevision"] == _CONTRACT_REVISION
             and response["correlationId"] == correlation_id
             and response["succeeded"] is True
             and 1 <= len(permit) <= 4096
             and permit.isascii()
             and type(response["expiresInSeconds"]) is int
             and response["expiresInSeconds"] == 30
+            and isinstance(response["runtimeConfig"], dict)
         )
 
     @staticmethod

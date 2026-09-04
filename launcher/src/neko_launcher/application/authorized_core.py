@@ -512,13 +512,6 @@ class LaunchPermitGateway(Protocol):
         timeout: float,
     ) -> LaunchAuthorizationBundle: ...
 
-    def issue_launch_permit(
-        self,
-        authenticated_transport: object,
-        correlation_id: str,
-        challenge: CoreChallenge,
-        timeout: float,
-    ) -> OpaquePermit: ...
 
 
 class LaunchPrecondition(Protocol):

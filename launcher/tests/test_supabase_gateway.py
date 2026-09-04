@@ -314,7 +314,43 @@ def test_change_password_uses_authenticated_auth_client() -> None:
     assert client.auth.updated_password == "new-password"
 
 
-def test_permit_uses_same_authenticated_client_as_session_claim() -> None:
+def test_authorization_uses_same_authenticated_client_as_session_claim() -> None:
+    client = FakeRpcClient(None)
+    client.functions = FakeFunctions()
+    gateway = build_gateway(client)
+
+    bundle = gateway.issue_launch_authorization(
+        gateway,
+        "0123456789abcdef0123456789abcdef",
+        CoreChallenge("a" * 43),
+        10.0,
+    )
+
+    assert bundle.permit.reveal_for_transport() == "opaque-permit"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.credential.reveal_for_transport() == "SENTINEL_PROXY_SECRET_42"
+    assert client.functions.access_token == "test-session-value"
+    assert client.functions.function_name == "issue_launch_permit"
+
+
+def test_authorization_rejects_foreign_authenticated_transport_before_invocation() -> None:
+    client = FakeRpcClient(None)
+    client.functions = FakeFunctions()
+    gateway = build_gateway(client)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        gateway.issue_launch_authorization(
+            object(),
+            "0123456789abcdef0123456789abcdef",
+            CoreChallenge("a" * 43),
+            10.0,
+        )
+
+    assert raised.value.diagnostic_code is PermitDiagnosticCode.PERMIT_AUTH_SESSION_UNAVAILABLE
+    assert client.functions.function_name == ""
+
+
+def test_legacy_permit_wrapper_returns_only_permit() -> None:
     client = FakeRpcClient(None)
     client.functions = FakeFunctions()
     gateway = build_gateway(client)
@@ -327,8 +363,6 @@ def test_permit_uses_same_authenticated_client_as_session_claim() -> None:
     )
 
     assert permit.reveal_for_transport() == "opaque-permit"
-    assert client.functions.access_token == "test-session-value"
-    assert client.functions.function_name == "issue_launch_permit"
 
 
 def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(

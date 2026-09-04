@@ -5,7 +5,10 @@ import os
 import re
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from neko_launcher.application.runtime_proxy_config import LaunchAuthorizationBundle
 
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
@@ -15,7 +18,6 @@ from neko_launcher.application.authorized_core import (
     CoreControlFailureCode,
     CoreStatus,
     CoreStatusKind,
-    OpaquePermit,
     RuntimeConfigurationCandidate,
 )
 
@@ -392,7 +394,7 @@ class NamedPipeCoreControlChannel:
     def start_authorized(
         self,
         command: object,
-        authorization: object,
+        authorization: "LaunchAuthorizationBundle",
         correlation_id: str,
         timeout: float,
     ) -> CoreStatus:

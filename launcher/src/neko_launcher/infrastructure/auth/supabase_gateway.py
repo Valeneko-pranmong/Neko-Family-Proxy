@@ -32,6 +32,7 @@ from neko_launcher.infrastructure.storage.secure_store import SupabaseAuthStorag
 
 if TYPE_CHECKING:
     from neko_launcher.application.authorized_core import CoreChallenge, OpaquePermit
+    from neko_launcher.application.runtime_proxy_config import LaunchAuthorizationBundle
 
 
 class SupabaseGateway(AuthGateway, EntitlementGateway):
@@ -307,19 +308,14 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             return False
         return response.data is True
 
-    def issue_launch_permit(
+    def issue_launch_authorization(
         self,
         authenticated_transport: object,
         correlation_id: str,
         challenge: "CoreChallenge",
         timeout: float,
-    ) -> "OpaquePermit":
-        """Call Backend Edge Function to obtain an opaque RS256-signed permit.
-
-        The Launcher never decodes or verifies the permit; Core is the sole
-        verifier.  The authenticated Supabase session provides the Bearer
-        token automatically.
-        """
+    ) -> "LaunchAuthorizationBundle":
+        """Return the permit and Runtime Config v1 from this auth session."""
         from neko_launcher.infrastructure.core.launch_permit_gateway import (
             IssueLaunchPermitGateway,
         )
@@ -340,12 +336,27 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                     "correlation_id": correlation_id,
                 },
             )
-        return IssueLaunchPermitGateway().issue_launch_permit(
+        return IssueLaunchPermitGateway().issue_launch_authorization(
             self._client,
             correlation_id,
             challenge,
             timeout,
         )
+
+    def issue_launch_permit(
+        self,
+        authenticated_transport: object,
+        correlation_id: str,
+        challenge: "CoreChallenge",
+        timeout: float,
+    ) -> "OpaquePermit":
+        """Compatibility wrapper; production orchestration uses the bundle API."""
+        return self.issue_launch_authorization(
+            authenticated_transport,
+            correlation_id,
+            challenge,
+            timeout,
+        ).permit
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
         try:

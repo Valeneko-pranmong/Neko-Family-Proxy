@@ -773,6 +773,60 @@ def test_write_all_payload_integrity_large_frame() -> None:
     assert len(handle.written) == 5000
 
 
+def test_start_maximum_valid_secret_and_config_fields_stay_under_8192(monkeypatch: Any) -> None:
+    handle = _PipeHandle(
+        {
+            "type": "startResponse",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "status": "Running",
+            "succeeded": True,
+        }
+    )
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
+    class Command:
+        mode = "ProcessMode"
+        process_name = "pso2.exe"
+        target_pid = 1234
+        profile_reference = "profile-0"
+        server_reference = "server-0"
+
+    bundle = _valid_bundle(
+        permit="p" * 4096,
+        runtime_config=_valid_runtime_config(
+            endpoint_id="e" * 64,
+            host="h" * 253,
+            cipher="c" * 64,
+            credential=OpaqueRuntimeCredential("s" * 256),
+        ),
+    )
+
+    status = _channel().start_authorized(
+        Command(),
+        bundle,
+        "0123456789abcdef0123456789abcdef",
+        1.0,
+    )
+
+    payload = handle.written.removesuffix(b"\n")
+    assert status.kind is CoreStatusKind.RUNNING
+    assert len(payload) < 8192
+    decoded = json.loads(payload)
+    assert decoded["protocolVersion"] == 3
+    assert set(decoded["runtimeConfig"]) == {
+        "schemaVersion",
+        "configVersion",
+        "endpointId",
+        "host",
+        "port",
+        "protocol",
+        "cipher",
+        "credential",
+        "issuedAt",
+        "expiresAt",
+    }
+
+
 def test_start_rejects_oversized_payload_before_write(monkeypatch: Any) -> None:
     handle = _PipeHandle(_challenge_response())
     monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
@@ -798,9 +852,15 @@ def test_start_rejects_oversized_payload_before_write(monkeypatch: Any) -> None:
 
     assert exc_info.value.control_code is CoreControlFailureCode.RESPONSE_REJECTED
     assert handle.written == b""
+    rendered = str(exc_info.value) + repr(exc_info.value)
+    assert oversized_permit not in rendered
+    assert SENTINEL_SECRET not in rendered
 
 
-def test_start_rejects_non_bundle_authorization() -> None:
+def test_start_rejects_non_bundle_authorization_before_write(monkeypatch: Any) -> None:
+    handle = _PipeHandle(_challenge_response())
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: handle)
+
     class Command:
         mode = "ProcessMode"
         process_name = "pso2.exe"
@@ -817,3 +877,4 @@ def test_start_rejects_non_bundle_authorization() -> None:
         )
 
     assert exc_info.value.code is AuthorizedCoreErrorCode.ADAPTER_FAILURE
+    assert handle.written == b""

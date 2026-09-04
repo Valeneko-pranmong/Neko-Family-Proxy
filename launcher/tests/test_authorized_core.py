@@ -211,6 +211,7 @@ class FakeChannel:
         assert SENTINEL_PROXY_SECRET_42 not in repr(authorization)
         assert SENTINEL_PROXY_SECRET_42 not in str(authorization)
         self.start_command = command
+        self.start_authorization = authorization
         self.start_timeout = timeout
         self.calls.append("core.start")
         return self.status
@@ -1133,6 +1134,41 @@ def test_target_observation_failure_is_not_reported_as_target_exit() -> None:
 
     assert raised.value.code is AuthorizedCoreErrorCode.PROCESS_OBSERVATION_UNAVAILABLE
     assert calls == ["backend.heartbeat"]
+
+
+def test_cancellation_set_by_authorization_discards_bundle_and_cleans_owned_host() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    cancellation = Event()
+    bundle = _make_test_bundle(permit="exact-bundle-permit")
+
+    def issue_and_cancel(*args: object, **kwargs: object) -> LaunchAuthorizationBundle:
+        cancellation.set()
+        return bundle
+
+    orchestrator._permits.issue_launch_authorization = issue_and_cancel  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        orchestrator.start(valid_command(), valid_access_context(), cancellation)
+
+    assert raised.value.code is AuthorizedCoreErrorCode.CANCELLED
+    assert "core.start" not in calls
+    assert not hasattr(channel, "start_authorization")
+    assert calls[-2:] == ["core.shutdown", "host.wait"]
+    rendered = str(raised.value) + repr(raised.value)
+    assert "exact-bundle-permit" not in rendered
+    assert SENTINEL_PROXY_SECRET_42 not in rendered
+
+
+def test_exact_authorization_bundle_identity_is_preserved_to_core_start() -> None:
+    orchestrator, _, _, channel = build_orchestrator()
+    bundle = _make_test_bundle(permit="exact-bundle-permit")
+    orchestrator._permits.issue_launch_authorization = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: bundle
+    )
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert channel.start_authorization is bundle
 
 
 def test_target_exit_after_permit_fails_closed_and_cleans_up() -> None:
