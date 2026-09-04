@@ -534,6 +534,37 @@ def test_reconnect_start_obtains_a_fresh_challenge_and_one_fresh_permit() -> Non
     assert calls.count("backend.permit") == 2
 
 
+def test_publishing_next_config_does_not_change_active_session_and_next_start_uses_it() -> None:
+    orchestrator, calls, _, channel = build_orchestrator()
+    next_config_version = 17
+
+    def issue_current_config(*_args: object, **_kwargs: object) -> LaunchAuthorizationBundle:
+        calls.append("backend.permit")
+        return _make_test_bundle(
+            runtime_config=_make_test_runtime_config(config_version=next_config_version)
+        )
+
+    orchestrator._permits.issue_launch_authorization = issue_current_config  # type: ignore[method-assign]
+
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+    first_authorization = channel.start_authorization
+    assert first_authorization.runtime_config.config_version == 17
+
+    # Publishing version 18 only changes what the next authorization returns.
+    next_config_version = 18
+    assert channel.start_authorization is first_authorization
+    assert channel.start_authorization.runtime_config.config_version == 17
+    assert "core.stop" not in calls
+
+    orchestrator.stop()
+    orchestrator.start(valid_command(), valid_access_context(), Event())
+
+    assert channel.start_authorization is not first_authorization
+    assert channel.start_authorization.runtime_config.config_version == 18
+    assert calls.count("backend.permit") == 2
+
+
+
 def test_each_operation_uses_its_independent_timeout() -> None:
     orchestrator, _, detector, channel = build_orchestrator()
 
