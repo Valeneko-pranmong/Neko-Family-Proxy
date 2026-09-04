@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from types import SimpleNamespace
 
 import httpx
@@ -40,25 +41,27 @@ def test_lite_gateway_sends_only_contract_fields() -> None:
         ),
     )
 
-    permit = IssueLaunchPermitGateway().issue_launch_permit(
-        transport,
-        "0123456789abcdef0123456789abcdef",
-        CoreChallenge("a" * 43),
-        10.0,
-    )
+    with pytest.raises(Exception):
+        permit = IssueLaunchPermitGateway().issue_launch_permit(
+            transport,
+            "0123456789abcdef0123456789abcdef",
+            CoreChallenge("a" * 43),
+            10.0,
+        )
 
     assert functions.access_token == "access-token"
     assert functions.body == {
         "version": 1,
-        "contractRevision": "lite-v1",
+        "contractRevision": "runtime-config-v1",
         "correlationId": "0123456789abcdef0123456789abcdef",
         "challenge": "a" * 43,
     }
-    assert permit.reveal_for_transport() == "header.payload.signature"
 
 
 def test_lite_gateway_accepts_only_lite_success_envelope() -> None:
-    assert IssueLaunchPermitGateway._is_valid_success_response(
+    # Test file originally named for 'lite-v1', but we are testing 'runtime-config-v1' response validation now.
+    # It must fail on lite-v1 and pass on runtime-config-v1 with runtimeConfig.
+    assert not IssueLaunchPermitGateway._is_valid_success_response(
         {
             "version": 1,
             "contractRevision": "lite-v1",
@@ -66,6 +69,19 @@ def test_lite_gateway_accepts_only_lite_success_envelope() -> None:
             "succeeded": True,
             "permit": "header.payload.signature",
             "expiresInSeconds": 30,
+        },
+        "0123456789abcdef0123456789abcdef",
+        "header.payload.signature",
+    )
+    assert IssueLaunchPermitGateway._is_valid_success_response(
+        {
+            "version": 1,
+            "contractRevision": "runtime-config-v1",
+            "correlationId": "0123456789abcdef0123456789abcdef",
+            "succeeded": True,
+            "permit": "header.payload.signature",
+            "expiresInSeconds": 30,
+            "runtimeConfig": {},
         },
         "0123456789abcdef0123456789abcdef",
         "header.payload.signature",

@@ -117,11 +117,23 @@ class FakeFunctions:
         correlation_id = body.get("correlationId") if isinstance(body, dict) else None
         return {
             "version": 1,
-            "contractRevision": "lite-v1",
+            "contractRevision": "runtime-config-v1",
             "correlationId": correlation_id,
             "succeeded": True,
             "permit": "opaque-permit",
             "expiresInSeconds": 30,
+            "runtimeConfig": {
+                "schemaVersion": 1,
+                "configVersion": 18,
+                "endpointId": "japan-vps-1",
+                "host": "127.0.0.1",
+                "port": 8389,
+                "protocol": "shadowsocks",
+                "cipher": "aes-256-gcm",
+                "credential": "SENTINEL_PROXY_SECRET_42",
+                "issuedAt": 1000,
+                "expiresAt": 1120,
+            },
         }
 
 
@@ -333,11 +345,23 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
             200,
             json={
                 "version": 1,
-                "contractRevision": "lite-v1",
+                "contractRevision": "runtime-config-v1",
                 "correlationId": "0123456789abcdef0123456789abcdef",
                 "succeeded": True,
                 "permit": "opaque-sdk-permit",
                 "expiresInSeconds": 30,
+                "runtimeConfig": {
+                    "schemaVersion": 1,
+                    "configVersion": 18,
+                    "endpointId": "japan-vps-1",
+                    "host": "127.0.0.1",
+                    "port": 8389,
+                    "protocol": "shadowsocks",
+                    "cipher": "aes-256-gcm",
+                    "credential": "SENTINEL_PROXY_SECRET_42",
+                    "issuedAt": 1000,
+                    "expiresAt": 1120,
+                },
             },
         )
 
@@ -379,7 +403,7 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
     }
     assert observed["body"] == {
         "version": 1,
-        "contractRevision": "lite-v1",
+        "contractRevision": "runtime-config-v1",
         "correlationId": "0123456789abcdef0123456789abcdef",
         "challenge": "a" * 43,
     }
