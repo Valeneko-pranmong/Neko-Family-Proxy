@@ -89,7 +89,11 @@ function parseRequest(value: unknown): Record<string, unknown> | null {
     Object.keys(body).some((key) => !REQUEST_FIELDS.has(key)) ||
     Object.keys(body).length !== REQUEST_FIELDS.size
   ) return null;
-  if (body.version !== 1 || body.contractRevision !== "runtime-config-v1") return null;
+  if (
+    body.version !== 1 ||
+    (body.contractRevision !== "lite-v1" &&
+      body.contractRevision !== "runtime-config-v1")
+  ) return null;
   if (
     typeof body.correlationId !== "string" ||
     !CORRELATION.test(body.correlationId)
@@ -163,8 +167,7 @@ function canonicalConfigBytes(
   issuedAt: number,
   expiresAt: number,
 ): Uint8Array {
-  const text =
-    `schema_version=1\n` +
+  const text = `schema_version=1\n` +
     `config_version=${config.configVersion}\n` +
     `endpoint_id=${config.endpointId}\n` +
     `host=${config.host}\n` +
@@ -219,6 +222,41 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
     false,
     ["sign"],
   );
+}
+
+async function signLegacyPermit(
+  body: Record<string, unknown>,
+  state: AuthorizationState,
+  deps: Dependencies,
+): Promise<string> {
+  if (!deps.privateKeyPem || deps.kid !== PRODUCTION_KID) {
+    throw new Error("missing signing configuration");
+  }
+  const key = await importPrivateKey(deps.privateKeyPem);
+  const now = (deps.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
+  const jti = (deps.randomUUID ?? (() => crypto.randomUUID()))();
+  const header = { alg: "RS256", typ: "neko-launch+jwt", kid: deps.kid };
+  const payload = {
+    iss: "neko-backend",
+    aud: "neko-proxy-core",
+    sub: state.userId,
+    product: state.product,
+    scope: "proxy:start",
+    challenge: body.challenge,
+    iat: now,
+    nbf: now,
+    exp: now + PERMIT_SECONDS,
+    jti,
+  };
+  const signingInput = `${base64Url(JSON.stringify(header))}.${
+    base64Url(JSON.stringify(payload))
+  }`;
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
 }
 
 async function signPermit(
@@ -305,6 +343,23 @@ export function createIssueLaunchPermitHandler(deps: Dependencies) {
       state.product !== "neko-family-proxy"
     ) {
       return json(403, { error: "SessionMismatch" });
+    }
+
+    if (body.contractRevision === "lite-v1") {
+      try {
+        const permit = await signLegacyPermit(body, state, deps);
+        return json(200, {
+          version: 1,
+          contractRevision: "lite-v1",
+          correlationId: body.correlationId,
+          succeeded: true,
+          permit,
+          expiresInSeconds: PERMIT_SECONDS,
+        });
+      } catch {
+        deps.log?.("issue_launch_permit signing configuration unavailable");
+        return json(500, { error: "AuthorizationUnavailable" });
+      }
     }
 
     let rawConfig: RuntimeProxyConfigRecord | null;

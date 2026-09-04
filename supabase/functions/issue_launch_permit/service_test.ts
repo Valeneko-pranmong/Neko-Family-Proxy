@@ -32,6 +32,11 @@ const validBody = {
   challenge: CHALLENGE,
 };
 
+const validLiteBody = {
+  ...validBody,
+  contractRevision: "lite-v1",
+};
+
 const activeState: AuthorizationState = {
   userId: USER_ID,
   authSessionId: AUTH_SESSION_ID,
@@ -101,9 +106,27 @@ async function request(
   return { result, body: await result.json() as Record<string, unknown>, logs };
 }
 
-function payload(permit: string): Record<string, unknown> {
+function jwtPart(permit: string, index: number): Record<string, unknown> {
   return JSON.parse(
-    Buffer.from(permit.split(".")[1], "base64url").toString("utf8"),
+    Buffer.from(permit.split(".")[index], "base64url").toString("utf8"),
+  );
+}
+
+function payload(permit: string): Record<string, unknown> {
+  return jwtPart(permit, 1);
+}
+
+async function verifyPermit(
+  publicKey: CryptoKey,
+  permit: string,
+): Promise<boolean> {
+  const [header, claims, encodedSignature] = permit.split(".");
+  const signature = Buffer.from(encodedSignature, "base64url");
+  return crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    publicKey,
+    signature,
+    new TextEncoder().encode(`${header}.${claims}`),
   );
 }
 
@@ -190,6 +213,75 @@ test("Valid request produces exact success response with runtime-config-v1, 120s
   );
 
   assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
+});
+
+test("lite-v1 preserves exact legacy response and JWT claim contracts without loading runtime config", async () => {
+  const keys = await keyPair();
+  let loaderCalls = 0;
+  const { result, body } = await request(validLiteBody, undefined, {
+    privateKeyPem: keys.privateKeyPem,
+    loadRuntimeConfig: async () => {
+      loaderCalls += 1;
+      throw new Error("runtime config provider unavailable");
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(Object.keys(body).sort(), [
+    "contractRevision",
+    "correlationId",
+    "expiresInSeconds",
+    "permit",
+    "succeeded",
+    "version",
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(body).filter(([key]) => key !== "permit"),
+    ),
+    {
+      version: 1,
+      contractRevision: "lite-v1",
+      correlationId: CORRELATION_ID,
+      succeeded: true,
+      expiresInSeconds: 30,
+    },
+  );
+  assert.equal(loaderCalls, 0);
+
+  assert.deepEqual(jwtPart(body.permit as string, 0), {
+    alg: "RS256",
+    typ: "neko-launch+jwt",
+    kid: "neko-prod-key-2",
+  });
+  assert.equal(await verifyPermit(keys.publicKey, body.permit as string), true);
+  const claims = payload(body.permit as string);
+  assert.deepEqual(Object.keys(claims).sort(), [
+    "aud",
+    "challenge",
+    "exp",
+    "iat",
+    "iss",
+    "jti",
+    "nbf",
+    "product",
+    "scope",
+    "sub",
+  ]);
+  assert.deepEqual(claims, {
+    iss: "neko-backend",
+    aud: "neko-proxy-core",
+    sub: USER_ID,
+    product: "neko-family-proxy",
+    scope: "proxy:start",
+    challenge: CHALLENGE,
+    iat: 1000,
+    nbf: 1000,
+    exp: 1030,
+    jti: "33333333-3333-4333-8333-333333333333",
+  });
+  assert.equal("runtime_config_version" in claims, false);
+  assert.equal("runtime_config_sha256" in claims, false);
 });
 
 test("Runtime config loader returns null / missing active config fails closed with safe 503", async () => {
@@ -355,28 +447,48 @@ test("SHA-256 digest failure returns exact HTTP 503 body AuthorizationUnavailabl
   assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
 });
 
-test("Old lite-v1 contractRevision is rejected with 400 ProtocolInvalid", async () => {
-  const { result, body } = await request({
-    ...validBody,
-    contractRevision: "lite-v1",
-  });
+test("Unknown contractRevision is rejected with 400 ProtocolInvalid before authorization or runtime config access", async () => {
+  let authorizeCalls = 0;
+  let loaderCalls = 0;
+  const { result, body } = await request(
+    { ...validBody, contractRevision: "future-v2" },
+    undefined,
+    {
+      authorize: async () => {
+        authorizeCalls += 1;
+        return activeState;
+      },
+      loadRuntimeConfig: async () => {
+        loaderCalls += 1;
+        return { ...activeConfigRecord };
+      },
+    },
+  );
   assert.equal(result.status, 400);
   assert.deepEqual(body, { error: "ProtocolInvalid" });
+  assert.equal(authorizeCalls, 0);
+  assert.equal(loaderCalls, 0);
 });
 
 test("Lite request rejects removed S0 fields and client identity", async () => {
   for (
     const body of [
-      { ...validBody, configurationDigest: "b".repeat(64) },
-      { ...validBody, processName: "pso2.exe" },
-      { ...validBody, targetPid: 42 },
-      { ...validBody, mode: "ProcessMode" },
-      { ...validBody, product: "neko-family-proxy" },
-      { ...validBody, scope: "proxy:start" },
-      { ...validBody, userId: USER_ID },
-      { ...validBody, sessionId: AUTH_SESSION_ID },
-      { ...validBody, licenseId: "33333333-3333-4333-8333-333333333333" },
-      { ...validBody, installationId: "44444444-4444-4444-8444-444444444444" },
+      { ...validLiteBody, configurationDigest: "b".repeat(64) },
+      { ...validLiteBody, processName: "pso2.exe" },
+      { ...validLiteBody, targetPid: 42 },
+      { ...validLiteBody, mode: "ProcessMode" },
+      { ...validLiteBody, product: "neko-family-proxy" },
+      { ...validLiteBody, scope: "proxy:start" },
+      { ...validLiteBody, userId: USER_ID },
+      { ...validLiteBody, sessionId: AUTH_SESSION_ID },
+      {
+        ...validLiteBody,
+        licenseId: "33333333-3333-4333-8333-333333333333",
+      },
+      {
+        ...validLiteBody,
+        installationId: "44444444-4444-4444-8444-444444444444",
+      },
     ]
   ) {
     const { result } = await request(body);
