@@ -13,22 +13,26 @@ from neko_launcher.application.authorized_core import (
     OpaquePermit,
     PermitDiagnosticCode,
 )
+from neko_launcher.application.runtime_proxy_config import (
+    LaunchAuthorizationBundle,
+    RuntimeProxyConfig,
+)
 
 
 _FUNCTION_NAME = "issue_launch_permit"
-_CONTRACT_REVISION = "lite-v1"
+_CONTRACT_REVISION = "runtime-config-v1"
 
 
 class IssueLaunchPermitGateway:
     """Authenticated adapter for the canonical launch-permit Edge Function."""
 
-    def issue_launch_permit(
+    def issue_launch_authorization(
         self,
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
         timeout: float,
-    ) -> OpaquePermit:
+    ) -> LaunchAuthorizationBundle:
         started_at = monotonic()
         try:
             auth = getattr(authenticated_transport, "auth")
@@ -85,13 +89,46 @@ class IssueLaunchPermitGateway:
                 correlation_id,
                 started_at,
             )
+        runtime_config_raw = response.get("runtimeConfig")
+        if not isinstance(runtime_config_raw, dict):
+            raise self._failure(
+                PermitDiagnosticCode.PERMIT_MISSING_FIELD,
+                correlation_id,
+                started_at,
+            )
         if not self._is_valid_success_response(response, correlation_id, permit):
             raise self._failure(
                 PermitDiagnosticCode.PERMIT_INVALID_RESPONSE,
                 correlation_id,
                 started_at,
             )
-        return OpaquePermit(permit)
+        try:
+            runtime_config = RuntimeProxyConfig.from_dict(runtime_config_raw)
+        except Exception:
+            raise self._failure(
+                PermitDiagnosticCode.PERMIT_INVALID_RESPONSE,
+                correlation_id,
+                started_at,
+            ) from None
+        return LaunchAuthorizationBundle(
+            permit=OpaquePermit(permit),
+            runtime_config=runtime_config,
+        )
+
+    def issue_launch_permit(
+        self,
+        authenticated_transport: object,
+        correlation_id: str,
+        challenge: CoreChallenge,
+        timeout: float,
+    ) -> OpaquePermit:
+        bundle = self.issue_launch_authorization(
+            authenticated_transport,
+            correlation_id,
+            challenge,
+            timeout,
+        )
+        return bundle.permit
 
     @staticmethod
     def _is_valid_success_response(
@@ -106,6 +143,7 @@ class IssueLaunchPermitGateway:
             "succeeded",
             "permit",
             "expiresInSeconds",
+            "runtimeConfig",
         }:
             return False
         return (
@@ -118,6 +156,7 @@ class IssueLaunchPermitGateway:
             and permit.isascii()
             and type(response["expiresInSeconds"]) is int
             and response["expiresInSeconds"] == 30
+            and isinstance(response["runtimeConfig"], dict)
         )
 
     @staticmethod

@@ -6,10 +6,13 @@ from hashlib import sha256
 from re import fullmatch
 from threading import Event, Lock
 from time import monotonic
-from typing import Callable, Protocol, TypeVar, cast, Any
+from typing import TYPE_CHECKING, Callable, Protocol, TypeVar, cast, Any
 from uuid import uuid4
 
 from neko_launcher.application.errors import HeartbeatAuthInvalid
+
+if TYPE_CHECKING:
+    from neko_launcher.application.runtime_proxy_config import LaunchAuthorizationBundle
 
 
 class AuthorizedCoreErrorCode(str, Enum):
@@ -501,6 +504,14 @@ class CoreControlChannel(Protocol):
 
 
 class LaunchPermitGateway(Protocol):
+    def issue_launch_authorization(
+        self,
+        authenticated_transport: object,
+        correlation_id: str,
+        challenge: CoreChallenge,
+        timeout: float,
+    ) -> LaunchAuthorizationBundle: ...
+
     def issue_launch_permit(
         self,
         authenticated_transport: object,
