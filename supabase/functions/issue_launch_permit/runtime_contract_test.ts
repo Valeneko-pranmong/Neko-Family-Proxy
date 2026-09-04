@@ -24,6 +24,11 @@ test("runtime uses caller-scoped authenticated RPC and server signing configurat
   assert.match(index, /Deno\.env\.get\("RS256_KID"\)/);
 });
 
+test("service contract revision is runtime-config-v1", async () => {
+  const service = await source("service.ts");
+  assert.match(service, /runtime-config-v1/);
+});
+
 test("Supabase gateway JWT verification remains enabled", async () => {
   const config = await readFile(
     new URL("../../config.toml", import.meta.url),
