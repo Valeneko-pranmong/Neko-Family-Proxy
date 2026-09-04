@@ -278,6 +278,83 @@ test("Invalid runtime config fields fail closed with safe 503 and never log secr
   }
 });
 
+test("config_version Number.MAX_SAFE_INTEGER + 1 is rejected", async () => {
+  const logs: string[] = [];
+  const { result, body } = await request(
+    validBody,
+    undefined,
+    {
+      loadRuntimeConfig: async () => ({
+        ...activeConfigRecord,
+        config_version: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    },
+    logs,
+  );
+  assert.equal(result.status, 503);
+  assert.deepEqual(body, { error: "AuthorizationUnavailable" });
+  assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
+  assert.equal(logs.join("\n").includes("japan-vps-1"), false);
+});
+
+test("nowSeconds values 1000.5, NaN, -1, Number.MAX_SAFE_INTEGER are rejected with exact safe 503 before hash/sign", async () => {
+  for (const badNow of [1000.5, NaN, -1, Number.MAX_SAFE_INTEGER]) {
+    const logs: string[] = [];
+    let digestCalled = false;
+    const { result, body } = await request(
+      validBody,
+      undefined,
+      {
+        nowSeconds: () => badNow,
+        digestRuntimeConfigSha256: async () => {
+          digestCalled = true;
+          return "unexpected-digest";
+        },
+      },
+      logs,
+    );
+    assert.equal(result.status, 503);
+    assert.deepEqual(body, { error: "AuthorizationUnavailable" });
+    assert.equal(digestCalled, false);
+    assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
+  }
+});
+
+test("nowSeconds callback throwing is caught and returns exact safe 503", async () => {
+  const logs: string[] = [];
+  const { result, body } = await request(
+    validBody,
+    undefined,
+    {
+      nowSeconds: () => {
+        throw new Error("time source crashed with " + SENTINEL_SECRET);
+      },
+    },
+    logs,
+  );
+  assert.equal(result.status, 503);
+  assert.deepEqual(body, { error: "AuthorizationUnavailable" });
+  assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
+});
+
+test("SHA-256 digest failure returns exact HTTP 503 body AuthorizationUnavailable and sentinel credential is absent from response and logs", async () => {
+  const logs: string[] = [];
+  const { result, body } = await request(
+    validBody,
+    undefined,
+    {
+      digestRuntimeConfigSha256: async () => {
+        throw new Error("crypto hardware failure leaking " + SENTINEL_SECRET);
+      },
+    },
+    logs,
+  );
+  assert.equal(result.status, 503);
+  assert.deepEqual(body, { error: "AuthorizationUnavailable" });
+  assert.equal(JSON.stringify(body).includes(SENTINEL_SECRET), false);
+  assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
+});
+
 test("Old lite-v1 contractRevision is rejected with 400 ProtocolInvalid", async () => {
   const { result, body } = await request({
     ...validBody,

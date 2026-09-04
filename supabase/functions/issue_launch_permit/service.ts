@@ -38,6 +38,7 @@ export type Dependencies = {
   kid?: string;
   nowSeconds?: () => number;
   randomUUID?: () => string;
+  digestRuntimeConfigSha256?: (bytes: Uint8Array) => Promise<string>;
   log?: (message: string) => void;
 };
 
@@ -106,7 +107,7 @@ function parseRuntimeConfig(value: unknown): ValidatedRuntimeConfig | null {
   const rec = value as Record<string, unknown>;
   if (
     typeof rec.config_version !== "number" ||
-    !Number.isInteger(rec.config_version) ||
+    !Number.isSafeInteger(rec.config_version) ||
     rec.config_version <= 0
   ) {
     return null;
@@ -176,9 +177,17 @@ function canonicalConfigBytes(
   return new TextEncoder().encode(text);
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const copy = new Uint8Array(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", copy.buffer as ArrayBuffer);
+async function sha256Hex(
+  bytes: Uint8Array,
+  customDigest?: (bytes: Uint8Array) => Promise<string>,
+): Promise<string> {
+  if (customDigest) {
+    return await customDigest(bytes);
+  }
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    bytes.buffer as ArrayBuffer,
+  );
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -320,11 +329,36 @@ export function createIssueLaunchPermitHandler(deps: Dependencies) {
       return json(503, { error: "AuthorizationUnavailable" });
     }
 
-    const now = (deps.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
+    let now: number;
+    try {
+      now = (deps.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
+    } catch {
+      deps.log?.("issue_launch_permit time evaluation failed");
+      return json(503, { error: "AuthorizationUnavailable" });
+    }
+    if (
+      typeof now !== "number" ||
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      now > Number.MAX_SAFE_INTEGER - RUNTIME_CONFIG_SECONDS
+    ) {
+      deps.log?.("issue_launch_permit time evaluation out of range");
+      return json(503, { error: "AuthorizationUnavailable" });
+    }
+
     const issuedAt = now;
     const expiresAt = now + RUNTIME_CONFIG_SECONDS;
     const canonicalBytes = canonicalConfigBytes(config, issuedAt, expiresAt);
-    const configSha256 = await sha256Hex(canonicalBytes);
+    let configSha256: string;
+    try {
+      configSha256 = await sha256Hex(
+        canonicalBytes,
+        deps.digestRuntimeConfigSha256,
+      );
+    } catch {
+      deps.log?.("issue_launch_permit runtime config digest failed");
+      return json(503, { error: "AuthorizationUnavailable" });
+    }
 
     try {
       const permit = await signPermit(
