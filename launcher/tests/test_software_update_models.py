@@ -288,7 +288,10 @@ def test_enum_member_sequence_and_values():
 
     assert list(UpdateDiagnosticCode.__members__.items()) == [
         ("DOWNGRADE_REJECTED", UpdateDiagnosticCode.DOWNGRADE_REJECTED),
-        ("SAME_SEQUENCE_IDENTITY_CONFLICT", UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT)
+        ("SAME_SEQUENCE_IDENTITY_CONFLICT", UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT),
+        ("MANIFEST_UNAVAILABLE", UpdateDiagnosticCode.MANIFEST_UNAVAILABLE),
+        ("MANIFEST_REJECTED", UpdateDiagnosticCode.MANIFEST_REJECTED),
+        ("UPDATE_CHECK_INTERNAL_FAILURE", UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE),
     ]
 
 def test_dataclasses_exact_fields():
