@@ -1,7 +1,7 @@
 # Neko Family Proxy 5.1 — Software Update Phase 2 Design
 
 **Date:** 2026-09-05
-**Status:** OWNER DESIGN APPROVED / SPEC REVIEW PENDING
+**Status:** OWNER SPEC APPROVED / IMPLEMENTATION PLAN READY
 **Branch:** `release/5.1`
 **Baseline:** `e39551bcba9790eb861633109e754d03d242e1c4` / `5.1.0a1`
 **Primary owner:** TEAM_LAUNCHER
