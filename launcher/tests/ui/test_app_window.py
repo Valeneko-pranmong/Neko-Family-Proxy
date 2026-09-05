@@ -5,6 +5,11 @@ from typing import Any
 
 import pytest
 
+from neko_launcher.application.reconnect import (
+    AutomaticProxyReconnectController,
+    ReconnectCompletion,
+)
+from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.domain.models import (
     AppState,
     AuthStatus,
@@ -18,6 +23,7 @@ from neko_launcher.infrastructure.process.process_detector import (
     TargetProcess,
 )
 from neko_launcher.ui.app_window import AppWindow, HEARTBEAT_INTERVAL_MS
+from neko_launcher.ui.theme import PALETTE
 
 
 @pytest.fixture(autouse=True)
@@ -30,13 +36,6 @@ def exact_pso2_present(monkeypatch: pytest.MonkeyPatch) -> None:
         "neko_launcher.ui.app_window.is_same_target_still_running",
         lambda target: target == TargetProcess(42, "pso2.exe", 100),
     )
-from neko_launcher.domain.events import GameProcessStateChanged
-from neko_launcher.application.reconnect import (
-    AutomaticProxyReconnectController,
-    ReconnectCompletion,
-)
-from neko_launcher.ui.theme import PALETTE
-
 
 
 class FakeVariable:
