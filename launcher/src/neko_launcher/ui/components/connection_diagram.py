@@ -148,7 +148,30 @@ class ConnectionDiagram:
             value_bold=True,
         ).pack(anchor="center")
 
+        self._server_status_trace_id: str | None = None
+        if self._server_status_var is not None:
+            self._server_status_trace_id = self._server_status_var.trace_add(
+                "write", self._on_server_status_changed
+            )
+
         self.set_path(path or NetworkPath())
+
+    def _on_server_status_changed(self, *_: Any) -> None:
+        self._refresh_remote_node()
+
+    def _refresh_remote_node(self) -> None:
+        if len(self._node_widgets) < 2 or len(self._visible_hops) < 2:
+            return
+        remote_hop = self._display_hop(self._get_raw_remote_hop())
+        if remote_hop != self._visible_hops[1]:
+            self._visible_hops = (self._visible_hops[0], remote_hop)
+            self._node_widgets[1].set_hop(remote_hop)
+
+    def _get_raw_remote_hop(self) -> NetworkHop:
+        for hop in self._path.hops:
+            if hop.role == NetworkHopRole.REMOTE_PROXY:
+                return hop
+        return self._placeholder(NetworkHopRole.REMOTE_PROXY)
 
     def _metric_line(
         self,
@@ -205,8 +228,16 @@ class ConnectionDiagram:
             ),
         )
 
-    @staticmethod
-    def _status_text(hop: NetworkHop) -> str:
+    def _status_text(self, hop: NetworkHop) -> str:
+        if hop.role is NetworkHopRole.REMOTE_PROXY:
+            server_status = ""
+            if self._server_status_var is not None:
+                server_status = str(self._server_status_var.get()).strip()
+            if server_status == "ONLINE":
+                return "พร้อมเชื่อมต่อ"
+            if server_status == "OFFLINE":
+                return "ไม่พร้อมเชื่อมต่อ"
+
         state = hop.connection_state
         if hop.role is NetworkHopRole.LOCAL_PROXY_ENGINE:
             if state is HopConnectionState.SUCCESS:
@@ -222,8 +253,7 @@ class ConnectionDiagram:
             return "ยังไม่เชื่อมต่อ"
         return "ยังไม่พร้อม"
 
-    @classmethod
-    def _display_hop(cls, hop: NetworkHop) -> NetworkHop:
+    def _display_hop(self, hop: NetworkHop) -> NetworkHop:
         label = {
             NetworkHopRole.LOCAL_PROXY_ENGINE: "Neko Core",
             NetworkHopRole.REMOTE_PROXY: "Neko Proxy",
@@ -231,7 +261,7 @@ class ConnectionDiagram:
         return NetworkHop(
             role=hop.role,
             label=label,
-            location=cls._status_text(hop),
+            location=self._status_text(hop),
             connection_state=hop.connection_state,
         )
 

@@ -1,4 +1,4 @@
 """Neko Family Launcher V2."""
 
 __all__ = ["__version__"]
-__version__ = "5.0.0a43"
+__version__ = "5.0.0a44"
