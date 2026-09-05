@@ -27,24 +27,22 @@ def valid_release_document():
         "release_id": "r2-beta-01",
         "mandatory": False,
         "minimum_supported_sequence": 1,
-        "components": [
-            {
-                "name": "core",
+        "components": {
+            "core": {
                 "version": "1.0.0-rc1",
                 "artifact_id": "core-1.0.0-win64",
                 "artifact_sha256": "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
                 "artifact_size": 25000000,
                 "installed_identity_sha256": "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"
             },
-            {
-                "name": "launcher",
+            "launcher": {
                 "version": "5.1.0a1",
                 "artifact_id": "launcher-5.1.0a1-win64",
                 "artifact_sha256": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
                 "artifact_size": 15000000,
                 "installed_identity_sha256": "0987654321fedcba0987654321fedcba0987654321fedcba0987654321fedcba"
-            }
-        ]
+            },
+        },
     }
 
 def test_enums_and_immutability():
@@ -137,6 +135,12 @@ def test_parse_release_set_accepts_exact_beta_schema():
     assert release.components[1].artifact_size == 25000000
     assert release.components[1].installed_identity_sha256 == "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"
 
+def with_component(document, component_name, **changes):
+    components = dict(document["components"])
+    components[component_name] = {**components[component_name], **changes}
+    return {**document, "components": components}
+
+
 @pytest.mark.parametrize("mutate", [
     lambda d: {**d, "extra": True},
     lambda d: {k: v for k, v in d.items() if k != "release_sequence"},
@@ -157,43 +161,46 @@ def test_parse_release_set_accepts_exact_beta_schema():
     lambda d: {**d, "mandatory": 1},
     lambda d: {**d, "mandatory": "False"},
     lambda d: {**d, "release_id": ""},
-    lambda d: {**d, "release_id": "r"*65},
+    lambda d: {**d, "release_id": "r" * 65},
     lambda d: {**d, "release_id": "r2 spaces"},
     lambda d: {**d, "release_id": 123},
-    lambda d: {**d, "components": {}},
-    lambda d: {**d, "components": d["components"] + [{"name": "extra", "version": "1", "artifact_id": "x", "artifact_sha256": "a"*64, "artifact_size": 1, "installed_identity_sha256": "a"*64}]},
-    lambda d: {**d, "components": [c for c in d["components"] if c["name"] != "core"]},
-    lambda d: {**d, "components": [c for c in d["components"] if c["name"] != "launcher"]},
-    lambda d: {**d, "components": [d["components"][0], d["components"][0]]},
-    lambda d: {**d, "components": [d["components"][0], "not a dict"]},
-    lambda d: {**d, "components": [{k: v for k, v in c.items() if k != "version"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "extra_field": "x"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "credential": "x"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "host": "x"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "port": "x"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "cipher": "x"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "version": ""} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "version": "v"*65} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "version": "v 1"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "version": True} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_id": ""} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_id": "a"*97} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_id": "a b"} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_id": True} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_sha256": "A"*64} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_sha256": "g"*64} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_sha256": "a"*63} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_sha256": 123} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "installed_identity_sha256": "A"*64} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "installed_identity_sha256": "g"*64} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "installed_identity_sha256": "a"*63} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "installed_identity_sha256": 123} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_size": 0} if c["name"] == "launcher" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_size": -1} if c["name"] == "launcher" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_size": True} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_size": 1.0} if c["name"] == "core" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_size": 134217729} if c["name"] == "launcher" else c for c in d["components"]]},
-    lambda d: {**d, "components": [{**c, "artifact_size": 1073741825} if c["name"] == "core" else c for c in d["components"]]},
+    lambda d: {**d, "components": []},
+    lambda d: {**d, "components": {"launcher": d["components"]["launcher"]}},
+    lambda d: {**d, "components": {"core": d["components"]["core"]}},
+    lambda d: {
+        **d,
+        "components": {**d["components"], "extra": d["components"]["core"]},
+    },
+    lambda d: with_component(d, "core", version=None),
+    lambda d: {**d, "components": {**d["components"], "core": "not a mapping"}},
+    lambda d: with_component(d, "core", name="core"),
+    lambda d: with_component(d, "core", extra_field="x"),
+    lambda d: with_component(d, "core", credential="x"),
+    lambda d: with_component(d, "core", host="x"),
+    lambda d: with_component(d, "core", port="x"),
+    lambda d: with_component(d, "core", cipher="x"),
+    lambda d: with_component(d, "core", version=""),
+    lambda d: with_component(d, "core", version="v" * 65),
+    lambda d: with_component(d, "core", version="v 1"),
+    lambda d: with_component(d, "core", version=True),
+    lambda d: with_component(d, "core", artifact_id=""),
+    lambda d: with_component(d, "core", artifact_id="a" * 97),
+    lambda d: with_component(d, "core", artifact_id="a b"),
+    lambda d: with_component(d, "core", artifact_id=True),
+    lambda d: with_component(d, "core", artifact_sha256="A" * 64),
+    lambda d: with_component(d, "core", artifact_sha256="g" * 64),
+    lambda d: with_component(d, "core", artifact_sha256="a" * 63),
+    lambda d: with_component(d, "core", artifact_sha256=123),
+    lambda d: with_component(d, "core", installed_identity_sha256="A" * 64),
+    lambda d: with_component(d, "core", installed_identity_sha256="g" * 64),
+    lambda d: with_component(d, "core", installed_identity_sha256="a" * 63),
+    lambda d: with_component(d, "core", installed_identity_sha256=123),
+    lambda d: with_component(d, "launcher", artifact_size=0),
+    lambda d: with_component(d, "launcher", artifact_size=-1),
+    lambda d: with_component(d, "core", artifact_size=True),
+    lambda d: with_component(d, "core", artifact_size=1.0),
+    lambda d: with_component(d, "launcher", artifact_size=134217729),
+    lambda d: with_component(d, "core", artifact_size=1073741825),
 ])
 def test_parse_release_set_rejects_non_exact_schema(mutate):
     ok, symbols = lazy_import()
@@ -204,6 +211,7 @@ def test_parse_release_set_rejects_non_exact_schema(mutate):
     with pytest.raises(ValueError):
         parse_release_set(mutate(valid_release_document()))
 
+
 def test_parse_release_set_positive_boundaries():
     ok, symbols = lazy_import()
     if not ok:
@@ -211,26 +219,13 @@ def test_parse_release_set_positive_boundaries():
     _, _, _, _, _, _, _, parse_release_set = symbols
 
     doc = valid_release_document()
-
-    # accept release_sequence == 9223372036854775807 and minimum_supported_sequence == release_sequence
     doc["release_sequence"] = 9223372036854775807
     doc["minimum_supported_sequence"] = 9223372036854775807
-
-    # accept Launcher artifact_size == 134217728 and Core == 1073741824
-    for c in doc["components"]:
-        if c["name"] == "launcher":
-            c["artifact_size"] = 134217728
-        elif c["name"] == "core":
-            c["artifact_size"] = 1073741824
-
-    # accept release_id exactly 64 chars using allowed uppercase/underscore/dot/hyphen grammar
+    doc["components"]["launcher"]["artifact_size"] = 134217728
+    doc["components"]["core"]["artifact_size"] = 1073741824
     doc["release_id"] = "A" * 61 + "_.-"
-
-    # accept version exactly 64 chars including plus sign
-    doc["components"][0]["version"] = "a" * 63 + "+"
-
-    # accept artifact_id exactly 96 chars
-    doc["components"][0]["artifact_id"] = "b" * 96
+    doc["components"]["core"]["version"] = "a" * 63 + "+"
+    doc["components"]["core"]["artifact_id"] = "b" * 96
 
     release = parse_release_set(doc)
     assert release.release_sequence == 9223372036854775807
@@ -243,29 +238,34 @@ def test_parse_release_set_positive_boundaries():
     assert release.components[1].artifact_id == "b" * 96
     assert release.components[1].artifact_size == 1073741824
 
-    # assert both SHA fields are valid lowercase 64 hex in accepted payload
-    for c in release.components:
-        assert re.fullmatch(r"[a-f0-9]{64}", c.artifact_sha256)
-        assert re.fullmatch(r"[a-f0-9]{64}", c.installed_identity_sha256)
+    for component in release.components:
+        assert re.fullmatch(r"[a-f0-9]{64}", component.artifact_sha256)
+        assert re.fullmatch(
+            r"[a-f0-9]{64}",
+            component.installed_identity_sha256,
+        )
 
-def test_parse_release_set_reorders_components():
+
+def test_parse_release_set_returns_fixed_component_order():
     ok, symbols = lazy_import()
     if not ok:
         pytest.fail("Module neko_launcher.application.software_update_models missing or fails to import")
     _, _, _, _, _, _, _, parse_release_set = symbols
 
     doc = valid_release_document()
-    # Reverse input order (core, launcher -> core, launcher wait, valid document has core then launcher already)
-    # The valid document actually has core then launcher.
-    # So we'll pass it, and assert the output is launcher, core.
-    assert doc["components"][0]["name"] == "core"
-    assert doc["components"][1]["name"] == "launcher"
+    components = doc["components"]
+    doc["components"] = {
+        "core": components["core"],
+        "launcher": components["launcher"],
+    }
+    assert tuple(doc["components"]) == ("core", "launcher")
 
     release = parse_release_set(doc)
     assert isinstance(release.components, tuple)
-    assert release.components[0].name == "launcher"
-    assert release.components[1].name == "core"
-
+    assert tuple(component.name for component in release.components) == (
+        "launcher",
+        "core",
+    )
 
 def test_enum_member_sequence_and_values():
     ok, symbols = lazy_import()

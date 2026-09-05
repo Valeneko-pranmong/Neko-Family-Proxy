@@ -83,10 +83,7 @@ def mutate_one_bit(value: bytes, index: int = 0) -> bytes:
 
 
 def component_mapping(payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
-    return {
-        component["name"]: component
-        for component in payload["components"]
-    }
+    return dict(payload["components"])
 
 
 def assert_component_matches(
