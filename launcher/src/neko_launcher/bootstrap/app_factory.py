@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
+from neko_launcher import __version__
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreOrchestrator,
     LaunchAccessContext,
@@ -15,6 +17,8 @@ from neko_launcher.application.production_authorization import (
     create_production_proxy_gateway,
 )
 from neko_launcher.application.services import LauncherService
+from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_service import UpdateCheckService
 from neko_launcher.domain.models import AuthStatus, EntitlementStatus
 from neko_launcher.infrastructure.account_recovery_gateway import (
     HttpAccountRecoveryGateway,
@@ -28,6 +32,15 @@ from neko_launcher.infrastructure.core.core_telemetry_client import NamedPipeCor
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.proxy_status_client import PublicProxyStatusClient
+from neko_launcher.infrastructure.software_release_identity import (
+    load_local_release_identity,
+)
+from neko_launcher.infrastructure.software_update_client import (
+    HttpUpdateManifestGateway,
+)
+from neko_launcher.infrastructure.software_update_manifest import (
+    ReleaseManifestVerifier,
+)
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
@@ -44,9 +57,43 @@ def application_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def compose_update_check_service(
+    config: LauncherConfig,
+    *,
+    key_registry: Mapping[str, bytes] | None = None,
+) -> UpdateCheckService:
+    manifest_gateway = HttpUpdateManifestGateway(config.software_update_api_url)
+    verifier = ReleaseManifestVerifier(
+        {} if key_registry is None else key_registry
+    )
+    launcher_executable = (
+        Path(sys.executable)
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve()
+    )
+    core_manifest = config.proxy_core_path.with_name("canonical-core-manifest.json")
+
+    def local_identity_provider() -> LocalReleaseIdentity:
+        return load_local_release_identity(
+            release_sequence=0,
+            release_id="dev-unpublished",
+            launcher_version=__version__,
+            launcher_executable=launcher_executable,
+            core_version="dev-unpublished",
+            core_manifest=core_manifest,
+        )
+
+    return UpdateCheckService(
+        manifest_gateway,
+        verifier,
+        local_identity_provider,
+    )
+
+
 def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
+    update_check_service = compose_update_check_service(config)
     event_bus = EventBus()
     game_manager = GameProcessManager()
     secure_store = KeyringSecureStore()
@@ -172,4 +219,5 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         debug_log_dir=config.debug_log_dir,
         telemetry_client=telemetry_client,
         proxy_status_client=proxy_status_client,
+        update_check_service=update_check_service,
     )
