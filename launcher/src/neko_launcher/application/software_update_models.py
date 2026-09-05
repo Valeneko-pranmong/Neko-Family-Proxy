@@ -101,22 +101,21 @@ def parse_release_set(document: object) -> ReleaseSet:
     if type(release_id) is not str or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", release_id):
         raise ValueError("Invalid release_id")
 
-    components_list = document.get("components")
-    if not isinstance(components_list, list) or len(components_list) != 2:
-        raise ValueError("Components must be a list of exactly 2 items")
+    components_document = document.get("components")
+    if not isinstance(components_document, dict):
+        raise ValueError("Components must be a dictionary")
+    if set(components_document) != {"launcher", "core"}:
+        raise ValueError("Invalid component names")
 
     components = {}
-    for comp in components_list:
+    for name in ("launcher", "core"):
+        comp = components_document[name]
         if not isinstance(comp, dict):
             raise ValueError("Component must be a dictionary")
 
-        comp_allowed = {"name", "version", "artifact_id", "artifact_sha256", "artifact_size", "installed_identity_sha256"}
+        comp_allowed = {"version", "artifact_id", "artifact_sha256", "artifact_size", "installed_identity_sha256"}
         if set(comp.keys()) != comp_allowed:
             raise ValueError("Invalid component fields")
-
-        name = comp["name"]
-        if name not in ("launcher", "core"):
-            raise ValueError("Unknown component name")
 
         version = comp["version"]
         if type(version) is not str or not re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", version):
