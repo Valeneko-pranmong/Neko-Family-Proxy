@@ -98,7 +98,7 @@ def sanitize_diagnostic_text(text: str) -> str:
 
     # 4. Redact sensitive key-value pairs (JSON, query params, headers, assignment)
     kv_pattern = re.compile(
-        r"""(?i)(["']?(?:access_token|refresh_token|token|password|passwd|secret|service_role|recovery_code|challenge|private_key|anon_key|api_key)[a-z0-9_\-]*["']?\s*[:=]\s*["']?)([^'"\s,;{}]+)(["']?)"""
+        r"""(?i)(["']?(?:access_token|refresh_token|token|password|passwd|secret|credential|service_role|recovery_code|challenge|private_key|anon_key|api_key)[a-z0-9_\-]*["']?\s*[:=]\s*["']?)([^'"\s,;{}]+)(["']?)"""
     )
     text = kv_pattern.sub(r"\1<redacted>\3", text)
 
