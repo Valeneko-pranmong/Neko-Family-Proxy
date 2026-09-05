@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Reporting
+    url: https://github.com/Valeneko-pranmong/Neko-Family-Proxy/security/policy
+    about: Please report security issues confidentially via our Security Policy.
+  - name: Questions & Community Discussions
+    url: https://github.com/Valeneko-pranmong/Neko-Family-Proxy/discussions
+    about: Ask questions and discuss features with the community.
