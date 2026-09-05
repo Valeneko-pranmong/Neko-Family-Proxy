@@ -35,6 +35,7 @@ def test_packaged_runtime_defaults_to_local_app_data(
     assert config.supabase_publishable_key.startswith("sb_publishable_")
     assert config.account_recovery_api_url == "https://neko-control-room.vercel.app"
     assert config.proxy_status_api_url == "https://neko-control-room.vercel.app/api/proxy/status"
+    assert config.software_update_api_url == "https://neko-control-room.vercel.app"
 
 
 def test_runtime_ignores_bundled_neko_proxy_core(
@@ -127,3 +128,17 @@ def test_program_preferences_preserve_peer_setting(tmp_path: Path) -> None:
     prefs.set_hide_to_tray(False)
     assert prefs.always_on_top is False
     assert prefs.hide_to_tray is False
+
+
+def test_software_update_api_url_is_not_overridden_by_environment(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_SOFTWARE_UPDATE_API_URL",
+        "https://example.invalid",
+    )
+
+    config = LauncherConfig.from_environment(tmp_path)
+
+    assert config.software_update_api_url == "https://neko-control-room.vercel.app"
