@@ -23,6 +23,11 @@ from neko_launcher.application.reconnect import (
     ReconnectCompletion,
 )
 from neko_launcher.application.services import LauncherService
+from neko_launcher.application.software_update_models import (
+    UpdateCheckResult,
+    UpdateDiagnosticCode,
+    UpdateState,
+)
 from neko_launcher.domain.events import (
     GameProcessStateChanged,
     StateChanged,
@@ -92,6 +97,7 @@ class AppWindow:
         debug_log_dir: Path | None = None,
         telemetry_client: Any = None,
         proxy_status_client: Any = None,
+        update_check_service: Any = None,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -99,11 +105,17 @@ class AppWindow:
         self._event_bus = event_bus
         self._telemetry_client = telemetry_client
         self._proxy_status_client = proxy_status_client
+        self._update_check_service = update_check_service
+        self._last_update_result: UpdateCheckResult | None = None
         self._proxy_status_refresh_pending = False
         self._public_server_host_status: str | None = None
         self._proxy_status_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="neko-proxy-status",
+        )
+        self._update_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="neko-software-update",
         )
         self._executor = ThreadPoolExecutor(
             max_workers=1,
@@ -243,6 +255,7 @@ class AppWindow:
         ))
         self.root.after(HEARTBEAT_INTERVAL_MS, self._heartbeat)
         self.root.after(1_500, self._refresh_public_proxy_status)
+        self.root.after(2_000, self._check_software_update_startup)
         self.root.after(3_000, self._poll_game_process)
         self._submit(self._service.restore_session, self._restore_completed)
 
@@ -1231,6 +1244,76 @@ class AppWindow:
 
         self.root.after(100, finish)
 
+    def _check_software_update_startup(self) -> None:
+        service = getattr(self, "_update_check_service", None)
+        if self._closing or service is None:
+            return
+        self._submit_software_update_check(service.check_startup)
+
+    def _check_software_update_manual(self) -> None:
+        service = getattr(self, "_update_check_service", None)
+        if self._closing or service is None:
+            return
+        self._submit_software_update_check(service.check_manual)
+
+    def _record_software_update_internal_failure(self) -> None:
+        self._last_update_result = None
+        if self._closing:
+            return
+        self._record_debug_status(
+            "SOFTWARE_UPDATE_CHECK",
+            state=UpdateState.VERIFY_FAILED.value,
+            release_sequence=None,
+            changed_components="",
+            diagnostic_code=(
+                UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE.value
+            ),
+        )
+
+    def _submit_software_update_check(
+        self,
+        work: Callable[[], UpdateCheckResult],
+    ) -> None:
+        try:
+            future = self._update_executor.submit(work)
+        except RuntimeError:
+            self._record_software_update_internal_failure()
+            return
+
+        def finish() -> None:
+            if not future.done():
+                if self.root.winfo_exists() and not self._closing:
+                    self.root.after(100, finish)
+                return
+            if self._closing:
+                return
+            try:
+                result = future.result()
+                if not isinstance(result, UpdateCheckResult):
+                    raise TypeError("invalid update check result")
+                state = result.state.value
+                release_sequence = result.release_sequence
+                changed_components = ",".join(result.changed_components)
+                diagnostic_code = (
+                    result.diagnostic_code.value
+                    if result.diagnostic_code is not None
+                    else None
+                )
+            except Exception:
+                self._record_software_update_internal_failure()
+                return
+
+            self._last_update_result = result
+            self._record_debug_status(
+                "SOFTWARE_UPDATE_CHECK",
+                state=state,
+                release_sequence=release_sequence,
+                changed_components=changed_components,
+                diagnostic_code=diagnostic_code,
+            )
+
+        self.root.after(100, finish)
+
     def _submit(
         self,
         work: Callable[[], Any],
@@ -1902,6 +1985,11 @@ class AppWindow:
         except Exception:
             pass
         self._executor.shutdown(wait=False, cancel_futures=True)
+        if getattr(self, "_update_executor", None) is not None:
+            try:
+                self._update_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
         if getattr(self, "_proxy_status_executor", None) is not None:
             try:
                 self._proxy_status_executor.shutdown(wait=False, cancel_futures=True)
