@@ -93,3 +93,85 @@ def test_connection_diagram_role_icons_and_privacy_boundary() -> None:
             assert forbidden not in source
     finally:
         root.destroy()
+
+
+def test_connection_diagram_server_status_color_roles() -> None:
+    from neko_launcher.ui.theme import PALETTE
+
+    root = _root()
+    try:
+        diagram = ConnectionDiagram(root)
+        label = diagram._server_status_value_label
+        download_label = diagram._download_value_label
+        upload_label = diagram._upload_value_label
+        latency_label = diagram._latency_value_label
+
+        # Initial default role is neutral
+        assert label.cget("text_color") == PALETTE.text_muted
+
+        roles_to_colors = [
+            ("success", PALETTE.success),
+            ("danger", PALETTE.danger),
+            ("warning", PALETTE.warning),
+            ("neutral", PALETTE.text_muted),
+        ]
+
+        for role, expected_color in roles_to_colors:
+            dl_color_before = download_label.cget("text_color")
+            ul_color_before = upload_label.cget("text_color")
+            lat_color_before = latency_label.cget("text_color")
+
+            diagram.update_server_status_color(role)
+            assert label.cget("text_color") == expected_color
+
+            # Only server status value label changes; other metric labels remain unchanged
+            assert download_label.cget("text_color") == dl_color_before
+            assert upload_label.cget("text_color") == ul_color_before
+            assert latency_label.cget("text_color") == lat_color_before
+    finally:
+        root.destroy()
+
+
+def test_connection_diagram_neko_proxy_node_reflects_server_status_in_place() -> None:
+    root = _root()
+    try:
+        server_status = tk.StringVar(master=root, value="กำลังเช็ค")
+        path = NetworkPath(
+            hops=(
+                NetworkHop(NetworkHopRole.LOCAL_PROXY_ENGINE, "Neko Core", connection_state=HopConnectionState.SUCCESS),
+                NetworkHop(NetworkHopRole.REMOTE_PROXY, "Neko Proxy", connection_state=HopConnectionState.CONNECTING),
+            ),
+        )
+        diagram = ConnectionDiagram(root, path=path, server_status_var=server_status)
+        node_widgets_before = tuple(diagram._node_widgets)
+        remote_node = diagram._node_widgets[1]
+
+        # 1. Transient/non-definitive status preserves existing NetworkHop wording ("กำลังเชื่อมต่อ")
+        assert remote_node._location_widget.cget("text") == "กำลังเชื่อมต่อ"
+        assert diagram._visible_hops[1].location == "กำลังเชื่อมต่อ"
+
+        # 2. Server ONLINE => exactly "พร้อมเชื่อมต่อ", updated in place
+        server_status.set("ONLINE")
+        assert tuple(diagram._node_widgets) == node_widgets_before
+        assert remote_node._location_widget.cget("text") == "พร้อมเชื่อมต่อ"
+        assert diagram._visible_hops[1].location == "พร้อมเชื่อมต่อ"
+
+        # 3. Server OFFLINE => exactly "ไม่พร้อมเชื่อมต่อ", updated in place
+        server_status.set("OFFLINE")
+        assert tuple(diagram._node_widgets) == node_widgets_before
+        assert remote_node._location_widget.cget("text") == "ไม่พร้อมเชื่อมต่อ"
+        assert diagram._visible_hops[1].location == "ไม่พร้อมเชื่อมต่อ"
+
+        # 4. Back to transient (e.g. กำลังเชื่อมต่อ) => preserves NetworkHop wording
+        server_status.set("กำลังเชื่อมต่อ")
+        assert tuple(diagram._node_widgets) == node_widgets_before
+        assert remote_node._location_widget.cget("text") == "กำลังเชื่อมต่อ"
+        assert diagram._visible_hops[1].location == "กำลังเชื่อมต่อ"
+
+        # 5. ONLINE again => exactly "พร้อมเชื่อมต่อ"
+        server_status.set("ONLINE")
+        assert tuple(diagram._node_widgets) == node_widgets_before
+        assert remote_node._location_widget.cget("text") == "พร้อมเชื่อมต่อ"
+        assert diagram._visible_hops[1].location == "พร้อมเชื่อมต่อ"
+    finally:
+        root.destroy()

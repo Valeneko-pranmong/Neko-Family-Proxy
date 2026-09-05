@@ -32,6 +32,89 @@ def test_exact_detector_returns_only_pso2_target() -> None:
     assert target == TargetProcess(2, "pso2.exe", 20)
 
 
+def test_observe_exact_pso2_returns_exact_single_target(monkeypatch) -> None:
+    monkeypatch.setattr("neko_launcher.infrastructure.process.process_detector.os.name", "posix")
+    expected = TargetProcess(2, "pso2.exe", 20)
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (TargetProcess(1, "Tweaker.exe", 10), expected)
+    )
+
+    assert detector.observe_exact_pso2() == expected
+
+
+def test_observe_exact_pso2_returns_none_when_zero_candidates() -> None:
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (TargetProcess(1, "Tweaker.exe", 10),)
+    )
+
+    assert detector.observe_exact_pso2() is None
+
+
+def test_observe_exact_pso2_rejects_multiple_candidates() -> None:
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (
+            TargetProcess(2, "pso2.exe", 20),
+            TargetProcess(3, "pso2.exe", 30),
+        )
+    )
+
+    assert detector.observe_exact_pso2() is None
+
+
+def test_observe_exact_pso2_propagates_observation_failure() -> None:
+    def fail() -> tuple[TargetProcess, ...]:
+        raise ProcessObservationUnavailable
+
+    detector = ExactPso2TargetDetector(snapshot=fail)
+
+    with pytest.raises(ProcessObservationUnavailable):
+        detector.observe_exact_pso2()
+
+def test_observe_exact_pso2_returns_target_with_visible_window() -> None:
+    target = TargetProcess(42, "pso2.exe", 100)
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (target,), window_probe=lambda pid: pid == target.pid
+    )
+
+    assert detector.observe_exact_pso2() == target
+
+
+def test_observe_exact_pso2_returns_none_without_visible_window() -> None:
+    target = TargetProcess(42, "pso2.exe", 100)
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (target,), window_probe=lambda _pid: False
+    )
+
+    assert detector.observe_exact_pso2() is None
+
+
+def test_observe_exact_pso2_propagates_window_observation_failure() -> None:
+    target = TargetProcess(42, "pso2.exe", 100)
+
+    def fail_window_probe(_pid: int) -> bool:
+        raise ProcessObservationUnavailable
+
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (target,), window_probe=fail_window_probe
+    )
+
+    with pytest.raises(ProcessObservationUnavailable):
+        detector.observe_exact_pso2()
+
+
+def test_same_target_check_does_not_probe_window() -> None:
+    target = TargetProcess(42, "pso2.exe", 100)
+
+    def fail_if_called(_pid: int) -> bool:
+        raise AssertionError("window probe must not authorize process identity")
+
+    detector = ExactPso2TargetDetector(
+        snapshot=lambda: (target,), window_probe=fail_if_called
+    )
+
+    assert detector.is_same_target_still_running(target) is True
+
+
 def test_exact_detector_fails_closed_when_multiple_pso2_candidates_are_ambiguous() -> None:
     detector = ExactPso2TargetDetector(
         snapshot=lambda: (

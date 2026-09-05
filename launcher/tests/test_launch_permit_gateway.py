@@ -10,9 +10,15 @@ from neko_launcher.application.authorized_core import (
     CoreChallenge,
     PermitDiagnosticCode,
 )
+from neko_launcher.application.runtime_proxy_config import (
+    LaunchAuthorizationBundle,
+)
 from neko_launcher.infrastructure.core.launch_permit_gateway import (
     IssueLaunchPermitGateway,
 )
+
+SENTINEL_SECRET = "SENTINEL_PROXY_SECRET_42"
+EXPECTED_DIGEST = "02060535a1e3c4db74edffc8d0b1f5bfd6feee948980669ff06acab9afdecf4d"
 
 
 class FakeFunctions:
@@ -50,26 +56,48 @@ def transport_for(
     return SimpleNamespace(functions=functions, auth=FakeAuth(access_token))
 
 
+def valid_runtime_config_dict(**overrides: object) -> dict[str, object]:
+    data: dict[str, object] = {
+        "schemaVersion": 1,
+        "configVersion": 18,
+        "endpointId": "japan-vps-1",
+        "host": "127.0.0.1",
+        "port": 8389,
+        "protocol": "shadowsocks",
+        "cipher": "aes-256-gcm",
+        "credential": SENTINEL_SECRET,
+        "issuedAt": 1000,
+        "expiresAt": 1120,
+    }
+    data.update(overrides)
+    return data
+
+
+_DEFAULT = object()
+
+
 def success_response(
     *,
     correlation_id: str = "0123456789abcdef0123456789abcdef",
     permit: object = "header.payload.signature",
+    runtime_config: object = _DEFAULT,
     **overrides: object,
 ) -> dict[str, object]:
     response: dict[str, object] = {
         "version": 1,
-        "contractRevision": "lite-v1",
+        "contractRevision": "runtime-config-v1",
         "correlationId": correlation_id,
         "succeeded": True,
         "permit": permit,
         "expiresInSeconds": 30,
+        "runtimeConfig": valid_runtime_config_dict() if runtime_config is _DEFAULT else runtime_config,
     }
     response.update(overrides)
     return response
 
 
-def issue(transport: object, timeout: float = 10.0) -> object:
-    return IssueLaunchPermitGateway().issue_launch_permit(
+def issue(transport: object, timeout: float = 10.0) -> LaunchAuthorizationBundle:
+    return IssueLaunchPermitGateway().issue_launch_authorization(
         transport,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
@@ -77,23 +105,29 @@ def issue(transport: object, timeout: float = 10.0) -> object:
     )
 
 
-def test_gateway_uses_authenticated_issue_launch_permit_contract_exactly() -> None:
+def test_gateway_uses_authenticated_issue_launch_authorization_contract_exactly() -> None:
     functions = FakeFunctions(success_response())
 
-    permit = issue(transport_for(functions))
+    bundle = issue(transport_for(functions))
 
     assert functions.access_token == "authenticated-access-token"
     assert functions.function_name == "issue_launch_permit"
     assert functions.invoke_options == {
         "body": {
             "version": 1,
-            "contractRevision": "lite-v1",
+            "contractRevision": "runtime-config-v1",
             "correlationId": "0123456789abcdef0123456789abcdef",
             "challenge": "a" * 43,
         },
         "responseType": "json",
     }
-    assert permit.reveal_for_transport() == "header.payload.signature"
+    assert isinstance(bundle, LaunchAuthorizationBundle)
+    assert bundle.permit.reveal_for_transport() == "header.payload.signature"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.credential.reveal_for_transport() == SENTINEL_SECRET
+    assert bundle.runtime_config.canonical_digest == EXPECTED_DIGEST
+    assert SENTINEL_SECRET not in str(bundle)
+    assert SENTINEL_SECRET not in repr(bundle)
 
 
 @pytest.mark.parametrize(
@@ -104,9 +138,11 @@ def test_gateway_uses_authenticated_issue_launch_permit_contract_exactly() -> No
         ({}, PermitDiagnosticCode.PERMIT_MISSING_FIELD),
         (success_response(permit=""), PermitDiagnosticCode.PERMIT_MISSING_FIELD),
         (success_response(permit=42), PermitDiagnosticCode.PERMIT_MISSING_FIELD),
+        (success_response(runtime_config=""), PermitDiagnosticCode.PERMIT_MISSING_FIELD),
+        (success_response(runtime_config=None), PermitDiagnosticCode.PERMIT_MISSING_FIELD),
     ],
 )
-def test_gateway_rejects_malformed_or_missing_permit(
+def test_gateway_rejects_malformed_or_missing_permit_or_config(
     response: object,
     expected: PermitDiagnosticCode,
 ) -> None:
@@ -115,6 +151,8 @@ def test_gateway_rejects_malformed_or_missing_permit(
 
     assert raised.value.diagnostic_code is expected
     assert str(raised.value) == "authorization permit is unavailable"
+    assert SENTINEL_SECRET not in str(raised.value)
+    assert SENTINEL_SECRET not in repr(raised.value)
 
 
 class FunctionFailure(RuntimeError):
@@ -152,6 +190,7 @@ def test_gateway_classifies_http_failure_without_exposing_backend_detail(
     assert raised.value.diagnostic_context["function"] == "issue_launch_permit"
     assert str(raised.value) == "authorization permit is unavailable"
     assert "sensitive backend response" not in str(raised.value)
+    assert SENTINEL_SECRET not in str(raised.value)
 
 
 def test_gateway_classifies_only_the_fixed_edge_session_inactive_response() -> None:
@@ -229,18 +268,33 @@ def test_gateway_rejects_function_client_timeout_above_deadline() -> None:
     "response",
     [
         success_response(version=2),
-        success_response(contractRevision="s0-rc2"),
+        success_response(version=True),
+        success_response(contractRevision="lite-v1"),
+        success_response(
+            contractRevision="lite-v1",
+            runtimeConfig=valid_runtime_config_dict(),
+        ),
         success_response(correlation_id="fedcba9876543210fedcba9876543210"),
         success_response(succeeded=False),
         success_response(expiresInSeconds=29),
+        success_response(expiresInSeconds=True),
         success_response(unexpected=True),
         success_response(permit="x" * 4097),
+        success_response(permit="permit-\N{SNOWMAN}"),
+        success_response(runtime_config=valid_runtime_config_dict(schemaVersion=2)),
+        success_response(runtime_config=valid_runtime_config_dict(configVersion=0)),
+        success_response(runtime_config=valid_runtime_config_dict(protocol="vmess")),
+        success_response(runtime_config=valid_runtime_config_dict(port=70000)),
+        success_response(runtime_config=valid_runtime_config_dict(expiresAt=1000 + 121)),
+        success_response(runtime_config=valid_runtime_config_dict(extra_field="bad")),
     ],
 )
-def test_gateway_rejects_response_outside_lite_v1_schema(
+def test_gateway_rejects_response_outside_runtime_config_v1_schema(
     response: dict[str, object],
 ) -> None:
     with pytest.raises(AuthorizedCoreError) as raised:
         issue(transport_for(FakeFunctions(response)))
 
     assert raised.value.diagnostic_code is PermitDiagnosticCode.PERMIT_INVALID_RESPONSE
+    assert SENTINEL_SECRET not in str(raised.value)
+    assert SENTINEL_SECRET not in repr(raised.value)

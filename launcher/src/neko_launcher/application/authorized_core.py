@@ -6,10 +6,13 @@ from hashlib import sha256
 from re import fullmatch
 from threading import Event, Lock
 from time import monotonic
-from typing import Callable, Protocol, TypeVar, cast, Any
+from typing import TYPE_CHECKING, Callable, Protocol, TypeVar, cast, Any
 from uuid import uuid4
 
 from neko_launcher.application.errors import HeartbeatAuthInvalid
+
+if TYPE_CHECKING:
+    from neko_launcher.application.runtime_proxy_config import LaunchAuthorizationBundle
 
 
 class AuthorizedCoreErrorCode(str, Enum):
@@ -488,7 +491,7 @@ class CoreControlChannel(Protocol):
     def start_authorized(
         self,
         command: object,
-        permit: OpaquePermit,
+        authorization: LaunchAuthorizationBundle,
         correlation_id: str,
         timeout: float,
     ) -> CoreStatus: ...
@@ -501,13 +504,14 @@ class CoreControlChannel(Protocol):
 
 
 class LaunchPermitGateway(Protocol):
-    def issue_launch_permit(
+    def issue_launch_authorization(
         self,
         authenticated_transport: object,
         correlation_id: str,
         challenge: CoreChallenge,
         timeout: float,
-    ) -> OpaquePermit: ...
+    ) -> LaunchAuthorizationBundle: ...
+
 
 
 class LaunchPrecondition(Protocol):
@@ -754,8 +758,8 @@ class AuthorizedCoreOrchestrator:
                 )
                 if self._diagnostics:
                     self._diagnostics.record_stage("PERMIT_REQUEST")
-                permit = self._invoke_adapter(
-                    lambda: self._permits.issue_launch_permit(
+                authorization = self._invoke_adapter(
+                    lambda: self._permits.issue_launch_authorization(
                         access_context.authenticated_transport,
                         self._correlation_id(),
                         challenge,
@@ -764,11 +768,17 @@ class AuthorizedCoreOrchestrator:
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
                     stage="PERMIT_REQUEST",
                 )
+                from neko_launcher.application.runtime_proxy_config import (
+                    LaunchAuthorizationBundle,
+                )
+                if not isinstance(authorization, LaunchAuthorizationBundle):
+                    raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
                 if self._diagnostics:
                     self._diagnostics.record_stage(
                         "PERMIT_RECEIVED",
                         PERMIT_RECEIVED=True,
-                        PERMIT_LENGTH=permit.diagnostic_length,
+                        PERMIT_LENGTH=authorization.permit.diagnostic_length,
+                        RUNTIME_CONFIG_VERSION=authorization.runtime_config.config_version,
                     )
                 self._require_not_cancelled(cancellation)
                 self._require_target(target)
@@ -778,7 +788,7 @@ class AuthorizedCoreOrchestrator:
                 status = self._invoke_adapter(
                     lambda: self._start_authorized_with_diagnostics(
                         target_bound_command,
-                        permit,
+                        authorization,
                         self._correlation_id(),
                     ),
                     AuthorizedCoreErrorCode.ADAPTER_FAILURE,
@@ -882,7 +892,7 @@ class AuthorizedCoreOrchestrator:
     def _start_authorized_with_diagnostics(
         self,
         command: TargetBoundStartCommand,
-        permit: OpaquePermit,
+        authorization: LaunchAuthorizationBundle,
         correlation_id: str,
     ) -> CoreStatus:
         started_at = monotonic()
@@ -890,7 +900,7 @@ class AuthorizedCoreOrchestrator:
         try:
             status = self._channel.start_authorized(
                 command,
-                permit,
+                authorization,
                 correlation_id,
                 self._timeouts.start_response,
             )

@@ -231,8 +231,7 @@ class DashboardView:
             self._status_title_label.configure(text_color=PALETTE.text_muted)
 
     def update_server_status_role(self, role: str) -> None:
-        """Compatibility no-op; server status is represented by path state."""
-        _ = role
+        self._connection_diagram.update_server_status_color(role)
 
     def set_tier_badge(self, text: str, role: str = "success") -> None:
         if role == "success":

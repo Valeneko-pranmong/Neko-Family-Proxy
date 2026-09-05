@@ -114,6 +114,43 @@ def test_dashboard_view_construction_and_bindings() -> None:
             pass
 
 
+def test_dashboard_view_update_server_status_role_delegates() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        view = DashboardView(
+            root,
+            root,
+            status_title_var=tk.StringVar(value=""),
+            status_subtitle_var=tk.StringVar(value=""),
+            account_var=tk.StringVar(value=""),
+            entitlement_days_var=tk.StringVar(value=""),
+            entitlement_expiry_var=tk.StringVar(value=""),
+            server_status_var=tk.StringVar(value="ONLINE"),
+            download_speed_var=tk.StringVar(value="—"),
+            upload_speed_var=tk.StringVar(value="—"),
+            session_duration_var=tk.StringVar(value="—"),
+            latency_var=tk.StringVar(value="—"),
+        )
+        calls: list[str] = []
+        view._connection_diagram.update_server_status_color = lambda role: calls.append(role)  # type: ignore[method-assign]
+
+        for role in ("success", "danger", "warning", "neutral"):
+            view.update_server_status_role(role)
+
+        assert calls == ["success", "danger", "warning", "neutral"]
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+
 def test_dashboard_view_initial_default_unknown_values() -> None:
     try:
         root = ctk.CTk()

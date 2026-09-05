@@ -119,7 +119,7 @@ def translate_customer_status(
                 )
             return CustomerStatus(
                 title="เชื่อมต่อแล้ว",
-                subtitle="พร้อมเล่น PSO2 แล้ว",
+                subtitle="Neko Core และ Neko Proxy ทำงานอย่างสมบูรณ์ Enjoy!",
                 role="success",
                 is_ready=False,
             )
@@ -132,21 +132,30 @@ def translate_customer_status(
 
     # 6. Connecting / Starting States
     if (
-        state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.STOPPING}
-        or state.game_status is GameStatus.STARTING
+        (state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.STOPPING} and state.game_process_running)
         or (state.game_process_running and state.proxy_status is ProxyStatus.STOPPED)
     ):
         return CustomerStatus(
             title="กำลังเชื่อมต่อ",
-            subtitle="เจอ PSO2 แล้ว กำลังเตรียม Neko Proxy",
+            subtitle="พบ pso2.exe แล้ว กำลังเชื่อมต่อ Neko Core",
+            role="warning",
+            is_ready=False,
+        )
+
+    if (
+        state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.STOPPING}
+    ):
+        return CustomerStatus(
+            title="กำลังเชื่อมต่อ",
+            subtitle="กำลังเริ่มทำงาน",
             role="warning",
             is_ready=False,
         )
 
     # 7. Idle / Ready State (Healthy authenticated session with active entitlement, waiting for game)
     return CustomerStatus(
-        title="พร้อมเล่นเกม",
-        subtitle="เปิด PSO2 ได้เลย เดี๋ยวระบบเชื่อมต่อให้เอง",
+        title="กำลังรอ PSO2",
+        subtitle="กำลังรอ pso2.exe",
         role="success",
         is_ready=True,
     )
@@ -162,7 +171,6 @@ def get_server_status(
 
     if (
         state.proxy_status in {ProxyStatus.STARTING, ProxyStatus.RECONNECTING}
-        or state.game_status is GameStatus.STARTING
         or (state.game_process_running and state.proxy_status is ProxyStatus.STOPPED)
     ):
         return "กำลังเชื่อมต่อ", "warning"
@@ -182,8 +190,8 @@ def get_server_status(
             and snap.local_socks_running
             and snap.shadowsocks_connected
         ):
-            return "ออนไลน์", "success"
+            return "ONLINE", "success"
         else:
             return "เชื่อมต่อไม่สมบูรณ์", "warning"
 
-    return "ออฟไลน์", "neutral"
+    return "OFFLINE", "danger"

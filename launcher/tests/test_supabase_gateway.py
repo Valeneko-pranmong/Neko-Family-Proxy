@@ -11,10 +11,20 @@ from neko_launcher.application.errors import HeartbeatAuthInvalid, LauncherServi
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     CoreChallenge,
+    LaunchPermitGateway,
     PermitDiagnosticCode,
 )
 from neko_launcher.domain.models import SessionTerminationReason
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.core.launch_permit_gateway import (
+    IssueLaunchPermitGateway,
+)
+
+
+def test_production_authorization_api_excludes_permit_only_method() -> None:
+    assert not hasattr(IssueLaunchPermitGateway, "issue_launch_permit")
+    assert not hasattr(SupabaseGateway, "issue_launch_permit")
+    assert not hasattr(LaunchPermitGateway, "issue_launch_permit")
 
 
 class MemoryStore:
@@ -117,11 +127,23 @@ class FakeFunctions:
         correlation_id = body.get("correlationId") if isinstance(body, dict) else None
         return {
             "version": 1,
-            "contractRevision": "lite-v1",
+            "contractRevision": "runtime-config-v1",
             "correlationId": correlation_id,
             "succeeded": True,
             "permit": "opaque-permit",
             "expiresInSeconds": 30,
+            "runtimeConfig": {
+                "schemaVersion": 1,
+                "configVersion": 18,
+                "endpointId": "japan-vps-1",
+                "host": "127.0.0.1",
+                "port": 8389,
+                "protocol": "shadowsocks",
+                "cipher": "aes-256-gcm",
+                "credential": "SENTINEL_PROXY_SECRET_42",
+                "issuedAt": 1000,
+                "expiresAt": 1120,
+            },
         }
 
 
@@ -302,21 +324,57 @@ def test_change_password_uses_authenticated_auth_client() -> None:
     assert client.auth.updated_password == "new-password"
 
 
-def test_permit_uses_same_authenticated_client_as_session_claim() -> None:
+def test_authorization_uses_same_authenticated_client_as_session_claim() -> None:
     client = FakeRpcClient(None)
     client.functions = FakeFunctions()
     gateway = build_gateway(client)
 
-    permit = gateway.issue_launch_permit(
+    bundle = gateway.issue_launch_authorization(
         gateway,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
         10.0,
     )
 
-    assert permit.reveal_for_transport() == "opaque-permit"
+    assert bundle.permit.reveal_for_transport() == "opaque-permit"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.credential.reveal_for_transport() == "SENTINEL_PROXY_SECRET_42"
     assert client.functions.access_token == "test-session-value"
     assert client.functions.function_name == "issue_launch_permit"
+
+
+def test_authorization_rejects_foreign_authenticated_transport_before_invocation() -> None:
+    client = FakeRpcClient(None)
+    client.functions = FakeFunctions()
+    gateway = build_gateway(client)
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        gateway.issue_launch_authorization(
+            object(),
+            "0123456789abcdef0123456789abcdef",
+            CoreChallenge("a" * 43),
+            10.0,
+        )
+
+    assert raised.value.diagnostic_code is PermitDiagnosticCode.PERMIT_AUTH_SESSION_UNAVAILABLE
+    assert client.functions.function_name == ""
+
+
+def test_authorization_returns_permit_and_runtime_config() -> None:
+    client = FakeRpcClient(None)
+    client.functions = FakeFunctions()
+    gateway = build_gateway(client)
+
+    bundle = gateway.issue_launch_authorization(
+        gateway,
+        "0123456789abcdef0123456789abcdef",
+        CoreChallenge("a" * 43),
+        10.0,
+    )
+
+    assert bundle.permit.reveal_for_transport() == "opaque-permit"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.endpoint_id == "japan-vps-1"
 
 
 def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
@@ -333,11 +391,23 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
             200,
             json={
                 "version": 1,
-                "contractRevision": "lite-v1",
+                "contractRevision": "runtime-config-v1",
                 "correlationId": "0123456789abcdef0123456789abcdef",
                 "succeeded": True,
                 "permit": "opaque-sdk-permit",
                 "expiresInSeconds": 30,
+                "runtimeConfig": {
+                    "schemaVersion": 1,
+                    "configVersion": 18,
+                    "endpointId": "japan-vps-1",
+                    "host": "127.0.0.1",
+                    "port": 8389,
+                    "protocol": "shadowsocks",
+                    "cipher": "aes-256-gcm",
+                    "credential": "SENTINEL_PROXY_SECRET_42",
+                    "issuedAt": 1000,
+                    "expiresAt": 1120,
+                },
             },
         )
 
@@ -362,7 +432,7 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
         client=client,
     )
 
-    permit = gateway.issue_launch_permit(
+    bundle = gateway.issue_launch_authorization(
         gateway,
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
@@ -379,11 +449,13 @@ def test_pinned_supabase_sdk_sends_current_access_token_and_decodes_json(
     }
     assert observed["body"] == {
         "version": 1,
-        "contractRevision": "lite-v1",
+        "contractRevision": "runtime-config-v1",
         "correlationId": "0123456789abcdef0123456789abcdef",
         "challenge": "a" * 43,
     }
-    assert permit.reveal_for_transport() == "opaque-sdk-permit"
+    assert bundle.permit.reveal_for_transport() == "opaque-sdk-permit"
+    assert bundle.runtime_config.config_version == 18
+    assert bundle.runtime_config.endpoint_id == "japan-vps-1"
 
 
 def test_current_session_heartbeat_applies_requested_http_timeout(
@@ -524,7 +596,7 @@ def test_pinned_supabase_sdk_http_failures_are_classified_fail_closed(
     )
 
     with pytest.raises(AuthorizedCoreError) as raised:
-        gateway.issue_launch_permit(
+        gateway.issue_launch_authorization(
             gateway,
             "0123456789abcdef0123456789abcdef",
             CoreChallenge("a" * 43),

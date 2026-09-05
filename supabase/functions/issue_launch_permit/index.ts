@@ -5,10 +5,12 @@ import {
   type AuthenticatedCaller,
   type AuthorizationState,
   createIssueLaunchPermitHandler,
+  type RuntimeProxyConfigRecord,
 } from "./service.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
 const publishableKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 function decodeValidatedSessionId(accessToken: string): string | null {
   try {
@@ -31,6 +33,56 @@ function clientFor(accessToken: string) {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
     auth: { autoRefreshToken: false, persistSession: false },
   });
+}
+
+function adminClient() {
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error("backend dependency unavailable");
+  }
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+function parseRuntimeConfigRpcResult(data: unknown): RuntimeProxyConfigRecord {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("backend dependency unavailable");
+  }
+  const row = data as Record<string, unknown>;
+  if (
+    typeof row.config_version !== "number" ||
+    typeof row.endpoint_id !== "string" ||
+    typeof row.host !== "string" ||
+    typeof row.port !== "number" ||
+    typeof row.protocol !== "string" ||
+    typeof row.cipher !== "string" ||
+    typeof row.credential !== "string"
+  ) {
+    throw new Error("backend dependency unavailable");
+  }
+  return {
+    config_version: row.config_version,
+    endpoint_id: row.endpoint_id,
+    host: row.host,
+    port: row.port,
+    protocol: row.protocol,
+    cipher: row.cipher,
+    credential: row.credential,
+    ...(typeof row.published_at === "string"
+      ? { published_at: row.published_at }
+      : {}),
+  };
+}
+
+async function loadRuntimeConfig(): Promise<RuntimeProxyConfigRecord> {
+  const client = adminClient();
+  const { data, error } = await client
+    .schema("launcher")
+    .rpc("get_active_runtime_proxy_config");
+  if (error) {
+    throw new Error("backend dependency unavailable");
+  }
+  return parseRuntimeConfigRpcResult(data);
 }
 
 const handler = createIssueLaunchPermitHandler({
@@ -83,6 +135,7 @@ const handler = createIssueLaunchPermitHandler({
       ? state
       : null;
   },
+  loadRuntimeConfig,
   privateKeyPem: Deno.env.get("RS256_PRIVATE_KEY"),
   kid: Deno.env.get("RS256_KID"),
   log: (message) => console.error(message),

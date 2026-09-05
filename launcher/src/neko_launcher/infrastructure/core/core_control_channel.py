@@ -5,7 +5,10 @@ import os
 import re
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from neko_launcher.application.runtime_proxy_config import LaunchAuthorizationBundle
 
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
@@ -15,7 +18,6 @@ from neko_launcher.application.authorized_core import (
     CoreControlFailureCode,
     CoreStatus,
     CoreStatusKind,
-    OpaquePermit,
     RuntimeConfigurationCandidate,
 )
 
@@ -85,11 +87,11 @@ _ERROR_CODES = frozenset(
 
 
 class NamedPipeCoreControlChannel:
-    """Protocol v2, newline-delimited JSON over Windows Named Pipes.
+    """Newline-delimited JSON over Windows Named Pipes.
 
     Pipe name: ``NekoProxyCoreControl`` (Core = server, Launcher = client).
-    The permit is serialized *only* inside the ``start`` frame and is never
-    logged, cached, or stored.
+    Authorized START uses protocol v3. The permit is serialized *only* inside
+    the ``start`` frame and is never logged, cached, or stored.
     """
 
     _MAX_PAYLOAD_BYTES = 8192
@@ -392,7 +394,7 @@ class NamedPipeCoreControlChannel:
     def start_authorized(
         self,
         command: object,
-        permit: OpaquePermit,
+        authorization: "LaunchAuthorizationBundle",
         correlation_id: str,
         timeout: float,
     ) -> CoreStatus:
@@ -400,16 +402,35 @@ class NamedPipeCoreControlChannel:
         # avoid a circular import.
         if not hasattr(command, "mode"):
             raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+        from neko_launcher.application.runtime_proxy_config import (
+            LaunchAuthorizationBundle,
+        )
+        if not isinstance(authorization, LaunchAuthorizationBundle):
+            raise AuthorizedCoreError(AuthorizedCoreErrorCode.ADAPTER_FAILURE)
+
+        cfg = authorization.runtime_config
         msg = {
             "type": "start",
             "correlationId": correlation_id,
-            "protocolVersion": 2,
+            "protocolVersion": 3,
             "mode": command.mode,  # type: ignore[attr-defined]
             "processName": command.process_name,  # type: ignore[attr-defined]
             "targetPid": command.target_pid,  # type: ignore[attr-defined]
             "profileReference": command.profile_reference,  # type: ignore[attr-defined]
             "serverReference": command.server_reference,  # type: ignore[attr-defined]
-            "permit": permit.reveal_for_transport(),
+            "permit": authorization.permit.reveal_for_transport(),
+            "runtimeConfig": {
+                "schemaVersion": cfg.schema_version,
+                "configVersion": cfg.config_version,
+                "endpointId": cfg.endpoint_id,
+                "host": cfg.host,
+                "port": cfg.port,
+                "protocol": cfg.protocol,
+                "cipher": cfg.cipher,
+                "credential": cfg.credential.reveal_for_transport(),
+                "issuedAt": cfg.issued_at,
+                "expiresAt": cfg.expires_at,
+            },
         }
 
         res = self._send_and_receive(msg, timeout)

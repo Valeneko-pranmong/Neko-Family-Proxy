@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -14,6 +15,7 @@ from neko_launcher.infrastructure.core.core_process import (
 class FakeLifetimeJob:
     def __init__(self) -> None:
         self.spawned: list[list[str]] = []
+        self.environments: list[dict[str, str]] = []
         self.closed = False
 
     def spawn(
@@ -25,6 +27,7 @@ class FakeLifetimeJob:
         env: dict[str, str],
     ) -> MagicMock:
         self.spawned.append(command)
+        self.environments.append(env)
         process = MagicMock(spec=subprocess.Popen)
         process.pid = 4242
         process.poll.return_value = None
@@ -71,15 +74,28 @@ def test_core_process_environment_rejects_runtime_injection(
         assert forbidden not in env
 
 
-def test_host_start_spawns_core_bound_to_launcher_kill_on_close_lifetime(
-    tmp_path: Path, fake_job: FakeLifetimeJob
+def test_host_start_spawns_core_bound_to_exact_launcher_pid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_job: FakeLifetimeJob,
 ) -> None:
+    monkeypatch.setenv("CORE_TOKEN", "must-not-reach-core")
+    monkeypatch.setenv("CORE_PASSWORD", "must-not-reach-core")
+    monkeypatch.setenv("CORE_PERMIT", "must-not-reach-core")
     (tmp_path / "NekoProxyCore.exe").write_bytes(b"core")
     adapter = WindowsCoreProcessAdapter(tmp_path / "NekoProxyCore.exe")
 
     adapter.start_host_without_secrets()
 
-    assert fake_job.spawned == [[str(tmp_path / "NekoProxyCore.exe")]]
+    assert fake_job.spawned == [
+        [str(tmp_path / "NekoProxyCore.exe"), "--launcher-pid", str(os.getpid())]
+    ]
+    for env in fake_job.environments:
+        assert not any(
+            forbidden in key.casefold()
+            for key in env
+            for forbidden in ("token", "password", "permit")
+        )
     assert adapter.owned_process_id() == 4242
     adapter._close_lifetime_job()
 
@@ -95,7 +111,7 @@ def test_host_start_spawn_failure_closes_lifetime_job(
         adapter.start_host_without_secrets()
 
 
-def test_admitted_core_spawn_uses_lifetime_bound_child(
+def test_admitted_core_spawn_uses_launcher_pid_bound_child(
     tmp_path: Path, fake_job: FakeLifetimeJob
 ) -> None:
     from neko_launcher.e2e.final_windows_harness import (
@@ -146,7 +162,9 @@ def test_admitted_core_spawn_uses_lifetime_bound_child(
 
     provenance = adapter.start_admitted_core(admission)
 
-    assert fake_job.spawned == [[str(exe)]]
+    assert fake_job.spawned == [
+        [str(exe), "--launcher-pid", str(os.getpid())]
+    ]
     assert provenance.pid == 4242
     assert provenance.expected_sha256 == "a" * 64
 

@@ -52,6 +52,18 @@ def test_public_proxy_status_parse_degrades_unknown_values_safely() -> None:
     assert status.avg_tx_bps == 0
 
 
+def test_public_proxy_status_parse_allows_offline_status() -> None:
+    status = PublicProxyStatusClient.parse(
+        {
+            "ok": True,
+            "proxy": {
+                "status": "OFFLINE",
+            },
+        }
+    )
+    assert status.host_status == "OFFLINE"
+
+
 def test_format_bps_uses_network_bit_rate_units() -> None:
     assert format_bps(0) == "0 bps"
     assert format_bps(1_000) == "1.0 Kbps"

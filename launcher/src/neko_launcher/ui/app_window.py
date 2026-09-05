@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import os
+import time
+import tkinter as tk
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from queue import SimpleQueue
-from typing import Any, Callable
 from tkinter import filedialog, messagebox
+from typing import Any
 
 import customtkinter as ctk
-import tkinter as tk
 from PIL import Image
 
 from neko_launcher import __version__
@@ -35,30 +37,41 @@ from neko_launcher.domain.models import (
     RegistrationResult,
     entitlement_is_active,
 )
-from neko_launcher.infrastructure.event_bus import EventBus
-from neko_launcher.infrastructure.process.process_detector import is_any_process_running
 from neko_launcher.infrastructure.config import ProgramPreferences
+from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.process.process_detector import (
+    ExactPso2TargetDetector,
+    ProcessObservationUnavailable,
+    TargetProcess,
+    is_any_process_running,
+    is_same_target_still_running,
+)
 
-from .theme import FONT_FAMILY, PALETTE, apply_theme
+from .components.buttons import secondary_button
+from .components.toast import ToastNotification
+from .network_path_presentation import map_network_path
+from .platform.system_tray import SystemTrayManager, drain_tray_actions
 from .platform.window_chrome import (
+    WindowDragHandler,
     apply_rounded_window_shape,
     style_native_title_bar,
-    WindowDragHandler,
 )
 from .platform.window_scaling import center_window, fit_portrait_window
-from .platform.system_tray import SystemTrayManager, drain_tray_actions
-from .components.toast import ToastNotification
-from .components.buttons import secondary_button
+from .settings_window import SettingsWindow
+from .status_presentation import get_server_status, translate_customer_status
+from .theme import FONT_FAMILY, PALETTE, apply_theme
 from .views.auth_view import AuthView
 from .views.dashboard_view import DashboardView, open_password_dialog
 from .views.recovery_view import RecoveryView
-from .settings_window import SettingsWindow
-from .status_presentation import translate_customer_status, get_server_status
-from .network_path_presentation import map_network_path
-
 
 HEARTBEAT_INTERVAL_MS = 30_000
 RECONNECT_BACKOFF_SECONDS = (1.0, 3.0, 8.0)
+PUBLIC_PROXY_STATUS_DEADLINE_SECONDS = 5.0
+
+
+def observe_exact_pso2() -> TargetProcess | None:
+    """Synchronously revalidate that exactly one pso2.exe target exists."""
+    return ExactPso2TargetDetector().observe_exact_pso2()
 
 
 class AppWindow:
@@ -87,6 +100,7 @@ class AppWindow:
         self._telemetry_client = telemetry_client
         self._proxy_status_client = proxy_status_client
         self._proxy_status_refresh_pending = False
+        self._public_server_host_status: str | None = None
         self._proxy_status_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="neko-proxy-status",
@@ -117,6 +131,7 @@ class AppWindow:
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
         self._debug_retry_pending = False
+        self._bound_target: TargetProcess | None = None
         self._proxy_start_attempted_for_detected_game = False
         self._proxy_retry_suppression_logged = False
         self._startup_recovery_in_progress = False
@@ -159,7 +174,7 @@ class AppWindow:
         self._entitlement = tk.StringVar(value="ยังไม่มีวันใช้งาน")
         self._status_title = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._status_subtitle = tk.StringVar(value="กำลังตรวจสอบการเข้าสู่ระบบ")
-        self._server_status = tk.StringVar(value="ออฟไลน์")
+        self._server_status = tk.StringVar(value="OFFLINE")
         self._entitlement_days = tk.StringVar(value="0 วัน")
         self._entitlement_expiry = tk.StringVar(value="ยังไม่มีวันใช้งาน")
         self._download_speed = tk.StringVar(value="—")
@@ -1006,6 +1021,7 @@ class AppWindow:
             self._startup_route_pending = False
             self._startup_route_completed = False
             self._startup_recovery_in_progress = False
+            self._bound_target = None
             self._proxy_start_attempted_for_detected_game = False
             self._proxy_retry_suppression_logged = False
             self._startup_routed_session_id = state.session_id
@@ -1102,19 +1118,66 @@ class AppWindow:
     # Background work / event loop
     # ------------------------------------------------------------------
 
+    def _get_server_status(
+        self,
+        state: AppState,
+        telemetry: Any = None,
+    ) -> tuple[str, str]:
+        """Present the one-shot public host check while the local proxy is idle."""
+        if state.proxy_status is ProxyStatus.STOPPED and not state.game_process_running:
+            public_status = getattr(self, "_public_server_host_status", None)
+            if public_status is None:
+                return "กำลังเช็ค", "warning"
+            if public_status == "ONLINE":
+                return "ONLINE", "success"
+            return "OFFLINE", "danger"
+        return get_server_status(state, telemetry)
+
+    def _set_public_server_host_status(self, host_status: str | None) -> None:
+        """Resolve the one-shot host result and refresh its idle UI immediately."""
+        normalized = "ONLINE" if host_status == "ONLINE" else "OFFLINE"
+        self._public_server_host_status = normalized
+
+        controller = getattr(self, "_controller", None)
+        state = getattr(controller, "state", None)
+        if state is not None and (
+            state.proxy_status is not ProxyStatus.STOPPED or state.game_process_running
+        ):
+            return
+
+        text = "ONLINE" if normalized == "ONLINE" else "OFFLINE"
+        role = "success" if normalized == "ONLINE" else "danger"
+        server_status = getattr(self, "_server_status", None)
+        if server_status is not None:
+            server_status.set(text)
+        dashboard = getattr(self, "_dashboard_view", None)
+        if dashboard is not None and hasattr(dashboard, "update_server_status_role"):
+            dashboard.update_server_status_role(role)
+
     def _refresh_public_proxy_status(self) -> None:
         if self._closing or self._proxy_status_client is None:
             return
         if self._proxy_status_refresh_pending:
-            if self.root.winfo_exists():
-                self.root.after(30_000, self._refresh_public_proxy_status)
             return
 
         self._proxy_status_refresh_pending = True
+        started_at = time.monotonic()
         future = self._proxy_status_executor.submit(self._proxy_status_client.fetch)
-
         def finish() -> None:
             if not future.done():
+                if time.monotonic() - started_at >= PUBLIC_PROXY_STATUS_DEADLINE_SECONDS:
+                    self._proxy_status_refresh_pending = False
+                    self._set_public_server_host_status("OFFLINE")
+                    self._set_if_changed(self._server_load, "ยังไม่มีข้อมูล")
+                    self._set_if_changed(self._server_avg_download, "—")
+                    self._set_if_changed(self._server_avg_upload, "—")
+                    self._set_if_changed(self._server_average_window, "เฉลี่ย 30 นาที")
+                    self._record_debug_status(
+                        "PUBLIC_PROXY_STATUS_UNAVAILABLE",
+                        error="ui_deadline",
+                    )
+                    future.cancel()
+                    return
                 if self.root.winfo_exists() and not self._closing:
                     self.root.after(100, finish)
                 return
@@ -1122,6 +1185,7 @@ class AppWindow:
             try:
                 status = future.result()
             except Exception as exc:
+                self._set_public_server_host_status("OFFLINE")
                 self._set_if_changed(self._server_load, "ยังไม่มีข้อมูล")
                 self._set_if_changed(self._server_avg_download, "—")
                 self._set_if_changed(self._server_avg_upload, "—")
@@ -1131,8 +1195,21 @@ class AppWindow:
                     error=type(exc).__name__,
                 )
             else:
+                if status is None:
+                    self._set_public_server_host_status("OFFLINE")
+                    self._set_if_changed(self._server_load, "ยังไม่มีข้อมูล")
+                    self._set_if_changed(self._server_avg_download, "—")
+                    self._set_if_changed(self._server_avg_upload, "—")
+                    self._set_if_changed(self._server_average_window, "เฉลี่ย 30 นาที")
+                    self._record_debug_status(
+                        "PUBLIC_PROXY_STATUS_UNAVAILABLE",
+                        error="no_result",
+                    )
+                    return
+
                 from neko_launcher.infrastructure.proxy_status_client import format_bps
 
+                self._set_public_server_host_status(status.host_status)
                 self._set_if_changed(self._server_load, status.load_label)
                 self._set_if_changed(self._server_avg_download, format_bps(status.avg_rx_bps))
                 self._set_if_changed(self._server_avg_upload, format_bps(status.avg_tx_bps))
@@ -1151,8 +1228,6 @@ class AppWindow:
                     sample_count=status.sample_count,
                     age_seconds=status.age_seconds if status.age_seconds is not None else "unknown",
                 )
-            if self.root.winfo_exists() and not self._closing:
-                self.root.after(30_000, self._refresh_public_proxy_status)
 
         self.root.after(100, finish)
 
@@ -1231,7 +1306,7 @@ class AppWindow:
         cust_status = translate_customer_status(
             state, getattr(self, "_last_telemetry_state", None)
         )
-        srv_text, srv_role = get_server_status(
+        srv_text, srv_role = self._get_server_status(
             state, getattr(self, "_last_telemetry_state", None)
         )
         self._set_if_changed(self._status_title, f"● {cust_status.title}")
@@ -1406,6 +1481,37 @@ class AppWindow:
                 reason="preserving last known process state",
             )
             return
+        if detected:
+            if getattr(self, "_bound_target", None) is not None:
+                try:
+                    still_running = is_same_target_still_running(self._bound_target)
+                except ProcessObservationUnavailable:
+                    self._record_debug_status(
+                        "GAME_PROCESS_OBSERVATION_FAILED",
+                        reason="preserving last known process state",
+                    )
+                    return
+                if not still_running:
+                    self._bound_target = None
+                    detected = False
+                else:
+                    detected = True
+            else:
+                try:
+                    target = observe_exact_pso2()
+                except ProcessObservationUnavailable:
+                    self._record_debug_status(
+                        "GAME_PROCESS_OBSERVATION_FAILED",
+                        reason="preserving last known process state",
+                    )
+                    return
+                if target is None:
+                    detected = False
+                else:
+                    self._bound_target = target
+                    detected = True
+        else:
+            self._bound_target = None
         state = self._controller.state
         detection_changed = state.game_process_running is not detected
         if detection_changed:
@@ -1424,7 +1530,6 @@ class AppWindow:
                 self._startup_route_completed = True
                 self._auto_launch_tweaker()
             self._cancel_automatic_reconnect(reset_attempts=True)
-            self._submit(self._service.stop_proxy)
             self._proxy_start_attempted_for_detected_game = False
             self._proxy_retry_suppression_logged = False
             self._record_debug_status(
@@ -1531,7 +1636,7 @@ class AppWindow:
 
         # Refresh server status before any telemetry early-return so stale or
         # disconnected data can never leave a previous online state visible.
-        srv_text, srv_role = get_server_status(self._controller.state, state)
+        srv_text, srv_role = self._get_server_status(self._controller.state, state)
         if hasattr(self, "_server_status"):
             self._set_if_changed(self._server_status, srv_text)
         if hasattr(self, "_dashboard_view") and hasattr(
@@ -1613,7 +1718,7 @@ class AppWindow:
 
         # Update customer hero status
         cust_status = translate_customer_status(self._controller.state, state)
-        srv_text, srv_role = get_server_status(self._controller.state, state)
+        srv_text, srv_role = self._get_server_status(self._controller.state, state)
         self._set_if_changed(self._status_title, f"● {cust_status.title}")
         self._set_if_changed(self._status_subtitle, cust_status.subtitle)
         if hasattr(self, "_server_status"):
@@ -1635,12 +1740,42 @@ class AppWindow:
             if state.proxy_status is ProxyStatus.RUNNING:
                 reconnect_controller.observe_running()
             return
+
+        if getattr(self, "_bound_target", None) is not None:
+            try:
+                still_running = is_same_target_still_running(self._bound_target)
+            except ProcessObservationUnavailable:
+                self._record_debug_status(
+                    "GAME_PROCESS_OBSERVATION_FAILED",
+                    reason="preserving last known process state",
+                )
+                return
+            if not still_running:
+                self._bound_target = None
+                self._on_game_detected(False)
+                return
+        else:
+            try:
+                target = observe_exact_pso2()
+            except ProcessObservationUnavailable:
+                self._record_debug_status(
+                    "GAME_PROCESS_OBSERVATION_FAILED",
+                    reason="preserving last known process state",
+                )
+                return
+            if target is not None:
+                self._bound_target = target
+            else:
+                self._on_game_detected(False)
+                return
+
         attempt = reconnect_controller.request(
             state,
             shutting_down=getattr(self, "_closing", False),
         )
         if attempt is None:
             return
+
         self._controller.mark_proxy_reconnecting()
         self._record_debug_status(
             "RECONNECT_SCHEDULED",

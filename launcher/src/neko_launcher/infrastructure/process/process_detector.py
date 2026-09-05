@@ -35,12 +35,17 @@ class ExactPso2TargetDetector:
         self,
         *,
         snapshot: Callable[[], Sequence[TargetProcess]] | None = None,
+        window_probe: Callable[[int], bool] | None = None,
         poll_interval: float = 0.25,
     ) -> None:
         if poll_interval <= 0:
             raise ValueError("poll interval must be positive")
         self._snapshot = snapshot or _snapshot_processes
+        self._window_probe = window_probe or _windows_has_active_window
         self._poll_interval = poll_interval
+
+    def _uses_windows_session_probe(self) -> bool:
+        return self._window_probe is not _windows_has_active_window or os.name == "nt"
 
     def wait_for_exact_pso2(
         self, timeout: float, cancellation: Event
@@ -64,13 +69,30 @@ class ExactPso2TargetDetector:
             cancellation.wait(min(self._poll_interval, remaining))
         return None
 
+    def observe_exact_pso2(self) -> TargetProcess | None:
+        candidates = tuple(p for p in self._snapshot() if p.image_name == "pso2.exe")
+        if len(candidates) == 1:
+            target = candidates[0]
+            if self._uses_windows_session_probe() and not self._window_probe(target.pid):
+                return None
+            return target
+        return None
+
     def is_same_target_still_running(self, target: TargetProcess) -> bool:
-        return any(
+        snapshot = self._snapshot()
+        exists = any(
             process.pid == target.pid
             and process.image_name == "pso2.exe"
             and process.creation_identity == target.creation_identity
-            for process in self._snapshot()
+            for process in snapshot
         )
+        return exists
+
+
+def is_same_target_still_running(target: TargetProcess) -> bool:
+    """Return whether the exact bound target process is still running."""
+    return ExactPso2TargetDetector().is_same_target_still_running(target)
+
 
 
 def is_any_process_running(
@@ -226,3 +248,37 @@ def _posix_creation_identity(pid: int) -> int | None:
         return int(fields[21])
     except (OSError, ValueError, IndexError):
         return None
+
+def _windows_has_active_window(pid: int) -> bool:
+    """Return whether *pid* owns a visible top-level window."""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    window_handle = ctypes.c_void_p
+    enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, window_handle, ctypes.c_void_p)
+    user32.EnumWindows.argtypes = (enum_windows_proc, ctypes.c_void_p)
+    user32.EnumWindows.restype = ctypes.c_bool
+    user32.GetWindowThreadProcessId.argtypes = (
+        window_handle,
+        ctypes.POINTER(ctypes.c_uint32),
+    )
+    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
+    user32.IsWindowVisible.argtypes = (window_handle,)
+    user32.IsWindowVisible.restype = ctypes.c_bool
+
+    found = False
+
+    def callback(hwnd: int, _extra: object) -> bool:
+        nonlocal found
+        process_id = ctypes.c_uint32()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+        if process_id.value == pid and user32.IsWindowVisible(hwnd):
+            found = True
+        return True
+
+    callback_reference = enum_windows_proc(callback)
+    ctypes.set_last_error(0)
+    if not user32.EnumWindows(callback_reference, None):
+        error = ctypes.get_last_error()
+        raise ProcessObservationUnavailable(
+            f"EnumWindows failed with Windows error {error}"
+        )
+    return found

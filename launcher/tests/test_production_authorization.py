@@ -42,7 +42,15 @@ def test_create_production_proxy_gateway_raises_when_gate_is_ready() -> None:
 def test_app_factory_composes_authorized_proxy_gateway(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from neko_launcher.bootstrap.app_factory import build_window
+    from neko_launcher.bootstrap import app_factory
+
+    class HeadlessWindow:
+        def __init__(self, controller: object, *_args: object, **_kwargs: object) -> None:
+            self._controller = controller
+            self.root = type("Root", (), {"destroy": lambda self: None})()
+
+    monkeypatch.setattr(app_factory, "AppWindow", HeadlessWindow)
+    build_window = app_factory.build_window
 
     monkeypatch.setenv("NEKO_SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("NEKO_SUPABASE_ANON_KEY", "dummy.jwt.token")
@@ -56,6 +64,8 @@ def test_app_factory_composes_authorized_proxy_gateway(
         assert not isinstance(
             window._controller._proxy_gateway, AuthorizationPendingProxyGateway
         )
+        permits = window._controller._proxy_gateway._orchestrator._permits
+        assert callable(permits.issue_launch_authorization)
     finally:
         window.root.destroy()
 
