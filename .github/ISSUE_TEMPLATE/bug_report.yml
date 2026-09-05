@@ -1,0 +1,71 @@
+name: Bug Report
+description: File a reproducible defect or unexpected behavior in Neko Family Proxy.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please do not report security vulnerabilities here; refer to [SECURITY.md](../SECURITY.md) for private reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What version of Neko Family Proxy are you running? (e.g., v5.0.0)
+      placeholder: v5.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which area does this issue affect?
+      options:
+        - Desktop Launcher (UI / PyInstaller)
+        - Session / Auth Control
+        - Runtime Config v1
+        - External Core Integration
+        - Build / Tooling
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Start Launcher
+        2. Log in with test account
+        3. Observe error ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: OS version, Python version (if running from source), network environment.
+      placeholder: Windows 11, Python 3.11.x, etc.
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context / Logs
+      description: Add any relevant non-sensitive logs, debug console output, or screenshots. Remember never to post permits, tokens, or private secrets.
+    validations:
+      required: false
