@@ -20,6 +20,7 @@ def _make_signed_evidence(seq: int, rel_id: str) -> tuple[Binding, str, str]:
     doc["schema_version"] = 2
     doc["updater_protocol"] = {"minimum": 1, "maximum": 1}
     doc["components"]["launcher"]["artifact_format"] = "raw-pe-v1"
+    doc["components"]["launcher"]["installed_identity_sha256"] = doc["components"]["launcher"]["artifact_sha256"]
     doc["components"]["core"]["artifact_format"] = "zip-core-v1"
     envelope = signed_envelope(doc)
     envelope_bytes = canonical_json_dumps(envelope)
