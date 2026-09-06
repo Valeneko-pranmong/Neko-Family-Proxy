@@ -30,6 +30,13 @@ This is the canonical index for repository documentation. Documentation is organ
 
 ---
 
+## Software Update — development proposals and evidence
+
+- [Phase-2 design](superpowers/specs/2026-09-05-software-update-phase-2-design.md) — signed update discovery; does not install software.
+- [Phase-3 transactional update architecture](superpowers/specs/2026-09-06-software-update-phase-3-design.md) — **PROPOSED / BLOCKED_AT_ARCHITECTURE_GATE**. Written Owner approval required before implementation. Architecture review is not production/release authorization.
+- [Phase-3 independent review record](superpowers/specs/2026-09-06-software-update-phase-3-review.md) — exact spec hash, Sol High fallback provenance, Critical0/Important0/Minor0; written architecture acceptance only, Owner approval still pending.
+- Phase-2 `5.1.0a2` remains historical packaged candidate evidence; this documentation checkpoint does not change product behavior or its version.
+
 ## Component Documentation
 
 | Document | Purpose |
