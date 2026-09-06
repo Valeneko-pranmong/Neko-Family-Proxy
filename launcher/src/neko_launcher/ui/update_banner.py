@@ -20,4 +20,22 @@ class UpdateBannerController:
 
     def update_status(self, has_update: bool, is_proxy_active: bool, version: str = "") -> UpdateBannerState:
         """Update banner state based on update availability and proxy activity."""
-        raise NotImplementedError("update_status not implemented")
+        if not has_update:
+            self.state = UpdateBannerState(visible=False)
+            return self.state
+
+        if is_proxy_active:
+            self.state = UpdateBannerState(
+                visible=True,
+                message=f"พร้อมอัปเดตเป็นเวอร์ชัน {version}" if version else "พร้อมอัปเดตเป็นเวอร์ชันใหม่",
+                restart_enabled=False,
+                busy_warning="กรุณาหยุดการเชื่อมต่อก่อนรีสตาร์ตเพื่ออัปเดต",
+            )
+        else:
+            self.state = UpdateBannerState(
+                visible=True,
+                message=f"พร้อมอัปเดตเป็นเวอร์ชัน {version}" if version else "พร้อมอัปเดตเป็นเวอร์ชันใหม่",
+                restart_enabled=True,
+                busy_warning=None,
+            )
+        return self.state
