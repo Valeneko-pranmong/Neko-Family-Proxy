@@ -1,10 +1,13 @@
 # Neko Family 5.1 — Phase-3 Balanced Security Amendment
 
-**Status: DESIGN AMENDMENT — awaiting user review before implementation plan**
+**Status: APPROVED — 2026-09-06**
 
 ## Scope and compatibility
 - This amendment governs only work not already implemented/accepted as of commit `8d9d8fdcbe30d97c903c275dbf450a9048991c9a` (Unit2 generation_builder accepted). Existing accepted modules/tests remain valid and are not to be weakened merely because they exceed the new minimum.
 - This is a threat-model reduction, not a rollback of already-delivered security.
+
+## Approved implementation-topology
+For future NEW orchestration, use a Launcher-spawned one-shot `NekoUpdater.exe` helper rather than the superseded long-lived hostile-process-family supervisor. Launcher owns network/download; helper owns signed admission, build/publish, post-Launcher-exit self-test, commit/abort. This topology is a simplification under the approved Balanced non-goals, not a weakening of existing Unit1/Unit2 modules. Do not add hostile race requirements.
 
 ## Balanced threat model
 Protect against: casual/local non-admin user tampering, accidental file edits/deletes, corrupted/truncated downloads, wrong package/release, unsigned/invalid signed metadata, hash mismatch, downgrade/replay of older release, ZIP traversal/symlink/reparse entries during extraction, interrupted/crashed update, failed startup/self-test after activation.
@@ -61,4 +64,4 @@ For remaining units require: contract tests for signed manifest, anti-downgrade,
 | Signed/hash verification | Kept unchanged; continue using signed canonical envelope and SHA-256 identities |
 | Rollback/self-test | Kept unchanged; continue using existing rollback/probation primitives if self-test fails |
 
-**Status: DESIGN AMENDMENT — awaiting user review before implementation plan**
+**Status: APPROVED — 2026-09-06**
