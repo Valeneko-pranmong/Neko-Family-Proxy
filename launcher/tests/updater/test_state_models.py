@@ -2,7 +2,6 @@ import pytest
 
 from neko_launcher.updater.state_models import (
     Binding,
-    DirectoryIdentity,
     EnrollmentMarker,
     Generation,
     RootIdentity,
@@ -42,9 +41,9 @@ def sample_valid_marker() -> EnrollmentMarker:
         schema_version=1,
         installation_id="1" * 32,
         root=RootIdentity(volume_serial="12345678abcdef01", file_id="a" * 32),
-        helper_sha256="h" * 64,
+        helper_sha256="f" * 64,
         helper_protocol=1,
-        keyset_sha256="k" * 64,
+        keyset_sha256="e" * 64,
         bootstrap_payload_sha256="b" * 64,
         enrollment_status="PREPARED",
     )
