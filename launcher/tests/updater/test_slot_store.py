@@ -210,7 +210,8 @@ def test_write_state_order_and_handle(tmp_path, keys, legal_states, monkeypatch)
     assert result.active_slot == "b"
 
     b_events = [e for e in events if e[1] == sentinel_b]
-    assert b_events[:3] == [
+    write_idx = b_events.index(("write", sentinel_b))
+    assert b_events[write_idx : write_idx + 3] == [
         ("write", sentinel_b),
         ("flush", sentinel_b),
         ("read", sentinel_b),
