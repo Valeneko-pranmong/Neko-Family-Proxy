@@ -6,8 +6,6 @@ from neko_launcher.updater.state_models import (
     Cleanup,
     DirectoryIdentity,
     Generation,
-    Mutation,
-    Rollback,
     State,
     Transaction,
 )
