@@ -184,6 +184,28 @@ def test_load_and_select(tmp_path, keys, legal_states):
     store.close()
 
 
+def test_slot_store_snapshots_public_keys(tmp_path, keys, legal_states):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+
+    slot_a.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    key_map = dict(keys)
+    store = ss.SlotStore(slot_a, slot_b, key_map)
+    key_map.clear()
+
+    result = store.load()
+
+    assert result.status == SelectionStatus.SELECTED
+    assert result.active_slot == "b"
+    assert result.state == state_rev3
+    store.close()
+
+
 def test_write_state_revision_and_transition_validation(tmp_path, keys, legal_states):
     import neko_launcher.updater.slot_store as ss
 

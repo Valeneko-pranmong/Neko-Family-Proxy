@@ -555,6 +555,57 @@ def test_load_enrollment_success(tmp_path, keys):
     assert result.state.installation_id == marker.installation_id
 
 
+def test_load_enrollment_snapshots_public_keys_before_io(tmp_path, keys, monkeypatch):
+    import neko_launcher.updater.enrollment as enr
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    marker, state_rev2, state_rev3 = _ready_states()
+
+    marker_bytes = _pack_marker(marker)
+    slot_a_bytes = pack_slot_frame(
+        SlotFrame(revision=state_rev2.revision, format_version=1, body_bytes=serialize_state(state_rev2))
+    )
+    slot_b_bytes = pack_slot_frame(
+        SlotFrame(revision=state_rev3.revision, format_version=1, body_bytes=serialize_state(state_rev3))
+    )
+
+    (state_dir / "enrollment.bin").write_bytes(marker_bytes)
+    (state_dir / "slot-a.bin").write_bytes(slot_a_bytes)
+    (state_dir / "slot-b.bin").write_bytes(slot_b_bytes)
+
+    key_map = dict(keys)
+    real_open = enr._open_existing_readonly
+    cleared = False
+
+    def wrapped_open(*args, **kwargs):
+        nonlocal cleared
+        if not cleared:
+            key_map.clear()
+            cleared = True
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(enr, "_open_existing_readonly", wrapped_open)
+
+    loaded_marker, result = enr.load_enrollment(
+        state_dir,
+        expected_root=marker.root,
+        expected_helper_sha256=marker.helper_sha256,
+        expected_keyset_sha256=marker.keyset_sha256,
+        expected_bootstrap_payload_sha256=marker.bootstrap_payload_sha256,
+        public_keys=key_map,
+    )
+
+    assert cleared is True
+    assert loaded_marker == marker
+    assert result.status == SelectionStatus.SELECTED
+    assert result.active_slot == "b"
+    assert result.state == state_rev3
+    assert result.state.enrollment_complete is True
+    assert result.state.installation_id == marker.installation_id
+
+
 def test_load_enrollment_returns_enrolling_rev1(tmp_path, keys, marker_and_initial_state):
     import neko_launcher.updater.enrollment as enr
 
