@@ -504,3 +504,16 @@ def test_failure_diagnostics_do_not_expose_component_secrets(
 
     for sensitive_value in sensitive_values:
         assert sensitive_value not in diagnostic_text
+
+
+def test_can_apply_update_enforces_idle_session() -> None:
+    from neko_launcher.application.software_update_policy import can_apply_update
+
+    can_apply, reason = can_apply_update(is_proxy_active=True)
+    assert can_apply is False
+    assert reason == "BUSY_SESSION"
+
+    can_apply, reason = can_apply_update(is_proxy_active=False)
+    assert can_apply is True
+    assert reason is None
+

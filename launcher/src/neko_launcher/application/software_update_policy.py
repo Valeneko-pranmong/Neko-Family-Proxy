@@ -84,3 +84,9 @@ def evaluate_release(
         diagnostic_code=None,
         **common,
     )
+
+
+def can_apply_update(is_proxy_active: bool) -> tuple[bool, str | None]:
+    """Evaluate whether an update can be applied given current proxy session activity."""
+    raise NotImplementedError("can_apply_update not implemented")
+
