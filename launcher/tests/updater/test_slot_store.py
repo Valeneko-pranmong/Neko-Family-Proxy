@@ -299,6 +299,20 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
 
+    real_selector = ss.select_active_slot
+
+    def make_counter_wrapper(fake_result):
+        call_count = 0
+
+        def wrapper(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return real_selector(*args, **kwargs)
+            return fake_result
+
+        return wrapper
+
     slot_a.write_bytes(_pack_state(state_rev2))
     slot_b.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
     store1 = ss.SlotStore(slot_a, slot_b, keys)
@@ -306,11 +320,13 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     monkeypatch.setattr(
         ss,
         "select_active_slot",
-        lambda *args, **kwargs: SelectionResult(
-            status=SelectionStatus.REPAIR_REQUIRED,
-            state=None,
-            active_slot=None,
-            reason="repair required",
+        make_counter_wrapper(
+            SelectionResult(
+                status=SelectionStatus.REPAIR_REQUIRED,
+                state=None,
+                active_slot=None,
+                reason="repair required",
+            )
         ),
     )
     with pytest.raises(ss.SlotStoreError) as exc1:
@@ -326,11 +342,13 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     monkeypatch.setattr(
         ss,
         "select_active_slot",
-        lambda *args, **kwargs: SelectionResult(
-            status=SelectionStatus.SELECTED,
-            state=state_rev3,
-            active_slot="a",
-            reason=None,
+        make_counter_wrapper(
+            SelectionResult(
+                status=SelectionStatus.SELECTED,
+                state=state_rev3,
+                active_slot="a",
+                reason=None,
+            )
         ),
     )
     with pytest.raises(ss.SlotStoreError) as exc2:
@@ -347,11 +365,13 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     monkeypatch.setattr(
         ss,
         "select_active_slot",
-        lambda *args, **kwargs: SelectionResult(
-            status=SelectionStatus.SELECTED,
-            state=state_rev3_diff,
-            active_slot="b",
-            reason=None,
+        make_counter_wrapper(
+            SelectionResult(
+                status=SelectionStatus.SELECTED,
+                state=state_rev3_diff,
+                active_slot="b",
+                reason=None,
+            )
         ),
     )
     with pytest.raises(ss.SlotStoreError) as exc3:

@@ -647,7 +647,7 @@ def test_load_enrollment_accepts_later_committed_state_without_bootstrap_evidenc
     state_dir = tmp_path / "state"
     state_dir.mkdir()
 
-    binding_seq1, payload_sha1, _, _ = _make_evidence_and_generation(1, "rel-1")
+    _, payload_sha1, _, _ = _make_evidence_and_generation(1, "rel-1")
     marker = EnrollmentMarker(
         schema_version=1,
         installation_id="0" * 32,
@@ -678,15 +678,18 @@ def test_load_enrollment_accepts_later_committed_state_without_bootstrap_evidenc
         last_error=None,
         evidence={payload_sha2: envelope_b64_2},
     )
+    state_prev = dataclasses.replace(state_later, revision=3, phase="CLEANING")
 
     assert payload_sha1 not in state_later.evidence
+    assert payload_sha1 not in state_prev.evidence
 
     marker_bytes = _pack_marker(marker)
-    slot_a_bytes = pack_slot_frame(SlotFrame(revision=4, format_version=1, body_bytes=serialize_state(state_later)))
+    slot_a_bytes = pack_slot_frame(SlotFrame(revision=3, format_version=1, body_bytes=serialize_state(state_prev)))
+    slot_b_bytes = pack_slot_frame(SlotFrame(revision=4, format_version=1, body_bytes=serialize_state(state_later)))
 
     (state_dir / "enrollment.bin").write_bytes(marker_bytes)
     (state_dir / "slot-a.bin").write_bytes(slot_a_bytes)
-    (state_dir / "slot-b.bin").write_bytes(slot_a_bytes)
+    (state_dir / "slot-b.bin").write_bytes(slot_b_bytes)
 
     loaded_marker, result = enr.load_enrollment(
         state_dir,
@@ -699,7 +702,9 @@ def test_load_enrollment_accepts_later_committed_state_without_bootstrap_evidenc
 
     assert loaded_marker == marker
     assert result.status == SelectionStatus.SELECTED
+    assert result.active_slot == "b"
     assert result.state == state_later
+    assert result.state.revision == 4
     assert result.state.enrollment_complete is True
     assert marker.bootstrap_payload_sha256 not in result.state.evidence
 
