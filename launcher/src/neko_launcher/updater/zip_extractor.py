@@ -53,7 +53,9 @@ def _validate_path_segment(seg: str) -> None:
 
 
 def _validate_entry_path(filename: str) -> list[str]:
-    if filename.startswith("/") or filename.startswith("\\"):
+    if "\\" in filename:
+        raise ZipSecurityError(f"Backslash disallowed in ZIP entry path: {filename!r}")
+    if filename.startswith("/"):
         raise ZipSecurityError(f"Path traversal rejected: absolute path {filename!r}")
     if ":" in filename:
         raise ZipSecurityError(f"Disallowed character ':' in path: {filename!r}")
