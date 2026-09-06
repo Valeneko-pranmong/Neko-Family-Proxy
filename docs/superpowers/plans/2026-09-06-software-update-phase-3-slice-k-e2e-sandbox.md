@@ -1,5 +1,10 @@
 # Software Update Phase 3 — Slice K Implementation Plan: Sandbox End-to-End Update & Rollback Proofs
 
+> **NOTICE: IMPLEMENTATION PAUSED / SUPERSEDED**
+>
+> Remaining unimplemented Slice-K work is paused and superseded pending a new Balanced Security implementation plan (refer to `docs/superpowers/specs/2026-09-06-software-update-phase-3-balanced-security-amendment.md`).
+> Completed units (Unit1, Unit2) remain accepted and retained.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Execute and verify the complete end-to-end sandbox update and rollback matrix, proving both positive live updates (Launcher-only, Core-only, and both) and automatic rollback on activation failure (broken N+2 candidate), resulting in deterministic `NEW FULLY COMMITTED` or `OLD FULLY RESTORED` states.

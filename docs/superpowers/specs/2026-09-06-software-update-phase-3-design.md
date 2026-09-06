@@ -1,5 +1,11 @@
 # Neko Family 5.1 — Phase-3 transactional live update
 
+> **NOTICE: ARCHITECTURAL SCOPE PIVOT (BALANCED SECURITY AMENDMENT)**
+>
+> All not-yet-implemented work under this specification has been superseded by a new Balanced Security threat model.
+> See `2026-09-06-software-update-phase-3-balanced-security-amendment.md` for the binding design amendment.
+> Note: Already completed units (Unit1, Unit2) remain accepted and their historical requirements are preserved.
+
 - Date: 2026-09-06.
 - Status: **PROPOSED / BLOCKED_AT_ARCHITECTURE_GATE**.
 - Scope: Launcher `release/5.1`, coordinated narrow Core adaptation, existing Admin development branch for controlled Core grant authorization and storage adapter.
