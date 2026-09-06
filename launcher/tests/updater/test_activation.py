@@ -32,7 +32,11 @@ class FakeSlotStore:
         self._write_count += 1
         self.writes.append(state)
         if self._write_count == self.reject_write_at_call:
-            return SelectionResult(status=SelectionStatus.REPAIR_REQUIRED)
+            return SelectionResult(
+                status=SelectionStatus.SELECTED,
+                state=self._state,
+                active_slot="a",
+            )
         self._state = state
         return SelectionResult(
             status=SelectionStatus.SELECTED,
