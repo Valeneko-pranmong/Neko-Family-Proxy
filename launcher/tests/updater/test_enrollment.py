@@ -258,6 +258,38 @@ def test_enroll_state_directory_retry_converges_when_one_slot_already_rev1(tmp_p
     assert slot_b.read_bytes() == slot_a_bytes
 
 
+def test_enroll_state_directory_retry_repairs_torn_existing_peer(tmp_path, keys, marker_and_initial_state):
+    import neko_launcher.updater.enrollment as enr
+
+    marker, initial_state = marker_and_initial_state
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    marker_bytes = _pack_marker(marker)
+    (state_dir / "enrollment.bin").write_bytes(marker_bytes)
+
+    slot_a_bytes = pack_slot_frame(SlotFrame(revision=1, format_version=1, body_bytes=serialize_state(initial_state)))
+    slot_a = state_dir / "slot-a.bin"
+    slot_a.write_bytes(slot_a_bytes)
+    stat_a_before = slot_a.stat()
+
+    slot_b = state_dir / "slot-b.bin"
+    slot_b.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
+    stat_b_before = slot_b.stat()
+
+    result = enr.enroll_state_directory(state_dir, marker, initial_state, keys)
+
+    assert result.status == SelectionStatus.SELECTED
+    assert result.state == initial_state
+
+    assert slot_a.stat().st_ino == stat_a_before.st_ino
+    assert slot_a.read_bytes() == slot_a_bytes
+    assert slot_b.stat().st_ino == stat_b_before.st_ino
+    assert slot_b.read_bytes() == slot_a_bytes
+    assert slot_a.stat().st_size == SLOT_FRAME_SIZE
+    assert slot_b.stat().st_size == SLOT_FRAME_SIZE
+
+
 def test_enroll_state_directory_fails_if_existing_slot_has_committed_state(tmp_path, keys, marker_and_initial_state):
     import neko_launcher.updater.enrollment as enr
 
