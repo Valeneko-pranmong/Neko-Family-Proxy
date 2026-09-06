@@ -669,7 +669,7 @@ def test_load_enrollment_returns_first_committed_idle_not_complete(tmp_path, key
     assert result.state.enrollment_complete is False
 
 
-def test_load_enrollment_complete_requires_both_slots_torn_peer_fails(tmp_path, keys):
+def test_load_enrollment_complete_accepts_present_torn_peer(tmp_path, keys):
     import neko_launcher.updater.enrollment as enr
 
     state_dir = tmp_path / "state"
@@ -683,18 +683,25 @@ def test_load_enrollment_complete_requires_both_slots_torn_peer_fails(tmp_path, 
             SlotFrame(revision=state_rev3.revision, format_version=1, body_bytes=serialize_state(state_rev3))
         )
     )
-    (state_dir / "slot-b.bin").write_bytes(b"\x00" * SLOT_FRAME_SIZE)
+    slot_b = state_dir / "slot-b.bin"
+    slot_b.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
+    torn_before = slot_b.read_bytes()
 
-    with pytest.raises(enr.EnrollmentError) as exc:
-        enr.load_enrollment(
-            state_dir,
-            expected_root=marker.root,
-            expected_helper_sha256=marker.helper_sha256,
-            expected_keyset_sha256=marker.keyset_sha256,
-            expected_bootstrap_payload_sha256=marker.bootstrap_payload_sha256,
-            public_keys=keys,
-        )
-    assert exc.value.code == "REPAIR_REQUIRED"
+    loaded_marker, result = enr.load_enrollment(
+        state_dir,
+        expected_root=marker.root,
+        expected_helper_sha256=marker.helper_sha256,
+        expected_keyset_sha256=marker.keyset_sha256,
+        expected_bootstrap_payload_sha256=marker.bootstrap_payload_sha256,
+        public_keys=keys,
+    )
+
+    assert loaded_marker == marker
+    assert result.status == SelectionStatus.SELECTED
+    assert result.active_slot == "a"
+    assert result.state == state_rev3
+    assert result.state.enrollment_complete is True
+    assert slot_b.read_bytes() == torn_before
 
 
 def test_load_enrollment_complete_requires_both_slots_missing_peer_fails(tmp_path, keys):
