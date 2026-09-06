@@ -374,6 +374,47 @@ def _actual_bad_zip_message(raw: bytes) -> str:
     assert detail
     return detail
 
+def _install_generation(env: Env, generation: Generation, envelope: bytes) -> Path:
+    destination = env.root / "releases" / env.gen_id(generation)
+    (destination / "ProxyCore").mkdir(parents=True)
+    launcher_bytes = env.new_launcher if generation.launcher_identity_sha256 == env.new_launcher_sha else env.old_launcher
+    (destination / "NekoLauncher.exe").write_bytes(launcher_bytes)
+    core_source_name = "new-core-source" if generation.core_identity_sha256 == env.new_core_sha else "old-core-source"
+    core_source = env.root / core_source_name
+    for source in core_source.rglob("*"):
+        if source.is_file():
+            target = destination / "ProxyCore" / source.relative_to(core_source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+    (destination / "release-envelope.json").write_bytes(envelope)
+    return destination
+
+
+def _later_candidate(
+    env: Env,
+    *,
+    launcher_sha: str,
+    core_sha: str,
+) -> tuple[Generation, bytes, str]:
+    payload, envelope = env.sign(
+        3,
+        launcher_sha,
+        len(env.new_launcher if launcher_sha == env.new_launcher_sha else env.old_launcher),
+        "c" * 64,
+        1,
+        core_sha,
+    )
+    digest = hashlib.sha256(payload).hexdigest()
+    generation = Generation(Binding(3, "rel-3", digest), launcher_sha, core_sha)
+    return generation, envelope, base64.b64encode(envelope).decode("ascii")
+
+
+def _remove_incoming_artifacts(env: Env) -> None:
+    for path in env.incoming.iterdir():
+        if path.is_file():
+            path.unlink()
+
+
 
 @pytest.mark.parametrize(("lc", "cc"), [(True, False), (False, True), (True, True), (False, False)])
 def test_exact_whole_fresh_generation(tmp_path: Path, lc: bool, cc: bool) -> None:
@@ -1039,3 +1080,313 @@ def test_malformed_zip_is_safe_package_invalid(
     finally:
         env.close()
 
+
+
+
+def test_valid_later_update_accepts_previous_and_exact_referenced_evidence(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.updater.generation_builder import build_generation
+
+    env = Env(tmp_path)
+    try:
+        committed = env.candidate
+        _install_generation(env, committed, env.envelope)
+        candidate, envelope, envelope_b64 = _later_candidate(
+            env,
+            launcher_sha=committed.launcher_identity_sha256,
+            core_sha=committed.core_identity_sha256,
+        )
+        _remove_incoming_artifacts(env)
+        env.state = replace(
+            env.state,
+            committed=committed,
+            previous=env.old,
+            highwater=committed.binding,
+            observed=candidate.binding,
+            transaction=replace(
+                env.state.transaction,
+                old=committed,
+                candidate=candidate,
+            ),
+            evidence={
+                env.old.binding.payload_sha256: env.old_envelope_b64,
+                committed.binding.payload_sha256: env.envelope_b64,
+                candidate.binding.payload_sha256: envelope_b64,
+            },
+        )
+        result = build_generation(env.root, env.state, env.keys)
+        assert result.generation == candidate
+        assert (result.generation_dir / "release-envelope.json").read_bytes() == envelope
+    finally:
+        env.close()
+
+
+def test_valid_rollback_preserved_highwater_is_accepted(tmp_path: Path) -> None:
+    from neko_launcher.updater.generation_builder import build_generation
+
+    env = Env(tmp_path)
+    try:
+        candidate, envelope, envelope_b64 = _later_candidate(
+            env,
+            launcher_sha=env.old.launcher_identity_sha256,
+            core_sha=env.old.core_identity_sha256,
+        )
+        _remove_incoming_artifacts(env)
+        env.state = replace(
+            env.state,
+            highwater=env.candidate.binding,
+            observed=candidate.binding,
+            transaction=replace(env.state.transaction, candidate=candidate),
+            evidence={
+                env.old.binding.payload_sha256: env.old_envelope_b64,
+                env.candidate.binding.payload_sha256: env.envelope_b64,
+                candidate.binding.payload_sha256: envelope_b64,
+            },
+        )
+        result = build_generation(env.root, env.state, env.keys)
+        assert result.generation == candidate
+        assert (result.generation_dir / "release-envelope.json").read_bytes() == envelope
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("case", ["not_newer_than_committed", "not_above_highwater", "bad_previous"])
+def test_candidate_ordering_and_referenced_generation_invariants_are_state_corrupt(
+    tmp_path: Path,
+    case: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    env = Env(tmp_path)
+    try:
+        if case == "not_newer_than_committed":
+            _remove_incoming_artifacts(env)
+            env.state = replace(
+                env.state,
+                observed=env.old.binding,
+                transaction=replace(env.state.transaction, candidate=env.old),
+                evidence={env.old.binding.payload_sha256: env.old_envelope_b64},
+            )
+        elif case == "not_above_highwater":
+            env.state = replace(env.state, highwater=env.candidate.binding)
+        else:
+            env.state = replace(env.state, previous=env.old)
+        _safe_error(env, builder, "STATE_CORRUPT", caplog)
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("which", ["incoming", "staging"])
+def test_object_substitution_after_guard_close_is_path_rejected(
+    tmp_path: Path,
+    which: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    env = Env(tmp_path)
+    env.close_handle(which)
+    target = env.incoming if which == "incoming" else env.staging
+    replacement = target.with_name(f"replacement-{which}")
+    replacement.mkdir()
+    for source in target.iterdir():
+        if source.is_file():
+            (replacement / source.name).write_bytes(source.read_bytes() + b"x")
+    real_close = builder.ctypes.windll.kernel32.CloseHandle
+    substituted = False
+
+    def close_then_substitute(handle: object) -> object:
+        nonlocal substituted
+        result = real_close(handle)
+        if not substituted:
+            try:
+                displaced = target.with_name(f"displaced-{which}")
+                target.rename(displaced)
+            except OSError:
+                pass
+            else:
+                replacement.rename(target)
+                substituted = True
+        return result
+
+    monkeypatch.setattr(builder.ctypes.windll.kernel32, "CloseHandle", close_then_substitute)
+
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
+    stdout, stderr = io.StringIO(), io.StringIO()
+
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            result = builder.build_generation(env.root, env.state, env.keys)
+    except builder.GenerationBuildError as error:
+        assert error.code == "PATH_REJECTED" and str(error) == "PATH_REJECTED" and error.args == ("PATH_REJECTED",)
+        assert error.__cause__ is None
+        if error.__context__ is not None:
+            assert error.__suppress_context__
+        assert substituted
+    else:
+        assert substituted
+        if which == "staging":
+            displaced = target.with_name(f"displaced-{which}")
+            assert not (target / "generation").exists(), "Generation built in corrupted replacement staging"
+            gen_dir = displaced / "generation"
+            assert _tree(gen_dir) == (FILES, DIRS)
+            assert (gen_dir / "release-envelope.json").read_bytes() == env.envelope
+            assert (gen_dir / "NekoLauncher.exe").read_bytes() == env.new_launcher
+            new_core = env.root / "new-core-source"
+            for item in new_core.rglob("*"):
+                if item.is_file():
+                    assert (gen_dir / "ProxyCore" / item.relative_to(new_core)).read_bytes() == item.read_bytes()
+        else:
+            assert result.generation.launcher_identity_sha256 == env.new_launcher_sha, "Corrupted launcher replacement consumed"
+            assert result.generation.core_identity_sha256 == env.new_core_sha, "Corrupted core replacement consumed"
+            gen_dir = result.generation_dir
+            assert (gen_dir / "release-envelope.json").read_bytes() == env.envelope
+            assert (gen_dir / "NekoLauncher.exe").read_bytes() == env.new_launcher
+            new_core = env.root / "new-core-source"
+            for item in new_core.rglob("*"):
+                if item.is_file():
+                    assert (gen_dir / "ProxyCore" / item.relative_to(new_core)).read_bytes() == item.read_bytes()
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("component", ["launcher", "core"])
+def test_fully_changed_update_still_validates_complete_old_generation(
+    tmp_path: Path,
+    component: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    env = Env(tmp_path, launcher_changed=True, core_changed=True)
+    try:
+        if component == "launcher":
+            path = env.old_dir / "NekoLauncher.exe"
+        else:
+            path = env.old_dir / "ProxyCore" / "NekoProxyCore.exe"
+        raw = path.read_bytes()
+        path.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+        code = "HASH_MISMATCH" if component == "launcher" else "CORE_INVENTORY_INVALID"
+        _safe_error(env, builder, code, caplog)
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("structure", ["extra_directory", "symlink_entry"])
+def test_changed_core_zip_structure_is_closed(
+    tmp_path: Path,
+    structure: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    env = Env(tmp_path)
+    archive = tmp_path / "structural-core.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for source in sorted((tmp_path / "new-core-source").rglob("*")):
+            if source.is_file():
+                zf.write(source, source.relative_to(tmp_path / "new-core-source").as_posix())
+        if structure == "extra_directory":
+            zf.writestr("unlisted-empty/", b"")
+        else:
+            link = zipfile.ZipInfo("bin/link")
+            link.create_system = 3
+            link.external_attr = (stat.S_IFLNK | 0o777) << 16
+            zf.writestr(link, "../NekoProxyCore.exe")
+    env.resign(artifact=archive.read_bytes())
+    try:
+        _safe_error(env, builder, "PACKAGE_INVALID", caplog)
+    finally:
+        env.close()
+
+
+def test_launcher_source_ads_is_rejected(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    env = Env(tmp_path)
+    try:
+        ads = Path(str(env.incoming / "launcher.artifact") + ":security-test")
+        ads.write_bytes(b"ads")
+        assert ads.read_bytes() == b"ads"
+        _safe_error(env, builder, "LINK_OR_ADS_REJECTED", caplog)
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("location", ["source", "output"])
+def test_prohibited_hidden_attribute_is_rejected(
+    tmp_path: Path,
+    location: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    env = Env(tmp_path)
+    set_attributes = ctypes.windll.kernel32.SetFileAttributesW
+    hidden = 0x2
+    try:
+        if location == "source":
+            assert set_attributes(str(env.incoming / "launcher.artifact"), hidden)
+        else:
+            real_flush = builder._flush_file
+
+            def hide_then_flush(path: Path) -> None:
+                if path.name == "NekoLauncher.exe":
+                    assert set_attributes(str(path), hidden)
+                real_flush(path)
+
+            monkeypatch.setattr(builder, "_flush_file", hide_then_flush)
+        _safe_error(env, builder, "LINK_OR_ADS_REJECTED", caplog)
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        ("missing_old_launcher", "ARTIFACT_MISSING"),
+        ("missing_old_core", "ARTIFACT_MISSING"),
+        ("extract_io", "IO_FAILED"),
+        ("verify_io", "IO_FAILED"),
+    ],
+)
+def test_filesystem_io_errors_have_safe_exact_taxonomy(
+    tmp_path: Path,
+    failure: str,
+    code: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import neko_launcher.updater.generation_builder as builder
+
+    unchanged = failure.startswith("missing_old")
+    env = Env(tmp_path, launcher_changed=not unchanged, core_changed=not unchanged)
+    detail = f"RAW_{failure}_DETAIL"
+    try:
+        if failure == "missing_old_launcher":
+            (env.old_dir / "NekoLauncher.exe").unlink()
+        elif failure == "missing_old_core":
+            (env.old_dir / "ProxyCore" / "NekoProxyCore.exe").unlink()
+        elif failure == "extract_io":
+            monkeypatch.setattr(
+                builder,
+                "extract_core_bundle",
+                lambda *_args: (_ for _ in ()).throw(OSError(detail)),
+            )
+        else:
+            monkeypatch.setattr(
+                builder,
+                "verify_canonical_core_bundle",
+                lambda *_args: (_ for _ in ()).throw(OSError(detail)),
+            )
+        _safe_error(env, builder, code, caplog, (detail,))
+    finally:
+        env.close()
