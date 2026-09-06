@@ -9,19 +9,20 @@ from pathlib import Path
 
 import pytest
 
-from neko_launcher.updater.generation_builder import GenerationBuildResult, GenerationBuildError
+from neko_launcher.updater.generation_builder import GenerationBuildError, GenerationBuildResult
+from neko_launcher.updater.slot_selector import SelectionResult, SelectionStatus
 from neko_launcher.updater.state_models import (
     Binding,
     Generation,
     State,
 )
-from neko_launcher.updater.slot_selector import SelectionResult, SelectionStatus
 from tests.software_update_helpers import (
     TEST_KEY_ID,
     TEST_PUBLIC_KEY,
-    signed_envelope,
     canonical_payload_bytes,
+    signed_envelope,
 )
+
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -194,6 +195,7 @@ class Env:
                     "artifact_sha256": c_sha,
                     "installed_identity_sha256": c_id,
                     "artifact_format": "zip-core-v1",
+                    "artifact_id": f"core-{seq}",
                 },
                 "launcher": {
                     "version": "1.0.0",
@@ -201,6 +203,7 @@ class Env:
                     "artifact_sha256": l_sha,
                     "installed_identity_sha256": l_sha,
                     "artifact_format": "raw-pe-v1",
+                    "artifact_id": f"launcher-{seq}",
                 },
             }
         }
@@ -238,7 +241,7 @@ def _assert_cleanup(state, admitted_tx, staging_identity=None):
         assert c1.directory == staging_identity
 
 def test_begin_rejection_for_write_corrupt(tmp_path: Path) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     env.store.write_fail_mode = True
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
@@ -248,7 +251,7 @@ def test_begin_rejection_for_write_corrupt(tmp_path: Path) -> None:
     assert result.error == "STATE_CORRUPT"
 
 def test_begin_success_admission(tmp_path: Path) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
 
@@ -263,7 +266,7 @@ def test_begin_success_admission(tmp_path: Path) -> None:
     assert env.store.state.highwater == env.old.binding
 
 def test_begin_rejection_for_non_selected(tmp_path: Path) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     env.store.state = None
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
@@ -274,11 +277,12 @@ def test_begin_rejection_for_non_selected(tmp_path: Path) -> None:
 
 def test_begin_rejection_for_downgrade(tmp_path: Path) -> None:
     import dataclasses
-    import neko_launcher.updater.broker as broker
+
+    from neko_launcher.updater import broker
     from neko_launcher.updater.state_models import Binding
     env = Env(tmp_path)
 
-    env.store.state = dataclasses.replace(env.store.state, highwater=Binding(5, "rel-5", "abc"))
+    env.store.state = dataclasses.replace(env.store.state, highwater=Binding(5, "rel-5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 
     payload_doc = env.build_release_doc(
         1, env.new_launcher_sha, len(env.new_launcher),
@@ -296,7 +300,7 @@ def test_begin_rejection_for_downgrade(tmp_path: Path) -> None:
         assert not list((tmp_path / "incoming").iterdir())
 
 def test_second_begin_while_preparing(tmp_path: Path) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
 
@@ -308,7 +312,7 @@ def test_second_begin_while_preparing(tmp_path: Path) -> None:
     assert result2.error == "LOCK_BUSY"
 
 def test_metadata_only_valid_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path, launcher_changed=False, core_changed=False)
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys, lambda p,g,e: None)
 
@@ -328,7 +332,7 @@ def test_metadata_only_valid_candidate(tmp_path: Path, monkeypatch: pytest.Monke
             from neko_launcher.updater.state_models import DirectoryIdentity
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
-            return 999, DirectoryIdentity(0, 0), stage
+            return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
         def publish_generation(self, staging_dir: Path, gen_id: str):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
@@ -351,7 +355,7 @@ def test_metadata_only_valid_candidate(tmp_path: Path, monkeypatch: pytest.Monke
     assert env.store.state.transaction.mutation is None
 
 def test_apply_rejects_wrong_ids(tmp_path: Path) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
     res = coordinator.begin(env.envelope_b64)
@@ -375,7 +379,7 @@ def test_apply_rejects_wrong_ids(tmp_path: Path) -> None:
     ("expected_is_directory", "PACKAGE_INVALID")
 ])
 def test_exact_incoming_validation_failures(tmp_path: Path, scenario: str, expected_error: str) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
     res = coordinator.begin(env.envelope_b64)
@@ -416,7 +420,7 @@ def test_exact_incoming_validation_failures(tmp_path: Path, scenario: str, expec
     _assert_cleanup(env.store.state, admitted_tx, None)
 
 def test_successful_apply_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     called_verifier = False
 
@@ -431,7 +435,7 @@ def test_successful_apply_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         gen_dir.mkdir(parents=True, exist_ok=True)
         return GenerationBuildResult(
             changed={"launcher": True, "core": True},
-            generation_id=f"g-2-{state.transaction.candidate.binding.payload_sha256}",
+            generation_id=f"g-{state.transaction.candidate.binding.release_sequence:020d}-{state.transaction.candidate.binding.payload_sha256}",
             generation_dir=gen_dir,
             generation=state.transaction.candidate,
         )
@@ -445,7 +449,7 @@ def test_successful_apply_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             from neko_launcher.updater.state_models import DirectoryIdentity
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
-            return 999, DirectoryIdentity(0, 0), stage
+            return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
         def publish_generation(self, staging_dir: Path, gen_id: str):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
@@ -477,7 +481,7 @@ def test_successful_apply_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert env.store.state.transaction.mutation is None
 
 def test_staging_handle_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
     closed_handle_value = None
 
@@ -501,7 +505,7 @@ def test_staging_handle_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             from neko_launcher.updater.state_models import DirectoryIdentity
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
-            return 999, DirectoryIdentity(0, 0), stage
+            return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
         def publish_generation(self, staging_dir: Path, gen_id: str):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
@@ -522,7 +526,7 @@ def test_staging_handle_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert closed_handle_value == 999
 
 def test_build_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
 
     def mock_build(root, state, keys):
@@ -537,7 +541,7 @@ def test_build_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             from neko_launcher.updater.state_models import DirectoryIdentity
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
-            return 999, DirectoryIdentity(0, 0), stage
+            return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
         def publish_generation(self, staging_dir: Path, gen_id: str):
             raise AssertionError("publish_generation must not be called on build failure")
 
@@ -568,7 +572,7 @@ def test_build_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_cleanup(env.store.state, admitted_tx, building_tx.staging)
 
 def test_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
 
     def mock_build(root, state, keys):
@@ -590,7 +594,7 @@ def test_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
             from neko_launcher.updater.state_models import DirectoryIdentity
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
-            return 999, DirectoryIdentity(0, 0), stage
+            return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
         def publish_generation(self, staging_dir: Path, gen_id: str):
             raise OSError("publish failed")
 
@@ -626,7 +630,7 @@ def test_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 def test_verifier_failure_inert_unselected_orphan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import neko_launcher.updater.broker as broker
+    from neko_launcher.updater import broker
     env = Env(tmp_path)
 
     def mock_build(root, state, keys):
@@ -651,7 +655,7 @@ def test_verifier_failure_inert_unselected_orphan(
             from neko_launcher.updater.state_models import DirectoryIdentity
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
-            return 999, DirectoryIdentity(0, 0), stage
+            return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
         def publish_generation(self, staging_dir: Path, gen_id: str):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
@@ -685,3 +689,11 @@ def test_verifier_failure_inert_unselected_orphan(
 
     building_tx = next(s.transaction for s in reversed(env.store.history) if s.transaction and s.transaction.stage == "BUILDING")
     _assert_cleanup(env.store.state, admitted_tx, building_tx.staging)
+
+
+def test_default_published_verifier_accepts_valid_generation(tmp_path: Path) -> None:
+    from neko_launcher.updater import broker
+
+    env = Env(tmp_path)
+    coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
+    coordinator.published_verifier(env.old_dir, env.old, env.old_envelope)
