@@ -3,6 +3,7 @@ import dataclasses
 import hashlib
 import os
 import sys
+
 import pytest
 
 from neko_launcher.updater.binary_frame import SLOT_FRAME_SIZE, SlotFrame, pack_slot_frame
@@ -85,19 +86,62 @@ def _pack_state(state: State) -> bytes:
     return pack_slot_frame(SlotFrame(revision=state.revision, format_version=1, body_bytes=body))
 
 
-def test_slot_store_rejects_missing(tmp_path, keys):
+def test_slot_store_load_with_single_missing_slot(tmp_path, keys, legal_states):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
-    slot_a.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
+    state_rev2, _ = legal_states
+
+    slot_a.write_bytes(_pack_state(state_rev2))
+
+    store = ss.SlotStore(slot_a, slot_b, keys)
+    result = store.load()
+
+    assert result.status == SelectionStatus.SELECTED
+    assert result.active_slot == "a"
+    assert result.state == state_rev2
+    assert not slot_b.exists()
+    store.close()
+
+
+def test_slot_store_write_state_fails_closed_when_peer_missing(tmp_path, keys, legal_states):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+
+    slot_a.write_bytes(_pack_state(state_rev2))
+
+    store = ss.SlotStore(slot_a, slot_b, keys)
+    store.load()
 
     with pytest.raises(ss.SlotStoreError) as exc:
-        ss.SlotStore(slot_a, slot_b, keys)
-    assert hasattr(exc.value, "code")
+        store.write_state(state_rev3)
+
+    assert exc.value.code == "REPAIR_REQUIRED"
+    assert not slot_b.exists()
+    store.close()
+
+
+def test_slot_store_load_with_both_slots_missing_yields_enrollment_incomplete(tmp_path, keys):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+
+    store = ss.SlotStore(slot_a, slot_b, keys)
+    result = store.load()
+
+    assert result.status == SelectionStatus.ENROLLMENT_INCOMPLETE
+    assert result.state is None
+    store.close()
 
 
 def test_slot_store_rejects_invalid_size(tmp_path, keys):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     slot_a.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
@@ -105,11 +149,25 @@ def test_slot_store_rejects_invalid_size(tmp_path, keys):
 
     with pytest.raises(ss.SlotStoreError) as exc:
         ss.SlotStore(slot_a, slot_b, keys)
-    assert hasattr(exc.value, "code")
+    assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
+
+
+def test_slot_store_rejects_oversize_slot(tmp_path, keys):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    slot_a.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
+    slot_b.write_bytes(b"\x00" * (SLOT_FRAME_SIZE + 1))
+
+    with pytest.raises(ss.SlotStoreError) as exc:
+        ss.SlotStore(slot_a, slot_b, keys)
+    assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
 
 
 def test_load_and_select(tmp_path, keys, legal_states):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
@@ -128,6 +186,7 @@ def test_load_and_select(tmp_path, keys, legal_states):
 
 def test_write_state_revision_and_transition_validation(tmp_path, keys, legal_states):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
@@ -140,23 +199,24 @@ def test_write_state_revision_and_transition_validation(tmp_path, keys, legal_st
 
     with pytest.raises(ss.SlotStoreError) as exc:
         store.write_state(state_rev2)
-    assert hasattr(exc.value, "code")
+    assert exc.value.code in ("PROTOCOL_INVALID", "SCHEMA_INVALID", "STATE_CORRUPT")
 
     state_rev4 = dataclasses.replace(state_rev2, revision=4, enrollment_complete=True)
     with pytest.raises(ss.SlotStoreError) as exc:
         store.write_state(state_rev4)
-    assert hasattr(exc.value, "code")
+    assert exc.value.code in ("PROTOCOL_INVALID", "SCHEMA_INVALID", "STATE_CORRUPT")
 
     invalid_phase_state = dataclasses.replace(state_rev3, phase="ENROLLING")
     with pytest.raises(ss.SlotStoreError) as exc:
         store.write_state(invalid_phase_state)
-    assert hasattr(exc.value, "code")
+    assert exc.value.code in ("PROTOCOL_INVALID", "SCHEMA_INVALID", "STATE_CORRUPT")
 
     store.close()
 
 
 def test_write_state_order_and_handle(tmp_path, keys, legal_states, monkeypatch):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
@@ -222,11 +282,11 @@ def test_write_state_order_and_handle(tmp_path, keys, legal_states, monkeypatch)
 
 def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states, monkeypatch):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
 
-    # Scenario 1: repair required
     slot_a.write_bytes(_pack_state(state_rev2))
     slot_b.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
     store1 = ss.SlotStore(slot_a, slot_b, keys)
@@ -243,11 +303,10 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     )
     with pytest.raises(ss.SlotStoreError) as exc1:
         store1.write_state(state_rev3)
-    assert hasattr(exc1.value, "code")
+    assert exc1.value.code == "REPAIR_REQUIRED"
     store1.close()
     monkeypatch.undo()
 
-    # Scenario 2: wrong active slot
     slot_a.write_bytes(_pack_state(state_rev2))
     slot_b.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
     store2 = ss.SlotStore(slot_a, slot_b, keys)
@@ -264,11 +323,10 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     )
     with pytest.raises(ss.SlotStoreError) as exc2:
         store2.write_state(state_rev3)
-    assert hasattr(exc2.value, "code")
+    assert exc2.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
     store2.close()
     monkeypatch.undo()
 
-    # Scenario 3: wrong state
     slot_a.write_bytes(_pack_state(state_rev2))
     slot_b.write_bytes(b"\x00" * SLOT_FRAME_SIZE)
     store3 = ss.SlotStore(slot_a, slot_b, keys)
@@ -286,13 +344,14 @@ def test_write_state_post_write_validation_failures(tmp_path, keys, legal_states
     )
     with pytest.raises(ss.SlotStoreError) as exc3:
         store3.write_state(state_rev3)
-    assert hasattr(exc3.value, "code")
+    assert exc3.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
     store3.close()
     monkeypatch.undo()
 
 
 def test_write_state_fails_closed_on_flush(tmp_path, keys, legal_states, monkeypatch):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
@@ -314,7 +373,7 @@ def test_write_state_fails_closed_on_flush(tmp_path, keys, legal_states, monkeyp
     err = str(exc.value)
     payload_sha = state_rev3.committed.binding.payload_sha256
     assert state_rev3.evidence[payload_sha] not in err
-    assert hasattr(exc.value, "code")
+    assert exc.value.code == "FLUSH_FAILED"
 
     store.close()
 
@@ -322,6 +381,7 @@ def test_write_state_fails_closed_on_flush(tmp_path, keys, legal_states, monkeyp
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows specific file identity test")
 def test_windows_file_identity_preserved(tmp_path, keys, legal_states):
     import neko_launcher.updater.slot_store as ss
+
     slot_a = tmp_path / "a.bin"
     slot_b = tmp_path / "b.bin"
     state_rev2, state_rev3 = legal_states
@@ -341,3 +401,179 @@ def test_windows_file_identity_preserved(tmp_path, keys, legal_states):
     assert os.stat(slot_b).st_ino == ino_b
     assert os.stat(slot_a).st_size == SLOT_FRAME_SIZE
     assert os.stat(slot_b).st_size == SLOT_FRAME_SIZE
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows hardlink validation test")
+def test_windows_rejects_hardlink(tmp_path, keys, legal_states):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+    slot_a.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    extra_link = tmp_path / "a_link.bin"
+    try:
+        os.link(slot_a, extra_link)
+    except OSError as e:
+        pytest.skip(f"Hardlink unsupported: {e}")
+
+    with pytest.raises(ss.SlotStoreError) as exc:
+        ss.SlotStore(slot_a, slot_b, keys)
+    assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows alternate data stream test")
+def test_windows_rejects_alternate_data_stream(tmp_path, keys, legal_states):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+    slot_a.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    ads_path = str(slot_a) + ":evil"
+    try:
+        with open(ads_path, "wb") as f:
+            f.write(b"evil_stream")
+    except OSError as e:
+        pytest.skip(f"Alternate data streams unsupported: {e}")
+
+    with pytest.raises(ss.SlotStoreError) as exc:
+        ss.SlotStore(slot_a, slot_b, keys)
+    assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows share-write denial test")
+def test_windows_share_write_denial(tmp_path, keys, legal_states):
+    import ctypes
+    from ctypes import wintypes
+
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+    slot_a.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    store = ss.SlotStore(slot_a, slot_b, keys)
+    store.load()
+
+    try:
+        GENERIC_WRITE = 0x40000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        OPEN_EXISTING = 3
+        INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+        ERROR_SHARING_VIOLATION = 32
+
+        CreateFileW = ctypes.windll.kernel32.CreateFileW
+        CreateFileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        CreateFileW.restype = wintypes.HANDLE
+
+        CloseHandle = ctypes.windll.kernel32.CloseHandle
+        CloseHandle.argtypes = [wintypes.HANDLE]
+        CloseHandle.restype = wintypes.BOOL
+
+        GetLastError = ctypes.windll.kernel32.GetLastError
+        GetLastError.restype = wintypes.DWORD
+
+        h = CreateFileW(
+            str(slot_a),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+        if h != INVALID_HANDLE_VALUE and h != 0:
+            CloseHandle(h)
+            pytest.fail("CreateFileW with GENERIC_WRITE succeeded, expected sharing violation")
+        err = GetLastError()
+        assert err == ERROR_SHARING_VIOLATION
+    finally:
+        store.close()
+
+
+def test_rejects_symlink_or_reparse(tmp_path, keys, legal_states):
+    import neko_launcher.updater.slot_store as ss
+
+    real_target = tmp_path / "real_target.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+    real_target.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    slot_a = tmp_path / "a.bin"
+    try:
+        slot_a.symlink_to(real_target)
+    except OSError as e:
+        pytest.skip(f"Symlinks not supported: {e}")
+
+    with pytest.raises(ss.SlotStoreError) as exc:
+        ss.SlotStore(slot_a, slot_b, keys)
+    assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
+
+
+def test_slot_store_retains_parent_guard_and_validates_leaf(tmp_path, keys, legal_states, monkeypatch):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+    slot_a.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    calls = []
+    fake_parent_handle = 999
+
+    def mock_guard(state_dir):
+        calls.append(("guard", state_dir))
+        return fake_parent_handle
+
+    def mock_validate(handle, expected_parent_handle=None):
+        calls.append(("validate", handle, expected_parent_handle))
+
+    monkeypatch.setattr(ss, "_open_state_dir_guard", mock_guard, raising=False)
+    monkeypatch.setattr(ss, "_validate_trusted_leaf", mock_validate, raising=False)
+
+    store = ss.SlotStore(slot_a, slot_b, keys)
+    store.load()
+    store.close()
+
+    assert ("guard", tmp_path) in calls
+    validates = [c for c in calls if c[0] == "validate"]
+    assert len(validates) >= 2
+    for v in validates:
+        assert v[2] == fake_parent_handle
+
+
+def test_slot_store_leaf_validation_failure_fails_closed(tmp_path, keys, legal_states, monkeypatch):
+    import neko_launcher.updater.slot_store as ss
+
+    slot_a = tmp_path / "a.bin"
+    slot_b = tmp_path / "b.bin"
+    state_rev2, state_rev3 = legal_states
+    slot_a.write_bytes(_pack_state(state_rev2))
+    slot_b.write_bytes(_pack_state(state_rev3))
+
+    def mock_validate_fail(handle, expected_parent_handle=None):
+        raise OSError("Leaf validation failed: not a single-link trusted leaf")
+
+    monkeypatch.setattr(ss, "_validate_trusted_leaf", mock_validate_fail, raising=False)
+
+    with pytest.raises(ss.SlotStoreError) as exc:
+        ss.SlotStore(slot_a, slot_b, keys)
+    assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
