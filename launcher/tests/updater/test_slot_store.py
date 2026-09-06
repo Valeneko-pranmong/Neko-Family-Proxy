@@ -252,6 +252,18 @@ def test_write_state_order_and_handle(tmp_path, keys, legal_states, monkeypatch)
     def mock_flush(handle):
         events.append(("flush", handle))
 
+    fake_parent_handle = 999
+
+    def mock_guard(state_dir):
+        assert state_dir == tmp_path
+        return fake_parent_handle
+
+    def mock_validate(handle, expected_parent_handle=None):
+        assert handle in {sentinel_a, sentinel_b}
+        assert expected_parent_handle == fake_parent_handle
+
+    monkeypatch.setattr(ss, "_open_state_dir_guard", mock_guard, raising=False)
+    monkeypatch.setattr(ss, "_validate_trusted_leaf", mock_validate, raising=False)
     monkeypatch.setattr(ss, "_open_existing_slot", mock_open, raising=False)
     monkeypatch.setattr(ss, "_close_handle", mock_close, raising=False)
     monkeypatch.setattr(ss, "_get_file_size", mock_get_size, raising=False)
