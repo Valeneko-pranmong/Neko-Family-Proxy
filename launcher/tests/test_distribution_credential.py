@@ -1,5 +1,3 @@
-import pytest
-
 from neko_launcher.infrastructure.distribution_credential import (
     clear_distribution_capability,
     get_distribution_capability,
