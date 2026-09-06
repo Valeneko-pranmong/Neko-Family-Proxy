@@ -31,11 +31,11 @@ def _encode_canonical_value(val: Any) -> str:
     if isinstance(val, (list, tuple)):
         return "[" + ",".join(_encode_canonical_value(item) for item in val) + "]"
     if isinstance(val, dict):
-        # Keys must be strings and sorted lexicographically
-        items = []
-        for k in sorted(val.keys()):
+        for k in val.keys():
             if not isinstance(k, str):
                 raise ValueError("Dict keys must be strings in canonical JSON")
+        items = []
+        for k in sorted(val.keys()):
             items.append(_encode_canonical_value(k) + ":" + _encode_canonical_value(val[k]))
         return "{" + ",".join(items) + "}"
     raise ValueError(f"Unsupported type in canonical JSON: {type(val).__name__}")

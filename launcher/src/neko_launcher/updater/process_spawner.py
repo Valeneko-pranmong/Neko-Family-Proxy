@@ -6,6 +6,7 @@ from ctypes import wintypes
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import subprocess
 
 from neko_launcher.updater.ipc_channel import FramedIpcChannel
 
@@ -221,7 +222,14 @@ def spawn_managed_child(
 
     pi = PROCESS_INFORMATION()
 
-    cmd_line = f'"{executable_path.resolve()}" ' + " ".join(args)
+    # Privacy check on command line arguments
+    from neko_launcher.updater.privacy_scanner import assert_clean_privacy
+    cmd_args = subprocess.list2cmdline(args) if args else ""
+    assert_clean_privacy(cmd_args)
+
+    cmd_line = f'"{executable_path.resolve()}"'
+    if cmd_args:
+        cmd_line += f" {cmd_args}"
     cmd_buf = ctypes.create_unicode_buffer(cmd_line)
 
     ok = _CreateProcessW(
@@ -249,8 +257,21 @@ def spawn_managed_child(
         raise OSError(f"CreateProcessW failed for '{executable_path}' (WinError {err})")
 
     # Assign to Job Object before resuming thread
-    _AssignProcessToJobObject(h_job, pi.hProcess)
-    _ResumeThread(pi.hThread)
+    if not _AssignProcessToJobObject(h_job, pi.hProcess):
+        err = _k32.GetLastError()
+        _TerminateProcess(pi.hProcess, 1)
+        _CloseHandle(pi.hThread)
+        _CloseHandle(pi.hProcess)
+        _CloseHandle(h_job)
+        raise OSError(f"AssignProcessToJobObject failed (WinError {err})")
+
+    if _ResumeThread(pi.hThread) == 0xFFFFFFFF:
+        err = _k32.GetLastError()
+        _TerminateProcess(pi.hProcess, 1)
+        _CloseHandle(pi.hThread)
+        _CloseHandle(pi.hProcess)
+        _CloseHandle(h_job)
+        raise OSError(f"ResumeThread failed (WinError {err})")
 
     # Convert parent pipe handles to python OS file descriptors
     import msvcrt

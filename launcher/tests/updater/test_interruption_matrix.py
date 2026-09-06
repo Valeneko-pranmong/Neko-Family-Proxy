@@ -21,8 +21,8 @@ def _make_dummy_gen(seq: int) -> tuple[Generation, str, str]:
     binding, p_sha, env_b64 = _make_signed_evidence(seq, f"r-{seq}")
     gen = Generation(
         binding=binding,
-        launcher_identity_sha256="a" * 64,
-        core_identity_sha256="b" * 64,
+        launcher_identity_sha256="3" * 64,
+        core_identity_sha256="2" * 64,
     )
     return gen, p_sha, env_b64
 
@@ -30,6 +30,8 @@ def _make_dummy_gen(seq: int) -> tuple[Generation, str, str]:
 def test_interruption_torn_slot_write(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+    releases_dir = tmp_path / "releases" / "r-1"
+    releases_dir.mkdir(parents=True)
     gen1, p_sha1, env_b64_1 = _make_dummy_gen(1)
 
     s1 = State(
@@ -66,6 +68,8 @@ def test_interruption_torn_slot_write(tmp_path: Path) -> None:
 def test_interruption_during_building_rolls_back_idempotently(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+    releases_dir = tmp_path / "releases" / "r-1"
+    releases_dir.mkdir(parents=True)
     gen1, p_sha1, env_b64_1 = _make_dummy_gen(1)
     gen2, p_sha2, env_b64_2 = _make_dummy_gen(2)
 
@@ -122,6 +126,8 @@ def test_interruption_during_building_rolls_back_idempotently(tmp_path: Path) ->
 def test_interruption_during_probation_executes_rollback(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+    releases_dir = tmp_path / "releases" / "r-1"
+    releases_dir.mkdir(parents=True)
     gen1, p_sha1, env_b64_1 = _make_dummy_gen(1)
     gen2, p_sha2, env_b64_2 = _make_dummy_gen(2)
 

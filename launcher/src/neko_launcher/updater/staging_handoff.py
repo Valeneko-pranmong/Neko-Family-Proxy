@@ -164,6 +164,7 @@ def handle_apply_request(
     current_state: State,
     transaction_id: str,
     request_id: str,
+    public_keys: Mapping[str, bytes],
 ) -> ApplyResult:
     """Handle APPLY from Launcher, verify on-disk artifacts match expected hashes, and formulate next State."""
     tx = current_state.transaction
@@ -180,13 +181,27 @@ def handle_apply_request(
     expected_files: set[str] = set()
     cand = tx.candidate
 
+    # Load signed envelope for candidate to obtain expected artifact hashes and sizes
+    envelope_b64 = current_state.evidence.get(cand.binding.payload_sha256)
+    if not envelope_b64:
+        return ApplyResult(accepted=False, error="SIGNATURE_INVALID")
+    try:
+        envelope_bytes = base64.b64decode(envelope_b64, validate=True)
+        envelope_doc = canonical_json_loads(envelope_bytes)
+        rel_set, _ = verify_release_envelope_v2(envelope_doc, public_keys)
+    except Exception:
+        return ApplyResult(accepted=False, error="SIGNATURE_INVALID")
+
     # If launcher changed
     if current_state.committed is None or current_state.committed.launcher_identity_sha256 != cand.launcher_identity_sha256:
         launcher_file = incoming_dir / "launcher.artifact"
         if not launcher_file.exists():
             return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
         data = launcher_file.read_bytes()
-        if hashlib.sha256(data).hexdigest() != cand.launcher_identity_sha256:
+        expected_launcher = rel_set.components["launcher"]
+        if len(data) != expected_launcher.artifact_size:
+            return ApplyResult(accepted=False, error="PACKAGE_INVALID")
+        if hashlib.sha256(data).hexdigest() != expected_launcher.artifact_sha256:
             return ApplyResult(accepted=False, error="HASH_MISMATCH")
         expected_files.add("launcher.artifact")
 
@@ -195,7 +210,12 @@ def handle_apply_request(
         core_file = incoming_dir / "core.artifact.zip"
         if not core_file.exists():
             return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
-        # In actual pipeline, core zip hash or installed manifest is checked
+        core_data = core_file.read_bytes()
+        expected_core = rel_set.components["core"]
+        if len(core_data) != expected_core.artifact_size:
+            return ApplyResult(accepted=False, error="PACKAGE_INVALID")
+        if hashlib.sha256(core_data).hexdigest() != expected_core.artifact_sha256:
+            return ApplyResult(accepted=False, error="HASH_MISMATCH")
         expected_files.add("core.artifact.zip")
 
     # Check for extraneous files

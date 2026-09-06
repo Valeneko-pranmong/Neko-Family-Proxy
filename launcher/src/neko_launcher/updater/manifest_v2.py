@@ -5,7 +5,6 @@ import base64
 import binascii
 from dataclasses import dataclass
 import hashlib
-import json
 import re
 from typing import Any, Mapping
 
@@ -237,12 +236,8 @@ def verify_release_envelope_v2(
 
     try:
         payload_obj = canonical_json_loads(payload_bytes)
-    except ValueError:
-        # Fallback to standard json loads if not canonical json
-        try:
-            payload_obj = json.loads(payload_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as err:
-            raise ValueError("Invalid payload JSON") from err
+    except ValueError as err:
+        raise ValueError(f"Payload is not valid canonical UTF-8 JSON: {err}") from err
 
     release_set = parse_release_v2(payload_obj)
     return release_set, payload_sha256

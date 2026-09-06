@@ -9,7 +9,7 @@ from typing import Mapping
 from neko_launcher.updater.binary_frame import FrameCorruptError, unpack_slot_frame
 from neko_launcher.updater.canonical_json import canonical_json_loads
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
-from neko_launcher.updater.state_models import Binding, State, deserialize_state
+from neko_launcher.updater.state_models import Binding, Generation, State, deserialize_state
 
 
 class SelectionStatus(str, Enum):
@@ -68,6 +68,34 @@ def _authenticate_evidence(state: State, public_keys: Mapping[str, bytes]) -> bo
         if release_set_v2.release_id != binding.release_id:
             return False
 
+    referenced_generations: list[Generation] = []
+    if state.committed is not None:
+        referenced_generations.append(state.committed)
+    if state.previous is not None:
+        referenced_generations.append(state.previous)
+    if state.transaction is not None:
+        referenced_generations.append(state.transaction.candidate)
+        if state.transaction.old is not None:
+            referenced_generations.append(state.transaction.old)
+    if state.rollback is not None:
+        referenced_generations.append(state.rollback.target)
+
+    for gen in referenced_generations:
+        p_sha = gen.binding.payload_sha256
+        envelope_b64 = state.evidence.get(p_sha)
+        if not envelope_b64:
+            return False
+        try:
+            envelope_bytes = base64.b64decode(envelope_b64, validate=True)
+            envelope_doc = canonical_json_loads(envelope_bytes)
+            release_set_v2, _ = verify_release_envelope_v2(envelope_doc, public_keys)
+        except Exception:
+            return False
+        if gen.launcher_identity_sha256 != release_set_v2.components["launcher"].installed_identity_sha256:
+            return False
+        if gen.core_identity_sha256 != release_set_v2.components["core"].installed_identity_sha256:
+            return False
+
     return True
 
 
@@ -82,6 +110,8 @@ def _classify_slot(raw: bytes | None) -> tuple[bool, State | None, int | None, s
 
     try:
         state = deserialize_state(frame.body_bytes)
+        if state.revision != frame.revision:
+            return True, None, frame.revision, "frame revision does not match state revision"
         return True, state, frame.revision, None
     except ValueError as err:
         return True, None, frame.revision, f"malformed schema: {err}"
@@ -171,13 +201,29 @@ def select_active_slot(
                 reason=f"Nonadjacent revisions: {rev_a} and {rev_b}",
             )
 
+        from neko_launcher.updater.state_machine import validate_transition
+
         if rev_b > rev_a:
+            try:
+                validate_transition(state_a, state_b)
+            except Exception as err:
+                return SelectionResult(
+                    status=SelectionStatus.REPAIR_REQUIRED,
+                    reason=f"Illegal transition from slot A to B: {err}",
+                )
             return SelectionResult(
                 status=SelectionStatus.SELECTED,
                 state=state_b,
                 active_slot="b",
             )
         else:
+            try:
+                validate_transition(state_b, state_a)
+            except Exception as err:
+                return SelectionResult(
+                    status=SelectionStatus.REPAIR_REQUIRED,
+                    reason=f"Illegal transition from slot B to A: {err}",
+                )
             return SelectionResult(
                 status=SelectionStatus.SELECTED,
                 state=state_a,

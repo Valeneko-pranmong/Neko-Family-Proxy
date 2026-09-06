@@ -11,6 +11,7 @@ def execute_broker_auth_handshake(
     broker_ipc: FramedIpcChannel,
     expected_generation: Generation,
     expected_revision: int,
+    expected_pid: int | None = None,
     mode: str = "managed",
     timeout_s: float = 10.0,
 ) -> bool:
@@ -18,6 +19,13 @@ def execute_broker_auth_handshake(
     try:
         hello_msg = broker_ipc.receive_message(timeout_s=timeout_s)
         if hello_msg.type != "HELLO" or hello_msg.body.get("mode") != mode:
+            return False
+
+        if expected_pid is not None and hello_msg.body.get("pid") != expected_pid:
+            return False
+
+        child_gen = hello_msg.body.get("generation")
+        if child_gen != asdict(expected_generation):
             return False
 
         broker_ipc.send_message(
@@ -43,7 +51,7 @@ def execute_broker_auth_handshake(
         )
 
         ack_msg = broker_ipc.receive_message(timeout_s=timeout_s)
-        if ack_msg.type != "NORMAL_ACK":
+        if ack_msg.type != "NORMAL_ACK" or ack_msg.body.get("revision") != expected_revision:
             return False
 
         return True
@@ -71,6 +79,8 @@ def execute_child_auth_handshake(
 
         ctx_msg = child_ipc.receive_message(timeout_s=timeout_s)
         if ctx_msg.type != "CONTEXT":
+            return False
+        if ctx_msg.body.get("generation") != asdict(current_generation):
             return False
 
         check_type = "LOCAL_CHECK" if mode == "managed" else "SELF_TEST"

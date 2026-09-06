@@ -13,7 +13,14 @@ from tests.software_update_helpers import (
 )
 
 
-def _make_signed_envelope_b64(seq: int, rel_id: str, launcher_hash: str, core_hash: str) -> str:
+def _make_signed_envelope_b64(
+    seq: int,
+    rel_id: str,
+    launcher_hash: str,
+    core_hash: str,
+    launcher_size: int = 20480,
+    core_size: int = 20480,
+) -> str:
     doc = valid_release_document()
     doc["schema_version"] = 2
     doc["channel"] = "beta"
@@ -25,9 +32,11 @@ def _make_signed_envelope_b64(seq: int, rel_id: str, launcher_hash: str, core_ha
     doc["components"]["launcher"]["artifact_format"] = "raw-pe-v1"
     doc["components"]["launcher"]["artifact_sha256"] = launcher_hash
     doc["components"]["launcher"]["installed_identity_sha256"] = launcher_hash
+    doc["components"]["launcher"]["artifact_size"] = launcher_size
     doc["components"]["core"]["artifact_format"] = "zip-core-v1"
     doc["components"]["core"]["artifact_sha256"] = core_hash
     doc["components"]["core"]["installed_identity_sha256"] = core_hash
+    doc["components"]["core"]["artifact_size"] = core_size
     env = signed_envelope(doc)
     return base64.b64encode(canonical_json_dumps(env)).decode("ascii")
 
@@ -146,7 +155,14 @@ def test_handle_apply_request_verifies_on_disk_artifacts(tmp_path: Path) -> None
     launcher_sha = hashlib.sha256(launcher_bytes).hexdigest()
     core_sha = hashlib.sha256(core_bytes).hexdigest()
 
-    env_b64 = _make_signed_envelope_b64(2, "rel-2", launcher_sha, core_sha)
+    env_b64 = _make_signed_envelope_b64(
+        2,
+        "rel-2",
+        launcher_sha,
+        core_sha,
+        launcher_size=len(launcher_bytes),
+        core_size=len(core_bytes),
+    )
     ready_res, state_admitted = handle_begin_request(tmp_path, current_state, env_b64, keys)
     assert ready_res.accepted and state_admitted is not None
 
@@ -159,6 +175,7 @@ def test_handle_apply_request_verifies_on_disk_artifacts(tmp_path: Path) -> None
         state_admitted,
         ready_res.transaction_id,
         ready_res.request_id,
+        keys,
     )
     assert apply_res.accepted
     assert apply_res.error is None

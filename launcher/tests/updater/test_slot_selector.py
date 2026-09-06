@@ -4,7 +4,14 @@ import hashlib
 from neko_launcher.updater.binary_frame import SlotFrame, pack_slot_frame
 from neko_launcher.updater.canonical_json import canonical_json_dumps
 from neko_launcher.updater.slot_selector import SelectionStatus, select_active_slot
-from neko_launcher.updater.state_models import Binding, Generation, State, serialize_state
+from neko_launcher.updater.state_models import (
+    Binding,
+    DirectoryIdentity,
+    Generation,
+    State,
+    Transaction,
+    serialize_state,
+)
 from tests.software_update_helpers import (
     TEST_KEY_ID,
     TEST_PUBLIC_KEY,
@@ -34,7 +41,7 @@ def _make_state(rev: int, seq: int) -> State:
     binding, p_sha, env_b64 = _make_signed_evidence(seq, f"rel-{seq}")
     gen = Generation(
         binding=binding,
-        launcher_identity_sha256="1" * 64,
+        launcher_identity_sha256="3" * 64,
         core_identity_sha256="2" * 64,
     )
     return State(
@@ -65,7 +72,36 @@ def _pack_state(state: State) -> bytes:
 
 def test_select_highest_consecutive_valid_revision() -> None:
     s1 = _make_state(rev=10, seq=1)
-    s2 = _make_state(rev=11, seq=2)
+    b2, p2, e2 = _make_signed_evidence(2, "rel-2")
+    cand2 = Generation(binding=b2, launcher_identity_sha256="3" * 64, core_identity_sha256="2" * 64)
+    tx2 = Transaction(
+        id="a" * 32,
+        request_id="b" * 32,
+        candidate=cand2,
+        old=s1.committed,
+        incoming=DirectoryIdentity("12345678abcdef01", "0" * 32, "0" * 32),
+        staging=None,
+        stage="ADMITTED",
+        mutation=None,
+    )
+    s2 = State(
+        schema_version=1,
+        revision=11,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="PREPARING",
+        committed=s1.committed,
+        previous=None,
+        highwater=s1.highwater,
+        observed=b2,
+        failed=None,
+        transaction=tx2,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={**s1.evidence, p2: e2},
+    )
     slot_a = _pack_state(s1)
     slot_b = _pack_state(s2)
     keys = {TEST_KEY_ID: TEST_PUBLIC_KEY}

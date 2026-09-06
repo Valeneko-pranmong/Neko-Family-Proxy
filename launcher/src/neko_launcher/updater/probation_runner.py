@@ -42,37 +42,52 @@ def run_probation_self_test(
 
     # Core preflight execution
     core_exe = core_dir / "NekoProxyCore.exe"
-    if core_exe.is_file():
-        try:
-            proc = subprocess.Popen(
-                [str(core_exe.resolve()), "--update-preflight"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            req = json.dumps({"protocol_version": 1, "generation_id": generation_dir.name}) + "\n"
-            stdout, _ = proc.communicate(input=req, timeout=core_preflight_timeout_s)
-            if proc.returncode != 0:
-                return SelfTestResult(
-                    passed=False,
-                    error_code="SELFTEST_FAILED",
-                    reason=f"Core preflight exited with code {proc.returncode}",
-                )
+    if not core_exe.is_file():
+        return SelfTestResult(
+            passed=False,
+            error_code="ARTIFACT_MISSING",
+            reason="Core executable 'NekoProxyCore.exe' missing",
+        )
 
-            resp = json.loads(stdout.strip())
-            if resp.get("result") != "PASS":
-                return SelfTestResult(
-                    passed=False,
-                    error_code="SELFTEST_FAILED",
-                    reason=f"Core preflight returned: {resp.get('code')}",
-                )
-        except Exception as err:
+    try:
+        proc = subprocess.Popen(
+            [str(core_exe.resolve()), "--update-preflight"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        req = json.dumps({"protocol_version": 1, "generation_id": generation_dir.name}) + "\n"
+        try:
+            stdout, _ = proc.communicate(input=req, timeout=core_preflight_timeout_s)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
             return SelfTestResult(
                 passed=False,
                 error_code="SELFTEST_FAILED",
-                reason=f"Core preflight execution error: {err}",
+                reason="Core preflight execution timed out",
             )
+        if proc.returncode != 0:
+            return SelfTestResult(
+                passed=False,
+                error_code="SELFTEST_FAILED",
+                reason=f"Core preflight exited with code {proc.returncode}",
+            )
+
+        resp = json.loads(stdout.strip())
+        if resp.get("result") != "PASS":
+            return SelfTestResult(
+                passed=False,
+                error_code="SELFTEST_FAILED",
+                reason=f"Core preflight returned: {resp.get('code')}",
+            )
+    except Exception as err:
+        return SelfTestResult(
+            passed=False,
+            error_code="SELFTEST_FAILED",
+            reason=f"Core preflight execution error: {err}",
+        )
 
     # Tkinter probe
     if not skip_tk:

@@ -69,6 +69,8 @@ def unpack_slot_frame(raw: bytes) -> SlotFrame:
     magic, body_len, format_version, revision = struct.unpack(HEADER_PREFIX_FORMAT, prefix)
     if magic != SLOT_MAGIC:
         raise FrameCorruptError(f"Invalid slot magic: {magic!r}")
+    if revision < 1:
+        raise FrameCorruptError(f"Invalid revision in slot frame: {revision}")
     if body_len == 0 or body_len > MAX_SLOT_BODY_SIZE:
         raise FrameCorruptError(f"Invalid body length: {body_len}")
     if format_version != 1:

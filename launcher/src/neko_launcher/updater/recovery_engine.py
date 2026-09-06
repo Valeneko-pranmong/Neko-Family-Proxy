@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import shutil
 from typing import Mapping
 
 from neko_launcher.updater.binary_frame import SlotFrame, pack_slot_frame
 from neko_launcher.updater.precommit_abort import execute_precommit_abort
+from neko_launcher.updater.rollback_controller import initiate_postcommit_rollback
 from neko_launcher.updater.slot_selector import SelectionStatus, select_active_slot
 from neko_launcher.updater.state_models import (
     Generation,
@@ -54,7 +56,12 @@ class RecoveryEngine:
         body = serialize_state(new_state)
         frame = SlotFrame(revision=new_state.revision, format_version=1, body_bytes=body)
         packed = pack_slot_frame(frame)
-        target_path.write_bytes(packed)
+        fd = os.open(target_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0))
+        try:
+            os.write(fd, packed)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         return target_slot
 
     def run_recovery(self) -> RecoveryResult:
@@ -91,9 +98,26 @@ class RecoveryEngine:
             assert state is not None
 
             if state.phase == "IDLE":
+                if state.committed is not None:
+                    rel_dir = self.root_dir / "releases" / state.committed.binding.release_id
+                    if not rel_dir.exists():
+                        if state.previous is not None:
+                            rb_state = initiate_postcommit_rollback(state, "CORRUPT_COMMITTED")
+                            active_slot = self._write_next_slot(rb_state, active_slot)
+                            mutations += 1
+                            continue
+                        return RecoveryResult(
+                            converged=False,
+                            status="REPAIR_REQUIRED",
+                            selected_generation=None,
+                            mutations_performed=mutations,
+                            final_state=state,
+                            error="Committed generation missing on disk and no previous available",
+                        )
+
                 return RecoveryResult(
                     converged=True,
-                    status="OLD_FULLY_RESTORED" if mutations > 0 else "CONVERGED",
+                    status="OLD_FULLY_RESTORED",
                     selected_generation=state.committed,
                     mutations_performed=mutations,
                     final_state=state,
@@ -149,15 +173,26 @@ class RecoveryEngine:
                 continue
 
             elif state.phase in ("QUIESCING", "PROBATION"):
-                # Candidate failed or was interrupted: roll back to committed
-                # Precommit rollback preserves committed and previous
-                next_state = State(
+                # Record rollback before restoring the committed generation.
+                from neko_launcher.updater.state_models import Rollback
+
+                target = state.committed
+                if target is None:
+                    return RecoveryResult(
+                        converged=False,
+                        status="REPAIR_REQUIRED",
+                        selected_generation=None,
+                        mutations_performed=mutations,
+                        final_state=state,
+                        error="Interrupted mutation has no committed rollback target",
+                    )
+                rollback_state = State(
                     schema_version=1,
                     revision=state.revision + 1,
                     installation_id=state.installation_id,
                     helper_protocol=state.helper_protocol,
                     enrollment_complete=state.enrollment_complete,
-                    phase="IDLE",
+                    phase="ROLLING_BACK",
                     committed=state.committed,
                     previous=state.previous,
                     highwater=state.highwater,
@@ -165,11 +200,17 @@ class RecoveryEngine:
                     failed=state.observed,
                     transaction=None,
                     cleanup=None,
-                    rollback=None,
+                    rollback=Rollback(
+                        mode="precommit",
+                        target=target,
+                        probation_id=(state.transaction.id if state.transaction else "0" * 32),
+                        scratch=[],
+                        step="RESTORE_INTENT",
+                    ),
                     last_error="RECOVERY_ROLLBACK",
                     evidence=state.evidence,
                 )
-                active_slot = self._write_next_slot(next_state, active_slot)
+                active_slot = self._write_next_slot(rollback_state, active_slot)
                 mutations += 1
                 continue
 

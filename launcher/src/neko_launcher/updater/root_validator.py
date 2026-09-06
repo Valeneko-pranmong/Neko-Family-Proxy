@@ -112,11 +112,12 @@ def validate_install_root(path: Path) -> RootValidationResult:
             fs_buf,
             ctypes.sizeof(fs_buf) // 2,
         )
-        if ok and fs_buf.value != "NTFS":
+        if not ok or fs_buf.value != "NTFS":
+            fs_name = fs_buf.value if ok else "UNKNOWN"
             return RootValidationResult(
                 valid=False,
                 error_code="ROOT_UNSUPPORTED",
-                reason=f"Filesystem '{fs_buf.value}' is not NTFS",
+                reason=f"Volume filesystem '{fs_name}' must be NTFS",
             )
 
     return RootValidationResult(valid=True)
