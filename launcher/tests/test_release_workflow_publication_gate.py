@@ -256,3 +256,35 @@ def test_manual_release_tag_resolves_to_current_run_sha_before_publication() -> 
             "(including annotated-tag peeling) and concretely compare its commit to "
             "${{ github.sha }} before publication"
         )
+
+
+def test_publication_passes_release_tag_via_environment_not_powershell_source() -> None:
+    publishers = publication_jobs(workflow_text())
+    assert publishers, "release.yml must have a publication job"
+
+    for publisher in publishers:
+        steps = re.split(r"(?m)(?=^      - )", publisher.text)
+        publication_steps = [step for step in steps if "gh release create" in step.lower()]
+        assert len(publication_steps) == 1, (
+            f"publication job {publisher.name!r} must have exactly one gh release create step"
+        )
+        publication_step = publication_steps[0]
+        run_match = re.search(r"(?m)^        run:\s*", publication_step)
+        assert run_match, "the publication step must have PowerShell source"
+        run_source = publication_step[run_match.start() :]
+
+        direct_interpolations = (
+            "${{ inputs.release_tag }}",
+            "${{ github.event.inputs.release_tag }}",
+        )
+        assert all(value not in run_source for value in direct_interpolations), (
+            "gh release create PowerShell source must not directly interpolate the release tag"
+        )
+        assert re.search(
+            r"(?mi)^\s*RELEASE_TAG:\s*['\"]?\$\{\{\s*inputs\.release_tag\s*}}['\"]?\s*$",
+            publication_step,
+        ), "the publication step must map inputs.release_tag to RELEASE_TAG"
+        assert re.search(
+            r"(?i)\bgh\s+release\s+create\s+(?:['\"]\$env:RELEASE_TAG['\"]|\$env:RELEASE_TAG)(?=\s)",
+            run_source,
+        ), "gh release create must receive $env:RELEASE_TAG as its tag argument"
