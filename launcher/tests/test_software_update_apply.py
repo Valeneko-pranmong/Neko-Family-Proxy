@@ -333,14 +333,22 @@ def test_prepare_default_downloader_uses_launcher_grant_and_https_transport(
     class FakeHttpsResponse:
         status = 200
 
+        def __init__(self) -> None:
+            self._offset = 0
+
         def __enter__(self) -> FakeHttpsResponse:
             return self
 
         def __exit__(self, *_args: Any) -> None:
             return None
 
-        def read(self, _size: int = -1) -> bytes:
-            return payload
+        def read(self, size: int = -1) -> bytes:
+            if self._offset >= len(payload):
+                return b""
+            end = len(payload) if size < 0 else self._offset + size
+            chunk = payload[self._offset : end]
+            self._offset += len(chunk)
+            return chunk
 
     opened_urls: list[str] = []
 
