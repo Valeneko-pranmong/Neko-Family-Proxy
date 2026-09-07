@@ -301,6 +301,33 @@ def test_production_compose_update_apply_service_uses_empty_key_registry_and_fai
         assert exc_info.value.code is not None
 
 
+def test_apply_composition_injects_lazy_production_distribution_capability_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.infrastructure.distribution_credential import (
+        get_distribution_capability,
+    )
+
+    captured: dict[str, object] = {}
+
+    def capture_service(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(app_factory, "SoftwareUpdateApplyService", capture_service)
+    config = make_config(monkeypatch, tmp_path)
+
+    service = app_factory.compose_update_apply_service(config, root_dir=tmp_path)
+
+    assert service is not None
+    assert "distribution_capability_provider" in captured, (
+        "composition must inject lazy distribution capability provider"
+    )
+    assert captured["distribution_capability_provider"] is get_distribution_capability
+    assert captured["key_registry"] == {}
+
+
 def test_production_update_configuration_contains_no_private_key_material(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

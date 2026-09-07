@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import inspect
 import importlib
 import json
 import urllib.error
@@ -25,11 +27,18 @@ from neko_launcher.infrastructure.software_update_client import (
     HttpUpdateManifestGateway,
     SoftwareUpdateClientError,
 )
-from tests.software_update_helpers import (
-    get_test_key_registry,
-    signed_envelope,
-    valid_release_document,
-)
+try:
+    from tests.software_update_helpers import (
+        get_test_key_registry,
+        signed_envelope,
+        valid_release_document,
+    )
+except ImportError:
+    from software_update_helpers import (  # type: ignore[no-redef]
+        get_test_key_registry,
+        signed_envelope,
+        valid_release_document,
+    )
 
 PROXY_CREDENTIAL = "SENTINEL_PROXY_CREDENTIAL_42"
 JWT_TOKEN = "eyJaaaaaa.bbbbbbb.ccccccc"
@@ -300,6 +309,96 @@ def test_unknown_update_signing_key_is_rejected_without_echoing_key_id() -> None
     assert caught.value.code == "UNKNOWN_KEY_ID"
     assert str(caught.value) == "UNKNOWN_KEY_ID"
     assert unknown_key_id not in repr(caught.value)
+
+
+def test_core_grant_failure_never_crosses_apply_privacy_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    import neko_launcher.infrastructure.software_update_apply as apply_module
+    try:
+        from tests.test_software_update_apply import FakeChannel, FakeSpawner
+    except ImportError:
+        from test_software_update_apply import (  # type: ignore[no-redef]
+            FakeChannel,
+            FakeSpawner,
+        )
+
+    service_cls = apply_module.SoftwareUpdateApplyService
+    assert "distribution_capability_provider" in inspect.signature(
+        service_cls
+    ).parameters, "missing lazy distribution_capability_provider seam"
+    capability = base64.urlsafe_b64encode(
+        b"CAPABILITY_SENTINEL_TEST_ONLY_00"
+    ).decode().rstrip("=")
+    envelope = signed_envelope(valid_release_document())
+    channel = FakeChannel(
+        [{
+            "type": "REQUEST_READY",
+            "message_id": "msg-0",
+            "body": {
+                "accepted": True,
+                "request_id": "req-privacy-core",
+                "transaction_id": "tx-privacy-core",
+                "changed": {"launcher": False, "core": True},
+                "error": None,
+            },
+        }]
+    )
+    spawner = FakeSpawner()
+    received_capabilities: list[str] = []
+
+    class FailingGrantGateway:
+        def grant_core(self, artifact_id: str, received: str) -> object:
+            del artifact_id
+            received_capabilities.append(received)
+            raise RuntimeError(f"grant transport leaked {received}")
+
+    artifact_requests: list[object] = []
+
+    def fake_open(request: object, **_kwargs: object) -> object:
+        artifact_requests.append(request)
+        raise AssertionError("artifact GET must not occur after grant failure")
+
+    monkeypatch.setattr(apply_module, "_open_no_redirect", fake_open)
+    service = service_cls(
+        root_dir=tmp_path,
+        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
+        key_registry=get_test_key_registry(),
+        spawner=spawner,
+        channel_factory=lambda: channel,
+        grant_gateway=FailingGrantGateway(),
+        distribution_capability_provider=lambda: capability,
+    )
+    prepared = None
+
+    with pytest.raises(apply_module.SoftwareUpdateApplyError) as caught:
+        prepared = service.prepare()
+
+    error = caught.value
+    assert error.code
+    assert str(error) == error.code
+    assert_secrets_absent(str(error), capability)
+    assert_secrets_absent(repr(error), capability)
+    assert received_capabilities == [capability]
+    assert spawner.process.terminated or spawner.process.killed
+    assert all(capability not in repr(message["body"]) for message in channel.sent)
+    assert all(
+        capability not in argument
+        for call in spawner.calls
+        for argument in call["command"]
+    )
+    assert_secrets_absent(repr(service), capability)
+    assert_secrets_absent(repr(prepared), capability)
+    assert artifact_requests == []
+    assert all(
+        request.get_header("Authorization") is None
+        and request.get_header("Cookie") is None
+        for request in artifact_requests
+    )
+    assert not any(message["type"] == "APPLY" for message in channel.sent)
 
 
 def test_downgrade_policy_rejects_remote_release_without_secret_fields() -> None:

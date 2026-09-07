@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib
 import json
 import urllib.error
@@ -404,7 +405,90 @@ def test_grant_sends_exact_compact_json_post_request(
     )
     assert request.get_header("Content-type") == "application/json"
     assert request.get_header("Accept") == "application/json"
+    assert request.get_header("Authorization") is None
     assert timeout == 5.0
+
+
+def test_core_grant_posts_exact_authenticated_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_client_module()
+    gateway = module.HttpArtifactGrantGateway(BASE_URL + "/")
+    assert hasattr(gateway, "grant_core"), "missing explicit grant_core capability API"
+    capability = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    opener = RecordingOpener(FakeResponse(grant_body()))
+    install_opener(monkeypatch, module, opener)
+
+    gateway.grant_core(ARTIFACT_ID, capability)
+
+    assert len(opener.calls) == 1
+    request, timeout = opener.calls[0]
+    assert request.full_url == BASE_URL + GRANT_PATH
+    assert request.get_method() == "POST"
+    assert request.data == b'{"artifact_id":"launcher-win-x64-beta-0002"}'
+    assert request.get_header("Authorization") == f"NekoDistribution {capability}"
+    assert request.get_header("Content-type") == "application/json"
+    assert request.get_header("Accept") == "application/json"
+    assert timeout == 5.0
+
+
+_CANONICAL_TEST_CAPABILITY = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+_NONCANONICAL_TEST_CAPABILITY = (
+    _CANONICAL_TEST_CAPABILITY[:-1]
+    + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"[
+        (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".index(
+                _CANONICAL_TEST_CAPABILITY[-1]
+            )
+            ^ 1
+        )
+    ]
+)
+assert len(_NONCANONICAL_TEST_CAPABILITY) == 43
+assert base64.urlsafe_b64decode(_NONCANONICAL_TEST_CAPABILITY + "=") == bytes(range(32))
+assert (
+    base64.urlsafe_b64encode(
+        base64.urlsafe_b64decode(_NONCANONICAL_TEST_CAPABILITY + "=")
+    ).decode().rstrip("=")
+    != _NONCANONICAL_TEST_CAPABILITY
+)
+
+
+@pytest.mark.parametrize(
+    "capability",
+    [
+        None,
+        "",
+        base64.urlsafe_b64encode(bytes(range(32))).decode(),
+        base64.urlsafe_b64encode(bytes(range(31))).decode().rstrip("="),
+        "!" * 43,
+        _NONCANONICAL_TEST_CAPABILITY,
+    ],
+    ids=(
+        "missing",
+        "empty",
+        "padded",
+        "wrong-length",
+        "malformed",
+        "noncanonical-padding-bits",
+    ),
+)
+def test_core_grant_rejects_invalid_capability_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+    capability: object,
+) -> None:
+    module = load_client_module()
+    gateway = module.HttpArtifactGrantGateway(BASE_URL)
+    assert hasattr(gateway, "grant_core"), "missing explicit grant_core capability API"
+    opener = RecordingOpener(FakeResponse(grant_body()))
+    install_opener(monkeypatch, module, opener)
+
+    with pytest.raises((module.SoftwareUpdateClientError, TypeError, ValueError)) as caught:
+        gateway.grant_core(ARTIFACT_ID, capability)
+
+    assert opener.calls == []
+    assert str(capability) not in str(caught.value)
+    assert str(capability) not in repr(caught.value)
 
 
 def test_grant_honors_custom_timeout(

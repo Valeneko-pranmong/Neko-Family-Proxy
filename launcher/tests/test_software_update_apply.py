@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import inspect
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -509,6 +511,177 @@ def test_prepare_default_downloader_rejects_trailing_response_bytes(
 
     assert spawner.process.terminated or spawner.process.killed
     assert not any(message["type"] == "APPLY" for message in channel.sent)
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected_provider_reads", "expected_grant_calls"),
+    [
+        ({"launcher": True, "core": False}, 0, [("anonymous", "launcher-50", None)]),
+        ({"launcher": False, "core": True}, 1, [("core", "core-50", "capability")]),
+        ({"launcher": False, "core": False}, 0, []),
+    ],
+    ids=("launcher-only", "core-only", "metadata-only"),
+)
+def test_default_download_selects_grant_path_and_reads_capability_only_for_core(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: dict[str, bool],
+    expected_provider_reads: int,
+    expected_grant_calls: list[tuple[str, str, str | None]],
+) -> None:
+    import neko_launcher.infrastructure.software_update_apply as apply_module
+
+    service_cls, prepared_cls, _ = _get_apply_api()
+    assert "distribution_capability_provider" in inspect.signature(
+        service_cls
+    ).parameters, "missing lazy distribution_capability_provider seam"
+    capability = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    payloads = {"launcher": b"L", "core": b"C"}
+    document = make_test_v2_envelope()["payload"]
+    for name, payload in payloads.items():
+        document["components"][name]["artifact_sha256"] = hashlib.sha256(payload).hexdigest()
+        document["components"][name]["installed_identity_sha256"] = hashlib.sha256(
+            payload
+        ).hexdigest()
+        document["components"][name]["artifact_size"] = len(payload)
+    envelope = signed_envelope(document)
+    request_id = "req-grant-routing"
+    (tmp_path / "incoming" / request_id).mkdir(parents=True)
+    channel = FakeChannel(
+        [
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": "tx-grant-routing",
+                    "changed": changed,
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": "tx-grant-routing",
+                    "error": None,
+                },
+            },
+        ]
+    )
+    provider_reads: list[str] = []
+    grant_calls: list[tuple[str, str, str | None]] = []
+
+    class FakeGrantGateway:
+        def grant(self, artifact_id: str) -> Any:
+            grant_calls.append(("anonymous", artifact_id, None))
+            return self._result(artifact_id)
+
+        def grant_core(self, artifact_id: str, received: str) -> Any:
+            assert provider_reads == ["read"]
+            assert received == capability
+            grant_calls.append(("core", artifact_id, "capability"))
+            return self._result(artifact_id)
+
+        @staticmethod
+        def _result(artifact_id: str) -> Any:
+            return SimpleNamespace(
+                url=f"https://updates.example.test/{artifact_id}",
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+
+    opened_requests: list[Any] = []
+
+    class FakeHttpsResponse:
+        status = 200
+
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def __enter__(self) -> FakeHttpsResponse:
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            result = self.body if size < 0 else self.body[:size]
+            self.body = self.body[len(result) :]
+            return result
+
+    def fake_open(request: Any, **_kwargs: Any) -> FakeHttpsResponse:
+        opened_requests.append(request)
+        component = "core" if "core-50" in request.full_url else "launcher"
+        return FakeHttpsResponse(payloads[component])
+
+    monkeypatch.setattr(apply_module, "_open_no_redirect", fake_open)
+    service = service_cls(
+        root_dir=tmp_path,
+        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
+        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        spawner=FakeSpawner(),
+        channel_factory=lambda: channel,
+        grant_gateway=FakeGrantGateway(),
+        distribution_capability_provider=lambda: provider_reads.append("read") or capability,
+    )
+
+    prepared = service.prepare()
+
+    assert isinstance(prepared, prepared_cls)
+    assert len(provider_reads) == expected_provider_reads
+    assert grant_calls == expected_grant_calls
+    assert all(
+        request.get_header("Authorization") is None
+        and request.get_header("Cookie") is None
+        for request in opened_requests
+    )
+
+
+def test_missing_core_capability_aborts_before_grant_or_apply(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    assert "distribution_capability_provider" in inspect.signature(
+        service_cls
+    ).parameters, "missing lazy distribution_capability_provider seam"
+    spawner = FakeSpawner()
+    channel = FakeChannel(
+        [{
+            "type": "REQUEST_READY",
+            "message_id": "msg-0",
+            "body": {
+                "accepted": True,
+                "request_id": "req-missing-capability",
+                "transaction_id": "tx-missing-capability",
+                "changed": {"launcher": False, "core": True},
+                "error": None,
+            },
+        }]
+    )
+    provider_reads: list[str] = []
+
+    class NeverGrant:
+        def grant_core(self, artifact_id: str, capability: str) -> Any:
+            raise AssertionError(f"Core grant must not occur: {artifact_id} {capability}")
+
+    service = service_cls(
+        root_dir=tmp_path,
+        manifest_gateway=SimpleNamespace(fetch=make_test_v2_envelope),
+        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        spawner=spawner,
+        channel_factory=lambda: channel,
+        grant_gateway=NeverGrant(),
+        distribution_capability_provider=lambda: provider_reads.append("read") or None,
+    )
+
+    with pytest.raises(error_cls) as caught:
+        service.prepare()
+
+    assert caught.value.code
+    assert str(caught.value) == caught.value.code
+    assert provider_reads == ["read"]
+    assert [message["type"] for message in channel.sent] == ["BEGIN"]
+    assert spawner.process.terminated or spawner.process.killed
 
 
 def test_prepared_update_release_closes_channel_without_terminating_helper(
