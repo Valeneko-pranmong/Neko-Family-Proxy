@@ -322,7 +322,7 @@ def test_prepare_default_downloader_uses_launcher_grant_and_https_transport(
     grant_calls: list[str] = []
 
     class FakeGrantGateway:
-        def fetch(self, artifact_id: str) -> Any:
+        def grant(self, artifact_id: str) -> Any:
             grant_calls.append(artifact_id)
             return SimpleNamespace(
                 url="https://updates.example.test/launcher.artifact",
