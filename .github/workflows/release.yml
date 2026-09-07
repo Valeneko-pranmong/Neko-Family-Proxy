@@ -2,12 +2,22 @@ name: Windows release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the candidate artifact as a GitHub release
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing v* tag to publish (required when publishing)
+        required: false
+        type: string
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-installer:
@@ -56,8 +66,61 @@ jobs:
           name: neko-family-launcher-windows
           path: release/*
           if-no-files-found: error
-      - name: Publish tagged GitHub release
-        if: github.ref_type == 'tag'
+
+  publish-release:
+    needs: build-installer
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Validate release tag
+        shell: pwsh
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" release/* --generate-notes
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mismatch = "Release tag does not match this workflow run."
+          if ($env:RELEASE_TAG -notmatch '^v.+$') {
+            throw $mismatch
+          }
+
+          try {
+            $target = gh api "repos/$env:GH_REPO/git/ref/tags/$env:RELEASE_TAG" 2>$null |
+              ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) {
+              throw $mismatch
+            }
+            $targetType = $target.object.type
+            $targetSha = $target.object.sha
+
+            if ($targetType -eq 'tag') {
+              $target = gh api "repos/$env:GH_REPO/git/tags/$targetSha" 2>$null |
+                ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0) {
+                throw $mismatch
+              }
+              $targetType = $target.object.type
+              $targetSha = $target.object.sha
+            }
+
+            if ($targetType -ne 'commit' -or $targetSha -ne '${{ github.sha }}') {
+              throw $mismatch
+            }
+          }
+          catch {
+            throw $mismatch
+          }
+      - name: Download candidate artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: neko-family-launcher-windows
+          path: release
+      - name: Publish GitHub release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release create "$env:RELEASE_TAG" release\NekoLauncher.exe release\NekoUpdater.exe release\SHA256SUMS.txt --verify-tag --generate-notes
