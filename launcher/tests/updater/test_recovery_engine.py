@@ -29,9 +29,9 @@ def _make_dummy_gen(seq: int) -> tuple[Generation, str, str]:
 def test_recovery_from_idle_converges_and_is_idempotent(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    releases_dir = tmp_path / "releases" / "r-1"
-    releases_dir.mkdir(parents=True)
     gen1, p_sha, env_b64 = _make_dummy_gen(1)
+    releases_dir = tmp_path / "releases" / f"g-{gen1.binding.release_sequence:020d}-{gen1.binding.payload_sha256}"
+    releases_dir.mkdir(parents=True)
     s = State(
         schema_version=1,
         revision=1,
@@ -68,9 +68,9 @@ def test_recovery_from_idle_converges_and_is_idempotent(tmp_path: Path) -> None:
 def test_recovery_from_preparing_aborts_candidate(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    releases_dir = tmp_path / "releases" / "r-1"
-    releases_dir.mkdir(parents=True)
     gen1, p_sha1, env_b64_1 = _make_dummy_gen(1)
+    releases_dir = tmp_path / "releases" / f"g-{gen1.binding.release_sequence:020d}-{gen1.binding.payload_sha256}"
+    releases_dir.mkdir(parents=True)
     gen2, p_sha2, env_b64_2 = _make_dummy_gen(2)
 
     inc_dir = tmp_path / "incoming" / ("b" * 32)
