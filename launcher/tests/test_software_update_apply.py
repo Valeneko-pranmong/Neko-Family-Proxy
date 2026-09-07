@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -248,6 +250,129 @@ def test_prepare_success_spawns_helper_downloads_changed_and_returns_prepared(
     ]
 
     # Prepared update object checks: channel remains open, helper not terminated
+    assert isinstance(prepared, prepared_cls)
+    assert channel.closed is False
+    assert spawner.process.terminated is False
+    assert spawner.process.killed is False
+
+
+def test_prepare_default_downloader_uses_launcher_grant_and_https_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import neko_launcher.infrastructure.software_update_apply as apply_module
+
+    service_cls, prepared_cls, _ = _get_apply_api()
+    payload = b"neko-launcher-update"
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    launcher_artifact_id = "launcher-default-download"
+    envelope_payload = {
+        "schema_version": 2,
+        "channel": "beta",
+        "release_sequence": 51,
+        "release_id": "r-51-default-download",
+        "mandatory": False,
+        "minimum_supported_sequence": 1,
+        "updater_protocol": {"minimum": 1, "maximum": 1},
+        "components": {
+            "launcher": {
+                "version": "2.0.1",
+                "artifact_id": launcher_artifact_id,
+                "artifact_sha256": payload_sha256,
+                "installed_identity_sha256": payload_sha256,
+                "artifact_size": len(payload),
+                "artifact_format": "raw-pe-v1",
+            },
+            "core": {
+                "version": "3.0.0",
+                "artifact_id": "core-51",
+                "artifact_sha256": "2" * 64,
+                "installed_identity_sha256": "3" * 64,
+                "artifact_size": 2048,
+                "artifact_format": "zip-core-v1",
+            },
+        },
+    }
+    envelope = signed_envelope(envelope_payload)
+    request_id = "req-default-download"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": "tx-default-download",
+                    "changed": {"launcher": True, "core": False},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": "tx-default-download",
+                    "error": None,
+                },
+            },
+        ]
+    )
+    grant_calls: list[str] = []
+
+    class FakeGrantGateway:
+        def fetch(self, artifact_id: str) -> Any:
+            grant_calls.append(artifact_id)
+            return SimpleNamespace(
+                url="https://updates.example.test/launcher.artifact",
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+
+    class FakeHttpsResponse:
+        status = 200
+
+        def __enter__(self) -> FakeHttpsResponse:
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            return payload
+
+    opened_urls: list[str] = []
+
+    def fake_open(url: Any, *_args: Any, **_kwargs: Any) -> FakeHttpsResponse:
+        opened_urls.append(url.full_url if hasattr(url, "full_url") else str(url))
+        return FakeHttpsResponse()
+
+    opener_name = next(
+        (
+            name
+            for name in ("_open_no_redirect", "urlopen")
+            if hasattr(apply_module, name)
+        ),
+        "urlopen",
+    )
+    monkeypatch.setattr(apply_module, opener_name, fake_open, raising=False)
+    spawner = FakeSpawner()
+    service = service_cls(
+        root_dir=tmp_path,
+        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
+        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        spawner=spawner,
+        channel_factory=lambda: channel,
+        grant_gateway=FakeGrantGateway(),
+    )
+
+    prepared = service.prepare()
+
+    assert grant_calls == [launcher_artifact_id]
+    assert opened_urls == ["https://updates.example.test/launcher.artifact"]
+    assert (tmp_path / "incoming" / request_id / "launcher.artifact").read_bytes() == payload
+    assert not (tmp_path / "incoming" / request_id / "core.artifact.zip").exists()
+    assert [message["type"] for message in channel.sent] == ["BEGIN", "APPLY"]
     assert isinstance(prepared, prepared_cls)
     assert channel.closed is False
     assert spawner.process.terminated is False
