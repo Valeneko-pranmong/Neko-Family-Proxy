@@ -1,11 +1,11 @@
 """Deterministic crash-recovery engine and recovery dispatcher."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import shutil
-from typing import Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 
 from neko_launcher.updater.binary_frame import SlotFrame, pack_slot_frame
 from neko_launcher.updater.precommit_abort import execute_precommit_abort
@@ -99,7 +99,11 @@ class RecoveryEngine:
 
             if state.phase == "IDLE":
                 if state.committed is not None:
-                    rel_dir = self.root_dir / "releases" / state.committed.binding.release_id
+                    rel_dir = (
+                        self.root_dir
+                        / "releases"
+                        / f"g-{state.committed.binding.release_sequence:020d}-{state.committed.binding.payload_sha256}"
+                    )
                     if not rel_dir.exists():
                         if state.previous is not None:
                             rb_state = initiate_postcommit_rollback(state, "CORRUPT_COMMITTED")
@@ -147,7 +151,7 @@ class RecoveryEngine:
                                     and actual_id.file_id == item.directory.file_id
                                 ):
                                     shutil.rmtree(container_path, ignore_errors=True)
-                            except Exception:
+                            except Exception:  # noqa: BLE001, S110
                                 pass
 
                 next_state = State(
