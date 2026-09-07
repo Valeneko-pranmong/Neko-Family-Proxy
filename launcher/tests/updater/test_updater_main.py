@@ -104,6 +104,48 @@ def test_serve_session_happy_path():
     assert app_res[2] == "msg2"
 
 
+def test_serve_session_uses_real_send_message_api():
+    updater_main = get_updater_main()
+
+    class StrictSendChannel(FakeChannel):
+        def send_message(self, msg_type, body, message_id=None):
+            self.sent.append((msg_type, body, message_id))
+
+    channel = StrictSendChannel(
+        [
+            IpcMessage(
+                protocol_version=1,
+                type="BEGIN",
+                body={"envelope_b64": "dummy_env"},
+                message_id="msg1",
+            ),
+            IpcMessage(
+                protocol_version=1,
+                type="APPLY",
+                body={"transaction_id": "tx1", "request_id": "req1"},
+                message_id="msg2",
+            ),
+            IpcProtocolError("EOF reached on IPC read handle"),
+        ]
+    )
+    coordinator = Mock()
+    coordinator.begin.return_value = RequestReadyResult(
+        accepted=True,
+        request_id="req1",
+        transaction_id="tx1",
+        changed={"launcher": True, "core": False},
+        error=None,
+    )
+    coordinator.apply.return_value = ApplyResult(
+        accepted=True, transaction_id="tx1", error=None
+    )
+
+    result = updater_main.serve_session(channel, coordinator)
+
+    assert result is True
+    assert [message[0] for message in channel.sent] == ["REQUEST_READY", "APPLY_RESULT"]
+
+
 def test_serve_session_begin_rejected():
     updater_main = get_updater_main()
 
