@@ -129,7 +129,7 @@ def test_v2_adapter_maps_valid_signed_release_set_v2_to_application_release_set(
         core_installed_identity_sha256="y" * 64,
     )
     result = evaluate_release(local_id, release_set, UpdateInvocationReason.MANUAL)
-    assert result.state == UpdateState.AVAILABLE
+    assert result.state == UpdateState.MANDATORY
     assert result.release_sequence == 42
     assert result.mandatory is True
 
