@@ -380,6 +380,129 @@ def test_prepare_default_downloader_uses_launcher_grant_and_https_transport(
     assert spawner.process.killed is False
 
 
+def test_prepare_default_downloader_rejects_trailing_response_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import neko_launcher.infrastructure.software_update_apply as apply_module
+
+    service_cls, _, error_cls = _get_apply_api()
+    good_payload = b"neko-launcher-signed-payload"
+    launcher_artifact_id = "launcher-trailing-response"
+    envelope = signed_envelope(
+        {
+            "schema_version": 2,
+            "channel": "beta",
+            "release_sequence": 52,
+            "release_id": "r-52-trailing-response",
+            "mandatory": False,
+            "minimum_supported_sequence": 1,
+            "updater_protocol": {"minimum": 1, "maximum": 1},
+            "components": {
+                "launcher": {
+                    "version": "2.0.2",
+                    "artifact_id": launcher_artifact_id,
+                    "artifact_sha256": hashlib.sha256(good_payload).hexdigest(),
+                    "installed_identity_sha256": hashlib.sha256(good_payload).hexdigest(),
+                    "artifact_size": len(good_payload),
+                    "artifact_format": "raw-pe-v1",
+                },
+                "core": {
+                    "version": "3.0.0",
+                    "artifact_id": "core-52",
+                    "artifact_sha256": "2" * 64,
+                    "installed_identity_sha256": "3" * 64,
+                    "artifact_size": 2048,
+                    "artifact_format": "zip-core-v1",
+                },
+            },
+        }
+    )
+    request_id = "req-trailing-response"
+    (tmp_path / "incoming" / request_id).mkdir(parents=True)
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": "tx-trailing-response",
+                    "changed": {"launcher": True, "core": False},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": "tx-trailing-response",
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    class FakeGrantGateway:
+        def grant(self, artifact_id: str) -> Any:
+            assert artifact_id == launcher_artifact_id
+            return SimpleNamespace(
+                url="https://updates.example.test/launcher.artifact",
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+
+    class FakeHttpsResponse:
+        status = 200
+
+        def __init__(self) -> None:
+            self.chunks = [good_payload, b"EXTRA"]
+
+        def __enter__(self) -> FakeHttpsResponse:
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            if not self.chunks:
+                return b""
+            chunk = self.chunks.pop(0)
+            if size >= 0 and len(chunk) > size:
+                self.chunks.insert(0, chunk[size:])
+                return chunk[:size]
+            return chunk
+
+    def fake_open(_url: Any, *_args: Any, **_kwargs: Any) -> FakeHttpsResponse:
+        return FakeHttpsResponse()
+
+    opener_name = next(
+        (
+            name
+            for name in ("_open_no_redirect", "urlopen")
+            if hasattr(apply_module, name)
+        ),
+        "urlopen",
+    )
+    monkeypatch.setattr(apply_module, opener_name, fake_open, raising=False)
+    spawner = FakeSpawner()
+    service = service_cls(
+        root_dir=tmp_path,
+        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
+        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        spawner=spawner,
+        channel_factory=lambda: channel,
+        grant_gateway=FakeGrantGateway(),
+    )
+
+    with pytest.raises(error_cls):
+        service.prepare()
+
+    assert spawner.process.terminated or spawner.process.killed
+    assert not any(message["type"] == "APPLY" for message in channel.sent)
+
+
 def test_prepared_update_release_closes_channel_without_terminating_helper(
     tmp_path: Path,
 ) -> None:
