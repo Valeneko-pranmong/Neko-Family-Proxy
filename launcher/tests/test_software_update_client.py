@@ -487,8 +487,13 @@ def test_core_grant_rejects_invalid_capability_before_network(
         gateway.grant_core(ARTIFACT_ID, capability)
 
     assert opener.calls == []
-    assert str(capability) not in str(caught.value)
-    assert str(capability) not in repr(caught.value)
+    if capability == "":
+        assert isinstance(caught.value, module.SoftwareUpdateClientError)
+        assert caught.value.code
+        assert str(caught.value) == caught.value.code
+    else:
+        assert str(capability) not in str(caught.value)
+        assert str(capability) not in repr(caught.value)
 
 
 def test_grant_honors_custom_timeout(

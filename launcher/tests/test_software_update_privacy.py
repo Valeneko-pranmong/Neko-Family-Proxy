@@ -319,11 +319,16 @@ def test_core_grant_failure_never_crosses_apply_privacy_boundaries(
 
     import neko_launcher.infrastructure.software_update_apply as apply_module
     try:
-        from tests.test_software_update_apply import FakeChannel, FakeSpawner
+        from tests.test_software_update_apply import (
+            FakeChannel,
+            FakeSpawner,
+            make_test_v2_envelope,
+        )
     except ImportError:
         from test_software_update_apply import (  # type: ignore[no-redef]
             FakeChannel,
             FakeSpawner,
+            make_test_v2_envelope,
         )
 
     service_cls = apply_module.SoftwareUpdateApplyService
@@ -333,7 +338,7 @@ def test_core_grant_failure_never_crosses_apply_privacy_boundaries(
     capability = base64.urlsafe_b64encode(
         b"CAPABILITY_SENTINEL_TEST_ONLY_00"
     ).decode().rstrip("=")
-    envelope = signed_envelope(valid_release_document())
+    envelope = make_test_v2_envelope()
     channel = FakeChannel(
         [{
             "type": "REQUEST_READY",

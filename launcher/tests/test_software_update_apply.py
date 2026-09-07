@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import inspect
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -537,7 +538,8 @@ def test_default_download_selects_grant_path_and_reads_capability_only_for_core(
     ).parameters, "missing lazy distribution_capability_provider seam"
     capability = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
     payloads = {"launcher": b"L", "core": b"C"}
-    document = make_test_v2_envelope()["payload"]
+    unsigned_envelope = make_test_v2_envelope()
+    document = json.loads(base64.b64decode(unsigned_envelope["payload_b64"]))
     for name, payload in payloads.items():
         document["components"][name]["artifact_sha256"] = hashlib.sha256(payload).hexdigest()
         document["components"][name]["installed_identity_sha256"] = hashlib.sha256(
