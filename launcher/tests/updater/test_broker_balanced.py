@@ -14,6 +14,7 @@ from neko_launcher.updater.slot_selector import SelectionResult, SelectionStatus
 from neko_launcher.updater.state_models import (
     Binding,
     Generation,
+    Mutation,
     State,
 )
 from tests.software_update_helpers import (
@@ -428,7 +429,7 @@ def test_successful_apply_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         assert env.store.state == state
         assert state.phase == "PREPARING"
         assert state.transaction.stage == "BUILDING"
-        assert state.transaction.mutation is None
+        assert state.transaction.mutation == Mutation("WRITE_CANDIDATE", "stage", "INTENT")
         assert state.transaction.staging is not None
         staging_dir = root / "staging" / state.transaction.id
         gen_dir = staging_dir / "generation"
