@@ -36,6 +36,10 @@ def test_composition_helper_exists() -> None:
     assert hasattr(app_factory, "compose_update_check_service")
 
 
+def test_composition_helper_apply_service_exists() -> None:
+    assert hasattr(app_factory, "compose_update_apply_service")
+
+
 def test_development_composition_uses_unpublished_sequence_zero_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -117,7 +121,7 @@ def test_composition_uses_http_gateway_verifier_and_update_check_service(
 
     assert type(service).__name__ == "UpdateCheckService"
     assert type(service._manifest_gateway).__name__ == "HttpUpdateManifestGateway"
-    assert type(service._verifier).__name__ == "ReleaseManifestVerifier"
+    assert type(service._verifier).__name__ == "V2ReleaseManifestVerifierAdapter"
     assert (
         service._manifest_gateway._base_url
         == "https://neko-control-room.vercel.app"
@@ -170,6 +174,10 @@ def test_production_public_key_registry_is_empty_and_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from neko_launcher.updater.main import PRODUCTION_RELEASE_PUBLIC_KEYS
+
+    assert len(PRODUCTION_RELEASE_PUBLIC_KEYS) == 0
+
     config = make_config(monkeypatch, tmp_path)
     gateway = StaticManifestGateway(signed_envelope(valid_release_document()))
 
@@ -180,6 +188,89 @@ def test_production_public_key_registry_is_empty_and_fail_closed(
 
     assert result.state == UpdateState.VERIFY_FAILED
     assert result.diagnostic_code == UpdateDiagnosticCode.MANIFEST_REJECTED
+
+
+def test_production_compose_update_apply_service_uses_empty_key_registry_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    try:
+        from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+    except ImportError:
+        from neko_launcher.updater.main import PRODUCTION_RELEASE_PUBLIC_KEYS
+
+    assert len(PRODUCTION_RELEASE_PUBLIC_KEYS) == 0
+
+    compose_update_apply_service = getattr(
+        app_factory, "compose_update_apply_service", None
+    )
+    if compose_update_apply_service is None:
+        pytest.fail("compose_update_apply_service not implemented", pytrace=False)
+
+    config = make_config(monkeypatch, tmp_path)
+    service = compose_update_apply_service(config)
+
+    registry = getattr(
+        service, "_key_registry", getattr(service, "key_registry", None)
+    )
+    if registry is not None:
+        assert registry == PRODUCTION_RELEASE_PUBLIC_KEYS
+
+    valid_signed_manifest = signed_envelope(
+        {
+            "schema_version": 2,
+            "channel": "beta",
+            "release_sequence": 50,
+            "release_id": "r-50-test",
+            "mandatory": False,
+            "minimum_supported_sequence": 1,
+            "updater_protocol": {"minimum": 1, "maximum": 1},
+            "components": {
+                "launcher": {
+                    "version": "2.0.0",
+                    "artifact_id": "launcher-50",
+                    "artifact_sha256": "1" * 64,
+                    "installed_identity_sha256": "1" * 64,
+                    "artifact_size": 1024,
+                    "artifact_format": "raw-pe-v1",
+                },
+                "core": {
+                    "version": "3.0.0",
+                    "artifact_id": "core-50",
+                    "artifact_sha256": "2" * 64,
+                    "installed_identity_sha256": "3" * 64,
+                    "artifact_size": 2048,
+                    "artifact_format": "zip-core-v1",
+                },
+            },
+        }
+    )
+    gateway = StaticManifestGateway(valid_signed_manifest)
+    if hasattr(service, "_manifest_gateway"):
+        service._manifest_gateway = gateway
+    else:
+        monkeypatch.setattr(service, "manifest_gateway", gateway, raising=False)
+
+    monkeypatch.setattr(
+        "neko_launcher.infrastructure.software_update_client.HttpUpdateManifestGateway.fetch",
+        lambda self: valid_signed_manifest,
+        raising=False,
+    )
+
+    try:
+        from neko_launcher.infrastructure.software_update_apply import (
+            SoftwareUpdateApplyError,
+        )
+
+        expected_error: type[Exception] = SoftwareUpdateApplyError
+    except ImportError:
+        expected_error = Exception
+
+    with pytest.raises(expected_error) as exc_info:
+        service.prepare()
+
+    if hasattr(exc_info.value, "code"):
+        assert exc_info.value.code is not None
 
 
 def test_production_update_configuration_contains_no_private_key_material(
@@ -208,6 +299,7 @@ def test_build_window_forwards_exact_composed_update_service_without_network(
 ) -> None:
     config = make_config(monkeypatch, tmp_path)
     composed_service = object()
+    composed_apply_service = object()
     captured: dict[str, Any] = {}
 
     monkeypatch.setattr(
@@ -222,6 +314,15 @@ def test_build_window_forwards_exact_composed_update_service_without_network(
             captured.setdefault("composition_config", received),
             composed_service,
         )[1],
+    )
+    monkeypatch.setattr(
+        app_factory,
+        "compose_update_apply_service",
+        lambda received: (
+            captured.setdefault("apply_composition_config", received),
+            composed_apply_service,
+        )[1],
+        raising=False,
     )
     monkeypatch.setattr(
         app_factory,
@@ -293,3 +394,4 @@ def test_build_window_forwards_exact_composed_update_service_without_network(
     assert isinstance(window, CapturingWindow)
     assert captured["composition_config"] is config
     assert captured["window_kwargs"]["update_check_service"] is composed_service
+    assert captured["window_kwargs"].get("update_apply_service") is composed_apply_service

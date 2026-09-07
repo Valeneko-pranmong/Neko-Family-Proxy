@@ -6,6 +6,8 @@ from concurrent.futures import Future
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from neko_launcher.application.software_update_models import (
     UpdateCheckResult,
     UpdateDiagnosticCode,
@@ -129,13 +131,17 @@ def make_result(
     )
 
 
-def build_window(service: Any) -> tuple[AppWindow, FakeRoot, ImmediateExecutor]:
+def build_window(
+    service: Any,
+    apply_service: Any = None,
+) -> tuple[AppWindow, FakeRoot, ImmediateExecutor]:
     window = object.__new__(AppWindow)
     root = FakeRoot()
     update_executor = ImmediateExecutor()
     window.root = root  # type: ignore[assignment]
     window._closing = False
     window._update_check_service = service
+    window._update_apply_service = apply_service
     window._update_executor = update_executor  # type: ignore[assignment]
     window._executor = ForbiddenExecutor()  # type: ignore[assignment]
     window._last_update_result = None
@@ -436,3 +442,169 @@ def test_perform_close_shuts_down_update_executor_without_waiting() -> None:
 
     assert "_update_executor" in source
     assert ".shutdown(wait=False, cancel_futures=True)" in source
+
+
+def _is_update_action_enabled(window: AppWindow) -> bool:
+    for name in (
+        "_can_apply_software_update",
+        "_is_update_action_available",
+        "_is_update_action_enabled",
+    ):
+        fn = getattr(window, name, None)
+        if callable(fn):
+            return bool(fn())
+        if isinstance(fn, bool):
+            return fn
+    btn = getattr(window, "_update_apply_button", None) or getattr(window, "_update_button", None)
+    if btn is not None and hasattr(btn, "cget"):
+        return str(btn.cget("state")) != "disabled"
+    pytest.fail(
+        "AppWindow update action availability contract not implemented",
+        pytrace=False,
+    )
+
+
+def _trigger_update_action(window: AppWindow) -> None:
+    for name in (
+        "_apply_software_update",
+        "_apply_software_update_manual",
+        "_trigger_software_update_apply",
+    ):
+        fn = getattr(window, name, None)
+        if callable(fn):
+            fn()
+            return
+    btn = getattr(window, "_update_apply_button", None) or getattr(window, "_update_button", None)
+    if btn is not None and hasattr(btn, "invoke"):
+        btn.invoke()
+        return
+    pytest.fail(
+        "AppWindow update apply action contract not implemented",
+        pytrace=False,
+    )
+
+
+def test_update_action_enabled_only_when_update_available_and_proxy_and_game_idle() -> None:
+    apply_service = SimpleNamespace(prepare=lambda: None)
+    window, _root, _update_executor = build_window(None, apply_service=apply_service)
+
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+        )
+    )
+    window._controller = controller
+
+    # 1. AVAILABLE and idle -> Enabled
+    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    assert _is_update_action_enabled(window) is True
+
+    # 2. MANDATORY and idle -> Enabled
+    window._last_update_result = make_result(state=UpdateState.MANDATORY)
+    assert _is_update_action_enabled(window) is True
+
+    # 3. LATEST and idle -> Disabled
+    window._last_update_result = make_result(state=UpdateState.LATEST)
+    assert _is_update_action_enabled(window) is False
+
+    # 4. AVAILABLE and proxy running -> Disabled
+    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    controller.state.proxy_status = "running"
+    assert _is_update_action_enabled(window) is False
+    controller.state.proxy_status = "stopped"
+
+    # 5. AVAILABLE and game running -> Disabled
+    controller.state.game_process_running = True
+    assert _is_update_action_enabled(window) is False
+    controller.state.game_process_running = False
+
+    # 6. None result -> Disabled
+    window._last_update_result = None
+    assert _is_update_action_enabled(window) is False
+
+
+def test_startup_check_never_calls_prepare_automatically() -> None:
+    prepare_calls = 0
+
+    def fake_prepare() -> Any:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return None
+
+    apply_service = SimpleNamespace(prepare=fake_prepare)
+    check_service = CachedUpdateService(make_result(state=UpdateState.AVAILABLE))
+    window, root, _update_executor = build_window(
+        check_service,
+        apply_service=apply_service,
+    )
+
+    window._check_software_update_startup()
+    root.run_callbacks()
+
+    assert window._last_update_result is not None
+    assert window._last_update_result.state == UpdateState.AVAILABLE
+    assert prepare_calls == 0
+
+
+def test_manual_apply_click_submits_single_prepare_and_failed_prepare_keeps_launcher_alive() -> None:
+    secret = "secret-manifest-grant-token-leak"
+    prepare_calls = 0
+
+    def failing_prepare() -> Any:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        raise RuntimeError(secret)
+
+    apply_service = SimpleNamespace(prepare=failing_prepare)
+    window, root, update_executor = build_window(None, apply_service=apply_service)
+    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    before = preserve_application_state(window)
+    diagnostics = capture_diagnostics(window)
+
+    _trigger_update_action(window)
+
+    assert len(update_executor.submitted) == 1
+    assert prepare_calls == 1
+
+    root.run_callbacks()
+
+    assert window._closing is False
+    assert window._controller.state.auth_status == before["auth_status"]
+    assert window._controller.state.proxy_status == before["proxy_status"]
+    assert secret not in window._error.get()
+    assert all(secret not in repr(ev) for ev in diagnostics)
+
+
+def test_successful_prepared_update_calls_perform_close_before_release_without_close_loop() -> None:
+    call_order: list[str] = []
+
+    class FakePrepared:
+        def release(self) -> None:
+            call_order.append("prepared.release")
+
+    prepared = FakePrepared()
+    apply_service = SimpleNamespace(prepare=lambda: prepared)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+
+    def fake_perform_close() -> None:
+        call_order.append("_perform_close")
+        window._closing = True
+
+    window._perform_close = fake_perform_close  # type: ignore[method-assign]
+
+    confirmation_invoked = False
+
+    def fake_confirm(*_args: Any, **_kwargs: Any) -> bool:
+        nonlocal confirmation_invoked
+        confirmation_invoked = True
+        return False
+
+    window._confirm_game_active_action = fake_confirm  # type: ignore[method-assign]
+
+    _trigger_update_action(window)
+    root.run_callbacks()
+
+    assert confirmation_invoked is False
+    assert call_order == ["_perform_close", "prepared.release"]
