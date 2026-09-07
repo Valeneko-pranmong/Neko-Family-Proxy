@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import urllib.error
@@ -224,18 +226,51 @@ class HttpArtifactGrantGateway:
         self._timeout = timeout
 
     def grant(self, artifact_id: str) -> ArtifactGrant:
+        return self._grant(artifact_id)
+
+    def grant_core(self, artifact_id: str, capability: str) -> ArtifactGrant:
+        if type(capability) is not str or re.fullmatch(
+            r"[A-Za-z0-9_-]{43}", capability, flags=re.ASCII
+        ) is None:
+            raise SoftwareUpdateClientError(_GRANT_UNAVAILABLE)
+        try:
+            decoded = base64.b64decode(
+                capability + "=", altchars=b"-_", validate=True
+            )
+        except (ValueError, binascii.Error):
+            raise SoftwareUpdateClientError(_GRANT_UNAVAILABLE) from None
+        if (
+            len(decoded) != 32
+            or base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+            != capability
+        ):
+            raise SoftwareUpdateClientError(_GRANT_UNAVAILABLE)
+        return self._grant(
+            artifact_id,
+            authorization=f"NekoDistribution {capability}",
+        )
+
+    def _grant(
+        self,
+        artifact_id: str,
+        *,
+        authorization: str | None = None,
+    ) -> ArtifactGrant:
         body = json.dumps(
             {"artifact_id": artifact_id},
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        if authorization is not None:
+            headers["Authorization"] = authorization
         request = urllib.request.Request(
             f"{self._base_url}/api/software-update/artifact-grant",
             data=body,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
 

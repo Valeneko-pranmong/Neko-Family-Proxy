@@ -2,6 +2,7 @@ import base64
 import subprocess
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -73,18 +74,12 @@ def _validate_grant(grant: object) -> str:
 
 
 def _download_and_verify(
-    grant_gateway: object,
+    grant: object,
     component: ComponentV2,
     destination: Path,
 ) -> None:
     if not destination.parent.is_dir():
         raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
-    try:
-        grant = grant_gateway.grant(component.artifact_id)  # type: ignore[attr-defined]
-    except SoftwareUpdateApplyError:
-        raise
-    except Exception:
-        raise SoftwareUpdateApplyError("GRANT_FAILED") from None
     url = _validate_grant(grant)
     request = urllib.request.Request(url, method="GET")
     try:
@@ -179,6 +174,7 @@ class SoftwareUpdateApplyService:
         channel_factory: Any = None,
         downloader: Any = None,
         grant_gateway: Any = None,
+        distribution_capability_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self.root_dir = root_dir
         self.manifest_gateway = manifest_gateway
@@ -187,6 +183,7 @@ class SoftwareUpdateApplyService:
         self.channel_factory = channel_factory
         self.downloader = downloader
         self.grant_gateway = grant_gateway
+        self.distribution_capability_provider = distribution_capability_provider
 
     def prepare(self) -> PreparedUpdate:
         if not self.key_registry:
@@ -318,11 +315,26 @@ class SoftwareUpdateApplyService:
                         if self.grant_gateway is None:
                             raise SoftwareUpdateApplyError("MISSING_GRANT_GATEWAY")
                         component_v2 = release_set_v2.components[comp_name]
-                        _download_and_verify(
-                            self.grant_gateway,
-                            component_v2,
-                            dest,
-                        )
+                        try:
+                            if comp_name == "core":
+                                if self.distribution_capability_provider is None:
+                                    raise SoftwareUpdateApplyError("GRANT_FAILED")
+                                capability = self.distribution_capability_provider()
+                                if capability is None:
+                                    raise SoftwareUpdateApplyError("GRANT_FAILED")
+                                grant = self.grant_gateway.grant_core(
+                                    component_v2.artifact_id, capability
+                                )
+                                del capability
+                            else:
+                                grant = self.grant_gateway.grant(
+                                    component_v2.artifact_id
+                                )
+                        except SoftwareUpdateApplyError:
+                            raise
+                        except Exception:
+                            raise SoftwareUpdateApplyError("GRANT_FAILED") from None
+                        _download_and_verify(grant, component_v2, dest)
 
             # Send APPLY
             apply_msg_id = channel.send_message(

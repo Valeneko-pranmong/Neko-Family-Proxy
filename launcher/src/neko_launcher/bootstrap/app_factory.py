@@ -29,6 +29,9 @@ from neko_launcher.infrastructure.core.authorized_proxy_gateway import Authorize
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
 from neko_launcher.infrastructure.core.core_telemetry_client import NamedPipeCoreTelemetryClient
+from neko_launcher.infrastructure.distribution_credential import (
+    get_distribution_capability,
+)
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.proxy_status_client import PublicProxyStatusClient
@@ -104,6 +107,7 @@ def compose_update_apply_service(
         root_dir=root_dir or get_expected_install_root(),
         manifest_gateway=HttpUpdateManifestGateway(config.software_update_api_url),
         grant_gateway=HttpArtifactGrantGateway(config.software_update_api_url),
+        distribution_capability_provider=get_distribution_capability,
         key_registry=(
             PRODUCTION_RELEASE_PUBLIC_KEYS if key_registry is None else key_registry
         ),
