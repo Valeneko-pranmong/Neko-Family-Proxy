@@ -24,7 +24,7 @@
 - Each task has tests-only contract review, genuine RED, GREEN, ONE focused production review, full regression before task acceptance.
 - Do not push automatically in the plan steps unless existing project authorization says the unit is accepted; normal non-force push only.
 - Owner Gate 2 still blocks production publication/signing/key/active-release mutation.
-- After Task 4, stop at engineering-complete/local-verified gate; release remains Owner Gate 2.
+- After Task 5, stop at engineering-complete/local-verified gate; release remains Owner Gate 2.
 
 ## Implementation Steps
 
@@ -184,6 +184,102 @@ def test_e2e_matrix_launcher_only(temp_root, test_keys):
     assert result.committed
 ```
 Commit message: `test: implement Balanced live update E2E matrix`
+
+### Task 5 — Launcher manual apply caller + v2 production wiring
+Goal: Production Launcher path uses release-v2 authority, user manually clicks update, Launcher prepares update through helper and exits, helper activates after EOF; stop before Owner Gate 2 production key/capability/signing/deploy/publication.
+
+Executor invariant: Hermes is the ONLY repo mutation executor (no Codex or secondary agent executor mutations).
+
+Files:
+- Create `launcher/src/neko_launcher/updater/trust.py`
+- Create `launcher/src/neko_launcher/infrastructure/software_update_v2.py`
+- Create `launcher/src/neko_launcher/infrastructure/software_update_apply.py`
+- Modify `launcher/src/neko_launcher/infrastructure/software_update_client.py`
+- Modify `launcher/src/neko_launcher/ui/app_window.py`
+- Modify `launcher/src/neko_launcher/bootstrap/app_factory.py`
+- Modify `launcher/src/neko_launcher/updater/main.py`
+- Create `launcher/tests/test_software_update_v2_adapter.py`
+- Create `launcher/tests/test_software_update_apply.py`
+- Modify `launcher/tests/test_software_update_composition.py`
+- Modify `launcher/tests/ui/test_software_update_one_shot.py`
+
+Design & Interfaces:
+A) Shared trust placeholder:
+- Create `launcher/src/neko_launcher/updater/trust.py` exposing `PRODUCTION_RELEASE_PUBLIC_KEYS: Mapping[str, bytes] = {}`.
+- Both `launcher/src/neko_launcher/updater/main.py` and Launcher composition import it.
+- Does NOT provision keys; empty remains fail closed until Owner Gate 2.
+
+B) V2 check adapter:
+- Create `launcher/src/neko_launcher/infrastructure/software_update_v2.py`.
+- `V2ReleaseManifestVerifierAdapter.verify(document) -> application.ReleaseSet` calls `verify_release_envelope_v2(document, keys)` and maps V2 fields needed by existing `UpdateCheckService`/`UpdateCheckResult`.
+- Rejects v1 envelopes, bad signatures, schema violations, and protocol mismatches.
+- Leave legacy v1 verifier (`ReleaseManifestVerifier`) and tests intact; production `compose_update_check_service` uses V2 adapter. No dual-authority apply.
+
+C) Manual apply caller:
+- Create `launcher/src/neko_launcher/infrastructure/software_update_apply.py` with focused public API:
+  - `SoftwareUpdateApplyError(code: str)` safe closed code only.
+  - `PreparedUpdate` owns helper `Popen` and IPC channel; `release()` closes Launcher->helper write/read pipes without terminating helper, causing helper EOF -> activation; `abort()` closes/terminates helper if preparation fails before handoff.
+  - `SoftwareUpdateApplyService.prepare() -> PreparedUpdate` refetches public manifest, verifies V2, canonicalizes outer envelope bytes and base64 encodes them, spawns fixed `<expected_install_root>/NekoUpdater.exe --session` via injectable spawner (default `subprocess.Popen` stdin/stdout PIPE stderr DEVNULL; no shell, no arbitrary path/args), sends BEGIN, validates REQUEST_READY and echoed message id, downloads ONLY helper-reported changed components to fixed `incoming/<request_id>/launcher.artifact` or `core.artifact.zip`, sends APPLY, validates APPLY_RESULT. Return PreparedUpdate while IPC write end stays open. No activation in Launcher.
+  - Artifact grant uses existing `HttpArtifactGrantGateway`. Add/extend a focused downloader (same module or `software_update_client.py`) to HTTPS/no-redirect stream with signed max/exact-size bound, finite timeout, fixed destination, then reuse `verify_artifact`. No retry/resume. No env/argv test key/root backdoor.
+  - Core distribution capability provisioning/production server enforcement remains Owner Gate 2; Task 5 may expose injection seam for grant gateway/auth provider but must not embed/store/provision a production capability.
+
+D) UI wiring:
+- Modify `launcher/src/neko_launcher/ui/app_window.py` (`AppWindow`) to accept optional `update_apply_service`.
+- Add small footer/manual button `อัปเดตตอนนี้`, hidden/disabled unless last update result is AVAILABLE or MANDATORY and proxy/game are idle.
+- Button submits `prepare()` on existing single-worker `_update_executor`.
+- On prepared success, main-thread close path bypasses hide-to-tray and confirmation loops, performs normal `_perform_close()` teardown, then `PreparedUpdate.release()` as the LAST handoff action (or a dedicated `_perform_update_handoff` that guarantees release after teardown).
+- On failure show sanitized Thai toast and keep Launcher running.
+- No auto-apply at startup.
+
+E) Composition:
+- `launcher/src/neko_launcher/bootstrap/app_factory.py` (`build_window`): composes V2 check adapter + apply service with same shared empty production key registry (`PRODUCTION_RELEASE_PUBLIC_KEYS`) and fixed root/helper path; injection tests use ephemeral keys/temp roots.
+- Production with empty keys must fail closed/leave button unavailable or preparation fail safely until Owner Gate 2.
+
+F) Tests (TDD, release-oriented):
+1. `tests/test_software_update_v2_adapter.py`: valid V2 maps to legacy ReleaseSet used by policy; bad signature/schema/protocol fail; v1 envelope not accepted by production adapter.
+2. `tests/test_software_update_apply.py`: BEGIN -> only changed downloads -> fixed names -> APPLY -> returns PreparedUpdate with channel still open; release closes channel but does not terminate helper; rejected BEGIN/APPLY/download/hash/timeout abort safely; metadata-only performs no grant/download; command exactly NekoUpdater.exe --session; no arbitrary root CLI.
+3. Extend `tests/test_software_update_composition.py`: production composition uses shared V2 keys object and apply service; empty registry remains fail closed.
+4. Extend `tests/ui/test_software_update_one_shot.py` (or focused new UI test if cleaner): button only for AVAILABLE/MANDATORY idle; click calls prepare once; on failure Launcher remains; on prepared success `_perform_close` happens before prepared.release; startup check never auto-applies.
+5. Local integration test: one local integration test may inject a fake helper process/channel or use real built NekoUpdater with test-only Python seam; do NOT embed test keys in production exe. Full Launcher regression + Ruff + rebuild onefile smoke after implementation.
+
+Task 5 Execution Sequence:
+- [ ] Tests-only author -> contract review C0/I0 -> tests commit.
+- [ ] Genuine RED verification.
+- [ ] Production in 2 focused substeps (v2/apply service then UI/composition) with focused GREEN.
+- [ ] One final blocker review C0/I0.
+- [ ] Full regression + onefile smoke.
+- [ ] Narrow commits/push -> status READY_FOR_OWNER_AUTHORIZATION. No server/admin/deploy/key/signing/publication changes.
+
+```python
+# Sample snippet: Task 5 minimal test
+class FakePrepared:
+    def __init__(self):
+        self.released = False
+
+    def release(self):
+        self.released = True
+
+
+class FakeService:
+    def prepare(self):
+        return FakePrepared()
+
+
+def test_apply_service_prepare_success():
+    service = FakeService()
+    prepared = service.prepare()
+    assert not prepared.released
+    prepared.release()
+    assert prepared.released
+```
+```cmd
+# Example TDD execution
+cd /d E:\Github\worktrees\Neko-Family-Proxy-5.1\launcher
+.venv\Scripts\python.exe -B -m pytest tests/test_software_update_v2_adapter.py tests/test_software_update_apply.py -v
+.venv\Scripts\ruff.exe check src/neko_launcher/infrastructure/software_update_v2.py src/neko_launcher/infrastructure/software_update_apply.py
+cmd /d /c "set PYTHONDONTWRITEBYTECODE=1&& set NEKO_FINAL_CORE_ARTIFACT_PATH=E:\Github\worktrees\NekoProxyCore-live-update\TestResults\task12\a43-core&& .venv\Scripts\python.exe -B -m pytest -p no:cacheprovider -q --tb=no"
+```
+Commit message: `test: add launcher software update v2 adapter and apply caller tests` then `feat: wire launcher manual apply caller and v2 update check`
 
 ## Deliberately Not Building
 To strictly bound the scope to the Balanced threat model, the following will NOT be implemented:
