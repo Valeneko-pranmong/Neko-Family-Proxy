@@ -8,7 +8,7 @@ from neko_launcher.updater.ipc_channel import FramedIpcChannel, IpcProtocolError
 from neko_launcher.updater.root_validator import get_expected_install_root, validate_install_root
 from neko_launcher.updater.slot_store import SlotStore
 
-PRODUCTION_RELEASE_PUBLIC_KEYS: Mapping[str, bytes] = {}
+from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
 
 def serve_session(channel, coordinator) -> bool:
@@ -24,7 +24,7 @@ def serve_session(channel, coordinator) -> bool:
 
         begin_res = coordinator.begin(envelope_b64)
         channel.send_message(
-            type="REQUEST_READY",
+            "REQUEST_READY",
             message_id=msg.message_id,
             body={
                 "accepted": begin_res.accepted,
@@ -51,7 +51,7 @@ def serve_session(channel, coordinator) -> bool:
 
         apply_res = coordinator.apply(tx_id, req_id)
         channel.send_message(
-            type="APPLY_RESULT",
+            "APPLY_RESULT",
             message_id=msg2.message_id,
             body={
                 "accepted": apply_res.accepted,

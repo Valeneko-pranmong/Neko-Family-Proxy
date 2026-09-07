@@ -98,6 +98,7 @@ class AppWindow:
         telemetry_client: Any = None,
         proxy_status_client: Any = None,
         update_check_service: Any = None,
+        update_apply_service: Any = None,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -106,6 +107,9 @@ class AppWindow:
         self._telemetry_client = telemetry_client
         self._proxy_status_client = proxy_status_client
         self._update_check_service = update_check_service
+        self._update_apply_service = update_apply_service
+        self._update_apply_pending = False
+        self._update_apply_future: Future[Any] | None = None
         self._last_update_result: UpdateCheckResult | None = None
         self._proxy_status_refresh_pending = False
         self._public_server_host_status: str | None = None
@@ -384,6 +388,16 @@ class AppWindow:
         self._show_auth_view()
         self._update_message_visibility()
         self._toast = ToastNotification(self.root)
+
+        self._update_apply_button = ctk.CTkButton(
+            shell,
+            text="อัปเดตตอนนี้",
+            command=self._apply_software_update,
+            state="disabled",
+            width=112,
+            height=26,
+        )
+        self._update_apply_button.pack(pady=(0, 2))
 
         footer = ctk.CTkLabel(
             shell,
@@ -1256,8 +1270,95 @@ class AppWindow:
             return
         self._submit_software_update_check(service.check_manual)
 
+    @staticmethod
+    def _state_value(value: Any) -> Any:
+        return getattr(value, "value", value)
+
+    def _can_apply_software_update(self) -> bool:
+        result = getattr(self, "_last_update_result", None)
+        controller = getattr(self, "_controller", None)
+        state = getattr(controller, "state", None)
+        if result is None or state is None:
+            return False
+        update_state = self._state_value(getattr(result, "state", None))
+        proxy_state = self._state_value(getattr(state, "proxy_status", None))
+        game_state = self._state_value(getattr(state, "game_status", "stopped"))
+        return (
+            getattr(self, "_update_apply_service", None) is not None
+            and not getattr(self, "_closing", False)
+            and not getattr(self, "_update_apply_pending", False)
+            and update_state in {UpdateState.AVAILABLE.value, UpdateState.MANDATORY.value}
+            and proxy_state == ProxyStatus.STOPPED.value
+            and not bool(getattr(state, "game_process_running", False))
+            and game_state == GameStatus.STOPPED.value
+        )
+
+    def _refresh_software_update_apply_action(self) -> None:
+        button = getattr(self, "_update_apply_button", None)
+        if button is not None:
+            button.configure(
+                state="normal" if self._can_apply_software_update() else "disabled"
+            )
+
+    def _abort_update_apply_future(self, future: Future[Any]) -> None:
+        if getattr(self, "_update_apply_future", None) is not future:
+            return
+        self._update_apply_future = None
+        self._update_apply_pending = False
+        if not future.done():
+            return
+        try:
+            prepared = future.result()
+        except Exception:
+            return
+        try:
+            prepared.abort()
+        except Exception:
+            pass
+
+    def _apply_software_update(self) -> None:
+        if not self._can_apply_software_update():
+            return
+        service = self._update_apply_service
+        self._update_apply_pending = True
+        self._refresh_software_update_apply_action()
+        try:
+            future = self._update_executor.submit(service.prepare)
+        except RuntimeError:
+            self._update_apply_pending = False
+            self._error.set("ไม่สามารถเตรียมการอัปเดตได้ กรุณาลองใหม่")
+            self._refresh_software_update_apply_action()
+            return
+        self._update_apply_future = future
+
+        def finish() -> None:
+            if not future.done():
+                if self.root.winfo_exists() and not self._closing:
+                    self.root.after(100, finish)
+                return
+            if self._closing:
+                self._abort_update_apply_future(future)
+                return
+            try:
+                prepared = future.result()
+            except Exception:
+                if getattr(self, "_update_apply_future", None) is future:
+                    self._update_apply_future = None
+                self._update_apply_pending = False
+                self._error.set("ไม่สามารถเตรียมการอัปเดตได้ กรุณาลองใหม่")
+                self._refresh_software_update_apply_action()
+                return
+
+            self._update_apply_future = None
+            self._update_apply_pending = False
+            self._perform_close()
+            prepared.release()
+
+        self.root.after(100, finish)
+
     def _record_software_update_internal_failure(self) -> None:
         self._last_update_result = None
+        self._refresh_software_update_apply_action()
         if self._closing:
             return
         self._record_debug_status(
@@ -1304,6 +1405,7 @@ class AppWindow:
                 return
 
             self._last_update_result = result
+            self._refresh_software_update_apply_action()
             self._record_debug_status(
                 "SOFTWARE_UPDATE_CHECK",
                 state=state,
@@ -1449,6 +1551,7 @@ class AppWindow:
             ProxyStatus.FAILED: "ProxyCore: เริ่มทำงานไม่สำเร็จ",
         }[state.proxy_status]
         self._proxy_connection_status.set(proxy_text)
+        self._refresh_software_update_apply_action()
         if state.last_error:
             self._error.set(state.last_error)
 
@@ -1966,6 +2069,12 @@ class AppWindow:
 
     def _perform_close(self) -> None:
         self._closing = True
+        update_apply_future = getattr(self, "_update_apply_future", None)
+        if update_apply_future is not None:
+            if update_apply_future.done():
+                self._abort_update_apply_future(update_apply_future)
+            else:
+                update_apply_future.add_done_callback(self._abort_update_apply_future)
         self._cancel_automatic_reconnect(reset_attempts=True)
         self._clear_recovery_sensitive_fields()
         if getattr(self, "_settings_window", None) is not None:

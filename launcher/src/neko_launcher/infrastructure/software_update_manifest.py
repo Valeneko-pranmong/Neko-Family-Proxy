@@ -14,6 +14,10 @@ from neko_launcher.application.software_update_models import (
     parse_release_set,
 )
 
+from .software_update_v2 import (
+    V2ReleaseManifestVerifierAdapter as V2ReleaseManifestVerifierAdapter,
+)
+
 _ENVELOPE_KEYS = {
     "envelope_version",
     "key_id",

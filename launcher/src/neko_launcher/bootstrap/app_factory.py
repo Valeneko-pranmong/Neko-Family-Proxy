@@ -35,13 +35,17 @@ from neko_launcher.infrastructure.proxy_status_client import PublicProxyStatusCl
 from neko_launcher.infrastructure.software_release_identity import (
     load_local_release_identity,
 )
+from neko_launcher.infrastructure.software_update_apply import SoftwareUpdateApplyService
 from neko_launcher.infrastructure.software_update_client import (
+    HttpArtifactGrantGateway,
     HttpUpdateManifestGateway,
 )
-from neko_launcher.infrastructure.software_update_manifest import (
-    ReleaseManifestVerifier,
+from neko_launcher.infrastructure.software_update_v2 import (
+    V2ReleaseManifestVerifierAdapter,
 )
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
+from neko_launcher.updater.root_validator import get_expected_install_root
+from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
 from neko_launcher.ui.app_window import AppWindow
@@ -63,8 +67,8 @@ def compose_update_check_service(
     key_registry: Mapping[str, bytes] | None = None,
 ) -> UpdateCheckService:
     manifest_gateway = HttpUpdateManifestGateway(config.software_update_api_url)
-    verifier = ReleaseManifestVerifier(
-        {} if key_registry is None else key_registry
+    verifier = V2ReleaseManifestVerifierAdapter(
+        PRODUCTION_RELEASE_PUBLIC_KEYS if key_registry is None else key_registry
     )
     launcher_executable = (
         Path(sys.executable)
@@ -90,10 +94,27 @@ def compose_update_check_service(
     )
 
 
+def compose_update_apply_service(
+    config: LauncherConfig,
+    *,
+    key_registry: Mapping[str, bytes] | None = None,
+    root_dir: Path | None = None,
+) -> SoftwareUpdateApplyService:
+    return SoftwareUpdateApplyService(
+        root_dir=root_dir or get_expected_install_root(),
+        manifest_gateway=HttpUpdateManifestGateway(config.software_update_api_url),
+        grant_gateway=HttpArtifactGrantGateway(config.software_update_api_url),
+        key_registry=(
+            PRODUCTION_RELEASE_PUBLIC_KEYS if key_registry is None else key_registry
+        ),
+    )
+
+
 def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
     update_check_service = compose_update_check_service(config)
+    update_apply_service = compose_update_apply_service(config)
     event_bus = EventBus()
     game_manager = GameProcessManager()
     secure_store = KeyringSecureStore()
@@ -220,4 +241,5 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         telemetry_client=telemetry_client,
         proxy_status_client=proxy_status_client,
         update_check_service=update_check_service,
+        update_apply_service=update_apply_service,
     )
