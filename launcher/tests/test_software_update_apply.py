@@ -295,6 +295,7 @@ def test_prepare_default_downloader_uses_launcher_grant_and_https_transport(
     }
     envelope = signed_envelope(envelope_payload)
     request_id = "req-default-download"
+    (tmp_path / "incoming" / request_id).mkdir(parents=True)
     channel = FakeChannel(
         responses=[
             {
