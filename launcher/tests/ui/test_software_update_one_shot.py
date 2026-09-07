@@ -160,11 +160,17 @@ def capture_diagnostics(
     return events
 
 
-def preserve_application_state(window: AppWindow) -> dict[str, Any]:
+def preserve_application_state(
+    window: AppWindow,
+    *,
+    proxy_status: str = "running",
+    game_process_running: bool = False,
+) -> dict[str, Any]:
     controller = SimpleNamespace(
         state=SimpleNamespace(
             auth_status="authenticated",
-            proxy_status="running",
+            proxy_status=proxy_status,
+            game_process_running=game_process_running,
         )
     )
     error = FakeVariable("existing error")
@@ -559,7 +565,7 @@ def test_manual_apply_click_submits_single_prepare_and_failed_prepare_keeps_laun
     apply_service = SimpleNamespace(prepare=failing_prepare)
     window, root, update_executor = build_window(None, apply_service=apply_service)
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
-    before = preserve_application_state(window)
+    before = preserve_application_state(window, proxy_status="stopped")
     diagnostics = capture_diagnostics(window)
 
     _trigger_update_action(window)
@@ -587,6 +593,12 @@ def test_successful_prepared_update_calls_perform_close_before_release_without_c
     apply_service = SimpleNamespace(prepare=lambda: prepared)
     window, root, _update_executor = build_window(None, apply_service=apply_service)
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+        )
+    )
 
     def fake_perform_close() -> None:
         call_order.append("_perform_close")
