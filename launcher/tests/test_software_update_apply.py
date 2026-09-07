@@ -646,6 +646,165 @@ def test_prepare_aborts_and_raises_when_apply_rejected(
     assert spawner.process.terminated or spawner.process.killed
 
 
+def _metadata_only_responses(
+    *,
+    ready_body: dict[str, Any] | None = None,
+    apply_body: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "REQUEST_READY",
+            "message_id": "msg-0",
+            "body": ready_body
+            or {
+                "accepted": True,
+                "request_id": "req-strict",
+                "transaction_id": "tx-strict",
+                "changed": {"launcher": False, "core": False},
+                "error": None,
+            },
+        },
+        {
+            "type": "APPLY_RESULT",
+            "message_id": "msg-1",
+            "body": apply_body
+            or {
+                "accepted": True,
+                "transaction_id": "tx-strict",
+                "error": None,
+            },
+        },
+    ]
+
+
+def test_prepare_default_channel_uses_process_pipe_file_descriptors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import neko_launcher.infrastructure.software_update_apply as apply_module
+
+    service_cls, prepared_cls, _ = _get_apply_api()
+
+    class FakePipe:
+        def __init__(self, fd: int) -> None:
+            self.fd = fd
+            self.closed = False
+
+        def fileno(self) -> int:
+            return self.fd
+
+        def close(self) -> None:
+            self.closed = True
+
+    process = FakeProcess()
+    process.stdout = FakePipe(41)
+    process.stdin = FakePipe(42)
+    spawner = FakeSpawner()
+    spawner.process = process
+    captured: list[tuple[int, int]] = []
+
+    class StrictFramedIpcChannel(FakeChannel):
+        def __init__(self, read_handle: int, write_handle: int) -> None:
+            assert type(read_handle) is int
+            assert type(write_handle) is int
+            assert read_handle == process.stdout.fileno()
+            assert write_handle == process.stdin.fileno()
+            captured.append((read_handle, write_handle))
+            super().__init__(_metadata_only_responses())
+
+    monkeypatch.setattr(apply_module, "FramedIpcChannel", StrictFramedIpcChannel)
+    service = service_cls(
+        root_dir=tmp_path,
+        manifest_gateway=SimpleNamespace(fetch=make_test_v2_envelope),
+        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        spawner=spawner,
+        downloader=FakeDownloader(),
+    )
+
+    prepared = service.prepare()
+
+    assert isinstance(prepared, prepared_cls)
+    assert captured == [(41, 42)]
+
+
+def test_prepare_uses_real_channel_send_message_api(tmp_path: Path) -> None:
+    service_cls, prepared_cls, _ = _get_apply_api()
+    spawner = FakeSpawner()
+
+    class StrictSendChannel(FakeChannel):
+        def send_message(
+            self,
+            msg_type: str,
+            body: dict[str, Any],
+            message_id: str | None = None,
+        ) -> str:
+            return super().send_message(msg_type, body, message_id)
+
+    channel = StrictSendChannel(_metadata_only_responses())
+    service = _build_service(
+        service_cls, tmp_path, spawner, channel, FakeDownloader()
+    )
+
+    prepared = service.prepare()
+
+    assert isinstance(prepared, prepared_cls)
+
+
+@pytest.mark.parametrize(
+    ("ready_body", "apply_body"),
+    [
+        (
+            {
+                "accepted": 1,
+                "request_id": "req-strict",
+                "transaction_id": "tx-strict",
+                "changed": {"launcher": False, "core": False},
+                "error": None,
+            },
+            None,
+        ),
+        (
+            {
+                "accepted": True,
+                "request_id": "req-strict",
+                "transaction_id": "tx-strict",
+                "changed": {"launcher": False, "core": False},
+                "error": None,
+                "extra": "forbidden",
+            },
+            None,
+        ),
+        (
+            None,
+            {
+                "accepted": True,
+                "transaction_id": "tx-other",
+                "error": None,
+            },
+        ),
+    ],
+    ids=("ready-non-bool", "ready-extra-key", "apply-wrong-transaction"),
+)
+def test_prepare_aborts_on_non_closed_response_body(
+    tmp_path: Path,
+    ready_body: dict[str, Any] | None,
+    apply_body: dict[str, Any] | None,
+) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    spawner = FakeSpawner()
+    channel = FakeChannel(
+        _metadata_only_responses(ready_body=ready_body, apply_body=apply_body)
+    )
+    service = _build_service(
+        service_cls, tmp_path, spawner, channel, FakeDownloader()
+    )
+
+    with pytest.raises(error_cls):
+        service.prepare()
+
+    assert spawner.process.terminated or spawner.process.killed
+
+
 def test_prepare_aborts_and_raises_when_manifest_verify_fails(
     tmp_path: Path,
 ) -> None:

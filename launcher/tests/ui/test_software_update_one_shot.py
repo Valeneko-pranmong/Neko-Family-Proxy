@@ -582,6 +582,55 @@ def test_manual_apply_click_submits_single_prepare_and_failed_prepare_keeps_laun
     assert all(secret not in repr(ev) for ev in diagnostics)
 
 
+def test_closing_during_update_prepare_aborts_prepared_helper() -> None:
+    call_order: list[str] = []
+
+    class FakePrepared:
+        def __init__(self) -> None:
+            self.abort_calls = 0
+            self.release_calls = 0
+
+        def abort(self) -> None:
+            self.abort_calls += 1
+            call_order.append("prepared.abort")
+
+        def release(self) -> None:
+            self.release_calls += 1
+            call_order.append("prepared.release")
+
+    prepared = FakePrepared()
+    apply_service = SimpleNamespace(prepare=lambda: prepared)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    deferred_executor = DeferredExecutor()
+    window._update_executor = deferred_executor  # type: ignore[assignment]
+    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+        )
+    )
+    perform_close_calls = 0
+
+    def fake_perform_close() -> None:
+        nonlocal perform_close_calls
+        perform_close_calls += 1
+
+    window._perform_close = fake_perform_close  # type: ignore[method-assign]
+
+    _trigger_update_action(window)
+    assert len(deferred_executor.futures) == 1
+
+    window._closing = True
+    deferred_executor.futures[0].set_result(prepared)
+    root.run_callback_generation()
+
+    assert prepared.abort_calls >= 1
+    assert prepared.release_calls == 0
+    assert call_order == ["prepared.abort"]
+    assert perform_close_calls == 0
+
+
 def test_successful_prepared_update_calls_perform_close_before_release_without_close_loop() -> None:
     call_order: list[str] = []
 
