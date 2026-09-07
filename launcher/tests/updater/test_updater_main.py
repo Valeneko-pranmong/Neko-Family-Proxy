@@ -1,4 +1,6 @@
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from neko_launcher.updater.activation import ActivationResult
@@ -364,3 +366,36 @@ def test_cli_contract(monkeypatch, tmp_path):
     assert updater_main.main(["--session"]) != 0
 
     assert updater_main.main(["--root", str(tmp_path)]) != 0
+
+    original_stdout = sys.stdout
+    monkeypatch.setattr(
+        updater_main,
+        "PRODUCTION_RELEASE_PUBLIC_KEYS",
+        {"prod": b"\x02" * 32},
+    )
+    monkeypatch.setattr(
+        updater_main,
+        "get_expected_install_root",
+        lambda: tmp_path / "install",
+    )
+    monkeypatch.setattr(
+        updater_main,
+        "validate_install_root",
+        lambda root: SimpleNamespace(valid=True),
+    )
+
+    run_session_called = 0
+
+    def fake_run_session(root, keys):
+        nonlocal run_session_called
+        assert sys.stdout is sys.stderr
+        run_session_called += 1
+        return 0
+
+    monkeypatch.setattr(updater_main, "run_session", fake_run_session)
+
+    try:
+        assert updater_main.main(["--session"]) == 0
+        assert run_session_called == 1
+    finally:
+        sys.stdout = original_stdout
