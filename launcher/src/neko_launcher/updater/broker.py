@@ -20,7 +20,7 @@ from neko_launcher.updater.staging_handoff import (
     handle_begin_request,
 )
 from neko_launcher.updater.state_machine import validate_transition
-from neko_launcher.updater.state_models import Generation, State
+from neko_launcher.updater.state_models import Generation, Mutation, State
 
 
 @dataclass(frozen=True)
@@ -160,7 +160,9 @@ class BrokerCoordinator:
         except OSError:
             return self._abort(current_state, "IO_FAILED")
             
-        new_tx = dataclasses.replace(tx, staging=identity, stage="BUILDING", mutation=None)
+        new_tx = dataclasses.replace(
+            tx, staging=identity, stage="BUILDING", mutation=Mutation("WRITE_CANDIDATE", "stage", "INTENT")
+        )
         building_state = dataclasses.replace(current_state, transaction=new_tx, revision=current_state.revision + 1)
         try:
             validate_transition(current_state, building_state)
