@@ -199,3 +199,60 @@ def test_release_contract_requires_no_additional_secrets() -> None:
     assert not re.search(r"\bsecrets\s*\.", workflow_text(), re.IGNORECASE), (
         "the release contract must use scoped github.token permissions, not secrets.*"
     )
+
+
+def test_publication_has_explicit_repository_context_without_checkout() -> None:
+    publishers = publication_jobs(workflow_text())
+    assert publishers, "release.yml must have a publication job"
+
+    for publisher in publishers:
+        has_checkout = "actions/checkout@" in publisher.text.lower()
+        has_gh_repo = bool(
+            re.search(
+                r"(?mi)^\s*GH_REPO:\s*['\"]?\$\{\{\s*github\.repository\s*}}['\"]?\s*$",
+                publisher.text,
+            )
+        )
+        has_repo_argument = bool(
+            re.search(
+                r"(?i)gh\s+release\s+create\b[^\n]*--repo(?:=|\s+)"
+                r"['\"]?\$\{\{\s*github\.repository\s*}}['\"]?",
+                publisher.text,
+            )
+        )
+        assert has_checkout or has_gh_repo or has_repo_argument, (
+            f"publication job {publisher.name!r} must check out the repository or bind "
+            "gh explicitly to ${{ github.repository }} via GH_REPO/--repo"
+        )
+
+
+def test_manual_release_tag_resolves_to_current_run_sha_before_publication() -> None:
+    publishers = publication_jobs(workflow_text())
+    assert publishers, "release.yml must have a publication job"
+
+    for publisher in publishers:
+        lowered = publisher.text.lower()
+        local_resolution = bool(
+            re.search(r"\bgit\s+rev-list\s+-n\s*1\b", lowered)
+            or re.search(r"\bgit\s+rev-parse\b[^\n]*\^\{\}", lowered)
+        )
+        api_ref_resolution = "gh api" in lowered and "/git/ref/tags/" in lowered
+        annotated_tag_peeling = "/git/tags/" in lowered
+        resolves_tag_commit = local_resolution or (
+            api_ref_resolution and annotated_tag_peeling
+        )
+        compares_with_run_sha = bool(
+            re.search(
+                r"(?mi)^.*(?:-eq|-ne|==|!=).*\$\{\{\s*github\.sha\s*}}.*$|"
+                r"^.*\$\{\{\s*github\.sha\s*}}.*(?:-eq|-ne|==|!=).*$",
+                publisher.text,
+            )
+        )
+        uses_explicit_release_tag = bool(
+            re.search(r"inputs\.release_tag|\bRELEASE_TAG\b", publisher.text)
+        )
+        assert resolves_tag_commit and compares_with_run_sha and uses_explicit_release_tag, (
+            f"publication job {publisher.name!r} must resolve the explicit release_tag "
+            "(including annotated-tag peeling) and concretely compare its commit to "
+            "${{ github.sha }} before publication"
+        )
