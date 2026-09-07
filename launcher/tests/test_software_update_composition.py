@@ -151,7 +151,35 @@ def test_valid_test_signed_manifest_reaches_lazy_identity_failure(
     tmp_path: Path,
 ) -> None:
     config = make_config(monkeypatch, tmp_path)
-    document = signed_envelope(valid_release_document())
+    document = signed_envelope(
+        {
+            "schema_version": 2,
+            "channel": "beta",
+            "release_sequence": 42,
+            "release_id": "r-42-test",
+            "mandatory": False,
+            "minimum_supported_sequence": 1,
+            "updater_protocol": {"minimum": 1, "maximum": 1},
+            "components": {
+                "launcher": {
+                    "version": "2.0.0",
+                    "artifact_id": "launcher-42",
+                    "artifact_sha256": "1" * 64,
+                    "installed_identity_sha256": "1" * 64,
+                    "artifact_size": 1024,
+                    "artifact_format": "raw-pe-v1",
+                },
+                "core": {
+                    "version": "3.0.0",
+                    "artifact_id": "core-42",
+                    "artifact_sha256": "2" * 64,
+                    "installed_identity_sha256": "3" * 64,
+                    "artifact_size": 2048,
+                    "artifact_format": "zip-core-v1",
+                },
+            },
+        }
+    )
     gateway = StaticManifestGateway(document)
 
     service = app_factory.compose_update_check_service(
