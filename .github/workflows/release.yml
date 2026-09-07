@@ -29,30 +29,22 @@ jobs:
         run: |
           python -m ruff check src tests
           python -m pytest -q -m "not integration"
-      - name: Build launcher executable
+      - name: Build launcher executables
         working-directory: launcher
-        run: python -m PyInstaller --clean --noconfirm NekoLauncher.spec
-      - name: Install Inno Setup
-        run: choco install innosetup --version=6.7.1 --no-progress --yes
-      - name: Build installer
-        shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF_TYPE -eq "tag") {
-            $env:GITHUB_REF_NAME.TrimStart("v")
-          } else {
-            "5.0.0-alpha.1"
-          }
-          $compiler = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-          if (-not $compiler) {
-            throw "Inno Setup compiler is unavailable"
-          }
-          & $compiler "/DMyAppVersion=$version" "installer\NekoLauncher.iss"
+          python -m PyInstaller --clean --noconfirm NekoLauncher.spec
+          python -m PyInstaller --clean --noconfirm NekoUpdater.spec
+      - name: Smoke-test updater executable
+        working-directory: launcher
+        run: dist\NekoUpdater.exe --self-check
+      - name: Note closed-beta installer owner gate
+        run: echo "Closed-beta installer assembly uses installer/scripts/build_beta_installer.py after approved external Core and prerequisite payloads are staged at Owner Gate."
       - name: Assemble checksummed artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release -Force | Out-Null
           Copy-Item launcher\dist\NekoLauncher.exe release\
-          Copy-Item installer\output\*-Setup.exe release\
+          Copy-Item launcher\dist\NekoUpdater.exe release\
           Get-ChildItem release\*.exe |
             Get-FileHash -Algorithm SHA256 |
             ForEach-Object {

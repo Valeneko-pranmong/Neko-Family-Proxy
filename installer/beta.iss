@@ -78,6 +78,9 @@ RestartIfNeededByRun=no
 Source: "{#PayloadDir}\NekoLauncher.exe"; \
     DestDir: "{app}"; \
     Flags: ignoreversion
+Source: "{#PayloadDir}\NekoUpdater.exe"; \
+    DestDir: "{app}"; \
+    Flags: ignoreversion
 
 ; Complete approved external Core bundle -> {app}\ProxyCore (external
 ; runtime; NOT embedded into the Launcher).

@@ -87,7 +87,27 @@ def main() -> int:
         fail(f"launcher sha mismatch: {got}")
     print("GATE launcher-sha256=PASS")
 
-    # ---- gate 2: Core manifest authority + every declared file -------------
+    # ---- gate 2: staged Updater presence, digest, and local self-check -------
+    updater = os.path.join(PAYLOAD, "NekoUpdater.exe")
+    if not os.path.isfile(updater):
+        fail(f"missing staged updater: {updater}")
+    updater_sha256 = sha256_file(updater)
+    try:
+        updater_check = subprocess.run(
+            [updater, "--self-check"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        fail("staged updater self-check timed out")
+    except OSError as exc:
+        fail(f"could not execute staged updater self-check: {exc}")
+    if updater_check.returncode != 0:
+        fail(f"staged updater self-check exited {updater_check.returncode}")
+    print("GATE updater-self-check=PASS")
+
+    # ---- gate 3: Core manifest authority + every declared file -------------
     manifest_path = os.path.join(CORE_BUNDLE, "core-manifest.json")
     if not os.path.isfile(manifest_path):
         fail(f"missing {manifest_path}")
@@ -221,6 +241,7 @@ def main() -> int:
         "installer_size_bytes": size,
         "installer_sha256": digest,
         "launcher_sha256": APPROVED_LAUNCHER_SHA256,
+        "updater_sha256": updater_sha256,
         "core_authority": CORE_AUTHORITY_COMMIT,
         "v2ray_sha256": APPROVED_V2RAY_SHA256,
         "dotnet_desktop_runtime": {
