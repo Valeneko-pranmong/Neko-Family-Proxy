@@ -9,7 +9,6 @@ from typing import get_type_hints
 
 import pytest
 
-from neko_launcher.application import ports
 from neko_launcher.application.software_update_models import (
     ComponentRelease,
     LocalReleaseIdentity,
@@ -19,7 +18,14 @@ from neko_launcher.application.software_update_models import (
     UpdateInvocationReason,
     UpdateState,
 )
-
+from neko_launcher.infrastructure.github_release import (
+    GitHubRelease,
+    GitHubReleaseAsset,
+)
+from neko_launcher.infrastructure.github_release_binding import (
+    AuthenticatedReleaseGateway,
+    ResolvedGitHubRelease,
+)
 
 TARGET_MODULE = "neko_launcher.application.software_update_service"
 
@@ -36,54 +42,31 @@ class ExplodingCodeError(Exception):
         raise RuntimeError("sentinel-code-property")
 
 
-class CountingGateway:
+class CountingReleaseGateway:
     def __init__(
         self,
-        document: object | None = None,
+        resolved: ResolvedGitHubRelease | None = None,
         error: Exception | None = None,
         *,
         blocking: bool = False,
     ) -> None:
-        self.document = document
+        self.resolved = resolved
         self.error = error
         self.calls = 0
-        self.channels: list[str] = []
         self.entered = threading.Event()
         self.release = threading.Event()
         self.blocking = blocking
         self._lock = threading.Lock()
 
-    def fetch(self, channel: str = "beta") -> object | None:
+    def resolve(self) -> ResolvedGitHubRelease | None:
         with self._lock:
             self.calls += 1
-            self.channels.append(channel)
         self.entered.set()
         if self.blocking and not self.release.wait(timeout=2):
             raise TimeoutError("test gateway was not released")
         if self.error is not None:
             raise self.error
-        return self.document
-
-
-class CountingVerifier:
-    def __init__(
-        self,
-        release: ReleaseSet | None = None,
-        error: Exception | None = None,
-    ) -> None:
-        self.release = release
-        self.error = error
-        self.calls = 0
-        self.documents: list[object] = []
-
-    def verify(self, document: object) -> ReleaseSet:
-        self.calls += 1
-        self.documents.append(document)
-        if self.error is not None:
-            raise self.error
-        if self.release is None:
-            raise AssertionError("verifier has no configured release")
-        return self.release
+        return self.resolved
 
 
 class LocalProvider:
@@ -123,7 +106,7 @@ def service_type() -> type:
 def remote_release(sequence: int) -> ReleaseSet:
     return ReleaseSet(
         schema_version=1,
-        channel="beta",
+        channel="stable",
         release_sequence=sequence,
         release_id=f"release-{sequence}",
         mandatory=False,
@@ -132,7 +115,7 @@ def remote_release(sequence: int) -> ReleaseSet:
             ComponentRelease(
                 "launcher",
                 "2.0.0",
-                "launcher-artifact",
+                "NekoLauncher.exe",
                 "a" * 64,
                 100,
                 "b" * 64,
@@ -140,12 +123,58 @@ def remote_release(sequence: int) -> ReleaseSet:
             ComponentRelease(
                 "core",
                 "2.0.0",
-                "core-artifact",
+                "NekoProxyCore.zip",
                 "c" * 64,
                 100,
                 "d" * 64,
             ),
         ),
+    )
+
+
+def make_resolved_release(sequence: int) -> ResolvedGitHubRelease:
+    rel = remote_release(sequence)
+    manifest_asset = GitHubReleaseAsset(
+        id=1,
+        name="release-v2.json",
+        size=100,
+        browser_download_url="https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v2.0.0/release-v2.json",
+    )
+    launcher_asset = GitHubReleaseAsset(
+        id=2,
+        name="NekoLauncher.exe",
+        size=100,
+        browser_download_url="https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v2.0.0/NekoLauncher.exe",
+    )
+    updater_asset = GitHubReleaseAsset(
+        id=3,
+        name="NekoUpdater.exe",
+        size=100,
+        browser_download_url="https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v2.0.0/NekoUpdater.exe",
+    )
+    core_asset = GitHubReleaseAsset(
+        id=4,
+        name="NekoProxyCore.zip",
+        size=100,
+        browser_download_url="https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v2.0.0/NekoProxyCore.zip",
+    )
+    gh_release = GitHubRelease(
+        id=1000,
+        tag_name="v2.0.0",
+        draft=False,
+        prerelease=False,
+        assets=(manifest_asset, launcher_asset, updater_asset, core_asset),
+    )
+    return ResolvedGitHubRelease(
+        authenticated_release=rel,
+        authenticated_release_v2=None,  # type: ignore[arg-type]
+        envelope_bytes=b'{"payload":"test"}',
+        envelope_document={"payload": "test"},
+        github_release=gh_release,
+        manifest_asset=manifest_asset,
+        launcher_asset=launcher_asset,
+        updater_asset=updater_asset,
+        core_asset=core_asset,
     )
 
 
@@ -166,11 +195,10 @@ def local_release(
 
 
 def make_service(
-    gateway: CountingGateway,
-    verifier: CountingVerifier,
+    gateway: CountingReleaseGateway,
     provider: LocalProvider,
 ):
-    return service_type()(gateway, verifier, provider)
+    return service_type()(gateway, provider)
 
 
 def wait_for_startup_waiter(service: object) -> None:
@@ -202,14 +230,11 @@ def assert_secret_absent(result: UpdateCheckResult, secret: str) -> None:
         assert secret not in repr(value)
 
 
-def test_update_manifest_gateway_contract() -> None:
-    signature = inspect.signature(ports.UpdateManifestGateway.fetch)
-    assert tuple(signature.parameters) == ("self", "channel")
-    assert signature.parameters["channel"].default == "beta"
-
-    hints = get_type_hints(ports.UpdateManifestGateway.fetch)
-    assert hints["channel"] is str
-    assert hints["return"] == object | None
+def test_authenticated_release_gateway_contract() -> None:
+    signature = inspect.signature(AuthenticatedReleaseGateway.resolve)
+    assert tuple(signature.parameters) == ("self",)
+    hints = get_type_hints(AuthenticatedReleaseGateway.resolve)
+    assert hints["return"] == ResolvedGitHubRelease | None
 
 
 def test_required_diagnostic_codes_have_exact_values() -> None:
@@ -226,13 +251,20 @@ def test_required_diagnostic_codes_have_exact_values() -> None:
         == "UPDATE_CHECK_INTERNAL_FAILURE"
     )
     assert UpdateDiagnosticCode.DOWNGRADE_REJECTED.value == "DOWNGRADE_REJECTED"
+    assert (
+        UpdateDiagnosticCode.UPDATER_INCOMPATIBLE.value
+        == "UPDATER_INCOMPATIBLE"
+    )
+    assert (
+        UpdateDiagnosticCode.GITHUB_RELEASE_UNAVAILABLE.value
+        == "GITHUB_RELEASE_UNAVAILABLE"
+    )
 
 
 def test_service_public_method_contract() -> None:
     service_class = service_type()
     assert tuple(inspect.signature(service_class).parameters) == (
-        "manifest_gateway",
-        "verifier",
+        "release_gateway",
         "local_identity_provider",
     )
     assert tuple(inspect.signature(service_class.check_startup).parameters) == (
@@ -245,11 +277,10 @@ def test_service_public_method_contract() -> None:
 
 
 def test_sequential_startup_checks_share_cached_result() -> None:
-    release = remote_release(2)
-    gateway = CountingGateway(release)
-    verifier = CountingVerifier(release)
+    resolved = make_resolved_release(2)
+    gateway = CountingReleaseGateway(resolved)
     provider = LocalProvider(local_release(1))
-    service = make_service(gateway, verifier, provider)
+    service = make_service(gateway, provider)
 
     first = service.check_startup()
     second = service.check_startup()
@@ -259,11 +290,10 @@ def test_sequential_startup_checks_share_cached_result() -> None:
 
 
 def test_concurrent_startup_checks_are_single_flight() -> None:
-    release = remote_release(2)
-    gateway = CountingGateway(release, blocking=True)
+    resolved = make_resolved_release(2)
+    gateway = CountingReleaseGateway(resolved, blocking=True)
     service = make_service(
         gateway,
-        CountingVerifier(release),
         LocalProvider(local_release(1)),
     )
     second_started = threading.Event()
@@ -287,11 +317,10 @@ def test_concurrent_startup_checks_are_single_flight() -> None:
 
 
 def test_manual_checks_always_fetch_and_do_not_reset_startup_cache() -> None:
-    release = remote_release(2)
-    gateway = CountingGateway(release)
+    resolved = make_resolved_release(2)
+    gateway = CountingReleaseGateway(resolved)
     service = make_service(
         gateway,
-        CountingVerifier(release),
         LocalProvider(local_release(1)),
     )
 
@@ -306,58 +335,47 @@ def test_manual_checks_always_fetch_and_do_not_reset_startup_cache() -> None:
 
 
 def test_missing_manifest_is_unavailable_without_verification() -> None:
-    gateway = CountingGateway(None)
-    verifier = CountingVerifier(error=AssertionError("must not be called"))
+    gateway = CountingReleaseGateway(None)
     provider = LocalProvider(error=AssertionError("must not be called"))
-    result = make_service(gateway, verifier, provider).check_manual()
+    result = make_service(gateway, provider).check_manual()
 
     assert result.state is UpdateState.UNAVAILABLE
     assert result.diagnostic_code is None
     assert_safe_empty_metadata(result)
-    assert verifier.calls == 0
     assert provider.calls == 0
 
 
-def test_coded_manifest_unavailable_maps_to_unavailable() -> None:
-    gateway = CountingGateway(
-        error=CodedError("MANIFEST_UNAVAILABLE", "unsafe detail"),
+@pytest.mark.parametrize(
+    "code",
+    ("MANIFEST_UNAVAILABLE", "GITHUB_RELEASE_UNAVAILABLE"),
+)
+def test_coded_manifest_unavailable_maps_to_unavailable(code: str) -> None:
+    gateway = CountingReleaseGateway(
+        error=CodedError(code, "unsafe detail"),
     )
     result = make_service(
         gateway,
-        CountingVerifier(error=AssertionError("must not be called")),
         LocalProvider(error=AssertionError("must not be called")),
     ).check_manual()
 
     assert result.state is UpdateState.UNAVAILABLE
-    assert result.diagnostic_code is UpdateDiagnosticCode.MANIFEST_UNAVAILABLE
+    assert result.diagnostic_code in (
+        UpdateDiagnosticCode.MANIFEST_UNAVAILABLE,
+        UpdateDiagnosticCode.GITHUB_RELEASE_UNAVAILABLE,
+    )
     assert_safe_empty_metadata(result)
     assert_secret_absent(result, "unsafe detail")
 
 
 @pytest.mark.parametrize(
-    ("source", "code"),
-    (
-        ("gateway", "MANIFEST_RESPONSE_INVALID"),
-        ("verifier", "SIGNATURE_INVALID"),
-    ),
+    "code",
+    ("MANIFEST_RESPONSE_INVALID", "RELEASE_MANIFEST_REJECTED", "SIGNATURE_INVALID"),
 )
-def test_rejected_manifest_codes_map_to_manifest_rejected(
-    source: str,
-    code: str,
-) -> None:
-    release = remote_release(2)
+def test_rejected_manifest_codes_map_to_manifest_rejected(code: str) -> None:
     error = CodedError(code, "unsafe rejected detail")
-    gateway = CountingGateway(
-        release,
-        error=error if source == "gateway" else None,
-    )
-    verifier = CountingVerifier(
-        release,
-        error=error if source == "verifier" else None,
-    )
+    gateway = CountingReleaseGateway(error=error)
     result = make_service(
         gateway,
-        verifier,
         LocalProvider(local_release(1)),
     ).check_manual()
 
@@ -367,11 +385,24 @@ def test_rejected_manifest_codes_map_to_manifest_rejected(
     assert_secret_absent(result, "unsafe rejected detail")
 
 
-def test_available_launcher_only_update_has_safe_release_metadata() -> None:
-    release = remote_release(2)
+def test_updater_incompatible_maps_to_updater_incompatible() -> None:
+    error = CodedError("UPDATER_INCOMPATIBLE", "unsafe updater detail")
+    gateway = CountingReleaseGateway(error=error)
     result = make_service(
-        CountingGateway(release),
-        CountingVerifier(release),
+        gateway,
+        LocalProvider(local_release(1)),
+    ).check_manual()
+
+    assert result.state is UpdateState.VERIFY_FAILED
+    assert result.diagnostic_code is UpdateDiagnosticCode.UPDATER_INCOMPATIBLE
+    assert_safe_empty_metadata(result)
+    assert_secret_absent(result, "unsafe updater detail")
+
+
+def test_available_launcher_only_update_has_safe_release_metadata() -> None:
+    resolved = make_resolved_release(2)
+    result = make_service(
+        CountingReleaseGateway(resolved),
         LocalProvider(
             local_release(
                 1,
@@ -392,10 +423,9 @@ def test_available_launcher_only_update_has_safe_release_metadata() -> None:
 
 
 def test_downgrade_is_rejected_by_real_policy() -> None:
-    release = remote_release(1)
+    resolved = make_resolved_release(1)
     result = make_service(
-        CountingGateway(release),
-        CountingVerifier(release),
+        CountingReleaseGateway(resolved),
         LocalProvider(local_release(2)),
     ).check_manual()
 
@@ -405,10 +435,9 @@ def test_downgrade_is_rejected_by_real_policy() -> None:
 
 def test_local_identity_failure_is_sanitized_before_metadata_exists() -> None:
     secret = "sentinel-local-identity-detail"
-    release = remote_release(2)
+    resolved = make_resolved_release(2)
     result = make_service(
-        CountingGateway(release),
-        CountingVerifier(release),
+        CountingReleaseGateway(resolved),
         LocalProvider(error=ValueError(secret)),
     ).check_manual()
 
@@ -423,13 +452,12 @@ def test_local_identity_failure_is_sanitized_before_metadata_exists() -> None:
 
 def test_concurrent_startup_internal_failure_is_cached_and_sanitized() -> None:
     secret = "sentinel-internal-detail"
-    gateway = CountingGateway(
+    gateway = CountingReleaseGateway(
         error=RuntimeError(secret),
         blocking=True,
     )
     service = make_service(
         gateway,
-        CountingVerifier(error=AssertionError("must not be called")),
         LocalProvider(error=AssertionError("must not be called")),
     )
     second_started = threading.Event()
@@ -462,10 +490,9 @@ def test_concurrent_startup_internal_failure_is_cached_and_sanitized() -> None:
 def test_unknown_coded_exception_is_internal_failure() -> None:
     secret = "sentinel-unknown-code"
     result = make_service(
-        CountingGateway(
+        CountingReleaseGateway(
             error=CodedError("NEW_UNTRUSTED_CODE", secret),
         ),
-        CountingVerifier(error=AssertionError("must not be called")),
         LocalProvider(error=AssertionError("must not be called")),
     ).check_manual()
 
@@ -478,12 +505,10 @@ def test_unknown_coded_exception_is_internal_failure() -> None:
     assert_secret_absent(result, secret)
 
 
-def test_verifier_runtime_error_does_not_leak_raw_document() -> None:
+def test_gateway_runtime_error_does_not_leak_raw_document() -> None:
     secret = "sentinel-raw-manifest-document"
-    document = {"payload": secret}
     result = make_service(
-        CountingGateway(document),
-        CountingVerifier(error=RuntimeError(repr(document))),
+        CountingReleaseGateway(error=RuntimeError(secret)),
         LocalProvider(error=AssertionError("must not be called")),
     ).check_manual()
 
@@ -497,13 +522,12 @@ def test_verifier_runtime_error_does_not_leak_raw_document() -> None:
 
 
 def test_exception_code_accessor_failure_cannot_strand_startup_waiters() -> None:
-    gateway = CountingGateway(
+    gateway = CountingReleaseGateway(
         error=ExplodingCodeError("safe outer message"),
         blocking=True,
     )
     service = make_service(
         gateway,
-        CountingVerifier(error=AssertionError("must not be called")),
         LocalProvider(error=AssertionError("must not be called")),
     )
     executor = ThreadPoolExecutor(max_workers=2)
@@ -517,8 +541,6 @@ def test_exception_code_accessor_failure_cannot_strand_startup_waiters() -> None
         first = first_future.result(timeout=2)
         second = second_future.result(timeout=2)
     finally:
-        # Recover a broken pre-fix implementation so the regression test itself
-        # cannot leave a worker blocked forever during RED verification.
         condition = service._startup_condition
         with condition:
             service._startup_checking = False

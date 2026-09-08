@@ -3,25 +3,56 @@ from __future__ import annotations
 import base64
 import hashlib
 import inspect
-import json
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from neko_launcher.infrastructure.github_asset_downloader import (
+    DownloadedArtifact,
+    GitHubAssetDownloadError,
+)
+from neko_launcher.infrastructure.github_release import (
+    GitHubRelease,
+    GitHubReleaseAsset,
+)
+from neko_launcher.infrastructure.github_release_binding import (
+    CORE_ASSET_NAME,
+    LAUNCHER_ASSET_NAME,
+    RELEASE_MANIFEST_ASSET_NAME,
+    UPDATER_ASSET_NAME,
+    AuthenticatedReleaseGateway,
+    GitHubReleaseResolverError,
+    ResolvedGitHubRelease,
+)
+from neko_launcher.infrastructure.software_update_v2 import (
+    V2ReleaseManifestVerifierAdapter,
+)
+from neko_launcher.updater.canonical_json import (
+    canonical_json_dumps,
+    canonical_json_loads,
+)
+from neko_launcher.updater.manifest_v2 import (
+    UPDATER_PROTOCOL_VERSION,
+    parse_release_v2,
+)
+from neko_launcher.updater.staging_handoff import handle_begin_request
+from neko_launcher.updater.state_models import Binding, Generation, State
+
 try:
     from tests.software_update_helpers import (
         TEST_KEY_ID,
         TEST_PUBLIC_KEY,
         signed_envelope,
+        valid_v2_release_document,
     )
 except ImportError:
     from software_update_helpers import (  # type: ignore[no-redef]
         TEST_KEY_ID,
         TEST_PUBLIC_KEY,
         signed_envelope,
+        valid_v2_release_document,
     )
 
 
@@ -50,6 +81,8 @@ class FakeProcess:
     def __init__(self) -> None:
         self.terminated = False
         self.killed = False
+        self.stdin: Any = None
+        self.stdout: Any = None
 
     def terminate(self) -> None:
         self.terminated = True
@@ -103,94 +136,186 @@ class FakeChannel:
         self.closed = True
 
 
-class FakeDownloader:
+class FakeAssetDownloader:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
-        self.downloaded: list[tuple[str, Path]] = []
+        self.calls: list[dict[str, Any]] = []
 
-    def download(self, component: str, destination: Path) -> None:
-        if self.fail:
-            raise RuntimeError(f"Simulated download failure for {component}")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(f"payload-{component}".encode())
-        self.downloaded.append((component, destination))
-
-
-def make_test_v2_envelope() -> dict[str, Any]:
-    payload = {
-        "schema_version": 2,
-        "channel": "beta",
-        "release_sequence": 50,
-        "release_id": "r-50-test",
-        "mandatory": False,
-        "minimum_supported_sequence": 1,
-        "updater_protocol": {"minimum": 1, "maximum": 1},
-        "components": {
-            "launcher": {
-                "version": "2.0.0",
-                "artifact_id": "launcher-50",
-                "artifact_sha256": "1" * 64,
-                "installed_identity_sha256": "1" * 64,
-                "artifact_size": 1024,
-                "artifact_format": "raw-pe-v1",
-            },
-            "core": {
-                "version": "3.0.0",
-                "artifact_id": "core-50",
-                "artifact_sha256": "2" * 64,
-                "installed_identity_sha256": "3" * 64,
-                "artifact_size": 2048,
-                "artifact_format": "zip-core-v1",
-            },
-        },
-    }
-    return signed_envelope(payload)
-
-
-def _build_service(
-    service_cls: Any,
-    root_dir: Path,
-    spawner: FakeSpawner,
-    channel: FakeChannel,
-    downloader: FakeDownloader,
-    envelope: dict[str, Any] | None = None,
-) -> Any:
-    env = envelope if envelope is not None else make_test_v2_envelope()
-    manifest_gateway = SimpleNamespace(fetch=lambda: env)
-    key_registry = {TEST_KEY_ID: TEST_PUBLIC_KEY}
-
-    kwargs: dict[str, Any] = {
-        "root_dir": root_dir,
-        "manifest_gateway": manifest_gateway,
-        "key_registry": key_registry,
-        "spawner": spawner,
-        "channel_factory": lambda: channel,
-        "downloader": downloader,
-    }
-
-    try:
-        return service_cls(**kwargs)
-    except TypeError:
-        pass
-
-    try:
-        return service_cls(
-            root_dir=root_dir,
-            spawner=spawner,
-            channel=channel,
-            downloader=downloader,
-            manifest_gateway=manifest_gateway,
+    def download(
+        self,
+        *,
+        initial_url: str,
+        destination: Path,
+        expected_size: int,
+        expected_sha256: str,
+    ) -> DownloadedArtifact:
+        self.calls.append(
+            {
+                "initial_url": initial_url,
+                "destination": destination,
+                "expected_size": expected_size,
+                "expected_sha256": expected_sha256,
+            }
         )
-    except TypeError:
-        return service_cls(root_dir)
+        if self.fail:
+            raise GitHubAssetDownloadError("DOWNLOAD_UNAVAILABLE")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"downloaded-payload")
+        return DownloadedArtifact(size=expected_size, sha256=expected_sha256)
+
+
+class FakeReleaseGateway:
+    def __init__(
+        self,
+        resolved: ResolvedGitHubRelease | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.resolved = resolved
+        self.error = error
+        self.calls = 0
+
+    def resolve(self) -> ResolvedGitHubRelease | None:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.resolved
+
+
+def make_resolved_release(
+    sequence: int = 50,
+    *,
+    launcher_version: str = "2.0.0",
+    core_version: str = "3.0.0",
+    launcher_sha: str = "1" * 64,
+    core_sha: str = "2" * 64,
+    updater_sha: str = "3" * 64,
+    launcher_size: int = 1024,
+    core_size: int = 2048,
+    updater_size: int = 4096,
+) -> ResolvedGitHubRelease:
+    doc = valid_v2_release_document(
+        sequence=sequence,
+        release_id=f"r-{sequence}-test",
+        launcher_version=launcher_version,
+        launcher_sha=launcher_sha,
+        launcher_size=launcher_size,
+        core_version=core_version,
+        core_sha=core_sha,
+        core_size=core_size,
+        updater_sha=updater_sha,
+        updater_size=updater_size,
+    )
+    envelope = signed_envelope(doc)
+    envelope_bytes = canonical_json_dumps(envelope)
+
+    adapter = V2ReleaseManifestVerifierAdapter(
+        {TEST_KEY_ID: TEST_PUBLIC_KEY},
+        updater_protocol=UPDATER_PROTOCOL_VERSION,
+    )
+    auth_release = adapter.verify(envelope)
+    auth_release_v2 = parse_release_v2(doc)
+
+    manifest_asset = GitHubReleaseAsset(
+        id=1,
+        name=RELEASE_MANIFEST_ASSET_NAME,
+        size=len(envelope_bytes),
+        browser_download_url=f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v{launcher_version}/release-v2.json",
+    )
+    launcher_asset = GitHubReleaseAsset(
+        id=2,
+        name=LAUNCHER_ASSET_NAME,
+        size=launcher_size,
+        browser_download_url=f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v{launcher_version}/NekoLauncher.exe",
+    )
+    updater_asset = GitHubReleaseAsset(
+        id=3,
+        name=UPDATER_ASSET_NAME,
+        size=updater_size,
+        browser_download_url=f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v{launcher_version}/NekoUpdater.exe",
+    )
+    core_asset = GitHubReleaseAsset(
+        id=4,
+        name=CORE_ASSET_NAME,
+        size=core_size,
+        browser_download_url=f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v{launcher_version}/NekoProxyCore.zip",
+    )
+    gh_release = GitHubRelease(
+        id=999,
+        tag_name=f"v{launcher_version}",
+        draft=False,
+        prerelease=False,
+        assets=(manifest_asset, launcher_asset, updater_asset, core_asset),
+    )
+
+    return ResolvedGitHubRelease(
+        authenticated_release=auth_release,
+        authenticated_release_v2=auth_release_v2,
+        envelope_bytes=envelope_bytes,
+        envelope_document=envelope,
+        github_release=gh_release,
+        manifest_asset=manifest_asset,
+        launcher_asset=launcher_asset,
+        updater_asset=updater_asset,
+        core_asset=core_asset,
+    )
+
+
+def _metadata_only_responses(
+    *,
+    ready_body: dict[str, Any] | None = None,
+    apply_body: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    default_ready = {
+        "accepted": True,
+        "request_id": "req-strict",
+        "transaction_id": "tx-strict",
+        "changed": {"launcher": False, "core": False},
+        "error": None,
+    }
+    default_apply = {
+        "accepted": True,
+        "transaction_id": "tx-strict",
+        "error": None,
+    }
+    return [
+        {
+            "type": "REQUEST_READY",
+            "message_id": "msg-0",
+            "body": default_ready if ready_body is None else ready_body,
+        },
+        {
+            "type": "APPLY_RESULT",
+            "message_id": "msg-1",
+            "body": default_apply if apply_body is None else apply_body,
+        },
+    ]
+
+
+def test_software_update_apply_service_contract() -> None:
+    service_cls, _, _ = _get_apply_api()
+    sig = inspect.signature(service_cls.__init__)
+    params = tuple(sig.parameters)
+    assert params == (
+        "self",
+        "root_dir",
+        "release_gateway",
+        "asset_downloader",
+        "spawner",
+        "channel_factory",
+    )
 
 
 def test_prepare_success_spawns_helper_downloads_changed_and_returns_prepared(
     tmp_path: Path,
 ) -> None:
     service_cls, prepared_cls, _ = _get_apply_api()
-
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
     spawner = FakeSpawner()
+
+    request_id = "req-xyz-101"
+    transaction_id = "tx-abc-202"
     channel = FakeChannel(
         responses=[
             {
@@ -198,8 +323,8 @@ def test_prepare_success_spawns_helper_downloads_changed_and_returns_prepared(
                 "message_id": "msg-0",
                 "body": {
                     "accepted": True,
-                    "request_id": "req-xyz-101",
-                    "transaction_id": "tx-abc-202",
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
                     "changed": {"launcher": True, "core": True},
                     "error": None,
                 },
@@ -209,542 +334,119 @@ def test_prepare_success_spawns_helper_downloads_changed_and_returns_prepared(
                 "message_id": "msg-1",
                 "body": {
                     "accepted": True,
-                    "transaction_id": "tx-abc-202",
+                    "transaction_id": transaction_id,
                     "error": None,
                 },
             },
         ]
     )
-    downloader = FakeDownloader()
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     prepared = service.prepare()
 
-    # Spawner invocation assertions: exactly [fixed_root/NekoUpdater.exe, '--session']
+    assert isinstance(prepared, prepared_cls)
+    assert gateway.calls == 1
     assert len(spawner.calls) == 1
-    spawn_call = spawner.calls[0]
-    expected_exe = str(tmp_path / "NekoUpdater.exe")
-    assert spawn_call["command"] == [expected_exe, "--session"]
-    assert not spawn_call.get("kwargs", {}).get("shell", False)
-    assert len(spawn_call["command"]) == 2  # No arbitrary root arguments
-
-    # Channel message validations
-    assert len(channel.sent) == 2
-    assert channel.sent[0]["type"] == "BEGIN"
-    assert "envelope_b64" in channel.sent[0]["body"]
-    assert channel.sent[1]["type"] == "APPLY"
-    assert channel.sent[1]["body"] == {
-        "transaction_id": "tx-abc-202",
-        "request_id": "req-xyz-101",
-    }
-
-    # Downloader destination validations
-    assert len(downloader.downloaded) == 2
-    expected_incoming = tmp_path / "incoming" / "req-xyz-101"
-    assert downloader.downloaded == [
-        ("launcher", expected_incoming / "launcher.artifact"),
-        ("core", expected_incoming / "core.artifact.zip"),
+    assert spawner.calls[0]["command"] == [
+        str(tmp_path / "NekoUpdater.exe"),
+        "--session",
     ]
 
-    # Prepared update object checks: channel remains open, helper not terminated
-    assert isinstance(prepared, prepared_cls)
-    assert channel.closed is False
-    assert spawner.process.terminated is False
-    assert spawner.process.killed is False
+    # Verify BEGIN message sent exact envelope bytes as base64
+    assert len(channel.sent) == 2
+    begin_msg = channel.sent[0]
+    assert begin_msg["type"] == "BEGIN"
+    raw_env_bytes = base64.b64decode(begin_msg["body"]["envelope_b64"])
+    assert raw_env_bytes == resolved.envelope_bytes
 
+    # Verify downloads: both launcher and core
+    assert len(downloader.calls) == 2
+    incoming_dir = tmp_path / "incoming" / request_id
+    launcher_call = next(
+        c for c in downloader.calls if c["destination"] == incoming_dir / "launcher.artifact"
+    )
+    core_call = next(
+        c for c in downloader.calls if c["destination"] == incoming_dir / "core.artifact.zip"
+    )
+    assert launcher_call["initial_url"] == resolved.launcher_asset.browser_download_url
+    assert launcher_call["expected_size"] == resolved.authenticated_release_v2.components["launcher"].artifact_size
+    assert launcher_call["expected_sha256"] == resolved.authenticated_release_v2.components["launcher"].artifact_sha256
 
-def test_prepare_default_downloader_uses_launcher_grant_and_https_transport(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import neko_launcher.infrastructure.software_update_apply as apply_module
+    assert core_call["initial_url"] == resolved.core_asset.browser_download_url
+    assert core_call["expected_size"] == resolved.authenticated_release_v2.components["core"].artifact_size
+    assert core_call["expected_sha256"] == resolved.authenticated_release_v2.components["core"].artifact_sha256
 
-    service_cls, prepared_cls, _ = _get_apply_api()
-    payload = b"neko-launcher-update"
-    payload_sha256 = hashlib.sha256(payload).hexdigest()
-    launcher_artifact_id = "launcher-default-download"
-    envelope_payload = {
-        "schema_version": 2,
-        "channel": "beta",
-        "release_sequence": 51,
-        "release_id": "r-51-default-download",
-        "mandatory": False,
-        "minimum_supported_sequence": 1,
-        "updater_protocol": {"minimum": 1, "maximum": 1},
-        "components": {
-            "launcher": {
-                "version": "2.0.1",
-                "artifact_id": launcher_artifact_id,
-                "artifact_sha256": payload_sha256,
-                "installed_identity_sha256": payload_sha256,
-                "artifact_size": len(payload),
-                "artifact_format": "raw-pe-v1",
-            },
-            "core": {
-                "version": "3.0.0",
-                "artifact_id": "core-51",
-                "artifact_sha256": "2" * 64,
-                "installed_identity_sha256": "3" * 64,
-                "artifact_size": 2048,
-                "artifact_format": "zip-core-v1",
-            },
-        },
+    # Verify APPLY message sent
+    apply_msg = channel.sent[1]
+    assert apply_msg["type"] == "APPLY"
+    assert apply_msg["body"] == {
+        "transaction_id": transaction_id,
+        "request_id": request_id,
     }
-    envelope = signed_envelope(envelope_payload)
-    request_id = "req-default-download"
-    (tmp_path / "incoming" / request_id).mkdir(parents=True)
-    channel = FakeChannel(
-        responses=[
-            {
-                "type": "REQUEST_READY",
-                "message_id": "msg-0",
-                "body": {
-                    "accepted": True,
-                    "request_id": request_id,
-                    "transaction_id": "tx-default-download",
-                    "changed": {"launcher": True, "core": False},
-                    "error": None,
-                },
-            },
-            {
-                "type": "APPLY_RESULT",
-                "message_id": "msg-1",
-                "body": {
-                    "accepted": True,
-                    "transaction_id": "tx-default-download",
-                    "error": None,
-                },
-            },
-        ]
-    )
-    grant_calls: list[str] = []
 
-    class FakeGrantGateway:
-        def grant(self, artifact_id: str) -> Any:
-            grant_calls.append(artifact_id)
-            return SimpleNamespace(
-                url="https://updates.example.test/launcher.artifact",
-                expires_at=datetime.now(UTC) + timedelta(minutes=5),
-            )
 
-    class FakeHttpsResponse:
-        status = 200
+def test_prepare_mandatory_resolver_refetch(tmp_path: Path) -> None:
+    service_cls, _, _ = _get_apply_api()
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
 
-        def __init__(self) -> None:
-            self._offset = 0
+    def make_channel() -> FakeChannel:
+        return FakeChannel(_metadata_only_responses())
 
-        def __enter__(self) -> FakeHttpsResponse:
-            return self
-
-        def __exit__(self, *_args: Any) -> None:
-            return None
-
-        def read(self, size: int = -1) -> bytes:
-            if self._offset >= len(payload):
-                return b""
-            end = len(payload) if size < 0 else self._offset + size
-            chunk = payload[self._offset : end]
-            self._offset += len(chunk)
-            return chunk
-
-    opened_urls: list[str] = []
-
-    def fake_open(url: Any, *_args: Any, **_kwargs: Any) -> FakeHttpsResponse:
-        opened_urls.append(url.full_url if hasattr(url, "full_url") else str(url))
-        return FakeHttpsResponse()
-
-    opener_name = next(
-        (
-            name
-            for name in ("_open_no_redirect", "urlopen")
-            if hasattr(apply_module, name)
-        ),
-        "urlopen",
-    )
-    monkeypatch.setattr(apply_module, opener_name, fake_open, raising=False)
     spawner = FakeSpawner()
     service = service_cls(
         root_dir=tmp_path,
-        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
-        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        release_gateway=gateway,
+        asset_downloader=downloader,
         spawner=spawner,
-        channel_factory=lambda: channel,
-        grant_gateway=FakeGrantGateway(),
+        channel_factory=make_channel,
     )
 
-    prepared = service.prepare()
-
-    assert grant_calls == [launcher_artifact_id]
-    assert opened_urls == ["https://updates.example.test/launcher.artifact"]
-    assert (tmp_path / "incoming" / request_id / "launcher.artifact").read_bytes() == payload
-    assert not (tmp_path / "incoming" / request_id / "core.artifact.zip").exists()
-    assert [message["type"] for message in channel.sent] == ["BEGIN", "APPLY"]
-    assert isinstance(prepared, prepared_cls)
-    assert channel.closed is False
-    assert spawner.process.terminated is False
-    assert spawner.process.killed is False
-
-
-def test_prepare_default_downloader_rejects_trailing_response_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import neko_launcher.infrastructure.software_update_apply as apply_module
-
-    service_cls, _, error_cls = _get_apply_api()
-    good_payload = b"neko-launcher-signed-payload"
-    launcher_artifact_id = "launcher-trailing-response"
-    envelope = signed_envelope(
-        {
-            "schema_version": 2,
-            "channel": "beta",
-            "release_sequence": 52,
-            "release_id": "r-52-trailing-response",
-            "mandatory": False,
-            "minimum_supported_sequence": 1,
-            "updater_protocol": {"minimum": 1, "maximum": 1},
-            "components": {
-                "launcher": {
-                    "version": "2.0.2",
-                    "artifact_id": launcher_artifact_id,
-                    "artifact_sha256": hashlib.sha256(good_payload).hexdigest(),
-                    "installed_identity_sha256": hashlib.sha256(good_payload).hexdigest(),
-                    "artifact_size": len(good_payload),
-                    "artifact_format": "raw-pe-v1",
-                },
-                "core": {
-                    "version": "3.0.0",
-                    "artifact_id": "core-52",
-                    "artifact_sha256": "2" * 64,
-                    "installed_identity_sha256": "3" * 64,
-                    "artifact_size": 2048,
-                    "artifact_format": "zip-core-v1",
-                },
-            },
-        }
-    )
-    request_id = "req-trailing-response"
-    (tmp_path / "incoming" / request_id).mkdir(parents=True)
-    channel = FakeChannel(
-        responses=[
-            {
-                "type": "REQUEST_READY",
-                "message_id": "msg-0",
-                "body": {
-                    "accepted": True,
-                    "request_id": request_id,
-                    "transaction_id": "tx-trailing-response",
-                    "changed": {"launcher": True, "core": False},
-                    "error": None,
-                },
-            },
-            {
-                "type": "APPLY_RESULT",
-                "message_id": "msg-1",
-                "body": {
-                    "accepted": True,
-                    "transaction_id": "tx-trailing-response",
-                    "error": None,
-                },
-            },
-        ]
-    )
-
-    class FakeGrantGateway:
-        def grant(self, artifact_id: str) -> Any:
-            assert artifact_id == launcher_artifact_id
-            return SimpleNamespace(
-                url="https://updates.example.test/launcher.artifact",
-                expires_at=datetime.now(UTC) + timedelta(minutes=5),
-            )
-
-    class FakeHttpsResponse:
-        status = 200
-
-        def __init__(self) -> None:
-            self.chunks = [good_payload, b"EXTRA"]
-
-        def __enter__(self) -> FakeHttpsResponse:
-            return self
-
-        def __exit__(self, *_args: Any) -> None:
-            return None
-
-        def read(self, size: int = -1) -> bytes:
-            if not self.chunks:
-                return b""
-            chunk = self.chunks.pop(0)
-            if size >= 0 and len(chunk) > size:
-                self.chunks.insert(0, chunk[size:])
-                return chunk[:size]
-            return chunk
-
-    def fake_open(_url: Any, *_args: Any, **_kwargs: Any) -> FakeHttpsResponse:
-        return FakeHttpsResponse()
-
-    opener_name = next(
-        (
-            name
-            for name in ("_open_no_redirect", "urlopen")
-            if hasattr(apply_module, name)
-        ),
-        "urlopen",
-    )
-    monkeypatch.setattr(apply_module, opener_name, fake_open, raising=False)
-    spawner = FakeSpawner()
-    service = service_cls(
-        root_dir=tmp_path,
-        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
-        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
-        spawner=spawner,
-        channel_factory=lambda: channel,
-        grant_gateway=FakeGrantGateway(),
-    )
-
-    with pytest.raises(error_cls):
-        service.prepare()
-
-    assert spawner.process.terminated or spawner.process.killed
-    assert not any(message["type"] == "APPLY" for message in channel.sent)
-
-
-@pytest.mark.parametrize(
-    ("changed", "expected_provider_reads", "expected_grant_calls"),
-    [
-        ({"launcher": True, "core": False}, 0, [("anonymous", "launcher-50", None)]),
-        ({"launcher": False, "core": True}, 1, [("core", "core-50", "capability")]),
-        ({"launcher": False, "core": False}, 0, []),
-    ],
-    ids=("launcher-only", "core-only", "metadata-only"),
-)
-def test_default_download_selects_grant_path_and_reads_capability_only_for_core(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    changed: dict[str, bool],
-    expected_provider_reads: int,
-    expected_grant_calls: list[tuple[str, str, str | None]],
-) -> None:
-    import neko_launcher.infrastructure.software_update_apply as apply_module
-
-    service_cls, prepared_cls, _ = _get_apply_api()
-    assert "distribution_capability_provider" in inspect.signature(
-        service_cls
-    ).parameters, "missing lazy distribution_capability_provider seam"
-    capability = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
-    payloads = {"launcher": b"L", "core": b"C"}
-    unsigned_envelope = make_test_v2_envelope()
-    document = json.loads(base64.b64decode(unsigned_envelope["payload_b64"]))
-    for name, payload in payloads.items():
-        document["components"][name]["artifact_sha256"] = hashlib.sha256(payload).hexdigest()
-        document["components"][name]["installed_identity_sha256"] = hashlib.sha256(
-            payload
-        ).hexdigest()
-        document["components"][name]["artifact_size"] = len(payload)
-    envelope = signed_envelope(document)
-    request_id = "req-grant-routing"
-    (tmp_path / "incoming" / request_id).mkdir(parents=True)
-    channel = FakeChannel(
-        [
-            {
-                "type": "REQUEST_READY",
-                "message_id": "msg-0",
-                "body": {
-                    "accepted": True,
-                    "request_id": request_id,
-                    "transaction_id": "tx-grant-routing",
-                    "changed": changed,
-                    "error": None,
-                },
-            },
-            {
-                "type": "APPLY_RESULT",
-                "message_id": "msg-1",
-                "body": {
-                    "accepted": True,
-                    "transaction_id": "tx-grant-routing",
-                    "error": None,
-                },
-            },
-        ]
-    )
-    provider_reads: list[str] = []
-    grant_calls: list[tuple[str, str, str | None]] = []
-
-    class FakeGrantGateway:
-        def grant(self, artifact_id: str) -> Any:
-            grant_calls.append(("anonymous", artifact_id, None))
-            return self._result(artifact_id)
-
-        def grant_core(self, artifact_id: str, received: str) -> Any:
-            assert provider_reads == ["read"]
-            assert received == capability
-            grant_calls.append(("core", artifact_id, "capability"))
-            return self._result(artifact_id)
-
-        @staticmethod
-        def _result(artifact_id: str) -> Any:
-            return SimpleNamespace(
-                url=f"https://updates.example.test/{artifact_id}",
-                expires_at=datetime.now(UTC) + timedelta(minutes=5),
-            )
-
-    opened_requests: list[Any] = []
-
-    class FakeHttpsResponse:
-        status = 200
-
-        def __init__(self, body: bytes) -> None:
-            self.body = body
-
-        def __enter__(self) -> FakeHttpsResponse:
-            return self
-
-        def __exit__(self, *_args: Any) -> None:
-            return None
-
-        def read(self, size: int = -1) -> bytes:
-            result = self.body if size < 0 else self.body[:size]
-            self.body = self.body[len(result) :]
-            return result
-
-    def fake_open(request: Any, **_kwargs: Any) -> FakeHttpsResponse:
-        opened_requests.append(request)
-        component = "core" if "core-50" in request.full_url else "launcher"
-        return FakeHttpsResponse(payloads[component])
-
-    monkeypatch.setattr(apply_module, "_open_no_redirect", fake_open)
-    service = service_cls(
-        root_dir=tmp_path,
-        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
-        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
-        spawner=FakeSpawner(),
-        channel_factory=lambda: channel,
-        grant_gateway=FakeGrantGateway(),
-        distribution_capability_provider=lambda: provider_reads.append("read") or capability,
-    )
-
-    prepared = service.prepare()
-
-    assert isinstance(prepared, prepared_cls)
-    assert len(provider_reads) == expected_provider_reads
-    assert grant_calls == expected_grant_calls
-    assert all(
-        request.get_header("Authorization") is None
-        and request.get_header("Cookie") is None
-        for request in opened_requests
-    )
-
-
-def test_missing_core_capability_aborts_before_grant_or_apply(tmp_path: Path) -> None:
-    service_cls, _, error_cls = _get_apply_api()
-    assert "distribution_capability_provider" in inspect.signature(
-        service_cls
-    ).parameters, "missing lazy distribution_capability_provider seam"
-    spawner = FakeSpawner()
-    channel = FakeChannel(
-        [{
-            "type": "REQUEST_READY",
-            "message_id": "msg-0",
-            "body": {
-                "accepted": True,
-                "request_id": "req-missing-capability",
-                "transaction_id": "tx-missing-capability",
-                "changed": {"launcher": False, "core": True},
-                "error": None,
-            },
-        }]
-    )
-    provider_reads: list[str] = []
-
-    class NeverGrant:
-        def grant_core(self, artifact_id: str, capability: str) -> Any:
-            raise AssertionError(f"Core grant must not occur: {artifact_id} {capability}")
-
-    service = service_cls(
-        root_dir=tmp_path,
-        manifest_gateway=SimpleNamespace(fetch=make_test_v2_envelope),
-        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
-        spawner=spawner,
-        channel_factory=lambda: channel,
-        grant_gateway=NeverGrant(),
-        distribution_capability_provider=lambda: provider_reads.append("read") or None,
-    )
-
-    with pytest.raises(error_cls) as caught:
-        service.prepare()
-
-    assert caught.value.code
-    assert str(caught.value) == caught.value.code
-    assert provider_reads == ["read"]
-    assert [message["type"] for message in channel.sent] == ["BEGIN"]
-    assert spawner.process.terminated or spawner.process.killed
-
-
-def test_prepared_update_release_closes_channel_without_terminating_helper(
-    tmp_path: Path,
-) -> None:
-    service_cls, prepared_cls, _ = _get_apply_api()
-
-    spawner = FakeSpawner()
-    channel = FakeChannel(
-        responses=[
-            {
-                "type": "REQUEST_READY",
-                "message_id": "msg-0",
-                "body": {
-                    "accepted": True,
-                    "request_id": "req-rel-1",
-                    "transaction_id": "tx-rel-1",
-                    "changed": {"launcher": True, "core": False},
-                    "error": None,
-                },
-            },
-            {
-                "type": "APPLY_RESULT",
-                "message_id": "msg-1",
-                "body": {
-                    "accepted": True,
-                    "transaction_id": "tx-rel-1",
-                    "error": None,
-                },
-            },
-        ]
-    )
-    downloader = FakeDownloader()
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
-    )
-
-    prepared = service.prepare()
-    assert isinstance(prepared, prepared_cls)
-    assert channel.closed is False
-    assert len(downloader.downloaded) == 1
-    assert downloader.downloaded[0][0] == "launcher"
-
-    # Calling release() must close channel/pipe to produce EOF on broker side, but NOT terminate helper
-    prepared.release()
-
-    assert channel.closed is True
-    assert spawner.process.terminated is False
-    assert spawner.process.killed is False
+    service.prepare()
+    service.prepare()
+    assert gateway.calls == 2
 
 
 def test_prepare_metadata_only_skips_downloads_and_sends_apply(
     tmp_path: Path,
 ) -> None:
     service_cls, prepared_cls, _ = _get_apply_api()
-
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
     spawner = FakeSpawner()
+    channel = FakeChannel(_metadata_only_responses())
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    prepared = service.prepare()
+    assert isinstance(prepared, prepared_cls)
+    assert len(downloader.calls) == 0
+    assert len(channel.sent) == 2
+    assert channel.sent[1]["type"] == "APPLY"
+
+
+def test_prepare_launcher_only_download(tmp_path: Path) -> None:
+    service_cls, _, _ = _get_apply_api()
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
+    spawner = FakeSpawner()
+    request_id = "req-launcher-only"
     channel = FakeChannel(
         responses=[
             {
@@ -752,9 +454,9 @@ def test_prepare_metadata_only_skips_downloads_and_sends_apply(
                 "message_id": "msg-0",
                 "body": {
                     "accepted": True,
-                    "request_id": "req-meta-1",
-                    "transaction_id": "tx-meta-1",
-                    "changed": {"launcher": False, "core": False},
+                    "request_id": request_id,
+                    "transaction_id": "tx-l",
+                    "changed": {"launcher": True, "core": False},
                     "error": None,
                 },
             },
@@ -763,37 +465,206 @@ def test_prepare_metadata_only_skips_downloads_and_sends_apply(
                 "message_id": "msg-1",
                 "body": {
                     "accepted": True,
-                    "transaction_id": "tx-meta-1",
+                    "transaction_id": "tx-l",
                     "error": None,
                 },
             },
         ]
     )
-    downloader = FakeDownloader()
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    service.prepare()
+    assert len(downloader.calls) == 1
+    assert downloader.calls[0]["destination"] == tmp_path / "incoming" / request_id / "launcher.artifact"
+
+
+def test_prepare_core_only_download(tmp_path: Path) -> None:
+    service_cls, _, _ = _get_apply_api()
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
+    spawner = FakeSpawner()
+    request_id = "req-core-only"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": "tx-c",
+                    "changed": {"launcher": False, "core": True},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": "tx-c",
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    service.prepare()
+    assert len(downloader.calls) == 1
+    assert downloader.calls[0]["destination"] == tmp_path / "incoming" / request_id / "core.artifact.zip"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED"),
+        GitHubReleaseResolverError("UPDATER_INCOMPATIBLE"),
+        GitHubReleaseResolverError("GITHUB_RELEASE_UNAVAILABLE"),
+        None,  # gateway.resolve() returning None
+    ],
+)
+def test_prepare_resolver_failure_rejects_before_spawner(
+    tmp_path: Path,
+    error: Exception | None,
+) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    gateway = FakeReleaseGateway(resolved=None, error=error)
+    downloader = FakeAssetDownloader()
+    spawner = FakeSpawner()
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+    )
+
+    with pytest.raises(error_cls):
+        service.prepare()
+
+    # Spawner must NEVER be called if resolver fails
+    assert len(spawner.calls) == 0
+
+
+def test_cross_boundary_canonical_envelope_regression(tmp_path: Path) -> None:
+    service_cls, _, _ = _get_apply_api()
+    resolved = make_resolved_release(2)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
+    spawner = FakeSpawner()
+
+    sent_envelopes: list[str] = []
+
+    class CapturingChannel(FakeChannel):
+        def send_message(
+            self,
+            type: str,
+            body: dict[str, Any],
+            message_id: str | None = None,
+        ) -> str:
+            if type == "BEGIN":
+                sent_envelopes.append(body["envelope_b64"])
+            return super().send_message(type, body, message_id)
+
+    channel = CapturingChannel(_metadata_only_responses())
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    service.prepare()
+
+    assert len(sent_envelopes) == 1
+    forwarded_b64 = sent_envelopes[0]
+    forwarded_bytes = base64.b64decode(forwarded_b64)
+    # Byte-identical to resolver canonical exact bytes
+    assert forwarded_bytes == resolved.envelope_bytes
+
+    # Prove staging_handoff accepts those exact bytes
+    initial_binding = Binding(release_sequence=1, release_id="rel-1", payload_sha256="1" * 64)
+    committed_gen = Generation(
+        binding=initial_binding,
+        launcher_identity_sha256="a" * 64,
+        core_identity_sha256="b" * 64,
+    )
+    current_state = State(
+        schema_version=1,
+        revision=1,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=committed_gen,
+        previous=None,
+        highwater=initial_binding,
+        observed=initial_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={},
+    )
+    keys = {TEST_KEY_ID: TEST_PUBLIC_KEY}
+    ready_res, next_state = handle_begin_request(tmp_path, current_state, forwarded_b64, keys)
+    assert ready_res.accepted is True
+    assert ready_res.error is None
+    assert next_state is not None
+
+
+def test_prepared_update_release_closes_channel_without_terminating_helper(
+    tmp_path: Path,
+) -> None:
+    service_cls, _, _ = _get_apply_api()
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
+    spawner = FakeSpawner()
+    channel = FakeChannel(_metadata_only_responses())
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     prepared = service.prepare()
+    assert channel.closed is False
+    assert spawner.process.terminated is False
+    assert spawner.process.killed is False
 
-    # Metadata only: no downloads performed
-    assert len(downloader.downloaded) == 0
-    # Still sends APPLY
-    assert len(channel.sent) == 2
-    assert channel.sent[1]["type"] == "APPLY"
-    assert channel.sent[1]["body"]["transaction_id"] == "tx-meta-1"
-    assert isinstance(prepared, prepared_cls)
+    prepared.release()
+    assert channel.closed is True
+    assert spawner.process.terminated is False
+    assert spawner.process.killed is False
 
 
-def test_prepare_aborts_and_raises_when_begin_rejected(
-    tmp_path: Path,
-) -> None:
+def test_prepare_aborts_and_raises_when_begin_rejected(tmp_path: Path) -> None:
     service_cls, _, error_cls = _get_apply_api()
-
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
     spawner = FakeSpawner()
     channel = FakeChannel(
         responses=[
@@ -805,34 +676,34 @@ def test_prepare_aborts_and_raises_when_begin_rejected(
                     "request_id": None,
                     "transaction_id": None,
                     "changed": None,
-                    "error": "REJECTED_SIGNATURE",
+                    "error": "DOWNGRADE_REJECTED",
                 },
             }
         ]
     )
-    downloader = FakeDownloader()
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     with pytest.raises(error_cls) as exc_info:
         service.prepare()
 
-    assert hasattr(exc_info.value, "code")
-    # Abort must terminate helper
+    assert exc_info.value.code == "BEGIN_REJECTED"
     assert spawner.process.terminated or spawner.process.killed
-    assert len(downloader.downloaded) == 0
 
 
 def test_prepare_aborts_and_raises_when_message_id_mismatched_or_malformed(
     tmp_path: Path,
 ) -> None:
     service_cls, _, error_cls = _get_apply_api()
-
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
     spawner = FakeSpawner()
     channel = FakeChannel(
         responses=[
@@ -848,13 +719,13 @@ def test_prepare_aborts_and_raises_when_message_id_mismatched_or_malformed(
             }
         ]
     )
-    downloader = FakeDownloader()
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     with pytest.raises(error_cls) as exc_info:
@@ -862,14 +733,13 @@ def test_prepare_aborts_and_raises_when_message_id_mismatched_or_malformed(
 
     assert hasattr(exc_info.value, "code")
     assert spawner.process.terminated or spawner.process.killed
-    assert len(downloader.downloaded) == 0
 
 
-def test_prepare_aborts_and_raises_when_download_fails(
-    tmp_path: Path,
-) -> None:
+def test_prepare_aborts_and_raises_when_download_fails(tmp_path: Path) -> None:
     service_cls, _, error_cls = _get_apply_api()
-
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader(fail=True)
     spawner = FakeSpawner()
     channel = FakeChannel(
         responses=[
@@ -886,30 +756,27 @@ def test_prepare_aborts_and_raises_when_download_fails(
             }
         ]
     )
-    downloader = FakeDownloader(fail=True)
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     with pytest.raises(error_cls) as exc_info:
         service.prepare()
 
     assert hasattr(exc_info.value, "code")
-    # Helper process aborted on download failure
     assert spawner.process.terminated or spawner.process.killed
-    # No APPLY message sent
-    assert not any(m["type"] == "APPLY" for m in channel.sent)
 
 
-def test_prepare_aborts_and_raises_when_apply_rejected(
-    tmp_path: Path,
-) -> None:
+def test_prepare_aborts_and_raises_when_apply_rejected(tmp_path: Path) -> None:
     service_cls, _, error_cls = _get_apply_api()
-
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = FakeAssetDownloader()
     spawner = FakeSpawner()
     channel = FakeChannel(
         responses=[
@@ -935,52 +802,20 @@ def test_prepare_aborts_and_raises_when_apply_rejected(
             },
         ]
     )
-    downloader = FakeDownloader()
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     with pytest.raises(error_cls) as exc_info:
         service.prepare()
 
     assert hasattr(exc_info.value, "code")
-    # Helper process aborted on apply rejection
     assert spawner.process.terminated or spawner.process.killed
-
-
-def _metadata_only_responses(
-    *,
-    ready_body: dict[str, Any] | None = None,
-    apply_body: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "REQUEST_READY",
-            "message_id": "msg-0",
-            "body": ready_body
-            or {
-                "accepted": True,
-                "request_id": "req-strict",
-                "transaction_id": "tx-strict",
-                "changed": {"launcher": False, "core": False},
-                "error": None,
-            },
-        },
-        {
-            "type": "APPLY_RESULT",
-            "message_id": "msg-1",
-            "body": apply_body
-            or {
-                "accepted": True,
-                "transaction_id": "tx-strict",
-                "error": None,
-            },
-        },
-    ]
 
 
 def test_prepare_default_channel_uses_process_pipe_file_descriptors(
@@ -1019,41 +854,17 @@ def test_prepare_default_channel_uses_process_pipe_file_descriptors(
             super().__init__(_metadata_only_responses())
 
     monkeypatch.setattr(apply_module, "FramedIpcChannel", StrictFramedIpcChannel)
+    resolved = make_resolved_release(50)
     service = service_cls(
         root_dir=tmp_path,
-        manifest_gateway=SimpleNamespace(fetch=make_test_v2_envelope),
-        key_registry={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        release_gateway=FakeReleaseGateway(resolved),
+        asset_downloader=FakeAssetDownloader(),
         spawner=spawner,
-        downloader=FakeDownloader(),
     )
 
     prepared = service.prepare()
-
     assert isinstance(prepared, prepared_cls)
     assert captured == [(41, 42)]
-
-
-def test_prepare_uses_real_channel_send_message_api(tmp_path: Path) -> None:
-    service_cls, prepared_cls, _ = _get_apply_api()
-    spawner = FakeSpawner()
-
-    class StrictSendChannel(FakeChannel):
-        def send_message(
-            self,
-            msg_type: str,
-            body: dict[str, Any],
-            message_id: str | None = None,
-        ) -> str:
-            return super().send_message(msg_type, body, message_id)
-
-    channel = StrictSendChannel(_metadata_only_responses())
-    service = _build_service(
-        service_cls, tmp_path, spawner, channel, FakeDownloader()
-    )
-
-    prepared = service.prepare()
-
-    assert isinstance(prepared, prepared_cls)
 
 
 @pytest.mark.parametrize(
@@ -1097,12 +908,17 @@ def test_prepare_aborts_on_non_closed_response_body(
     apply_body: dict[str, Any] | None,
 ) -> None:
     service_cls, _, error_cls = _get_apply_api()
+    resolved = make_resolved_release(50)
     spawner = FakeSpawner()
     channel = FakeChannel(
         _metadata_only_responses(ready_body=ready_body, apply_body=apply_body)
     )
-    service = _build_service(
-        service_cls, tmp_path, spawner, channel, FakeDownloader()
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=FakeReleaseGateway(resolved),
+        asset_downloader=FakeAssetDownloader(),
+        spawner=spawner,
+        channel_factory=lambda: channel,
     )
 
     with pytest.raises(error_cls):
@@ -1111,35 +927,20 @@ def test_prepare_aborts_on_non_closed_response_body(
     assert spawner.process.terminated or spawner.process.killed
 
 
-def test_prepare_aborts_and_raises_when_manifest_verify_fails(
-    tmp_path: Path,
-) -> None:
-    service_cls, _, error_cls = _get_apply_api()
+def test_source_guards_no_grant_or_obsolete_apis_in_apply() -> None:
+    import neko_launcher.infrastructure.software_update_apply as apply_module
 
-    spawner = FakeSpawner()
-    channel = FakeChannel([])
-    downloader = FakeDownloader()
-
-    corrupt_envelope = make_test_v2_envelope()
-    corrupt_envelope["signature_b64"] = "A" * 86 + "=="
-
-    service = _build_service(
-        service_cls,
-        tmp_path,
-        spawner,
-        channel,
-        downloader,
-        envelope=corrupt_envelope,
+    source = inspect.getsource(apply_module)
+    forbidden = (
+        "HttpArtifactGrantGateway",
+        "get_distribution_capability",
+        "/api/software-update",
+        "software_update_api_url",
+        "grant_gateway",
+        "distribution_capability_provider",
+        "DefaultDownloader",
+        "_validate_grant",
+        "_download_and_verify",
     )
-
-    with pytest.raises(error_cls) as exc_info:
-        service.prepare()
-
-    assert hasattr(exc_info.value, "code")
-    assert (
-        len(spawner.calls) == 0
-        or spawner.process.terminated
-        or spawner.process.killed
-    )
-    assert len(downloader.downloaded) == 0
-
+    for term in forbidden:
+        assert term not in source, f"Forbidden legacy update term found in apply: {term}"

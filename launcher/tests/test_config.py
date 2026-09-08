@@ -35,7 +35,19 @@ def test_packaged_runtime_defaults_to_local_app_data(
     assert config.supabase_publishable_key.startswith("sb_publishable_")
     assert config.account_recovery_api_url == "https://neko-control-room.vercel.app"
     assert config.proxy_status_api_url == "https://neko-control-room.vercel.app/api/proxy/status"
-    assert config.software_update_api_url == "https://neko-control-room.vercel.app"
+    assert not hasattr(config, "software_update_api_url")
+
+
+def test_source_guards_no_software_update_api_url_in_config_or_defaults() -> None:
+    import inspect
+    import neko_launcher.infrastructure.config as config_mod
+    import neko_launcher.infrastructure.defaults as defaults_mod
+
+    assert not hasattr(defaults_mod, "SOFTWARE_UPDATE_API_URL")
+    for mod in (config_mod, defaults_mod):
+        source = inspect.getsource(mod)
+        assert "software_update_api_url" not in source
+        assert "SOFTWARE_UPDATE_API_URL" not in source
 
 
 def test_runtime_ignores_bundled_neko_proxy_core(

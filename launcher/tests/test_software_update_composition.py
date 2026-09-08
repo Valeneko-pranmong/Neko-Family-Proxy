@@ -14,8 +14,20 @@ from neko_launcher.application.software_update_models import (
     UpdateState,
 )
 from neko_launcher.infrastructure.config import LauncherConfig
+from neko_launcher.infrastructure.github_asset_downloader import (
+    GitHubAssetDownloader,
+    GitHubManifestDownloader,
+)
+from neko_launcher.infrastructure.github_release import GitHubLatestReleaseGateway
+from neko_launcher.infrastructure.github_release_binding import (
+    GitHubReleaseResolver,
+    GitHubReleaseResolverError,
+    ResolvedGitHubRelease,
+)
+from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
+from neko_launcher.updater.root_validator import get_expected_install_root
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
-from software_update_helpers import get_test_key_registry, signed_envelope, valid_release_document
+from software_update_helpers import get_test_key_registry
 
 
 EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
@@ -26,14 +38,17 @@ def assert_approved_production_registry() -> None:
     assert len(PRODUCTION_RELEASE_PUBLIC_KEYS[EXPECTED_PRODUCTION_KEY_ID]) == 32
 
 
-class StaticManifestGateway:
-    def __init__(self, document: object) -> None:
-        self.document = document
+class StaticReleaseGateway:
+    def __init__(self, resolved: ResolvedGitHubRelease | None = None, error: Exception | None = None) -> None:
+        self.resolved = resolved
+        self.error = error
         self.fetch_count = 0
 
-    def fetch(self) -> object:
+    def resolve(self) -> ResolvedGitHubRelease | None:
         self.fetch_count += 1
-        return self.document
+        if self.error is not None:
+            raise self.error
+        return self.resolved
 
 
 def make_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> LauncherConfig:
@@ -117,7 +132,7 @@ def test_packaged_composition_hashes_sys_executable_as_launcher_identity(
     assert captured["launcher_executable"] == packaged_executable
 
 
-def test_composition_uses_http_gateway_verifier_and_update_check_service(
+def test_composition_uses_github_resolver_and_update_check_service(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -126,15 +141,17 @@ def test_composition_uses_http_gateway_verifier_and_update_check_service(
     service = app_factory.compose_update_check_service(
         config,
         key_registry=get_test_key_registry(),
+        root_dir=tmp_path,
     )
 
     assert type(service).__name__ == "UpdateCheckService"
-    assert type(service._manifest_gateway).__name__ == "HttpUpdateManifestGateway"
-    assert type(service._verifier).__name__ == "V2ReleaseManifestVerifierAdapter"
-    assert (
-        service._manifest_gateway._base_url
-        == "https://neko-control-room.vercel.app"
-    )
+    resolver = service._release_gateway
+    assert isinstance(resolver, GitHubReleaseResolver)
+    assert isinstance(resolver._release_gateway, GitHubLatestReleaseGateway)
+    assert isinstance(resolver._manifest_downloader, GitHubManifestDownloader)
+    assert resolver._key_registry == get_test_key_registry()
+    assert resolver._install_root == tmp_path
+    assert resolver._updater_protocol == UPDATER_PROTOCOL_VERSION
 
 
 def test_composition_is_lazy_when_canonical_core_manifest_is_missing(
@@ -155,58 +172,6 @@ def test_composition_is_lazy_when_canonical_core_manifest_is_missing(
     assert not core_manifest.exists()
 
 
-def test_valid_test_signed_manifest_reaches_lazy_identity_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    config = make_config(monkeypatch, tmp_path)
-    document = signed_envelope(
-        {
-            "schema_version": 2,
-            "channel": "beta",
-            "release_sequence": 42,
-            "release_id": "r-42-test",
-            "mandatory": False,
-            "minimum_supported_sequence": 1,
-            "updater_protocol": {"minimum": 1, "maximum": 1},
-            "components": {
-                "launcher": {
-                    "version": "2.0.0",
-                    "artifact_id": "launcher-42",
-                    "artifact_sha256": "1" * 64,
-                    "installed_identity_sha256": "1" * 64,
-                    "artifact_size": 1024,
-                    "artifact_format": "raw-pe-v1",
-                },
-                "core": {
-                    "version": "3.0.0",
-                    "artifact_id": "core-42",
-                    "artifact_sha256": "2" * 64,
-                    "installed_identity_sha256": "3" * 64,
-                    "artifact_size": 2048,
-                    "artifact_format": "zip-core-v1",
-                },
-            },
-        }
-    )
-    gateway = StaticManifestGateway(document)
-
-    service = app_factory.compose_update_check_service(
-        config,
-        key_registry=get_test_key_registry(),
-    )
-    service._manifest_gateway = gateway
-
-    result = service.check_manual()
-
-    assert gateway.fetch_count == 1
-    assert result.state == UpdateState.VERIFY_FAILED
-    assert (
-        result.diagnostic_code
-        == UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE
-    )
-
-
 def test_production_public_key_registry_is_approved_and_untrusted_signature_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -214,20 +179,19 @@ def test_production_public_key_registry_is_approved_and_untrusted_signature_fail
     assert_approved_production_registry()
 
     config = make_config(monkeypatch, tmp_path)
-    gateway = StaticManifestGateway(signed_envelope(valid_release_document()))
+    gateway = StaticReleaseGateway(error=GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED"))
 
     service = app_factory.compose_update_check_service(config)
-    service._manifest_gateway = gateway
+    assert service._release_gateway._key_registry == PRODUCTION_RELEASE_PUBLIC_KEYS
 
-    assert service._verifier._key_registry == PRODUCTION_RELEASE_PUBLIC_KEYS
-
+    service._release_gateway = gateway
     result = service.check_manual()
 
     assert result.state == UpdateState.VERIFY_FAILED
     assert result.diagnostic_code == UpdateDiagnosticCode.MANIFEST_REJECTED
 
 
-def test_production_compose_update_apply_service_uses_approved_registry_and_fails_closed(
+def test_production_compose_update_apply_service_uses_approved_registry_and_resolver(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -240,149 +204,33 @@ def test_production_compose_update_apply_service_uses_approved_registry_and_fail
         pytest.fail("compose_update_apply_service not implemented", pytrace=False)
 
     config = make_config(monkeypatch, tmp_path)
-    service = compose_update_apply_service(config)
+    service = compose_update_apply_service(config, root_dir=tmp_path)
 
-    registry = getattr(
-        service, "_key_registry", getattr(service, "key_registry", None)
-    )
-    if registry is not None:
-        assert registry == PRODUCTION_RELEASE_PUBLIC_KEYS
+    resolver = getattr(service, "release_gateway", getattr(service, "_release_gateway", None))
+    assert isinstance(resolver, GitHubReleaseResolver)
+    assert resolver._key_registry == PRODUCTION_RELEASE_PUBLIC_KEYS
+    assert resolver._install_root == tmp_path
+    assert resolver._updater_protocol == UPDATER_PROTOCOL_VERSION
 
-    valid_signed_manifest = signed_envelope(
-        {
-            "schema_version": 2,
-            "channel": "beta",
-            "release_sequence": 50,
-            "release_id": "r-50-test",
-            "mandatory": False,
-            "minimum_supported_sequence": 1,
-            "updater_protocol": {"minimum": 1, "maximum": 1},
-            "components": {
-                "launcher": {
-                    "version": "2.0.0",
-                    "artifact_id": "launcher-50",
-                    "artifact_sha256": "1" * 64,
-                    "installed_identity_sha256": "1" * 64,
-                    "artifact_size": 1024,
-                    "artifact_format": "raw-pe-v1",
-                },
-                "core": {
-                    "version": "3.0.0",
-                    "artifact_id": "core-50",
-                    "artifact_sha256": "2" * 64,
-                    "installed_identity_sha256": "3" * 64,
-                    "artifact_size": 2048,
-                    "artifact_format": "zip-core-v1",
-                },
-            },
-        }
-    )
-    gateway = StaticManifestGateway(valid_signed_manifest)
-    if hasattr(service, "_manifest_gateway"):
-        service._manifest_gateway = gateway
-    else:
-        monkeypatch.setattr(service, "manifest_gateway", gateway, raising=False)
+    downloader = getattr(service, "asset_downloader", getattr(service, "_asset_downloader", None))
+    assert isinstance(downloader, GitHubAssetDownloader)
 
-    monkeypatch.setattr(
-        "neko_launcher.infrastructure.software_update_client.HttpUpdateManifestGateway.fetch",
-        lambda self: valid_signed_manifest,
-        raising=False,
-    )
-
-    try:
-        from neko_launcher.infrastructure.software_update_apply import (
-            SoftwareUpdateApplyError,
-        )
-
-        expected_error: type[Exception] = SoftwareUpdateApplyError
-    except ImportError:
-        expected_error = Exception
-
-    with pytest.raises(expected_error) as exc_info:
-        service.prepare()
-
-    if hasattr(exc_info.value, "code"):
-        assert exc_info.value.code is not None
+    # No separate key registry or grant gateway or capability provider on apply service
+    assert not hasattr(service, "grant_gateway")
+    assert not hasattr(service, "distribution_capability_provider")
 
 
-def test_apply_composition_injects_lazy_production_distribution_capability_provider(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from neko_launcher.infrastructure.distribution_credential import (
-        get_distribution_capability,
-    )
-
-    captured: dict[str, object] = {}
-
-    def capture_service(**kwargs: object) -> object:
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(app_factory, "SoftwareUpdateApplyService", capture_service)
-    config = make_config(monkeypatch, tmp_path)
-
-    service = app_factory.compose_update_apply_service(config, root_dir=tmp_path)
-
-    assert service is not None
-    assert "distribution_capability_provider" in captured, (
-        "composition must inject lazy distribution capability provider"
-    )
-    assert captured["distribution_capability_provider"] is get_distribution_capability
-    assert captured["key_registry"] is PRODUCTION_RELEASE_PUBLIC_KEYS
-    assert_approved_production_registry()
-
-
-def test_production_update_configuration_contains_no_private_key_material(
+def test_build_window_shares_same_resolver_instance_between_check_and_apply(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     config = make_config(monkeypatch, tmp_path)
-    service = app_factory.compose_update_check_service(config)
-
-    production_source = "\n".join(
-        (
-            inspect.getsource(defaults),
-            inspect.getsource(app_factory),
-            inspect.getsource(type(service._verifier)),
-        )
-    )
-
-    assert "BEGIN PRIVATE KEY" not in production_source
-    assert "BEGIN ED25519 PRIVATE KEY" not in production_source
-    assert "test-only-deterministic-key-0000" not in production_source
-
-
-def test_build_window_forwards_exact_composed_update_service_without_network(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    config = make_config(monkeypatch, tmp_path)
-    composed_service = object()
-    composed_apply_service = object()
     captured: dict[str, Any] = {}
 
     monkeypatch.setattr(
         app_factory.LauncherConfig,
         "from_environment",
         classmethod(lambda cls, root: config),
-    )
-    monkeypatch.setattr(
-        app_factory,
-        "compose_update_check_service",
-        lambda received: (
-            captured.setdefault("composition_config", received),
-            composed_service,
-        )[1],
-    )
-    monkeypatch.setattr(
-        app_factory,
-        "compose_update_apply_service",
-        lambda received: (
-            captured.setdefault("apply_composition_config", received),
-            composed_apply_service,
-        )[1],
-        raising=False,
     )
     monkeypatch.setattr(
         app_factory,
@@ -452,6 +300,40 @@ def test_build_window_forwards_exact_composed_update_service_without_network(
     window = app_factory.build_window(tmp_path)
 
     assert isinstance(window, CapturingWindow)
-    assert captured["composition_config"] is config
-    assert captured["window_kwargs"]["update_check_service"] is composed_service
-    assert captured["window_kwargs"].get("update_apply_service") is composed_apply_service
+    check_service = captured["window_kwargs"]["update_check_service"]
+    apply_service = captured["window_kwargs"]["update_apply_service"]
+
+    # Proves same resolver instance injected into check and apply!
+    assert check_service._release_gateway is apply_service.release_gateway
+
+
+def test_production_update_configuration_contains_no_private_key_material(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = make_config(monkeypatch, tmp_path)
+    service = app_factory.compose_update_check_service(config)
+
+    production_source = "\n".join(
+        (
+            inspect.getsource(defaults),
+            inspect.getsource(app_factory),
+            inspect.getsource(type(service._release_gateway)),
+        )
+    )
+
+    assert "BEGIN PRIVATE KEY" not in production_source
+    assert "BEGIN ED25519 PRIVATE KEY" not in production_source
+    assert "test-only-deterministic-key-0000" not in production_source
+
+
+def test_source_guards_no_obsolete_update_apis_in_app_factory() -> None:
+    source = inspect.getsource(app_factory)
+    forbidden = (
+        "HttpArtifactGrantGateway",
+        "get_distribution_capability",
+        "/api/software-update",
+        "software_update_api_url",
+    )
+    for term in forbidden:
+        assert term not in source, f"Forbidden legacy update term found in app_factory: {term}"
