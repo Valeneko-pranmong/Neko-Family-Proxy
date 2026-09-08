@@ -73,3 +73,66 @@ def test_release_workflow_builds_and_carries_updater_without_legacy_iss() -> Non
         missing.append("removal of nonexistent installer\\NekoLauncher.iss reference")
 
     assert not missing, "release.yml lacks: " + ", ".join(missing)
+
+
+def test_obsolete_software_update_authority_is_rejected() -> None:
+    safety = load_safety_module()
+    errors: list[str] = []
+    for path in safety.repository_files():
+        errors.extend(safety.validate_software_update_authority(path))
+
+    assert not errors, f"Obsolete update authority strings detected: {errors}"
+
+
+def test_software_update_untrusted_sources_are_rejected() -> None:
+    safety = load_safety_module()
+    errors: list[str] = []
+    for path in safety.repository_files():
+        errors.extend(safety.validate_software_update_untrusted_sources(path))
+
+    assert not errors, f"Untrusted update source usage detected: {errors}"
+
+
+def test_allowlisted_history_docs_are_permitted() -> None:
+    safety = load_safety_module()
+    history_plan = (
+        REPOSITORY_ROOT
+        / "docs"
+        / "superpowers"
+        / "plans"
+        / "2026-09-08-software-update-github-releases-implementation.md"
+    )
+    assert safety.is_allowlisted_history_doc(
+        history_plan.relative_to(REPOSITORY_ROOT)
+    )
+    assert not safety.validate_software_update_authority(history_plan)
+
+
+def test_safety_guard_rejects_untrusted_software_update_sources(tmp_path: Path) -> None:
+    safety = load_safety_module()
+    fake_py = (
+        REPOSITORY_ROOT
+        / "launcher"
+        / "src"
+        / "neko_launcher"
+        / "infrastructure"
+        / "_fake_test_guard.py"
+    )
+    forbidden_tokens = (
+        "zipball_url",
+        "tarball_url",
+        "/archive/refs/",
+        "raw.githubusercontent.com",
+        "SHA256SUMS.txt",
+    )
+    for token in forbidden_tokens:
+        test_file = tmp_path / f"test_{token.replace('/', '_').replace('.', '_')}.py"
+        test_file.write_text(f'SOURCE = "{token}"\n', encoding="utf-8")
+        # Direct check using the validator logic with the relative path mocked
+        relative = fake_py.relative_to(REPOSITORY_ROOT)
+        errors = [
+            f"untrusted software update source ({label}) found in production code: {relative}"
+            for label, pattern in safety.SOFTWARE_UPDATE_UNTRUSTED_SOURCE_PATTERNS.items()
+            if pattern.search(test_file.read_text(encoding="utf-8"))
+        ]
+        assert errors, f"Expected guard to reject token: {token}"

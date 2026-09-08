@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import base64
 import inspect
 import importlib
 import io
-import json
 import urllib.error
 from pathlib import Path
-from types import TracebackType
 from typing import Any
 
 import pytest
@@ -20,14 +17,12 @@ from neko_launcher.application.software_update_models import (
 )
 from neko_launcher.application.software_update_policy import evaluate_release
 from neko_launcher.application.software_update_service import UpdateCheckService
-from neko_launcher.infrastructure import software_update_client
 from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
-from neko_launcher.infrastructure.software_update_manifest import ReleaseManifestVerifier
-from neko_launcher.infrastructure.software_update_client import (
-    HttpArtifactGrantGateway,
-    HttpUpdateManifestGateway,
-    SoftwareUpdateClientError,
+from neko_launcher.infrastructure.software_update_apply import (
+    SoftwareUpdateApplyError,
+    SoftwareUpdateApplyService,
 )
+from neko_launcher.infrastructure.software_update_manifest import ReleaseManifestVerifier
 try:
     from tests.software_update_helpers import (
         get_test_key_registry,
@@ -49,49 +44,6 @@ SIGNED_URL = (
     f"?token={SIGNED_URL_TOKEN}&signature=abc"
 )
 BASE_URL = "https://updates.example.invalid"
-
-
-class FakeResponse:
-    def __init__(self, body: bytes, status: int = 200) -> None:
-        self.body = body
-        self.status = status
-
-    def __enter__(self) -> FakeResponse:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        return None
-
-    def getcode(self) -> int:
-        return self.status
-
-    def read(self, size: int = -1) -> bytes:
-        if size < 0:
-            return self.body
-        return self.body[:size]
-
-
-class FakeOpener:
-    def __init__(
-        self,
-        *,
-        response: FakeResponse | None = None,
-        error: BaseException | None = None,
-    ) -> None:
-        self.response = response
-        self.error = error
-
-    def __call__(self, request: Any, *, timeout: float) -> FakeResponse:
-        del request, timeout
-        if self.error is not None:
-            raise self.error
-        assert self.response is not None
-        return self.response
 
 
 def assert_secrets_absent(text: str, *secrets: str) -> None:
@@ -128,67 +80,6 @@ def test_support_log_sanitizes_exception_secrets(tmp_path: Path) -> None:
         assert "redact" in contents.lower()
 
 
-def test_manifest_client_retains_only_safe_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    reason = (
-        f"proxy authentication failed credential={PROXY_CREDENTIAL}; "
-        f"permit={JWT_TOKEN}"
-    )
-    opener = FakeOpener(error=urllib.error.URLError(reason))
-    monkeypatch.setattr(software_update_client, "_open_no_redirect", opener)
-    gateway = HttpUpdateManifestGateway(BASE_URL)
-
-    with pytest.raises(SoftwareUpdateClientError) as caught:
-        gateway.fetch()
-
-    error = caught.value
-    assert error.code == "MANIFEST_UNAVAILABLE"
-    assert str(error) == "MANIFEST_UNAVAILABLE"
-    assert_secrets_absent(
-        str(error),
-        PROXY_CREDENTIAL,
-        JWT_TOKEN,
-    )
-    assert_secrets_absent(
-        repr(error),
-        PROXY_CREDENTIAL,
-        JWT_TOKEN,
-    )
-
-
-def test_grant_client_retains_only_safe_invalid_response_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    body = json.dumps(
-        {
-            "url": SIGNED_URL,
-            "credential": PROXY_CREDENTIAL,
-        }
-    ).encode()
-    opener = FakeOpener(response=FakeResponse(body))
-    monkeypatch.setattr(software_update_client, "_open_no_redirect", opener)
-    gateway = HttpArtifactGrantGateway(BASE_URL)
-
-    with pytest.raises(SoftwareUpdateClientError) as caught:
-        gateway.grant("artifact-42")
-
-    error = caught.value
-    assert error.code == "GRANT_RESPONSE_INVALID"
-    assert str(error) == "GRANT_RESPONSE_INVALID"
-    assert_secrets_absent(
-        str(error),
-        SIGNED_URL,
-        SIGNED_URL_TOKEN,
-        PROXY_CREDENTIAL,
-    )
-    assert_secrets_absent(
-        repr(error),
-        SIGNED_URL,
-        SIGNED_URL_TOKEN,
-        PROXY_CREDENTIAL,
-    )
-
 RAW_PAYLOAD_SENTINEL = "SENTINEL_RAW_PAYLOAD_42"
 SIGNATURE_SENTINEL = "SENTINEL_SIGNATURE_42"
 PERMIT_SENTINEL = "SENTINEL_PERMIT_42"
@@ -196,9 +87,8 @@ RUNTIME_CONFIG_SENTINEL = "SENTINEL_RUNTIME_CONFIG_42"
 TEST_PRIVATE_SEED_TEXT = "test-only-deterministic-key-0000"
 
 
-class SecretFailingManifestGateway:
-    def fetch(self, channel: str = "beta") -> object | None:
-        del channel
+class SecretFailingReleaseGateway:
+    def resolve(self) -> Any:
         raise RuntimeError(
             " ".join(
                 (
@@ -212,11 +102,6 @@ class SecretFailingManifestGateway:
                 )
             )
         )
-
-
-class NeverCalledVerifier:
-    def verify(self, document: object) -> object:
-        raise AssertionError(f"verifier must not receive failed transport: {document!r}")
 
 
 def _local_identity(sequence: int = 3) -> LocalReleaseIdentity:
@@ -264,8 +149,7 @@ def test_service_result_and_support_log_omit_update_secret_sentinels(
     tmp_path: Path,
 ) -> None:
     service = UpdateCheckService(
-        SecretFailingManifestGateway(),
-        NeverCalledVerifier(),
+        SecretFailingReleaseGateway(),
         lambda: _local_identity(),
     )
 
@@ -312,99 +196,118 @@ def test_unknown_update_signing_key_is_rejected_without_echoing_key_id() -> None
     assert unknown_key_id not in repr(caught.value)
 
 
-def test_core_grant_failure_never_crosses_apply_privacy_boundaries(
+def test_apply_service_has_no_capability_seam_and_sanitizes_resolver_failure(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import SimpleNamespace
+    sig = inspect.signature(SoftwareUpdateApplyService.__init__)
+    params = set(sig.parameters)
+    assert "distribution_capability_provider" not in params
+    assert "grant_gateway" not in params
+    assert "manifest_gateway" not in params
 
-    import neko_launcher.infrastructure.software_update_apply as apply_module
+    service = SoftwareUpdateApplyService(
+        root_dir=tmp_path,
+        release_gateway=SecretFailingReleaseGateway(),
+        asset_downloader=None,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(SoftwareUpdateApplyError) as caught:
+        service.prepare()
+
+    error = caught.value
+    assert error.code == "MANIFEST_VERIFY_FAILED"
+    assert str(error) == "MANIFEST_VERIFY_FAILED"
+
+    forbidden = (
+        RAW_PAYLOAD_SENTINEL,
+        SIGNATURE_SENTINEL,
+        SIGNED_URL,
+        SIGNED_URL_TOKEN,
+        JWT_TOKEN,
+        PERMIT_SENTINEL,
+        RUNTIME_CONFIG_SENTINEL,
+        PROXY_CREDENTIAL,
+    )
+    assert_secrets_absent(str(error), *forbidden)
+    assert_secrets_absent(repr(error), *forbidden)
+    assert_secrets_absent(repr(service), *forbidden)
+
+    logger = DevelopmentLogger(tmp_path / "logs")
+    logger.record_exception(error, stage="software-update-apply")
+    for log_file in (tmp_path / "logs").glob("*.log"):
+        assert_secrets_absent(log_file.read_text(encoding="utf-8"), *forbidden)
+
+
+def test_apply_service_sanitizes_download_failure(tmp_path: Path) -> None:
     try:
         from tests.test_software_update_apply import (
             FakeChannel,
+            FakeReleaseGateway,
             FakeSpawner,
-            make_test_v2_envelope,
+            make_resolved_release,
         )
     except ImportError:
         from test_software_update_apply import (  # type: ignore[no-redef]
             FakeChannel,
+            FakeReleaseGateway,
             FakeSpawner,
-            make_test_v2_envelope,
+            make_resolved_release,
         )
 
-    service_cls = apply_module.SoftwareUpdateApplyService
-    assert "distribution_capability_provider" in inspect.signature(
-        service_cls
-    ).parameters, "missing lazy distribution_capability_provider seam"
-    capability = base64.urlsafe_b64encode(
-        b"CAPABILITY_SENTINEL_TEST_ONLY_00"
-    ).decode().rstrip("=")
-    envelope = make_test_v2_envelope()
-    channel = FakeChannel(
-        [{
-            "type": "REQUEST_READY",
-            "message_id": "msg-0",
-            "body": {
-                "accepted": True,
-                "request_id": "req-privacy-core",
-                "transaction_id": "tx-privacy-core",
-                "changed": {"launcher": False, "core": True},
-                "error": None,
-            },
-        }]
-    )
+    class SecretFailingDownloader:
+        def download(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError(
+                f"leaked secret={SIGNED_URL_TOKEN} cdn={CDN_QUERY_TOKEN_TASK3} auth={PROXY_CREDENTIAL}"
+            )
+
+    resolved = make_resolved_release(50)
+    gateway = FakeReleaseGateway(resolved)
+    downloader = SecretFailingDownloader()
     spawner = FakeSpawner()
-    received_capabilities: list[str] = []
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": "req-privacy-dl",
+                    "transaction_id": "tx-privacy-dl",
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            }
+        ]
+    )
 
-    class FailingGrantGateway:
-        def grant_core(self, artifact_id: str, received: str) -> object:
-            del artifact_id
-            received_capabilities.append(received)
-            raise RuntimeError(f"grant transport leaked {received}")
-
-    artifact_requests: list[object] = []
-
-    def fake_open(request: object, **_kwargs: object) -> object:
-        artifact_requests.append(request)
-        raise AssertionError("artifact GET must not occur after grant failure")
-
-    monkeypatch.setattr(apply_module, "_open_no_redirect", fake_open)
-    service = service_cls(
+    service = SoftwareUpdateApplyService(
         root_dir=tmp_path,
-        manifest_gateway=SimpleNamespace(fetch=lambda: envelope),
-        key_registry=get_test_key_registry(),
+        release_gateway=gateway,
+        asset_downloader=downloader,  # type: ignore[arg-type]
         spawner=spawner,
         channel_factory=lambda: channel,
-        grant_gateway=FailingGrantGateway(),
-        distribution_capability_provider=lambda: capability,
     )
-    prepared = None
 
-    with pytest.raises(apply_module.SoftwareUpdateApplyError) as caught:
-        prepared = service.prepare()
+    with pytest.raises(SoftwareUpdateApplyError) as exc_info:
+        service.prepare()
 
-    error = caught.value
-    assert error.code
-    assert str(error) == error.code
-    assert_secrets_absent(str(error), capability)
-    assert_secrets_absent(repr(error), capability)
-    assert received_capabilities == [capability]
-    assert spawner.process.terminated or spawner.process.killed
-    assert all(capability not in repr(message["body"]) for message in channel.sent)
-    assert all(
-        capability not in argument
-        for call in spawner.calls
-        for argument in call["command"]
+    error = exc_info.value
+    assert error.code == "DOWNLOAD_FAILED"
+    assert str(error) == "DOWNLOAD_FAILED"
+
+    forbidden = (
+        SIGNED_URL_TOKEN,
+        CDN_QUERY_TOKEN_TASK3,
+        PROXY_CREDENTIAL,
     )
-    assert_secrets_absent(repr(service), capability)
-    assert_secrets_absent(repr(prepared), capability)
-    assert artifact_requests == []
-    assert all(
-        request.get_header("Authorization") is None
-        and request.get_header("Cookie") is None
-        for request in artifact_requests
-    )
-    assert not any(message["type"] == "APPLY" for message in channel.sent)
+    assert_secrets_absent(str(error), *forbidden)
+    assert_secrets_absent(repr(error), *forbidden)
+    assert_secrets_absent(repr(service), *forbidden)
+
+    logger = DevelopmentLogger(tmp_path / "logs")
+    logger.record_exception(error, stage="software-update-apply")
+    for log_file in (tmp_path / "logs").glob("*.log"):
+        assert_secrets_absent(log_file.read_text(encoding="utf-8"), *forbidden)
 
 
 def test_downgrade_policy_rejects_remote_release_without_secret_fields() -> None:

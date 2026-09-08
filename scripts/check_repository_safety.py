@@ -32,6 +32,33 @@ LEGACY_EMAIL_RECOVERY_PATTERNS = {
     "Supabase recovery-code exchange": re.compile(r"\bexchangeCodeForSession\b"),
     "Supabase email reset sender": re.compile(r"\bresetPasswordForEmail\b"),
 }
+OBSOLETE_UPDATE_AUTHORITY_PATTERNS = {
+    "obsolete distribution credential target": re.compile(
+        r"NEKO-FAMILY/SoftwareUpdateDistribution/v1"
+    ),
+    "obsolete distribution authorization authority": re.compile(
+        r"\bNekoDistribution\b"
+    ),
+    "obsolete artifact grant route": re.compile(
+        r"/api/software-update/artifact-grant"
+    ),
+    "obsolete software update active release env": re.compile(
+        r"\bSOFTWARE_UPDATE_ACTIVE_RELEASE_JSON\b"
+    ),
+    "obsolete software update manifest route": re.compile(
+        r"/api/software-update/manifest"
+    ),
+    "obsolete Supabase software update bucket identity": re.compile(
+        r"\bsoftware[-_]update(?:s)?[-_]bucket\b"
+    ),
+}
+SOFTWARE_UPDATE_UNTRUSTED_SOURCE_PATTERNS = {
+    "GitHub zipball source archive": re.compile(r"\bzipball_url\b"),
+    "GitHub tarball source archive": re.compile(r"\btarball_url\b"),
+    "GitHub source archive ref": re.compile(r"/archive/refs/"),
+    "GitHub raw content endpoint": re.compile(r"\braw\.githubusercontent\.com\b"),
+    "unsigned checksum file": re.compile(r"\bSHA256SUMS\.txt\b"),
+}
 
 
 def repository_files() -> list[Path]:
@@ -82,6 +109,75 @@ def validate_content(path: Path) -> list[str]:
     ]
 
 
+def is_allowlisted_history_doc(relative: Path) -> bool:
+    parts = relative.parts
+    if len(parts) >= 2 and parts[0] == "docs" and parts[1] in {"archive", "superpowers"}:
+        return True
+    return False
+
+
+def is_test_path(relative: Path) -> bool:
+    return any(part in {"tests", "test"} for part in relative.parts)
+
+
+def is_software_update_production_code(relative: Path) -> bool:
+    parts = relative.parts
+    return (
+        len(parts) >= 3
+        and parts[0] == "launcher"
+        and parts[1] == "src"
+        and parts[2] == "neko_launcher"
+        and not is_test_path(relative)
+    )
+
+
+def validate_software_update_authority(path: Path) -> list[str]:
+    relative = path.relative_to(REPOSITORY_ROOT)
+    if (
+        is_allowlisted_history_doc(relative)
+        or is_test_path(relative)
+        or relative.as_posix() == "scripts/check_repository_safety.py"
+    ):
+        return []
+    if path.suffix.lower() in {".ico", ".png", ".ttf"}:
+        return []
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return []
+
+    errors: list[str] = []
+    for label, pattern in OBSOLETE_UPDATE_AUTHORITY_PATTERNS.items():
+        if label == "obsolete distribution authorization authority":
+            if relative.as_posix() == "launcher/src/neko_launcher/updater/privacy_scanner.py":
+                continue
+        if pattern.search(content):
+            errors.append(
+                f"obsolete software update authority ({label}) found in tracked file: {relative}"
+            )
+    return errors
+
+
+def validate_software_update_untrusted_sources(path: Path) -> list[str]:
+    relative = path.relative_to(REPOSITORY_ROOT)
+    if not is_software_update_production_code(relative):
+        return []
+    if path.suffix.lower() not in {".py"}:
+        return []
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return []
+
+    errors: list[str] = []
+    for label, pattern in SOFTWARE_UPDATE_UNTRUSTED_SOURCE_PATTERNS.items():
+        if pattern.search(content):
+            errors.append(
+                f"untrusted software update source ({label}) found in production code: {relative}"
+            )
+    return errors
+
+
 def validate_repository_contracts() -> list[str]:
     errors: list[str] = []
     deployable_docs = REPOSITORY_ROOT / "docs"
@@ -122,6 +218,8 @@ def main() -> int:
     for path in repository_files():
         errors.extend(validate_path(path))
         errors.extend(validate_content(path))
+        errors.extend(validate_software_update_authority(path))
+        errors.extend(validate_software_update_untrusted_sources(path))
     errors.extend(validate_repository_contracts())
     if errors:
         print("Repository safety check failed:")
