@@ -183,3 +183,82 @@ def test_enrollment_incomplete_when_both_slots_none() -> None:
     keys = {TEST_KEY_ID: TEST_PUBLIC_KEY}
     res = select_active_slot(None, None, keys)
     assert res.status == SelectionStatus.ENROLLMENT_INCOMPLETE
+
+
+def test_slot_selector_recovers_durable_legacy_two_component_evidence() -> None:
+    from pathlib import Path
+    from neko_launcher.updater.staging_handoff import handle_begin_request
+    from tests.software_update_helpers import valid_legacy_v2_release_document
+
+    seq = 42
+    rel_id = "legacy-rel-42"
+    doc = valid_legacy_v2_release_document(sequence=seq, release_id=rel_id)
+    envelope = signed_envelope(doc)
+    envelope_bytes = canonical_json_dumps(envelope)
+    envelope_b64 = base64.b64encode(envelope_bytes).decode("ascii")
+    payload_sha = hashlib.sha256(base64.b64decode(envelope["payload_b64"])).hexdigest()
+
+    binding = Binding(release_sequence=seq, release_id=rel_id, payload_sha256=payload_sha)
+    gen = Generation(
+        binding=binding,
+        launcher_identity_sha256=doc["components"]["launcher"]["installed_identity_sha256"],
+        core_identity_sha256=doc["components"]["core"]["installed_identity_sha256"],
+    )
+    state = State(
+        schema_version=1,
+        revision=10,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen,
+        previous=None,
+        highwater=binding,
+        observed=binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={payload_sha: envelope_b64},
+    )
+    keys = {TEST_KEY_ID: TEST_PUBLIC_KEY}
+    slot_a = _pack_state(state)
+
+    # Recovery must succeed post-migration for durable legacy committed slot
+    res = select_active_slot(slot_a, None, keys)
+    assert res.status == SelectionStatus.SELECTED
+    assert res.state is not None
+    assert res.state.committed.binding.release_sequence == seq
+    assert res.state.committed.binding.release_id == rel_id
+
+    # The exact same legacy envelope MUST be rejected by staging_handoff handle_begin_request (new candidate)
+    begin_res, _ = handle_begin_request(Path("C:/fake_root"), state, envelope_b64, keys)
+    assert not begin_res.accepted
+
+
+def test_legacy_verifier_source_reachability_guard() -> None:
+    """Ensure verify_legacy_recovery_envelope_v2 is reachable only in manifest_v2, slot_selector, and focused tests."""
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[3]
+    forbidden_search_dirs = [
+        repo_root / "launcher" / "src" / "neko_launcher",
+        repo_root / "scripts",
+    ]
+    allowed_sources = {
+        repo_root / "launcher" / "src" / "neko_launcher" / "updater" / "manifest_v2.py",
+        repo_root / "launcher" / "src" / "neko_launcher" / "updater" / "slot_selector.py",
+    }
+    target_names = ["verify_legacy_recovery_envelope_v2", "parse_legacy_recovery_release_v2"]
+
+    for base_dir in forbidden_search_dirs:
+        for py_file in base_dir.rglob("*.py"):
+            resolved = py_file.resolve()
+            if resolved in allowed_sources:
+                continue
+            content = py_file.read_text(encoding="utf-8")
+            for name in target_names:
+                assert name not in content, (
+                    f"Forbidden reference to {name} in {py_file}; legacy verifier must only be "
+                    f"reachable from manifest_v2 and slot_selector"
+                )

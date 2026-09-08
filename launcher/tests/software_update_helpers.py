@@ -93,3 +93,106 @@ def noncanonical_base64_spelling(canonical: str) -> str:
     target_index = -3 if canonical.endswith("==") else -2
     chars[target_index] = alphabet[alphabet.index(chars[target_index]) ^ 1]
     return "".join(chars)
+
+
+def valid_v2_release_document(
+    *,
+    sequence: int = 2,
+    release_id: str = "r2-stable",
+    channel: str = "stable",
+    mandatory: bool = False,
+    minimum_supported_sequence: int = 1,
+    proto_min: int = 1,
+    proto_max: int = 1,
+    launcher_version: str = "5.1.0",
+    launcher_sha: str = "1" * 64,
+    launcher_size: int = 20480,
+    updater_version: str = "5.1.0",
+    updater_sha: str = "2" * 64,
+    updater_size: int = 30720,
+    core_version: str = "1.0.0",
+    core_sha: str = "3" * 64,
+    core_size: int = 40960,
+    core_installed_sha: str = "4" * 64,
+) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "channel": channel,
+        "release_sequence": sequence,
+        "release_id": release_id,
+        "mandatory": mandatory,
+        "minimum_supported_sequence": minimum_supported_sequence,
+        "updater_protocol": {"minimum": proto_min, "maximum": proto_max},
+        "components": {
+            "launcher": {
+                "version": launcher_version,
+                "artifact_id": "NekoLauncher.exe",
+                "artifact_sha256": launcher_sha,
+                "installed_identity_sha256": launcher_sha,
+                "artifact_size": launcher_size,
+                "artifact_format": "raw-pe-v1",
+            },
+            "updater": {
+                "version": updater_version,
+                "artifact_id": "NekoUpdater.exe",
+                "artifact_sha256": updater_sha,
+                "installed_identity_sha256": updater_sha,
+                "artifact_size": updater_size,
+                "artifact_format": "raw-pe-v1",
+            },
+            "core": {
+                "version": core_version,
+                "artifact_id": "NekoProxyCore.zip",
+                "artifact_sha256": core_sha,
+                "installed_identity_sha256": core_installed_sha,
+                "artifact_size": core_size,
+                "artifact_format": "zip-core-v1",
+            },
+        },
+    }
+
+
+def valid_legacy_v2_release_document(
+    *,
+    sequence: int = 2,
+    release_id: str = "r2-beta",
+    channel: str = "beta",
+    mandatory: bool = False,
+    minimum_supported_sequence: int = 1,
+    proto_min: int = 1,
+    proto_max: int = 1,
+    launcher_version: str = "5.1.0a1",
+    launcher_sha: str = "3" * 64,
+    launcher_size: int = 20480,
+    core_version: str = "1.0.0",
+    core_sha: str = "1" * 64,
+    core_size: int = 102400,
+    core_installed_sha: str = "2" * 64,
+) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "channel": channel,
+        "release_sequence": sequence,
+        "release_id": release_id,
+        "mandatory": mandatory,
+        "minimum_supported_sequence": minimum_supported_sequence,
+        "updater_protocol": {"minimum": proto_min, "maximum": proto_max},
+        "components": {
+            "launcher": {
+                "version": launcher_version,
+                "artifact_id": "launcher-1.0.0-bin",
+                "artifact_sha256": launcher_sha,
+                "installed_identity_sha256": launcher_sha,
+                "artifact_size": launcher_size,
+                "artifact_format": "raw-pe-v1",
+            },
+            "core": {
+                "version": core_version,
+                "artifact_id": "core-1.0.0-bin",
+                "artifact_sha256": core_sha,
+                "installed_identity_sha256": core_installed_sha,
+                "artifact_size": core_size,
+                "artifact_format": "zip-core-v1",
+            },
+        },
+    }

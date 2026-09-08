@@ -40,10 +40,13 @@ def load_builder() -> ModuleType:
 @pytest.fixture
 def release_inputs(tmp_path: Path) -> dict[str, Any]:
     launcher_bytes = b"MZ\x00ephemeral launcher artifact\xff"
+    updater_bytes = b"MZ\x00ephemeral updater artifact\xee"
     core_bytes = b"PK\x03\x04ephemeral core bundle\x00"
     launcher = tmp_path / "NekoLauncher.exe"
+    updater = tmp_path / "NekoUpdater.exe"
     core = tmp_path / "NekoProxyCore.zip"
     launcher.write_bytes(launcher_bytes)
+    updater.write_bytes(updater_bytes)
     core.write_bytes(core_bytes)
 
     private_key = Ed25519PrivateKey.generate()
@@ -63,7 +66,7 @@ def release_inputs(tmp_path: Path) -> dict[str, Any]:
 
     metadata: dict[str, Any] = {
         "schema_version": 2,
-        "channel": "beta",
+        "channel": "stable",
         "release_sequence": 41,
         "release_id": "phase3-test-41",
         "mandatory": False,
@@ -76,6 +79,14 @@ def release_inputs(tmp_path: Path) -> dict[str, Any]:
                 "artifact_sha256": hashlib.sha256(launcher_bytes).hexdigest(),
                 "artifact_size": len(launcher_bytes),
                 "installed_identity_sha256": hashlib.sha256(launcher_bytes).hexdigest(),
+                "artifact_format": "raw-pe-v1",
+            },
+            "updater": {
+                "version": "5.1.0a3",
+                "artifact_id": "updater-5.1.0a3-win-x64",
+                "artifact_sha256": hashlib.sha256(updater_bytes).hexdigest(),
+                "artifact_size": len(updater_bytes),
+                "installed_identity_sha256": hashlib.sha256(updater_bytes).hexdigest(),
                 "artifact_format": "raw-pe-v1",
             },
             "core": {
@@ -94,6 +105,7 @@ def release_inputs(tmp_path: Path) -> dict[str, Any]:
         "metadata": metadata,
         "metadata_path": metadata_path,
         "launcher": launcher,
+        "updater": updater,
         "core": core,
         "private_path": private_path,
         "private_raw": private_raw,
@@ -107,6 +119,7 @@ def build(module: ModuleType, data: dict[str, Any], **changes: object) -> object
     arguments = {
         "metadata_path": data["metadata_path"],
         "launcher_artifact": data["launcher"],
+        "updater_artifact": data["updater"],
         "core_artifact": data["core"],
         "private_key_file": data["private_path"],
         "key_id": KEY_ID,
@@ -129,6 +142,8 @@ def cli_command(data: dict[str, Any], *extra: str) -> list[str]:
         str(data["metadata_path"]),
         "--launcher-artifact",
         str(data["launcher"]),
+        "--updater-artifact",
+        str(data["updater"]),
         "--core-artifact",
         str(data["core"]),
         "--private-key-file",
@@ -168,7 +183,7 @@ def assert_no_private_material(text: str, private_raw: bytes) -> None:
     assert all(marker not in text for marker in markers)
 
 
-def test_build_derives_both_artifacts_and_verifies_with_separate_public_key(
+def test_build_derives_all_three_artifacts_and_verifies_with_separate_public_key(
     release_inputs: dict[str, Any],
 ) -> None:
     module = load_builder()
@@ -179,8 +194,10 @@ def test_build_derives_both_artifacts_and_verifies_with_separate_public_key(
     release, _payload_hash = verify_release_envelope_v2(
         envelope, {KEY_ID: release_inputs["public_raw"]}
     )
+    assert release.channel == "stable"
     for component, artifact in (
         ("launcher", release_inputs["launcher"]),
+        ("updater", release_inputs["updater"]),
         ("core", release_inputs["core"]),
     ):
         expected = artifact.read_bytes()
@@ -213,10 +230,12 @@ def test_build_is_canonical_and_deterministic(release_inputs: dict[str, Any]) ->
     [
         ("launcher", "artifact_sha256", "0" * 64),
         ("launcher", "artifact_size", 999),
+        ("updater", "artifact_sha256", "0" * 64),
+        ("updater", "artifact_size", 999),
         ("core", "artifact_sha256", "0" * 64),
         ("core", "artifact_size", 999),
     ],
-    ids=["launcher-sha", "launcher-size", "core-sha", "core-size"],
+    ids=["launcher-sha", "launcher-size", "updater-sha", "updater-size", "core-sha", "core-size"],
 )
 def test_claimed_artifact_metadata_disagreement_is_rejected(
     release_inputs: dict[str, Any], component: str, field: str, bad_value: object
@@ -235,12 +254,15 @@ def test_claimed_artifact_metadata_disagreement_is_rejected(
     "mutate",
     [
         pytest.param(lambda d: d.update(extra="forbidden"), id="top-level-extra"),
+        pytest.param(lambda d: d.update(channel="beta"), id="beta-channel-rejected"),
         pytest.param(lambda d: d["components"]["core"].update(extra="forbidden"), id="component-extra"),
         pytest.param(lambda d: d.pop("release_id"), id="missing-field"),
         pytest.param(lambda d: d.update(updater_protocol={"minimum": 2, "maximum": 1}), id="unknown-protocol"),
         pytest.param(lambda d: d["components"]["launcher"].update(artifact_format="msi-v1"), id="launcher-format"),
+        pytest.param(lambda d: d["components"]["updater"].update(artifact_format="msi-v1"), id="updater-format"),
         pytest.param(lambda d: d["components"]["core"].update(artifact_format="tar-core-v1"), id="core-format"),
         pytest.param(lambda d: d["components"]["core"].update(distribution="public"), id="unknown-distribution"),
+        pytest.param(lambda d: d["components"].pop("updater"), id="missing-updater-component"),
         pytest.param(lambda d: d["components"].update(agent=d["components"]["core"]), id="unknown-component"),
     ],
 )
@@ -253,6 +275,26 @@ def test_closed_release_v2_metadata_is_enforced(
     write_metadata(release_inputs, metadata)
 
     with pytest.raises((ValueError, TypeError)):
+        build(module, release_inputs)
+    assert not release_inputs["output"].exists()
+
+
+@pytest.mark.parametrize("changed_component", ["launcher", "updater", "core"])
+def test_artifact_changed_during_build_is_rejected_for_each_component(
+    release_inputs: dict[str, Any], changed_component: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_builder()
+    original_sign = module.Ed25519PrivateKey.sign
+
+    def tamper_on_sign(self: Any, data: bytes) -> bytes:
+        sig = original_sign(self, data)
+        # Modify the artifact on disk right after signing to simulate change during build
+        release_inputs[changed_component].write_bytes(b"tampered-after-sign")
+        return sig
+
+    monkeypatch.setattr(module.Ed25519PrivateKey, "sign", tamper_on_sign)
+
+    with pytest.raises(ValueError, match="ARTIFACT_CHANGED_DURING_BUILD"):
         build(module, release_inputs)
     assert not release_inputs["output"].exists()
 
@@ -344,6 +386,39 @@ def test_cli_requires_all_explicit_paths_and_produces_verified_output(
     assert_no_private_material(combined, release_inputs["private_raw"])
     envelope = canonical_json_loads(release_inputs["output"].read_bytes())
     verify_release_envelope_v2(envelope, {KEY_ID: release_inputs["public_raw"]})
+
+
+def test_cli_fails_when_updater_artifact_missing(
+    release_inputs: dict[str, Any],
+) -> None:
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--input",
+        str(release_inputs["metadata_path"]),
+        "--launcher-artifact",
+        str(release_inputs["launcher"]),
+        # omitting --updater-artifact
+        "--core-artifact",
+        str(release_inputs["core"]),
+        "--private-key-file",
+        str(release_inputs["private_path"]),
+        "--key-id",
+        KEY_ID,
+        "--public-key-file",
+        str(release_inputs["public_path"]),
+        "--output",
+        str(release_inputs["output"]),
+    ]
+    completed = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert not release_inputs["output"].exists()
 
 
 @pytest.mark.parametrize("option", ["--private-key", "--private-key-env"])

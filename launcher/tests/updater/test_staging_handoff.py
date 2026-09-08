@@ -9,7 +9,8 @@ from tests.software_update_helpers import (
     TEST_KEY_ID,
     TEST_PUBLIC_KEY,
     signed_envelope,
-    valid_release_document,
+    valid_legacy_v2_release_document,
+    valid_v2_release_document,
 )
 
 
@@ -21,24 +22,20 @@ def _make_signed_envelope_b64(
     launcher_size: int = 20480,
     core_size: int = 20480,
 ) -> str:
-    doc = valid_release_document()
-    doc["schema_version"] = 2
-    doc["channel"] = "beta"
-    doc["release_sequence"] = seq
-    doc["release_id"] = rel_id
-    doc["mandatory"] = False
-    doc["minimum_supported_sequence"] = 1
-    doc["updater_protocol"] = {"minimum": 1, "maximum": 1}
-    doc["components"]["launcher"]["artifact_format"] = "raw-pe-v1"
-    doc["components"]["launcher"]["artifact_sha256"] = launcher_hash
-    doc["components"]["launcher"]["installed_identity_sha256"] = launcher_hash
-    doc["components"]["launcher"]["artifact_size"] = launcher_size
-    doc["components"]["core"]["artifact_format"] = "zip-core-v1"
-    doc["components"]["core"]["artifact_sha256"] = core_hash
-    doc["components"]["core"]["installed_identity_sha256"] = core_hash
-    doc["components"]["core"]["artifact_size"] = core_size
+    doc = valid_v2_release_document(
+        sequence=seq,
+        release_id=rel_id,
+        launcher_sha=launcher_hash,
+        launcher_size=launcher_size,
+        core_sha=core_hash,
+        core_size=core_size,
+        core_installed_sha=core_hash,
+        updater_sha="9" * 64,
+        updater_size=30000,
+    )
     env = signed_envelope(doc)
     return base64.b64encode(canonical_json_dumps(env)).decode("ascii")
+
 
 
 def test_handle_begin_request_success(tmp_path: Path) -> None:
@@ -179,3 +176,40 @@ def test_handle_apply_request_verifies_on_disk_artifacts(tmp_path: Path) -> None
     )
     assert apply_res.accepted
     assert apply_res.error is None
+
+
+def test_handle_begin_request_rejects_legacy_two_component_envelope(tmp_path: Path) -> None:
+    initial_binding = Binding(release_sequence=1, release_id="rel-1", payload_sha256="1" * 64)
+    committed_gen = Generation(
+        binding=initial_binding,
+        launcher_identity_sha256="a" * 64,
+        core_identity_sha256="b" * 64,
+    )
+    current_state = State(
+        schema_version=1,
+        revision=1,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=committed_gen,
+        previous=None,
+        highwater=initial_binding,
+        observed=initial_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={},
+    )
+    keys = {TEST_KEY_ID: TEST_PUBLIC_KEY}
+
+    # Signed legacy 2-component envelope
+    doc = valid_legacy_v2_release_document(sequence=2, release_id="rel-2")
+    env = signed_envelope(doc)
+    env_b64 = base64.b64encode(canonical_json_dumps(env)).decode("ascii")
+
+    ready_res, next_state = handle_begin_request(tmp_path, current_state, env_b64, keys)
+    assert not ready_res.accepted
+    assert next_state is None

@@ -49,20 +49,22 @@ def _get_v2_adapter_cls() -> Any:
 def sample_valid_v2_document(
     *,
     sequence: int = 42,
-    release_id: str = "r-42-beta",
+    release_id: str = "r-42-stable",
     mandatory: bool = False,
     minimum_supported_sequence: int = 1,
     proto_min: int = 1,
     proto_max: int = 1,
     launcher_sha: str = "a" * 64,
     launcher_size: int = 1024,
+    updater_sha: str = "d" * 64,
+    updater_size: int = 1024,
     core_sha: str = "b" * 64,
     core_size: int = 2048,
     core_installed_sha: str = "c" * 64,
 ) -> dict[str, Any]:
     return {
         "schema_version": 2,
-        "channel": "beta",
+        "channel": "stable",
         "release_sequence": sequence,
         "release_id": release_id,
         "mandatory": mandatory,
@@ -77,6 +79,14 @@ def sample_valid_v2_document(
                 "artifact_size": launcher_size,
                 "artifact_format": "raw-pe-v1",
             },
+            "updater": {
+                "version": "2.0.0",
+                "artifact_id": f"updater-{sequence}",
+                "artifact_sha256": updater_sha,
+                "installed_identity_sha256": updater_sha,
+                "artifact_size": updater_size,
+                "artifact_format": "raw-pe-v1",
+            },
             "core": {
                 "version": "3.0.0",
                 "artifact_id": f"core-{sequence}",
@@ -87,6 +97,7 @@ def sample_valid_v2_document(
             },
         },
     }
+
 
 
 def test_v2_adapter_maps_valid_signed_release_set_v2_to_application_release_set() -> None:
@@ -207,3 +218,28 @@ def test_v2_adapter_rejects_legacy_schema_v1_envelope() -> None:
     )
     assert diag_v1.state == UpdateState.VERIFY_FAILED
     assert diag_v1.diagnostic_code == UpdateDiagnosticCode.MANIFEST_REJECTED
+
+
+def test_v2_adapter_rejects_legacy_two_component_beta_envelope() -> None:
+    from tests.software_update_helpers import valid_legacy_v2_release_document
+
+    adapter_cls = _get_v2_adapter_cls()
+    adapter = adapter_cls(get_test_key_registry())
+
+    # Valid legacy 2-component envelope must be rejected by V2ReleaseManifestVerifierAdapter
+    legacy_doc = valid_legacy_v2_release_document()
+    envelope_legacy = signed_envelope(legacy_doc)
+
+    with pytest.raises(Exception) as exc_legacy:
+        adapter.verify(envelope_legacy)
+
+    code_legacy = getattr(exc_legacy.value, "code", None)
+    assert code_legacy in _VERIFIER_REJECTED_CODES
+
+
+def test_v2_adapter_has_no_private_helper_protocol_version() -> None:
+    import neko_launcher.infrastructure.software_update_v2 as su_v2
+    # The private duplicate _HELPER_PROTOCOL_VERSION must be removed
+    assert not hasattr(su_v2, "_HELPER_PROTOCOL_VERSION"), (
+        "_HELPER_PROTOCOL_VERSION must be replaced by authoritative shared constant"
+    )
