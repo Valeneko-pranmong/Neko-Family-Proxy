@@ -424,3 +424,199 @@ def test_downgrade_policy_rejects_remote_release_without_secret_fields() -> None
     assert result.diagnostic_code is UpdateDiagnosticCode.DOWNGRADE_REJECTED
     assert result.changed_components == ()
     assert result.mandatory is False
+
+
+CDN_QUERY_TOKEN_TASK3 = "SENTINEL_CDN_QUERY_TOKEN_TASK3_42"
+CDN_SIG_TOKEN_TASK3 = "SENTINEL_CDN_SIG_TOKEN_TASK3_42"
+CDN_COOKIE_TOKEN_TASK3 = "SENTINEL_CDN_COOKIE_TOKEN_TASK3_42"
+QUERY_BEARING_CDN_URL = (
+    "https://objects.githubusercontent.com/storage/v1/release-asset"
+    f"?token={CDN_QUERY_TOKEN_TASK3}&signature={CDN_SIG_TOKEN_TASK3}"
+)
+
+
+def _downloader_module() -> Any:
+    try:
+        return importlib.import_module("neko_launcher.infrastructure.github_asset_downloader")
+    except ModuleNotFoundError:
+        return None
+
+
+def test_github_manifest_downloader_privacy_omits_secrets_in_errors_and_repr(
+    tmp_path: Path,
+) -> None:
+    module = _downloader_module()
+    assert module is not None, "Task 3 production module must exist"
+    from neko_launcher.infrastructure.github_release import GitHubReleaseAsset
+
+    initial_url = (
+        "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/"
+        "v5.1.0/release-v2.json"
+    )
+    routes = {
+        initial_url: FakeResponse(
+            status=302,
+            headers={"Location": QUERY_BEARING_CDN_URL},
+        ),
+        QUERY_BEARING_CDN_URL: urllib.error.URLError(
+            f"network error with secret={CDN_QUERY_TOKEN_TASK3}"
+        ),
+    }
+
+    class FakeRouteOpener:
+        def open(self, request: Any, timeout: float = 15.0) -> Any:
+            del timeout
+            url = request.full_url if hasattr(request, "full_url") else str(request)
+            res = routes.get(url)
+            if isinstance(res, BaseException):
+                raise res
+            return res
+
+    downloader = module.GitHubManifestDownloader(_opener=FakeRouteOpener())
+    asset = GitHubReleaseAsset(
+        id=1,
+        name="release-v2.json",
+        size=100,
+        browser_download_url=initial_url,
+    )
+
+    with pytest.raises(module.GitHubAssetDownloadError) as caught:
+        downloader.download(asset)
+
+    error = caught.value
+    assert error.code == "DOWNLOAD_UNAVAILABLE"
+    assert str(error) == "DOWNLOAD_UNAVAILABLE"
+
+    forbidden = (
+        CDN_QUERY_TOKEN_TASK3,
+        CDN_SIG_TOKEN_TASK3,
+        "token=",
+        "signature=",
+    )
+    assert_secrets_absent(str(error), *forbidden)
+    assert_secrets_absent(repr(error), *forbidden)
+    assert_secrets_absent(repr(downloader), *forbidden)
+
+    logger = DevelopmentLogger(tmp_path / "logs")
+    logger.record_exception(error, stage="software-update-manifest")
+    for log_file in (tmp_path / "logs").glob("*.log"):
+        assert_secrets_absent(log_file.read_text(encoding="utf-8"), *forbidden)
+
+
+def test_github_asset_downloader_privacy_omits_query_tokens_and_secrets(
+    tmp_path: Path,
+) -> None:
+    module = _downloader_module()
+    assert module is not None, "Task 3 production module must exist"
+
+    initial_url = (
+        "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/"
+        "v5.1.0/NekoLauncher.exe"
+    )
+    # 302 to query-bearing CDN URL, which returns wrong hash
+    routes = {
+        initial_url: FakeResponse(
+            status=302,
+            headers={"Location": QUERY_BEARING_CDN_URL},
+        ),
+        QUERY_BEARING_CDN_URL: FakeResponse(
+            body=b"mismatched content",
+            status=200,
+        ),
+    }
+
+    class FakeRouteOpener:
+        def open(self, request: Any, timeout: float = 15.0) -> Any:
+            del timeout
+            url = request.full_url if hasattr(request, "full_url") else str(request)
+            res = routes.get(url)
+            if isinstance(res, BaseException):
+                raise res
+            return res
+
+    downloader = module.GitHubAssetDownloader(_opener=FakeRouteOpener())
+    destination = tmp_path / "NekoLauncher.exe"
+
+    with pytest.raises(module.GitHubAssetDownloadError) as caught:
+        downloader.download(
+            initial_url=initial_url,
+            destination=destination,
+            expected_size=len(b"mismatched content"),
+            expected_sha256="0" * 64,
+        )
+
+    error = caught.value
+    assert error.code == "DOWNLOAD_HASH_MISMATCH"
+    assert str(error) == "DOWNLOAD_HASH_MISMATCH"
+
+    forbidden = (
+        CDN_QUERY_TOKEN_TASK3,
+        CDN_SIG_TOKEN_TASK3,
+        "token=",
+        "signature=",
+    )
+    assert_secrets_absent(str(error), *forbidden)
+    assert_secrets_absent(repr(error), *forbidden)
+    assert_secrets_absent(repr(downloader), *forbidden)
+
+    logger = DevelopmentLogger(tmp_path / "logs")
+    logger.record_exception(error, stage="software-update-artifact")
+    for log_file in (tmp_path / "logs").glob("*.log"):
+        assert_secrets_absent(log_file.read_text(encoding="utf-8"), *forbidden)
+
+
+def test_github_downloaders_request_privacy_and_no_cookie_replay() -> None:
+    module = _downloader_module()
+    assert module is not None, "Task 3 production module must exist"
+    from neko_launcher.infrastructure.github_release import GitHubReleaseAsset
+
+    initial_url = (
+        "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/"
+        "v5.1.0/release-v2.json"
+    )
+    cdn_hop1 = "https://objects.githubusercontent.com/hop1"
+    cdn_hop2 = "https://release-assets.githubusercontent.com/hop2"
+    body = b'{"channel":"stable"}'
+
+    captured_requests: list[Any] = []
+
+    class MultiHopOpener:
+        def open(self, request: Any, timeout: float = 15.0) -> Any:
+            del timeout
+            captured_requests.append(request)
+            url = request.full_url
+            if url == initial_url:
+                return FakeResponse(
+                    status=302,
+                    headers={
+                        "Location": cdn_hop1,
+                        "Set-Cookie": f"auth={CDN_COOKIE_TOKEN_TASK3}; Path=/",
+                    },
+                )
+            if url == cdn_hop1:
+                return FakeResponse(
+                    status=302,
+                    headers={
+                        "Location": cdn_hop2,
+                        "Set-Cookie": "track=secret; Path=/",
+                    },
+                )
+            if url == cdn_hop2:
+                return FakeResponse(body=body, status=200)
+            raise AssertionError(f"unexpected request url: {url}")
+
+    downloader = module.GitHubManifestDownloader(_opener=MultiHopOpener())
+    asset = GitHubReleaseAsset(
+        id=1,
+        name="release-v2.json",
+        size=len(body),
+        browser_download_url=initial_url,
+    )
+
+    downloader.download(asset)
+
+    assert len(captured_requests) == 3
+    for req in captured_requests:
+        assert req.get_header("Authorization") is None
+        assert req.get_header("Cookie") is None
+
