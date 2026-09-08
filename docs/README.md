@@ -24,18 +24,28 @@ This is the canonical index for repository documentation. Documentation is organ
 | **[`current/build-windows-executable.md`](current/build-windows-executable.md)** | `CURRENT_OPERATIONAL` | PyInstaller standalone packaging and secret-hygiene build instructions |
 | **[`current/debug-console.md`](current/debug-console.md)** | `CURRENT_OPERATIONAL` | Windows debug console, runtime logging, and IPC troubleshooting |
 | **[`current/repository-layout.md`](current/repository-layout.md)** | `CURRENT_OPERATIONAL` | Tracked source, local inputs, and component layout |
-| **[`current/runtime-distribution.md`](current/runtime-distribution.md)** | `CURRENT_OPERATIONAL` | Controlled Core runtime delivery and packaging policy |
+| **[`current/runtime-distribution.md`](current/runtime-distribution.md)** | `CURRENT_OPERATIONAL` | External Core runtime distribution policy (GitHub Releases architecture, public Core accepted) |
 | **[`current/dashboard-redesign-plan.md`](current/dashboard-redesign-plan.md)** | `CURRENT_PLAN` | Dashboard UI redesign plan (6 phases) targeting v5.0.0a10+ post-beta |
 | **[`Tool.md`](Tool.md)** | `CURRENT_OPERATIONAL` | Developer tool installation and Windows environment checklist |
 
 ---
 
-## Software Update — development proposals and evidence
+## Software Update — GitHub Releases Architecture (Current)
 
-- [Phase-2 design](superpowers/specs/2026-09-05-software-update-phase-2-design.md) — signed update discovery; does not install software.
-- [Phase-3 transactional update architecture](superpowers/specs/2026-09-06-software-update-phase-3-design.md) — **PROPOSED / BLOCKED_AT_ARCHITECTURE_GATE**. Written Owner approval required before implementation. Architecture review is not production/release authorization.
-- [Phase-3 independent review record](superpowers/specs/2026-09-06-software-update-phase-3-review.md) — exact spec hash, Sol High fallback provenance, Critical0/Important0/Minor0; written architecture acceptance only, Owner approval still pending.
-- [Phase-3 master implementation plan](superpowers/plans/2026-09-06-software-update-phase-3-master-plan.md) — 12-slice decomposition (Slices A through L) for autonomous live update implementation.
+Software Update operates under the Owner-approved GitHub-only architecture:
+- **Current Architecture**: Fixed GitHub Releases only, latest published stable release discovery, signed `release-v2.json` authority, exact fixed product assets (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`), public Core accepted, no Supabase/Admin update fallback, and publish-last draft verification process.
+- [Current specification](superpowers/specs/2026-09-08-software-update-github-releases-design.md) — Fixed GitHub Releases-only Software Update architecture design.
+- [Current implementation plan](superpowers/plans/2026-09-08-software-update-github-releases-implementation.md) — 8-task implementation plan. Tasks 1–7 accepted C0/I0 (Task 7 canonical full Launcher suite 1673 passed / 35 skipped / 0 failed; optional disposable GitHub proof NOT RUN / ACCEPTABLE). Task 8 documentation migration active.
+- **Gates & Authority**: Gate #2 remains NOT PASSED until replacement GitHub package/release execution criteria are performed under separate authority. Gate #3 NOT PASSED.
+- **Operational Discipline**: Active implementation and review routing is `ag/gemini-3.8-flash-high` via Hermes; Sol High is paused. ChatGPT PM writes no product code. Mandatory dedup check before every Hermes dispatch (`--oneshot` + registry + session history).
+- **Scope Boundary**: Unrelated Supabase/Admin/account/recovery/proxy services remain untouched. Documentation does not claim production signing, tag creation, draft release, asset upload, publication, merge, push, deployment, live auto-update completion, Gate #2, or Gate #3.
+
+### Historical and Superseded Update Plans
+
+- [Phase-2 design](superpowers/specs/2026-09-05-software-update-phase-2-design.md) — **HISTORICAL / SUPERSEDED BY OWNER GITHUB-ONLY ARCHITECTURE DECISION, NOT PASS**. Signed update discovery prototype; does not install software.
+- [Phase-3 transactional update architecture](superpowers/specs/2026-09-06-software-update-phase-3-design.md) — **HISTORICAL / SUPERSEDED BY OWNER GITHUB-ONLY ARCHITECTURE DECISION, NOT PASS**. Historical Supabase private Storage / Admin grant / capability / Vercel Software Update E3 requirements preserved as evidence.
+- [Phase-3 independent review record](superpowers/specs/2026-09-06-software-update-phase-3-review.md) — historical architecture review record.
+- [Phase-3 master implementation plan](superpowers/plans/2026-09-06-software-update-phase-3-master-plan.md) — **HISTORICAL / SUPERSEDED BY OWNER GITHUB-ONLY ARCHITECTURE DECISION, NOT PASS**.
 - Phase-2 `5.1.0a2` remains historical packaged candidate evidence; this documentation checkpoint does not change product behavior or its version.
 
 ## Component Documentation

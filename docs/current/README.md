@@ -51,6 +51,20 @@ The branch is closed and prepared for merge into `main`. The next stream (`featu
 
 ---
 
+## 1.1 Software Update Architecture (GitHub Releases)
+
+Software Update on `release/5.1` is governed by the Owner's GitHub-only architecture decision:
+
+- **Current Architecture**: Fixed GitHub Releases only with latest published stable release discovery, signed `release-v2.json` authority, exact fixed product assets (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`), public Core accepted, no Supabase/Admin update fallback, and publish-last draft verification process.
+- **Historical Supersession**: The historical Supabase private Storage / Admin grant / capability / Vercel Software Update E3 / Gate #2 architecture is **SUPERSEDED BY OWNER GITHUB-ONLY ARCHITECTURE DECISION, NOT PASS**. Historical blocker evidence is preserved; unrelated Supabase/Admin/account/recovery/proxy services remain untouched.
+- **Engineering Status**: Tasks 1–7 are accepted C0/I0; Task 7 canonical full Launcher suite returned 1673 passed / 35 skipped / 0 failed with the admitted Core fixture. Optional disposable GitHub proof is NOT RUN / ACCEPTABLE. Task 8 documentation migration is active.
+- **Release Gates**: Gate #2 remains NOT PASSED until replacement GitHub package/release execution criteria are performed under separate authority. Gate #3 remains NOT PASSED.
+- **Operational Discipline**: Active implementation and review routing is `ag/gemini-3.8-flash-high` via Hermes; Sol High is paused. ChatGPT PM writes no product code. Mandatory dedup check before every Hermes dispatch (`--oneshot` + registry + session history).
+- **Explicit Boundary**: Do not claim production signing, tag creation, draft release, asset upload, publication, merge, push, deployment, live auto-update completion, Gate #2, or Gate #3.
+
+
+---
+
 ## 2. Evidence-aligned dashboard semantics
 
 The four-node visual flow from the mockup is preserved, but it is a **service/status path**, not a fabricated physical traceroute:
@@ -182,7 +196,9 @@ Build/live proof/authority = NOT performed in this pass; Phase 6 owns packaged i
 | **[`build-windows-executable.md`](build-windows-executable.md)** | PyInstaller packaging and secret-hygiene build instructions | `CURRENT_OPERATIONAL` |
 | **[`debug-console.md`](debug-console.md)** | Windows debug console, runtime logging, and IPC troubleshooting | `CURRENT_OPERATIONAL` |
 | **[`repository-layout.md`](repository-layout.md)** | File organization and component dependency layout | `CURRENT_OPERATIONAL` |
-| **[`runtime-distribution.md`](runtime-distribution.md)** | External Core runtime distribution policy | `CURRENT_OPERATIONAL` |
+| **[`runtime-distribution.md`](runtime-distribution.md)** | External Core runtime distribution policy (GitHub Releases architecture, public Core accepted) | `CURRENT_OPERATIONAL` |
+| **[`../superpowers/specs/2026-09-08-software-update-github-releases-design.md`](../superpowers/specs/2026-09-08-software-update-github-releases-design.md)** | Software Update GitHub Releases design specification | `CURRENT_SPEC` |
+| **[`../superpowers/plans/2026-09-08-software-update-github-releases-implementation.md`](../superpowers/plans/2026-09-08-software-update-github-releases-implementation.md)** | Software Update GitHub Releases implementation plan | `CURRENT_PLAN` |
 | **[`closed-beta-runbook.md`](closed-beta-runbook.md)** | Closed-Beta distribution and accepted artifact evidence | `CURRENT_OPERATIONAL / RELEASE_HISTORY` |
 
 ---
