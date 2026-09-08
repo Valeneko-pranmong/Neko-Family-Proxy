@@ -104,13 +104,19 @@ def test_candidate_build_preserves_launcher_and_updater_outputs() -> None:
         "updater build": "NekoUpdater.spec",
         "updater self-check": "NekoUpdater.exe --self-check",
         "updater carry into release": "launcher\\dist\\NekoUpdater.exe",
-        "checksum manifest": "SHA256SUMS.txt",
         "candidate artifact upload": "actions/upload-artifact@",
     }
     missing = [label for label, marker in required.items() if marker not in candidate]
     assert not missing, "candidate build is missing: " + ", ".join(missing)
     assert "installer\\NekoLauncher.iss" not in candidate, (
         "candidate build must preserve Unit Task5 removal of the legacy installer spec"
+    )
+
+
+def test_candidate_build_and_publication_do_not_produce_or_publish_unsigned_checksum_file() -> None:
+    text = workflow_text()
+    assert "sha256sums.txt" not in text.lower(), (
+        "release.yml must not assemble or publish unsigned SHA256SUMS.txt"
     )
 
 
@@ -186,9 +192,6 @@ def test_publication_consumes_the_candidate_artifact_without_rebuilding() -> Non
         )
         assert "pyinstaller" not in lowered and ".spec" not in lowered, (
             f"publication job {publisher.name!r} must not independently rebuild candidates"
-        )
-        assert "sha256sums.txt" in lowered, (
-            f"publication job {publisher.name!r} must publish the candidate checksum manifest"
         )
         assert any(name.strip(" '\"") in publisher.text for name in uploads), (
             f"publication job {publisher.name!r} must name an artifact produced by this workflow"
@@ -288,3 +291,36 @@ def test_publication_passes_release_tag_via_environment_not_powershell_source() 
             r"(?i)\bgh\s+release\s+create\s+(?:['\"]\$env:RELEASE_TAG['\"]|\$env:RELEASE_TAG)(?=\s)",
             run_source,
         ), "gh release create must receive $env:RELEASE_TAG as its tag argument"
+
+
+def test_publication_creates_draft_release_first() -> None:
+    publishers = publication_jobs(workflow_text())
+    assert publishers, "release.yml must have a publication job"
+    for publisher in publishers:
+        assert re.search(r"(?i)\bgh\s+release\s+create\b[^\n]*--draft\b", publisher.text), (
+            f"publication job {publisher.name!r} must create the release with --draft"
+        )
+
+
+def test_publication_edits_draft_to_false_as_final_step() -> None:
+    publishers = publication_jobs(workflow_text())
+    assert publishers, "release.yml must have a publication job"
+    for publisher in publishers:
+        assert re.search(r"(?i)\bgh\s+release\s+edit\b[^\n]*--draft=false\b", publisher.text), (
+            f"publication job {publisher.name!r} must publish last using gh release edit --draft=false"
+        )
+
+
+def test_publication_runs_verifier_before_publish() -> None:
+    publishers = publication_jobs(workflow_text())
+    assert publishers, "release.yml must have a publication job"
+    for publisher in publishers:
+        create_idx = publisher.text.find("gh release create")
+        verifier_idx = publisher.text.find("verify_github_release_assets.py")
+        publish_idx = publisher.text.find("--draft=false")
+        assert create_idx != -1, "gh release create missing"
+        assert verifier_idx != -1, "verifier invocation missing"
+        assert publish_idx != -1, "gh release edit --draft=false missing"
+        assert create_idx < verifier_idx < publish_idx, (
+            "verifier must run after draft creation and before --draft=false"
+        )
