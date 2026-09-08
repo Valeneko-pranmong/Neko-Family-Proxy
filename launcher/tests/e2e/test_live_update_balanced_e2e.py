@@ -9,7 +9,50 @@ from neko_launcher.updater.main import run_session
 from neko_launcher.updater.probation_runner import SelfTestResult
 from neko_launcher.updater.recovery_engine import RecoveryEngine
 from neko_launcher.updater.state_models import serialize_state
-from tests.updater.test_broker_balanced import Env, FakeSlotStore
+from tests.updater.test_broker_balanced import Env, FakeSlotStore, sha256_bytes
+
+
+class BalancedLiveUpdateEnv(Env):
+    def build_release_doc(
+        self, seq: int, l_sha: str, l_size: int, c_sha: str, c_size: int, c_id: str
+    ) -> dict[str, object]:
+        u_bytes = b"updater-binary-payload"
+        u_sha = sha256_bytes(u_bytes)
+        return {
+            "schema_version": 2,
+            "channel": "stable",
+            "release_sequence": seq,
+            "release_id": f"rel-{seq}",
+            "mandatory": False,
+            "minimum_supported_sequence": 1,
+            "updater_protocol": {"minimum": 1, "maximum": 1},
+            "components": {
+                "launcher": {
+                    "version": "1.0.0",
+                    "artifact_size": l_size,
+                    "artifact_sha256": l_sha,
+                    "installed_identity_sha256": l_sha,
+                    "artifact_format": "raw-pe-v1",
+                    "artifact_id": "NekoLauncher.exe",
+                },
+                "updater": {
+                    "version": "1.0.0",
+                    "artifact_size": len(u_bytes),
+                    "artifact_sha256": u_sha,
+                    "installed_identity_sha256": u_sha,
+                    "artifact_format": "raw-pe-v1",
+                    "artifact_id": "NekoUpdater.exe",
+                },
+                "core": {
+                    "version": "1.0.0",
+                    "artifact_size": c_size,
+                    "artifact_sha256": c_sha,
+                    "installed_identity_sha256": c_id,
+                    "artifact_format": "zip-core-v1",
+                    "artifact_id": "NekoProxyCore.zip",
+                },
+            },
+        }
 
 
 class ClosableStore(FakeSlotStore):
@@ -81,7 +124,7 @@ def test_balanced_live_update_success_matrix(tmp_path: Path) -> None:
     for launcher_changed, core_changed, name in cases:
         case_root = tmp_path / name
         case_root.mkdir()
-        env = Env(case_root, launcher_changed=launcher_changed, core_changed=core_changed)
+        env = BalancedLiveUpdateEnv(case_root, launcher_changed=launcher_changed, core_changed=core_changed)
         store = ClosableStore(env.state)
         env.store = store
         channel = SessionChannel(env)
@@ -136,7 +179,7 @@ def test_balanced_live_update_success_matrix(tmp_path: Path) -> None:
 
 
 def test_balanced_live_update_broken_candidate(tmp_path: Path) -> None:
-    env = Env(tmp_path, launcher_changed=True, core_changed=True)
+    env = BalancedLiveUpdateEnv(tmp_path, launcher_changed=True, core_changed=True)
     store = ClosableStore(env.state)
     env.store = store
     channel = SessionChannel(env)
@@ -188,7 +231,7 @@ def test_balanced_live_update_recovery_checkpoints(tmp_path: Path) -> None:
     for stage in ("ADMITTED", "VERIFIED"):
         case_root = tmp_path / f"recovery-{stage.lower()}"
         case_root.mkdir()
-        env = Env(case_root, launcher_changed=True, core_changed=True)
+        env = BalancedLiveUpdateEnv(case_root, launcher_changed=True, core_changed=True)
         store = ClosableStore(env.state)
 
         coordinator = BrokerCoordinator(case_root, store, env.keys)

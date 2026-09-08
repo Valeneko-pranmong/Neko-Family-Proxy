@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import importlib
 import io
+import json
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -576,3 +577,164 @@ def test_github_downloaders_request_privacy_and_no_cookie_replay() -> None:
     for req in captured_requests:
         assert req.get_header("Authorization") is None
         assert req.get_header("Cookie") is None
+
+
+def test_software_update_simulation_makes_zero_grant_or_admin_network_calls(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.infrastructure.github_asset_downloader import (
+        GitHubManifestDownloader,
+    )
+    from neko_launcher.infrastructure.github_release import (
+        GITHUB_RELEASE_API_URL,
+        GitHubLatestReleaseGateway,
+    )
+    from neko_launcher.infrastructure.github_release_binding import (
+        CORE_ASSET_NAME,
+        LAUNCHER_ASSET_NAME,
+        RELEASE_MANIFEST_ASSET_NAME,
+        UPDATER_ASSET_NAME,
+        GitHubReleaseResolver,
+    )
+    from neko_launcher.updater.canonical_json import canonical_json_dumps
+    from tests.e2e.test_live_update_balanced_e2e import (
+        BalancedLiveUpdateEnv,
+        ClosableStore,
+    )
+
+    env = BalancedLiveUpdateEnv(tmp_path, launcher_changed=True, core_changed=True)
+    store = ClosableStore(env.state)
+    env.store = store
+
+    updater_bytes = b"updater-binary-payload"
+    (tmp_path / "NekoUpdater.exe").write_bytes(updater_bytes)
+    manifest_bytes = canonical_json_dumps(env.envelope_dict)
+    tag = "v1.0.0"
+
+    api_release = {
+        "id": 100,
+        "tag_name": tag,
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {
+                "id": 1,
+                "name": RELEASE_MANIFEST_ASSET_NAME,
+                "size": len(manifest_bytes),
+                "browser_download_url": f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{RELEASE_MANIFEST_ASSET_NAME}",
+            },
+            {
+                "id": 2,
+                "name": LAUNCHER_ASSET_NAME,
+                "size": len(env.new_launcher),
+                "browser_download_url": f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{LAUNCHER_ASSET_NAME}",
+            },
+            {
+                "id": 3,
+                "name": UPDATER_ASSET_NAME,
+                "size": len(updater_bytes),
+                "browser_download_url": f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{UPDATER_ASSET_NAME}",
+            },
+            {
+                "id": 4,
+                "name": CORE_ASSET_NAME,
+                "size": len(env.new_core_zip_bytes),
+                "browser_download_url": f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{CORE_ASSET_NAME}",
+            },
+        ],
+    }
+
+    cdn_prefix = "https://objects.githubusercontent.com/test-assets/"
+    routes: dict[str, Any] = {
+        GITHUB_RELEASE_API_URL: _PrivacyFakeResponse(
+            body=json.dumps(api_release).encode("utf-8"),
+            status=200,
+        ),
+        f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{RELEASE_MANIFEST_ASSET_NAME}": _PrivacyFakeResponse(
+            status=302,
+            headers={"Location": cdn_prefix + RELEASE_MANIFEST_ASSET_NAME},
+        ),
+        cdn_prefix + RELEASE_MANIFEST_ASSET_NAME: _PrivacyFakeResponse(
+            body=manifest_bytes,
+            status=200,
+        ),
+        f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{LAUNCHER_ASSET_NAME}": _PrivacyFakeResponse(
+            status=302,
+            headers={"Location": cdn_prefix + LAUNCHER_ASSET_NAME},
+        ),
+        cdn_prefix + LAUNCHER_ASSET_NAME: _PrivacyFakeResponse(
+            body=env.new_launcher,
+            status=200,
+        ),
+        f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/{CORE_ASSET_NAME}": _PrivacyFakeResponse(
+            status=302,
+            headers={"Location": cdn_prefix + CORE_ASSET_NAME},
+        ),
+        cdn_prefix + CORE_ASSET_NAME: _PrivacyFakeResponse(
+            body=env.new_core_zip_bytes,
+            status=200,
+        ),
+    }
+
+    captured_requests: list[Any] = []
+
+    class CapturingOpener:
+        def open(self, request: Any, timeout: float = 15.0) -> Any:
+            del timeout
+            captured_requests.append(request)
+            url = request.full_url if hasattr(request, "full_url") else str(request)
+            return routes[url]
+
+    opener = CapturingOpener()
+    gw = GitHubLatestReleaseGateway()
+    gw._opener = opener
+    mdl = GitHubManifestDownloader(_opener=opener)
+    resolver = GitHubReleaseResolver(
+        release_gateway=gw,
+        manifest_downloader=mdl,
+        key_registry=env.keys,
+        install_root=tmp_path,
+    )
+    resolved = resolver.resolve()
+    assert resolved is not None
+
+    # Verify every request captured during resolution and asset preparation
+    assert len(captured_requests) >= 2
+    for req in captured_requests:
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        assert "supabase" not in url.lower()
+        assert "admin" not in url.lower()
+        assert "vercel" not in url.lower()
+        assert "/api/distribution" not in url.lower()
+        assert "/api/software-update" not in url.lower()
+        assert req.get_header("Authorization") is None
+        assert req.get_header("Cookie") is None
+
+
+def test_software_update_subsystem_source_has_no_obsolete_distribution_grants() -> None:
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "neko_launcher"
+    update_files = [
+        pkg_root / "application" / "software_update_service.py",
+        pkg_root / "application" / "software_update_models.py",
+        pkg_root / "application" / "software_update_policy.py",
+        pkg_root / "infrastructure" / "github_release.py",
+        pkg_root / "infrastructure" / "github_asset_downloader.py",
+        pkg_root / "infrastructure" / "github_release_binding.py",
+        pkg_root / "infrastructure" / "software_update_apply.py",
+        pkg_root / "infrastructure" / "software_update_v2.py",
+    ]
+
+    forbidden = (
+        "HttpArtifactGrantGateway",
+        "get_distribution_capability",
+        "/api/distribution",
+        "/api/software-update",
+        "software_update_api_url",
+        "distribution_capability_provider",
+    )
+
+    for fpath in update_files:
+        if fpath.is_file():
+            content = fpath.read_text(encoding="utf-8")
+            for term in forbidden:
+                assert term not in content, f"Forbidden legacy term {term!r} in {fpath.name}"
