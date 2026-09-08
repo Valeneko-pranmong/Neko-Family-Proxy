@@ -292,6 +292,8 @@ def test_enum_member_sequence_and_values():
         ("MANIFEST_UNAVAILABLE", UpdateDiagnosticCode.MANIFEST_UNAVAILABLE),
         ("MANIFEST_REJECTED", UpdateDiagnosticCode.MANIFEST_REJECTED),
         ("UPDATE_CHECK_INTERNAL_FAILURE", UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE),
+        ("UPDATER_INCOMPATIBLE", UpdateDiagnosticCode.UPDATER_INCOMPATIBLE),
+        ("GITHUB_RELEASE_UNAVAILABLE", UpdateDiagnosticCode.GITHUB_RELEASE_UNAVAILABLE),
     ]
 
 def test_dataclasses_exact_fields():

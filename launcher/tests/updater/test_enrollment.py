@@ -29,19 +29,12 @@ from tests.software_update_helpers import (
     TEST_KEY_ID,
     TEST_PUBLIC_KEY,
     signed_envelope,
-    valid_release_document,
+    valid_v2_release_document,
 )
 
 
 def _make_evidence_and_generation(seq: int, rel_id: str) -> tuple[Binding, str, str, Generation]:
-    doc = valid_release_document()
-    doc["release_sequence"] = seq
-    doc["release_id"] = rel_id
-    doc["schema_version"] = 2
-    doc["updater_protocol"] = {"minimum": 1, "maximum": 1}
-    doc["components"]["launcher"]["artifact_format"] = "raw-pe-v1"
-    doc["components"]["launcher"]["installed_identity_sha256"] = doc["components"]["launcher"]["artifact_sha256"]
-    doc["components"]["core"]["artifact_format"] = "zip-core-v1"
+    doc = valid_v2_release_document(sequence=seq, release_id=rel_id)
 
     envelope = signed_envelope(doc)
     envelope_bytes = canonical_json_dumps(envelope)

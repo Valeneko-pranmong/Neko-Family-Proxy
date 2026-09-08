@@ -181,9 +181,10 @@ class Env:
     def build_release_doc(
         self, seq: int, l_sha: str, l_size: int, c_sha: str, c_size: int, c_id: str
     ) -> dict[str, object]:
+        updater_sha = "2" * 64
         return {
             "schema_version": 2,
-            "channel": "beta",
+            "channel": "stable",
             "release_sequence": seq,
             "release_id": f"rel-{seq}",
             "mandatory": False,
@@ -206,7 +207,15 @@ class Env:
                     "artifact_format": "raw-pe-v1",
                     "artifact_id": f"launcher-{seq}",
                 },
-            }
+                "updater": {
+                    "version": "1.0.0",
+                    "artifact_size": 30720,
+                    "artifact_sha256": updater_sha,
+                    "installed_identity_sha256": updater_sha,
+                    "artifact_format": "raw-pe-v1",
+                    "artifact_id": f"updater-{seq}",
+                },
+            },
         }
 
     def populate_incoming(self, req_id: str) -> None:

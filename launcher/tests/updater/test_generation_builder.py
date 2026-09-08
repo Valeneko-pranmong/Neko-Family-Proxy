@@ -201,10 +201,20 @@ class Env:
         doc = valid_release_document()
         doc.update(
             schema_version=2,
+            channel="stable",
             release_sequence=seq,
             release_id=f"rel-{seq}",
             updater_protocol={"minimum": pmin, "maximum": pmax},
         )
+        updater_sha = "2" * 64
+        doc["components"]["updater"] = {
+            "version": "1.0.0",
+            "artifact_size": 30720,
+            "artifact_sha256": updater_sha,
+            "installed_identity_sha256": updater_sha,
+            "artifact_format": "raw-pe-v1",
+            "artifact_id": f"updater-{seq}",
+        }
         doc["components"]["launcher"].update(
             artifact_format="raw-pe-v1",
             artifact_sha256=launcher_sha,
