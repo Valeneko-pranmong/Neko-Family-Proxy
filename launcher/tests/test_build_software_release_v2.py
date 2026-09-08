@@ -284,18 +284,25 @@ def test_artifact_changed_during_build_is_rejected_for_each_component(
     release_inputs: dict[str, Any], changed_component: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = load_builder()
-    original_sign = module.Ed25519PrivateKey.sign
+    original_load = module._load_private_key
 
-    def tamper_on_sign(self: Any, data: bytes) -> bytes:
-        sig = original_sign(self, data)
-        # Modify the artifact on disk right after signing to simulate change during build
-        release_inputs[changed_component].write_bytes(b"tampered-after-sign")
-        return sig
+    def load_and_tamper(path: Path) -> Any:
+        key = original_load(path)
 
-    monkeypatch.setattr(module.Ed25519PrivateKey, "sign", tamper_on_sign)
+        class WrappedKey:
+            def sign(self, data: bytes) -> bytes:
+                sig = key.sign(data)
+                # Modify the artifact on disk right after signing to simulate change during build
+                release_inputs[changed_component].write_bytes(b"tampered-after-sign")
+                return sig
+
+        return WrappedKey()
+
+    monkeypatch.setattr(module, "_load_private_key", load_and_tamper)
 
     with pytest.raises(ValueError, match="ARTIFACT_CHANGED_DURING_BUILD"):
         build(module, release_inputs)
+
     assert not release_inputs["output"].exists()
 
 

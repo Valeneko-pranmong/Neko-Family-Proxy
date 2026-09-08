@@ -8,7 +8,11 @@ from typing import Mapping
 
 from neko_launcher.updater.binary_frame import FrameCorruptError, unpack_slot_frame
 from neko_launcher.updater.canonical_json import canonical_json_loads
-from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+from neko_launcher.updater.manifest_v2 import (
+    ReleaseSetV2,
+    verify_legacy_recovery_envelope_v2,
+    verify_release_envelope_v2,
+)
 from neko_launcher.updater.state_models import Binding, Generation, State, deserialize_state
 
 
@@ -24,6 +28,16 @@ class SelectionResult:
     state: State | None = None
     active_slot: str | None = None  # "a" or "b"
     reason: str | None = None
+
+
+def _verify_envelope(
+    envelope_doc: object,
+    public_keys: Mapping[str, bytes],
+) -> tuple[ReleaseSetV2, str]:
+    try:
+        return verify_release_envelope_v2(envelope_doc, public_keys)
+    except Exception:
+        return verify_legacy_recovery_envelope_v2(envelope_doc, public_keys)
 
 
 def _authenticate_evidence(state: State, public_keys: Mapping[str, bytes]) -> bool:
@@ -57,7 +71,7 @@ def _authenticate_evidence(state: State, public_keys: Mapping[str, bytes]) -> bo
             envelope_doc = canonical_json_loads(envelope_bytes)
             if not isinstance(envelope_doc, dict):
                 return False
-            release_set_v2, payload_sha256 = verify_release_envelope_v2(envelope_doc, public_keys)
+            release_set_v2, payload_sha256 = _verify_envelope(envelope_doc, public_keys)
         except Exception:
             return False
 
@@ -88,7 +102,7 @@ def _authenticate_evidence(state: State, public_keys: Mapping[str, bytes]) -> bo
         try:
             envelope_bytes = base64.b64decode(envelope_b64, validate=True)
             envelope_doc = canonical_json_loads(envelope_bytes)
-            release_set_v2, _ = verify_release_envelope_v2(envelope_doc, public_keys)
+            release_set_v2, _ = _verify_envelope(envelope_doc, public_keys)
         except Exception:
             return False
         if gen.launcher_identity_sha256 != release_set_v2.components["launcher"].installed_identity_sha256:
@@ -97,6 +111,7 @@ def _authenticate_evidence(state: State, public_keys: Mapping[str, bytes]) -> bo
             return False
 
     return True
+
 
 
 def _classify_slot(raw: bytes | None) -> tuple[bool, State | None, int | None, str | None]:

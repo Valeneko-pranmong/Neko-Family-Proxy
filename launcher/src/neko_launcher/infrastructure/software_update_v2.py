@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from neko_launcher.application.software_update_models import ComponentRelease, ReleaseSet
-from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
-
-_HELPER_PROTOCOL_VERSION = 1
+from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION, verify_release_envelope_v2
 
 
 class V2ManifestVerificationError(ValueError):
@@ -19,8 +17,13 @@ class V2ManifestVerificationError(ValueError):
 
 
 class V2ReleaseManifestVerifierAdapter:
-    def __init__(self, key_registry: Mapping[str, bytes]) -> None:
+    def __init__(
+        self,
+        key_registry: Mapping[str, bytes],
+        updater_protocol: int = UPDATER_PROTOCOL_VERSION,
+    ) -> None:
         self._key_registry = dict(key_registry)
+        self._updater_protocol = updater_protocol
 
     def verify(self, document: object) -> ReleaseSet:
         try:
@@ -31,11 +34,8 @@ class V2ReleaseManifestVerifierAdapter:
         except ValueError:
             raise V2ManifestVerificationError("INVALID_PAYLOAD_SCHEMA") from None
 
-        protocol = release_v2.updater_protocol
-        if not protocol.minimum <= _HELPER_PROTOCOL_VERSION <= protocol.maximum:
-            raise V2ManifestVerificationError("INVALID_PAYLOAD_SCHEMA")
-
         components = tuple(
+
             ComponentRelease(
                 name=component.name,
                 version=component.version,

@@ -49,7 +49,7 @@ def test_parse_release_v2_rejects_beta_channel():
 
 
 def test_parse_release_v2_rejects_legacy_exact_two_components():
-    legacy_doc = valid_legacy_v2_release_document()
+    legacy_doc = valid_legacy_v2_release_document(channel="stable")
     with pytest.raises(ValueError, match="components must contain exactly 'launcher', 'updater', and 'core'"):
         parse_release_v2(legacy_doc)
 

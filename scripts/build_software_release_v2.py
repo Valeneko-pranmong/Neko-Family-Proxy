@@ -107,6 +107,7 @@ def build_release_v2(
     *,
     metadata_path: Path | str,
     launcher_artifact: Path | str,
+    updater_artifact: Path | str,
     core_artifact: Path | str,
     private_key_file: Path | str,
     key_id: str,
@@ -119,6 +120,7 @@ def build_release_v2(
     metadata = _load_metadata(Path(metadata_path))
     artifact_paths = {
         "launcher": Path(launcher_artifact),
+        "updater": Path(updater_artifact),
         "core": Path(core_artifact),
     }
     identities = {name: _artifact_identity(path) for name, path in artifact_paths.items()}
@@ -163,6 +165,7 @@ def _parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--launcher-artifact", required=True, type=Path)
+    parser.add_argument("--updater-artifact", required=True, type=Path)
     parser.add_argument("--core-artifact", required=True, type=Path)
     parser.add_argument("--private-key-file", required=True, type=Path)
     parser.add_argument("--key-id", required=True)
@@ -178,12 +181,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         build_release_v2(
             metadata_path=arguments.input,
             launcher_artifact=arguments.launcher_artifact,
+            updater_artifact=arguments.updater_artifact,
             core_artifact=arguments.core_artifact,
             private_key_file=arguments.private_key_file,
             key_id=arguments.key_id,
             public_key_file=arguments.public_key_file,
             output=arguments.output,
         )
+
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         print("release-v2 build failed", file=sys.stderr)
         return 1
