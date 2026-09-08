@@ -14,7 +14,16 @@ from neko_launcher.application.software_update_models import (
     UpdateState,
 )
 from neko_launcher.infrastructure.config import LauncherConfig
+from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 from software_update_helpers import get_test_key_registry, signed_envelope, valid_release_document
+
+
+EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
+
+
+def assert_approved_production_registry() -> None:
+    assert set(PRODUCTION_RELEASE_PUBLIC_KEYS) == {EXPECTED_PRODUCTION_KEY_ID}
+    assert len(PRODUCTION_RELEASE_PUBLIC_KEYS[EXPECTED_PRODUCTION_KEY_ID]) == 32
 
 
 class StaticManifestGateway:
@@ -198,13 +207,11 @@ def test_valid_test_signed_manifest_reaches_lazy_identity_failure(
     )
 
 
-def test_production_public_key_registry_is_empty_and_fail_closed(
+def test_production_public_key_registry_is_approved_and_untrusted_signature_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from neko_launcher.updater.main import PRODUCTION_RELEASE_PUBLIC_KEYS
-
-    assert len(PRODUCTION_RELEASE_PUBLIC_KEYS) == 0
+    assert_approved_production_registry()
 
     config = make_config(monkeypatch, tmp_path)
     gateway = StaticManifestGateway(signed_envelope(valid_release_document()))
@@ -212,22 +219,19 @@ def test_production_public_key_registry_is_empty_and_fail_closed(
     service = app_factory.compose_update_check_service(config)
     service._manifest_gateway = gateway
 
+    assert service._verifier._key_registry == PRODUCTION_RELEASE_PUBLIC_KEYS
+
     result = service.check_manual()
 
     assert result.state == UpdateState.VERIFY_FAILED
     assert result.diagnostic_code == UpdateDiagnosticCode.MANIFEST_REJECTED
 
 
-def test_production_compose_update_apply_service_uses_empty_key_registry_and_fails_closed(
+def test_production_compose_update_apply_service_uses_approved_registry_and_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    try:
-        from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
-    except ImportError:
-        from neko_launcher.updater.main import PRODUCTION_RELEASE_PUBLIC_KEYS
-
-    assert len(PRODUCTION_RELEASE_PUBLIC_KEYS) == 0
+    assert_approved_production_registry()
 
     compose_update_apply_service = getattr(
         app_factory, "compose_update_apply_service", None
@@ -325,7 +329,8 @@ def test_apply_composition_injects_lazy_production_distribution_capability_provi
         "composition must inject lazy distribution capability provider"
     )
     assert captured["distribution_capability_provider"] is get_distribution_capability
-    assert captured["key_registry"] == {}
+    assert captured["key_registry"] is PRODUCTION_RELEASE_PUBLIC_KEYS
+    assert_approved_production_registry()
 
 
 def test_production_update_configuration_contains_no_private_key_material(
