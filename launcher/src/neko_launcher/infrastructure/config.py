@@ -9,7 +9,6 @@ from .defaults import (
     ACCOUNT_RECOVERY_API_URL,
     PRODUCT_CODE,
     PROXY_STATUS_API_URL,
-    SOFTWARE_UPDATE_API_URL,
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
 )
@@ -81,7 +80,6 @@ class LauncherConfig:
     supabase_publishable_key: str
     account_recovery_api_url: str
     proxy_status_api_url: str
-    software_update_api_url: str
     debug_mode: bool
     debug_log_dir: Path
 
@@ -119,7 +117,6 @@ class LauncherConfig:
             supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
             account_recovery_api_url=ACCOUNT_RECOVERY_API_URL,
             proxy_status_api_url=PROXY_STATUS_API_URL,
-            software_update_api_url=SOFTWARE_UPDATE_API_URL,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )

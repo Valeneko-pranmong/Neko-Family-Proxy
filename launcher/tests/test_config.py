@@ -153,4 +153,4 @@ def test_software_update_api_url_is_not_overridden_by_environment(
 
     config = LauncherConfig.from_environment(tmp_path)
 
-    assert config.software_update_api_url == "https://neko-control-room.vercel.app"
+    assert not hasattr(config, "software_update_api_url")

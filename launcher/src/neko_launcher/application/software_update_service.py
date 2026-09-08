@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Condition
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from neko_launcher.application.ports import UpdateManifestGateway
 from neko_launcher.application.software_update_models import (
     LocalReleaseIdentity,
-    ReleaseSet,
     UpdateCheckResult,
     UpdateDiagnosticCode,
     UpdateInvocationReason,
@@ -15,9 +13,14 @@ from neko_launcher.application.software_update_models import (
 )
 from neko_launcher.application.software_update_policy import evaluate_release
 
+if TYPE_CHECKING:
+    from neko_launcher.infrastructure.github_release_binding import (
+        ResolvedGitHubRelease,
+    )
 
-class ReleaseManifestVerifier(Protocol):
-    def verify(self, document: object) -> ReleaseSet:
+
+class AuthenticatedReleaseGateway(Protocol):
+    def resolve(self) -> ResolvedGitHubRelease | None:
         ...
 
 
@@ -36,6 +39,8 @@ _VERIFIER_REJECTED_CODES = frozenset(
         "INVALID_UTF8",
         "INVALID_JSON",
         "INVALID_PAYLOAD_SCHEMA",
+        "RELEASE_MANIFEST_REJECTED",
+        "MANIFEST_RESPONSE_INVALID",
     }
 )
 
@@ -43,12 +48,10 @@ _VERIFIER_REJECTED_CODES = frozenset(
 class UpdateCheckService:
     def __init__(
         self,
-        manifest_gateway: UpdateManifestGateway,
-        verifier: ReleaseManifestVerifier,
+        release_gateway: AuthenticatedReleaseGateway,
         local_identity_provider: Callable[[], LocalReleaseIdentity],
     ) -> None:
-        self._manifest_gateway = manifest_gateway
-        self._verifier = verifier
+        self._release_gateway = release_gateway
         self._local_identity_provider = local_identity_provider
         self._startup_condition = Condition()
         self._startup_checking = False
@@ -83,11 +86,11 @@ class UpdateCheckService:
         reason: UpdateInvocationReason,
     ) -> UpdateCheckResult:
         try:
-            document = self._manifest_gateway.fetch()
+            resolved = self._release_gateway.resolve()
         except Exception as error:
             return self._gateway_exception_result(reason, error)
 
-        if document is None:
+        if resolved is None:
             return self._empty_result(
                 reason,
                 UpdateState.UNAVAILABLE,
@@ -95,11 +98,7 @@ class UpdateCheckService:
             )
 
         try:
-            remote = self._verifier.verify(document)
-        except Exception as error:
-            return self._verifier_exception_result(reason, error)
-
-        try:
+            remote = resolved.authenticated_release
             local = self._local_identity_provider()
             return evaluate_release(local, remote, reason)
         except Exception:
@@ -112,14 +111,25 @@ class UpdateCheckService:
         error: Exception,
     ) -> UpdateCheckResult:
         code = cls._safe_exception_code(error)
-        if code == "MANIFEST_UNAVAILABLE":
+        if code in ("MANIFEST_UNAVAILABLE", "GITHUB_RELEASE_UNAVAILABLE"):
+            diag = getattr(
+                UpdateDiagnosticCode,
+                code,
+                UpdateDiagnosticCode.MANIFEST_UNAVAILABLE,
+            )
             return cls._empty_result(
                 reason,
                 UpdateState.UNAVAILABLE,
-                UpdateDiagnosticCode.MANIFEST_UNAVAILABLE,
+                diag,
             )
-        if code == "MANIFEST_RESPONSE_INVALID":
+        if code in _VERIFIER_REJECTED_CODES:
             return cls._manifest_rejected_result(reason)
+        if code == "UPDATER_INCOMPATIBLE":
+            return cls._empty_result(
+                reason,
+                UpdateState.VERIFY_FAILED,
+                UpdateDiagnosticCode.UPDATER_INCOMPATIBLE,
+            )
         return cls._internal_failure_result(reason)
 
     @classmethod

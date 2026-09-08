@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +21,6 @@ from neko_launcher.infrastructure.github_release_binding import (
     LAUNCHER_ASSET_NAME,
     RELEASE_MANIFEST_ASSET_NAME,
     UPDATER_ASSET_NAME,
-    AuthenticatedReleaseGateway,
     GitHubReleaseResolverError,
     ResolvedGitHubRelease,
 )
@@ -31,7 +29,6 @@ from neko_launcher.infrastructure.software_update_v2 import (
 )
 from neko_launcher.updater.canonical_json import (
     canonical_json_dumps,
-    canonical_json_loads,
 )
 from neko_launcher.updater.manifest_v2 import (
     UPDATER_PROTOCOL_VERSION,

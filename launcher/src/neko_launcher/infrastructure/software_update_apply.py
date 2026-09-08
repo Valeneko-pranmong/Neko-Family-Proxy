@@ -1,125 +1,20 @@
+from __future__ import annotations
+
 import base64
 import subprocess
-import urllib.parse
-import urllib.request
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any
 
-from neko_launcher.application.software_update_models import ComponentRelease
-from neko_launcher.infrastructure.software_update_artifact import verify_artifact
-from neko_launcher.updater.canonical_json import canonical_json_dumps
 from neko_launcher.updater.ipc_channel import FramedIpcChannel
-from neko_launcher.updater.manifest_v2 import ComponentV2, verify_release_envelope_v2
 
-_DOWNLOAD_TIMEOUT_S = 15.0
-_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
-
-
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: object,
-        code: int,
-        msg: str,
-        headers: object,
-        newurl: str,
-    ) -> None:
-        return None
-
-
-_open_no_redirect = urllib.request.build_opener(_NoRedirectHandler()).open
-
-
-def _component_release(component: ComponentV2) -> ComponentRelease:
-    return ComponentRelease(
-        name=component.name,
-        version=component.version,
-        artifact_id=component.artifact_id,
-        artifact_sha256=component.artifact_sha256,
-        artifact_size=component.artifact_size,
-        installed_identity_sha256=component.installed_identity_sha256,
+if TYPE_CHECKING:
+    from neko_launcher.infrastructure.github_asset_downloader import (
+        GitHubAssetDownloader,
     )
-
-
-def _validate_grant(grant: object) -> str:
-    try:
-        url = grant.url  # type: ignore[attr-defined]
-        expires_at = grant.expires_at  # type: ignore[attr-defined]
-    except Exception:
-        raise SoftwareUpdateApplyError("GRANT_INVALID") from None
-
-    if type(url) is not str or not isinstance(expires_at, datetime):
-        raise SoftwareUpdateApplyError("GRANT_INVALID")
-    try:
-        parsed = urllib.parse.urlsplit(url)
-        hostname = parsed.hostname
-        parsed.port
-        aware = expires_at.tzinfo is not None and expires_at.utcoffset() is not None
-        future = aware and expires_at > datetime.now(UTC)
-    except (TypeError, ValueError, OverflowError):
-        raise SoftwareUpdateApplyError("GRANT_INVALID") from None
-    if (
-        parsed.scheme.lower() != "https"
-        or not hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.fragment
-        or not future
-    ):
-        raise SoftwareUpdateApplyError("GRANT_INVALID")
-    return url
-
-
-def _download_and_verify(
-    grant: object,
-    component: ComponentV2,
-    destination: Path,
-) -> None:
-    if not destination.parent.is_dir():
-        raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
-    url = _validate_grant(grant)
-    request = urllib.request.Request(url, method="GET")
-    try:
-        with _open_no_redirect(request, timeout=_DOWNLOAD_TIMEOUT_S) as response:
-            status = getattr(response, "status", None)
-            if status is None and hasattr(response, "getcode"):
-                status = response.getcode()
-            if status != 200:
-                raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
-            with destination.open("xb") as output:
-                remaining = component.artifact_size
-                while remaining:
-                    chunk = response.read(min(_DOWNLOAD_CHUNK_SIZE, remaining + 1))
-                    if type(chunk) is not bytes or not chunk:
-                        break
-                    if len(chunk) > remaining:
-                        raise SoftwareUpdateApplyError("DOWNLOAD_SIZE_MISMATCH")
-                    output.write(chunk)
-                    remaining -= len(chunk)
-                if remaining:
-                    raise SoftwareUpdateApplyError("DOWNLOAD_SIZE_MISMATCH")
-                trailing = response.read(1)
-                if type(trailing) is not bytes:
-                    raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
-                if trailing:
-                    raise SoftwareUpdateApplyError("DOWNLOAD_SIZE_MISMATCH")
-        verify_artifact(destination, _component_release(component))
-    except SoftwareUpdateApplyError:
-        try:
-            destination.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-    except Exception:
-        try:
-            destination.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise SoftwareUpdateApplyError("DOWNLOAD_FAILED") from None
-
+    from neko_launcher.infrastructure.github_release_binding import (
+        AuthenticatedReleaseGateway,
+    )
 
 
 class SoftwareUpdateApplyError(Exception):
@@ -127,17 +22,19 @@ class SoftwareUpdateApplyError(Exception):
         self.code = code
         super().__init__(code)
 
+
 class PreparedUpdate:
-    def __init__(self, channel: FramedIpcChannel, process: Any) -> None:
+    def __init__(self, channel: FramedIpcChannel | None, process: Any) -> None:
         self._channel = channel
         self._process = process
 
     def release(self) -> None:
         # Close IPC/channel/pipes to signal EOF, MUST NOT terminate helper
-        try:
-            self._channel.close()
-        except Exception:
-            pass
+        if self._channel is not None:
+            try:
+                self._channel.close()
+            except Exception:
+                pass
         if hasattr(self._process, "stdin") and self._process.stdin:
             try:
                 self._process.stdin.close()
@@ -160,57 +57,42 @@ class PreparedUpdate:
         except Exception:
             pass
 
-class DefaultDownloader:
-    def download(self, component: str, destination: Path) -> None:
-        raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
 
 class SoftwareUpdateApplyService:
     def __init__(
         self,
         root_dir: Path,
-        manifest_gateway: Any = None,
-        key_registry: Mapping[str, bytes] | None = None,
-        spawner: Any = None,
-        channel_factory: Any = None,
-        downloader: Any = None,
-        grant_gateway: Any = None,
-        distribution_capability_provider: Callable[[], str | None] | None = None,
+        release_gateway: AuthenticatedReleaseGateway,
+        asset_downloader: GitHubAssetDownloader,
+        spawner: Callable[..., subprocess.Popen[bytes]] | None = None,
+        channel_factory: Callable[..., FramedIpcChannel] | None = None,
     ) -> None:
-        self.root_dir = root_dir
-        self.manifest_gateway = manifest_gateway
-        self.key_registry = dict(key_registry) if key_registry is not None else {}
+        self.root_dir = Path(root_dir)
+        self.release_gateway = release_gateway
+        self.asset_downloader = asset_downloader
         self.spawner = spawner
         self.channel_factory = channel_factory
-        self.downloader = downloader
-        self.grant_gateway = grant_gateway
-        self.distribution_capability_provider = distribution_capability_provider
 
     def prepare(self) -> PreparedUpdate:
-        if not self.key_registry:
-            raise SoftwareUpdateApplyError("MISSING_KEY_REGISTRY")
-
-        # Fetch manifest
-        if not self.manifest_gateway:
-            raise SoftwareUpdateApplyError("MISSING_MANIFEST_GATEWAY")
-
+        # Mandatory resolver refetch on apply; fails closed before helper starts
         try:
-            document = self.manifest_gateway.fetch()
-        except Exception:
-            raise SoftwareUpdateApplyError("MANIFEST_FETCH_FAILED")
+            resolved = self.release_gateway.resolve()
+        except SoftwareUpdateApplyError:
+            raise
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if type(code) is str:
+                raise SoftwareUpdateApplyError(code) from None
+            raise SoftwareUpdateApplyError("MANIFEST_VERIFY_FAILED") from None
 
-        # Verify V2 directly
-        try:
-            release_set_v2, _ = verify_release_envelope_v2(document, self.key_registry)
-        except Exception:
-            raise SoftwareUpdateApplyError("MANIFEST_VERIFY_FAILED")
+        if resolved is None:
+            raise SoftwareUpdateApplyError("RELEASE_UNAVAILABLE")
 
-        # canonical-json serialize outer envelope and base64 encode exact bytes for BEGIN
+        # Forward exact downloaded canonical envelope bytes unchanged to BEGIN
         try:
-            # We canonicalize the whole document (envelope)
-            envelope_bytes = canonical_json_dumps(document)
-            envelope_b64 = base64.b64encode(envelope_bytes).decode("ascii")
+            envelope_b64 = base64.b64encode(resolved.envelope_bytes).decode("ascii")
         except Exception:
-            raise SoftwareUpdateApplyError("ENVELOPE_SERIALIZE_FAILED")
+            raise SoftwareUpdateApplyError("ENVELOPE_SERIALIZE_FAILED") from None
 
         # Spawn helper
         exe_path = str(self.root_dir / "NekoUpdater.exe")
@@ -218,11 +100,23 @@ class SoftwareUpdateApplyService:
 
         try:
             if self.spawner:
-                process = self.spawner(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False)
+                process = self.spawner(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                )
             else:
-                process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False)
+                process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                )
         except Exception:
-            raise SoftwareUpdateApplyError("SPAWN_FAILED")
+            raise SoftwareUpdateApplyError("SPAWN_FAILED") from None
 
         prepared = PreparedUpdate(None, process)
 
@@ -248,7 +142,7 @@ class SoftwareUpdateApplyService:
             # Send BEGIN
             msg_id = channel.send_message(
                 "BEGIN",
-                body={"envelope_b64": envelope_b64}
+                body={"envelope_b64": envelope_b64},
             )
 
             # Wait for REQUEST_READY
@@ -272,7 +166,9 @@ class SoftwareUpdateApplyService:
             tx_id = body["transaction_id"]
             changed = body["changed"]
             error = body["error"]
-            if type(accepted) is not bool or (error is not None and type(error) is not str):
+            if type(accepted) is not bool or (
+                error is not None and type(error) is not str
+            ):
                 raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
             if accepted:
                 if type(req_id) is not str or not req_id:
@@ -300,46 +196,37 @@ class SoftwareUpdateApplyService:
                     raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
                 raise SoftwareUpdateApplyError("BEGIN_REJECTED")
 
-            # Downloads for changed components
+            # Downloads for changed components (launcher and core only)
             incoming_dir = self.root_dir / "incoming" / req_id
             for comp_name in ("launcher", "core"):
                 if changed[comp_name]:
-                    dest = incoming_dir / ("launcher.artifact" if comp_name == "launcher" else "core.artifact.zip")
-
-                    if self.downloader:
-                        try:
-                            self.downloader.download(comp_name, dest)
-                        except Exception:
-                            raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
-                    else:
-                        if self.grant_gateway is None:
-                            raise SoftwareUpdateApplyError("MISSING_GRANT_GATEWAY")
-                        component_v2 = release_set_v2.components[comp_name]
-                        try:
-                            if comp_name == "core":
-                                if self.distribution_capability_provider is None:
-                                    raise SoftwareUpdateApplyError("GRANT_FAILED")
-                                capability = self.distribution_capability_provider()
-                                if capability is None:
-                                    raise SoftwareUpdateApplyError("GRANT_FAILED")
-                                grant = self.grant_gateway.grant_core(
-                                    component_v2.artifact_id, capability
-                                )
-                                del capability
-                            else:
-                                grant = self.grant_gateway.grant(
-                                    component_v2.artifact_id
-                                )
-                        except SoftwareUpdateApplyError:
-                            raise
-                        except Exception:
-                            raise SoftwareUpdateApplyError("GRANT_FAILED") from None
-                        _download_and_verify(grant, component_v2, dest)
+                    dest = (
+                        incoming_dir / "launcher.artifact"
+                        if comp_name == "launcher"
+                        else incoming_dir / "core.artifact.zip"
+                    )
+                    asset = (
+                        resolved.launcher_asset
+                        if comp_name == "launcher"
+                        else resolved.core_asset
+                    )
+                    component_v2 = resolved.authenticated_release_v2.components[
+                        comp_name
+                    ]
+                    try:
+                        self.asset_downloader.download(
+                            initial_url=asset.browser_download_url,
+                            destination=dest,
+                            expected_size=component_v2.artifact_size,
+                            expected_sha256=component_v2.artifact_sha256,
+                        )
+                    except Exception:
+                        raise SoftwareUpdateApplyError("DOWNLOAD_FAILED") from None
 
             # Send APPLY
             apply_msg_id = channel.send_message(
                 "APPLY",
-                body={"transaction_id": tx_id, "request_id": req_id}
+                body={"transaction_id": tx_id, "request_id": req_id},
             )
 
             apply_resp = channel.receive_message(timeout_s=5.0)
@@ -375,4 +262,4 @@ class SoftwareUpdateApplyService:
             prepared.abort()
             if isinstance(e, SoftwareUpdateApplyError):
                 raise
-            raise SoftwareUpdateApplyError("PREPARE_FAILED")
+            raise SoftwareUpdateApplyError("PREPARE_FAILED") from None

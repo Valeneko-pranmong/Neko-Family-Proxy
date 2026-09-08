@@ -25,7 +25,6 @@ from neko_launcher.infrastructure.github_release_binding import (
     ResolvedGitHubRelease,
 )
 from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
-from neko_launcher.updater.root_validator import get_expected_install_root
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 from software_update_helpers import get_test_key_registry
 
