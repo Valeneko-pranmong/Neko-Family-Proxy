@@ -82,6 +82,9 @@ class FakeResponse:
     def __exit__(self, *args: object) -> None:
         return None
 
+    def close(self) -> None:
+        pass
+
 
 class FakeOpener:
     def __init__(
@@ -852,10 +855,29 @@ def test_product_downloader_write_failure_cleans_destination(
     opener = FakeOpener({INITIAL_PRODUCT_URL: FakeResponse(body=content, status=200)})
     downloader = module.GitHubAssetDownloader(_opener=opener)
 
-    def failing_write(self: Any, data: bytes) -> int:
-        raise OSError("Disk full")
+    real_open = Path.open
 
-    monkeypatch.setattr(io.BufferedWriter, "write", failing_write)
+    def failing_open(path_obj: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = real_open(path_obj, *args, **kwargs)
+        if path_obj == destination:
+
+            class FailingWriter:
+                def write(self, data: bytes) -> int:
+                    raise OSError("Disk full")
+
+                def flush(self) -> None:
+                    handle.flush()
+
+                def fileno(self) -> int:
+                    return handle.fileno()
+
+                def close(self) -> None:
+                    handle.close()
+
+            return FailingWriter()
+        return handle
+
+    monkeypatch.setattr(Path, "open", failing_open)
 
     assert (
         _error_code(

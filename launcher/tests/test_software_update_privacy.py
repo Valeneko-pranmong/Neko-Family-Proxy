@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import inspect
 import importlib
+import io
 import json
 import urllib.error
 from pathlib import Path
@@ -435,6 +436,59 @@ QUERY_BEARING_CDN_URL = (
 )
 
 
+class _PrivacyFakeResponse:
+    def __init__(
+        self,
+        body: bytes = b"",
+        status: int = 200,
+        headers: dict[str, Any] | None = None,
+    ) -> None:
+        self.stream = io.BytesIO(body)
+        self.status = status
+        self.code = status
+        self._headers = headers or {}
+
+    def read(self, size: int = -1) -> bytes:
+        return self.stream.read(size)
+
+    def getcode(self) -> int:
+        return self.status
+
+    def info(self) -> Any:
+        return self
+
+    @property
+    def headers(self) -> Any:
+        return self
+
+    def get(self, name: str, default: Any = None) -> Any:
+        for k, v in self._headers.items():
+            if k.lower() == name.lower():
+                return v
+        return default
+
+    def get_all(self, name: str, default: Any = None) -> Any:
+        matches = [v for k, v in self._headers.items() if k.lower() == name.lower()]
+        if not matches:
+            return default
+        results: list[Any] = []
+        for match in matches:
+            if isinstance(match, (list, tuple)):
+                results.extend(match)
+            else:
+                results.append(match)
+        return results
+
+    def __enter__(self) -> _PrivacyFakeResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
+
+
 def _downloader_module() -> Any:
     try:
         return importlib.import_module("neko_launcher.infrastructure.github_asset_downloader")
@@ -454,7 +508,7 @@ def test_github_manifest_downloader_privacy_omits_secrets_in_errors_and_repr(
         "v5.1.0/release-v2.json"
     )
     routes = {
-        initial_url: FakeResponse(
+        initial_url: _PrivacyFakeResponse(
             status=302,
             headers={"Location": QUERY_BEARING_CDN_URL},
         ),
@@ -515,11 +569,11 @@ def test_github_asset_downloader_privacy_omits_query_tokens_and_secrets(
     )
     # 302 to query-bearing CDN URL, which returns wrong hash
     routes = {
-        initial_url: FakeResponse(
+        initial_url: _PrivacyFakeResponse(
             status=302,
             headers={"Location": QUERY_BEARING_CDN_URL},
         ),
-        QUERY_BEARING_CDN_URL: FakeResponse(
+        QUERY_BEARING_CDN_URL: _PrivacyFakeResponse(
             body=b"mismatched content",
             status=200,
         ),
@@ -586,7 +640,7 @@ def test_github_downloaders_request_privacy_and_no_cookie_replay() -> None:
             captured_requests.append(request)
             url = request.full_url
             if url == initial_url:
-                return FakeResponse(
+                return _PrivacyFakeResponse(
                     status=302,
                     headers={
                         "Location": cdn_hop1,
@@ -594,7 +648,7 @@ def test_github_downloaders_request_privacy_and_no_cookie_replay() -> None:
                     },
                 )
             if url == cdn_hop1:
-                return FakeResponse(
+                return _PrivacyFakeResponse(
                     status=302,
                     headers={
                         "Location": cdn_hop2,
@@ -602,7 +656,7 @@ def test_github_downloaders_request_privacy_and_no_cookie_replay() -> None:
                     },
                 )
             if url == cdn_hop2:
-                return FakeResponse(body=body, status=200)
+                return _PrivacyFakeResponse(body=body, status=200)
             raise AssertionError(f"unexpected request url: {url}")
 
     downloader = module.GitHubManifestDownloader(_opener=MultiHopOpener())
@@ -619,4 +673,3 @@ def test_github_downloaders_request_privacy_and_no_cookie_replay() -> None:
     for req in captured_requests:
         assert req.get_header("Authorization") is None
         assert req.get_header("Cookie") is None
-
