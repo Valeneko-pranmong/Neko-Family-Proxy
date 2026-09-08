@@ -69,7 +69,7 @@ def create_test_release_bundle(
     )
 
     envelope = signed_envelope(v2_doc, key_id=TEST_KEY_ID)
-    manifest_bytes = canonical_json_dumps(envelope).encode("utf-8")
+    manifest_bytes = canonical_json_dumps(envelope)
     (download_dir / "release-v2.json").write_bytes(manifest_bytes)
 
     pub_key_file = tmp_path / "approved.pub"
@@ -385,7 +385,7 @@ def test_verify_assets_fails_on_forged_envelope_signature(tmp_path: Path) -> Non
     envelope["signature_b64"] = sig.decode("ascii")
 
     (bundle["download_dir"] / "release-v2.json").write_bytes(
-        canonical_json_dumps(envelope).encode("utf-8")
+        canonical_json_dumps(envelope)
     )
 
     with pytest.raises(Exception):
@@ -424,7 +424,7 @@ def test_verify_assets_fails_on_wrong_three_product_binding(tmp_path: Path) -> N
     del v2_doc["components"]["updater"]
     envelope = signed_envelope(v2_doc, key_id=TEST_KEY_ID)
     (bundle["download_dir"] / "release-v2.json").write_bytes(
-        canonical_json_dumps(envelope).encode("utf-8")
+        canonical_json_dumps(envelope)
     )
 
     with pytest.raises(Exception):

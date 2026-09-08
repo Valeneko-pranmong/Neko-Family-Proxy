@@ -12,6 +12,18 @@ on:
         description: Existing v* tag to publish (required when publishing)
         required: false
         type: string
+      core_artifact_path:
+        description: Path or workspace file for approved NekoProxyCore.zip
+        required: false
+        type: string
+      signed_manifest_path:
+        description: Path or workspace file for approved signed release-v2.json
+        required: false
+        type: string
+      release_public_key_path:
+        description: Path to approved release verification public key file
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -49,18 +61,12 @@ jobs:
         run: dist\NekoUpdater.exe --self-check
       - name: Note closed-beta installer owner gate
         run: echo "Closed-beta installer assembly uses installer/scripts/build_beta_installer.py after approved external Core and prerequisite payloads are staged at Owner Gate."
-      - name: Assemble checksummed artifacts
+      - name: Assemble candidate release artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release -Force | Out-Null
           Copy-Item launcher\dist\NekoLauncher.exe release\
           Copy-Item launcher\dist\NekoUpdater.exe release\
-          Get-ChildItem release\*.exe |
-            Get-FileHash -Algorithm SHA256 |
-            ForEach-Object {
-              "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))"
-            } |
-            Set-Content release\SHA256SUMS.txt -Encoding ascii
       - uses: actions/upload-artifact@v7
         with:
           name: neko-family-launcher-windows
@@ -74,6 +80,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: Validate release tag
         shell: pwsh
         env:
@@ -118,9 +128,93 @@ jobs:
         with:
           name: neko-family-launcher-windows
           path: release
-      - name: Publish GitHub release
+      - name: Stage approved update assets
+        shell: pwsh
+        env:
+          CORE_PATH: ${{ inputs.core_artifact_path }}
+          MANIFEST_PATH: ${{ inputs.signed_manifest_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:CORE_PATH -and (Test-Path $env:CORE_PATH)) {
+            Copy-Item $env:CORE_PATH release\NekoProxyCore.zip -Force
+          }
+          if ($env:MANIFEST_PATH -and (Test-Path $env:MANIFEST_PATH)) {
+            Copy-Item $env:MANIFEST_PATH release\release-v2.json -Force
+          }
+          $required = @(
+            "release\NekoLauncher.exe",
+            "release\NekoUpdater.exe",
+            "release\NekoProxyCore.zip",
+            "release\release-v2.json"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              throw "Required update asset is missing before release creation: $file"
+            }
+          }
+      - name: Create draft GitHub release
+        shell: pwsh
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release create "$env:RELEASE_TAG" release\NekoLauncher.exe release\NekoUpdater.exe release\SHA256SUMS.txt --verify-tag --generate-notes
+        run: |
+          gh release create "$env:RELEASE_TAG" --draft --title "$env:RELEASE_TAG" --notes "Release $env:RELEASE_TAG" --target "${{ github.sha }}"
+      - name: Upload required update assets
+        shell: pwsh
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release upload "$env:RELEASE_TAG" release\NekoLauncher.exe release\NekoUpdater.exe release\NekoProxyCore.zip release\release-v2.json --clobber=false
+      - name: Read back draft release by ID
+        shell: pwsh
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $draftView = gh api "repos/$env:GH_REPO/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          $releaseId = $draftView.id
+          if (-not $releaseId) {
+            throw "Unable to resolve release ID for tag $env:RELEASE_TAG"
+          }
+          $releaseById = gh api "repos/$env:GH_REPO/releases/$releaseId"
+          New-Item -ItemType Directory -Path release\metadata -Force | Out-Null
+          $releaseById | Set-Content release\metadata\draft-release.json -Encoding utf8
+      - name: Verify release assets before publication
+        shell: pwsh
+        env:
+          PUBLIC_KEY_PATH: ${{ inputs.release_public_key_path }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $pubKey = if ($env:PUBLIC_KEY_PATH) { $env:PUBLIC_KEY_PATH } else { "launcher\tests\keys\neko-update-prod-1.pub" }
+          python scripts/verify_github_release_assets.py `
+            --release-json release\metadata\draft-release.json `
+            --download-dir release `
+            --public-key-file $pubKey `
+            --expected-tag "$env:RELEASE_TAG" `
+            --expected-target "${{ github.sha }}" `
+            --require-draft
+      - name: Publish verified release
+        shell: pwsh
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release edit "$env:RELEASE_TAG" --draft=false
+      - name: Verify published release readback
+        shell: pwsh
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $published = gh api "repos/$env:GH_REPO/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($published.draft -ne $false) {
+            throw "Post-publication check failed: release $env:RELEASE_TAG remains marked draft"
+          }

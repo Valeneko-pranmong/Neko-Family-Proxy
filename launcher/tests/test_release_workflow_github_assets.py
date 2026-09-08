@@ -13,9 +13,19 @@ def workflow_text() -> str:
 
 def publication_job_text() -> str:
     text = workflow_text()
-    match = re.search(r"(?m)^  publish-release:\s*\n((?:    .*\n?)+)", text)
-    assert match is not None, "release.yml must contain a publish-release job"
-    return match.group(1)
+    lines = text.splitlines()
+    start_idx = None
+    for idx, line in enumerate(lines):
+        if re.match(r"^  publish-release:\s*$", line):
+            start_idx = idx
+            break
+    assert start_idx is not None, "release.yml must contain a publish-release job"
+    block = [lines[start_idx]]
+    for line in lines[start_idx + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) <= 2:
+            break
+        block.append(line)
+    return "\n".join(block)
 
 
 def test_publication_stages_and_uploads_four_required_assets() -> None:

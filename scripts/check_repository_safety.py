@@ -121,14 +121,22 @@ def is_test_path(relative: Path) -> bool:
 
 
 def is_software_update_production_code(relative: Path) -> bool:
+    if is_test_path(relative):
+        return False
     parts = relative.parts
-    return (
+    if (
         len(parts) >= 3
         and parts[0] == "launcher"
         and parts[1] == "src"
         and parts[2] == "neko_launcher"
-        and not is_test_path(relative)
-    )
+    ):
+        return True
+    if relative.as_posix() in {
+        "scripts/verify_github_release_assets.py",
+        ".github/workflows/release.yml",
+    }:
+        return True
+    return False
 
 
 def validate_software_update_authority(path: Path) -> list[str]:
@@ -162,7 +170,7 @@ def validate_software_update_untrusted_sources(path: Path) -> list[str]:
     relative = path.relative_to(REPOSITORY_ROOT)
     if not is_software_update_production_code(relative):
         return []
-    if path.suffix.lower() not in {".py"}:
+    if path.suffix.lower() not in {".py", ".yml", ".yaml"}:
         return []
     try:
         content = path.read_text(encoding="utf-8")
