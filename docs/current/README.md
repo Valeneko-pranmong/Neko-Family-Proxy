@@ -2,38 +2,60 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         COMPLETED (UI_LAYOUT_FIX_APPLIED)
-PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a31)
-CURRENT_WORKSTREAM:             DASHBOARD METRICS RELOCATION (PROXY STATUS & PING)
-ACTIVE_DEV_BRANCH:              main
-FEATURE_BRANCH_STATUS:          MERGED_TO_MAIN
-FINAL_VERSION:                  5.0.0a31
-FINAL_COMMIT:                   PENDING_COMMIT
-CANDIDATE_LAUNCHER_EXE_FILE:    NekoLauncher.exe
-CANDIDATE_LAUNCHER_EXE_SIZE:    36822089 bytes
-CANDIDATE_LAUNCHER_EXE_SHA256:  106b9533494b82dd7ed77d88142e8eab0ecbe3fffe64c0cce784cfb9257db2fb
-MAIN_HEAD:                      091a0db (origin/main)
-BETA_HEAD:                      c9ab125 (origin/beta; previous Closed Beta baseline)
-CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
-CORE_HEAD:                      ec2af36f04ce945f3c1bf3f7528e14e1a0678c2e
-CLEAN_INSTALL:                  PASS
-FIRST_RUN:                      PASS
-AUTH_FLOW:                      PASS
-PROXY_FLOW:                     PASS
-CLOSE_GAME_INVARIANT:           PASS
-REOPEN_GAME_INVARIANT:          PASS
-LONG_RUN_TEST:                  PASS
-SECURITY_SCAN:                  PASS (0 secrets, fail-closed auth)
+STATUS:                         RELEASE_PUBLISHED / GATE_3_PASS (v5.1.0a3)
+PRODUCT_BASELINE:               PRODUCTION RELEASE (v5.1.0a3)
+CURRENT_WORKSTREAM:             FINAL_RELEASE_LEDGER_DOCS (t_94c2023f)
+ACTIVE_BRANCH:                  release/5.1
+RELEASE_TAG:                    v5.1.0a3 (at release commit 6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc)
+POST_RELEASE_BRANCH_HEAD:       16dba6e3748e9fe1dc9e3fd7e11309dc1838582e (clean, synced origin/release/5.1)
+GATE_2_STATUS:                  PASS (C0/I0 on recovery r6 / sequence 2 / release_id stable-0002)
+GATE_3_STATUS:                  PASS (C0/I0 / GitHub release ID 385616276 / latest verified)
+SECURITY_SCAN:                  PASS (0 secrets, fail-closed auth, offline Ed25519 signing)
 P0_BLOCKERS:                    0
 P1_ISSUES:                      0
-MERGE_TARGET:                   main
-MERGE_READY:                    YES
-CONFLICT_RISK:                  LOW
-NEXT_DEVELOPMENT_STREAM:        feature/live-update
-LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-09-09 +07:00 (Asia/Bangkok)
 ```
 
 > **Current-state rule:** verify Git branch, HEAD, status, and this directory before assigning work. The active feature branch is newer development state than older production/Closed-Beta status blocks. Frozen release evidence remains historical authority for the exact accepted artifacts only.
+
+---
+
+## Current Production Release Status — v5.1.0a3 (Gate #2 PASS / Gate #3 PASS) — 2026-09-09
+
+- **Production Release v5.1.0a3**: Successfully qualified under Gate #2 (C0/I0) and published to GitHub Releases under Gate #3 (C0/I0).
+- **Release Commit vs Post-Release Branch Head Distinction**:
+  - **Release Tag & Hosted Artifact Commit**: `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc` (tag `v5.1.0a3`). All four shipped binaries and signed manifest payload were built and signed strictly from this release commit.
+  - **Post-Release Automation Branch HEAD**: `16dba6e3748e9fe1dc9e3fd7e11309dc1838582e` on `release/5.1` (clean, synced with `origin/release/5.1`). Contains post-release staging and publication automation fixes discovered during live release; shipped binaries did NOT come from `16dba6e`.
+- **Gate #2 PASS (Normative Recovery r6)**:
+  - Sequence: 2 / Release ID: `stable-0002` / `minimum_supported_sequence`: 1 / `updater_protocol`: 1..1.
+  - Note: Sequence 1 (`stable-0001`) is permanently spent-unpublished following rejected run r4 and remains strictly historical.
+  - Gate #2 Qualification: Critical 0 / Important 0 (C0/I0) under strict 7-step normative ordering.
+  - Gate2-Qualified Hashes and Sizes (bit-for-bit immutable):
+    - `NekoLauncher.exe`: 29,904,786 bytes / SHA-256 `41415cb03fd050145f09f77ac16b65ac1eca39ff533477dba21dc93bd1079e35`
+    - `NekoUpdater.exe`: 14,342,842 bytes / SHA-256 `44b3900d00a4c30546cd8070871db95d3a9f48dd4ec04aa9338ebef85a1f2320`
+    - `NekoProxyCore.zip`: 371,995,837 bytes / SHA-256 `b969512875bd640265af0b01730e0d6c78027dc584bfa04c029c6115a6599ebc`
+    - `release-v2.json`: 1,640 bytes / SHA-256 `af110662d76ae124ec313241aa1de8f7d73c7d2b47ab4b0c41f003feecf2b85c`
+    - Core Installed Identity: SHA-256 `fcb4f5e9a05831c645a1e4cf7a667ab1e0a8c2c621d7853a9adbd2d81aebf7ad`
+- **Gate #3 PASS (Hosted Release Publication & Proof)**:
+  - Hosted GitHub Release ID: `385616276`
+  - Release Tag: `v5.1.0a3`
+  - Target Release Commit: `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc`
+  - Hosted Release State: `draft=false`, `prerelease=false`.
+  - Public Visibility: `/releases/latest` resolves to release ID `385616276` (`v5.1.0a3`).
+  - Immutable Asset IDs on GitHub:
+    - `NekoLauncher.exe`: `552989471`
+    - `NekoUpdater.exe`: `552989468`
+    - `NekoProxyCore.zip`: `552989467`
+    - `release-v2.json`: `552989470`
+  - Publication Workflow Run & Operational Recovery: GitHub Actions publication workflow run `34371586108` verified and published the immutable release successfully, but concluded failure only at immediate latest readback due to GitHub API propagation timing. Reviewed operational recovery `gh release edit v5.1.0a3 --latest` corrected the latest pointer; fresh hosted re-review achieved Critical 0 / Important 0 (C0/I0). Workflow run `34371586108` did NOT conclude success directly.
+  - Gate 3 Hosted Proof: Fresh download streams by immutable ID match exact bytes and SHA-256 digests; production `verify_github_release_assets.py` PASS; public `GitHubLatestReleaseGateway` PASS; production `GitHubReleaseResolver` PASS; GitHub-only Software Update authority confirmed with zero Admin-Supabase update dependency.
+- **Post-Release Automation Fixes (Reviewed C0/I0)**:
+  - `ecf60837`: import path repair + safe draft discovery in staging tool
+  - `b6a261a8`: remote asset size binding in verification
+  - `f23fa0a` + `16dba6e`: explicit latest contract + typed boolean API payload + behavioral retry tests
+  - Canonical post-release regression at `16dba6e`: 1,732 passed / 35 skipped / 0 failed; Ruff PASS; safety PASS; YAML PASS; diff clean.
+  - Final integrated Sol review C0/I0, safe to push. Branch `release/5.1` was fast-forward pushed to `16dba6e`. Published tag `v5.1.0a3` intentionally remains `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc`; hosted release provenance unchanged.
+- **Autonomous Kanban Unblock Policy**: Active and exercised throughout publication; release blockers were diagnosed, remediated under strict TDD, and reviewed automatically. At final ledger time, no engineering or release blocker remains.
 
 ---
 
@@ -69,7 +91,7 @@ Software Update on `release/5.1` is governed by the Owner-approved Two-Phase Sta
   - Controller evidence: focused release suite 73 passed / 0 failed; full canonical Launcher with admitted Core fixture 1719 passed / 35 skipped / 0 failed; Ruff PASS; repository safety PASS; all 3 workflow YAML parse PASS; `git diff --check` PASS; worktree clean.
   - Next phase is formal Gate #2 candidate qualification under normative order.
   - Historical implementation evidence: Earlier 2026-09-08 plan Tasks 1–7 achieved canonical Launcher suite passing 1673 / skipped 35 / failed 0. Stale operative reviews from that cycle are superseded by the two-phase correction implementation.
-- **Release Gates & Explicit Boundary**: Gate #2 remains NOT PASSED. Gate #3 remains NOT PASSED. There has been no candidate rebuild after this final implementation HEAD yet, no production signing, push, tag, draft creation, asset upload, workflow dispatch, or publication. Never claim production release or live update completion. Operational discipline requires Hermes as sole repository mutation executor with dedup checks before dispatch.
+- **Release Gates & Explicit Boundary (Historical Pre-Release Checkpoint — SUPERSEDED)**: Gate #2 and Gate #3 are **PASSED** (see Section "Current Production Release Status — v5.1.0a3" above). Historically prior to publication, this section noted: Gate #2 remained NOT PASSED, Gate #3 remained NOT PASSED, and no production signing/push/publication had yet occurred. Those steps are now fully completed, verified, and closed.
 
 
 ---

@@ -2,6 +2,45 @@
 
 **Status:** Current policy — updated September 2026 for Two-Phase Staged-Draft Software Update architecture.
 
+---
+
+## Current Production Release State: v5.1.0a3 (Gate #2 PASS / Gate #3 PASS) — 2026-09-09
+
+- **Production Status**: Production release `v5.1.0a3` is officially published and active. Both Gate #2 (qualification) and Gate #3 (hosted publication and proof) are **PASSED (C0/I0)**.
+- **Release Commit vs Post-Release Branch Head Distinction**:
+  - **Release Tag & Hosted Artifact Commit**: `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc` (tag `v5.1.0a3`). Shipped binaries and signed manifest payload were built and signed strictly from this release commit.
+  - **Post-Release Automation Branch HEAD**: `16dba6e3748e9fe1dc9e3fd7e11309dc1838582e` on `release/5.1` (clean, synced with `origin/release/5.1`). Contains post-release automation fixes discovered during real publication; shipped binaries did NOT come from `16dba6e`.
+- **Gate #2 PASS (Normative Order Recovery r6)**:
+  - Sequence: 2 / Release ID: `stable-0002` / `minimum_supported_sequence`: 1 / `updater_protocol`: 1..1.
+  - *Spent Sequence 1 Invariant*: Sequence 1 (`stable-0001`) was permanently spent-unpublished during rejected run r4 and remains strictly historical.
+  - Gate #2 Qualification: Critical 0 / Important 0 (C0/I0) under strict 7-step normative ordering.
+  - Gate2-Qualified Hashes and Sizes (bit-for-bit immutable):
+    - `NekoLauncher.exe`: 29,904,786 bytes / SHA-256 `41415cb03fd050145f09f77ac16b65ac1eca39ff533477dba21dc93bd1079e35`
+    - `NekoUpdater.exe`: 14,342,842 bytes / SHA-256 `44b3900d00a4c30546cd8070871db95d3a9f48dd4ec04aa9338ebef85a1f2320`
+    - `NekoProxyCore.zip`: 371,995,837 bytes / SHA-256 `b969512875bd640265af0b01730e0d6c78027dc584bfa04c029c6115a6599ebc`
+    - `release-v2.json`: 1,640 bytes / SHA-256 `af110662d76ae124ec313241aa1de8f7d73c7d2b47ab4b0c41f003feecf2b85c`
+    - Core Installed Identity: SHA-256 `fcb4f5e9a05831c645a1e4cf7a667ab1e0a8c2c621d7853a9adbd2d81aebf7ad`
+- **Gate #3 PASS (Hosted Release Publication & Proof)**:
+  - Hosted GitHub Release ID: `385616276`
+  - Tag: `v5.1.0a3`
+  - Target Release Commit: `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc`
+  - Release State: `draft=false`, `prerelease=false`.
+  - Latest Pointer: `/releases/latest` resolves to `385616276` (`v5.1.0a3`).
+  - Immutable Asset IDs on GitHub:
+    - `NekoLauncher.exe`: `552989471`
+    - `NekoUpdater.exe`: `552989468`
+    - `NekoProxyCore.zip`: `552989467`
+    - `release-v2.json`: `552989470`
+  - Publication Workflow Run & Operational Recovery: GitHub Actions publication workflow run `34371586108` verified and published the immutable release successfully, but concluded failure only at immediate latest readback due to GitHub API propagation timing. Reviewed operational recovery `gh release edit v5.1.0a3 --latest` corrected the latest pointer; fresh hosted re-review achieved Critical 0 / Important 0 (C0/I0). Workflow run `34371586108` did NOT conclude success directly.
+  - Gate 3 Hosted Proof: Fresh download streams by immutable numeric asset ID match exact bytes and SHA-256 digests; production `verify_github_release_assets.py` PASS; public `GitHubLatestReleaseGateway` PASS; production `GitHubReleaseResolver` PASS; GitHub-only Software Update authority confirmed with zero Admin-Supabase update dependency.
+- **Post-Release Automation Fixes (Reviewed C0/I0)**:
+  - `ecf60837`: import path repair + safe draft discovery in staging tooling
+  - `b6a261a8`: remote asset size binding in verification
+  - `f23fa0a` + `16dba6e`: explicit latest contract + typed boolean API payload + behavioral retry tests
+  - Canonical post-release regression at `16dba6e`: 1,732 passed / 35 skipped / 0 failed; Ruff PASS; safety PASS; YAML PASS; diff clean.
+  - Final integrated Sol review C0/I0, safe to push. Branch `release/5.1` was fast-forward pushed to `16dba6e`. Published tag `v5.1.0a3` intentionally remains `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc`; hosted release provenance unchanged.
+- **Autonomous Kanban Unblock Policy**: Active throughout publication; release blockers were diagnosed, fixed under strict TDD, and reviewed automatically. At final ledger time, no engineering or release blocker remains.
+
 `NekoProxyCore` is a separately licensed external runtime. It is never committed to this repository's source tree or embedded inside the `NekoLauncher.exe` PE binary.
 
 Under the Owner's GitHub-only architecture decision, `NekoProxyCore.zip` is accepted as an exact fixed product asset published alongside `NekoLauncher.exe` and `NekoUpdater.exe` in fixed GitHub Releases, governed by signed `release-v2.json` authority (public Core accepted).
@@ -200,9 +239,17 @@ Launcher resolves `NekoProxyCore.exe` only from the external runtime path above.
 
 ---
 
-## 6. Current Release Gate Status
+## 6. Release Gate Status (Current: Gate #2 PASS / Gate #3 PASS)
 
-- **Gate #2 Status**: **NOT PASSED**. Operational Gate #2 qualification run `r4` was **REJECTED** for audit-evidence retention (failure to capture and persist separate stdout/stderr transcripts and timing metadata for Launcher smoke and Updater self-check). Sequence 1 / `stable-0001` was signed once during run r4 and is **PERMANENTLY SPENT-UNPUBLISHED**. It must never be published or regenerated. Subsequent recovery amendment review recorded Critical 0 / Important 1 (C0/I1) for evidence anti-reconstruction (finding that local ceremony log/hash-chain/evidence index alone can be reconstructed retroactively without contemporaneous external anchoring). Recovery Amendment Fix Round 1 anchors all Gate #2 executable/action commands through the out-of-band controller task system (@aikhai task execution) and adds an event hash chain as defense-in-depth; this fix is pending re-review. Gate #2 and Gate #3 remain NOT PASSED.
-- **Gate #3 Status**: **NOT PASSED**. Workflow dispatch, remote publication, and `/releases/latest` validation have not occurred.
-- **Implementation Status**: Engineering implementation at HEAD `419a3ec593709b84afdf8e74a70ce737cd7832d9` was C0/I0 before operational Gate #2. However, operational Gate #2 r4 was REJECTED for audit-evidence retention, sequence 1 is spent-unpublished, recovery amendment review had C0/I1 for evidence anti-reconstruction, and this fix is pending re-review; Gate #2 and Gate #3 remain NOT PASSED.
-- **Explicit Boundary**: Documentation does not claim candidate qualification, production signing, push, tag creation, draft release, asset upload, workflow dispatch, publication, deployment, live auto-update completion, Gate #2 clearance, or Gate #3 clearance.
+- **Gate #2 Status**: **PASSED** (Critical 0 / Important 0 [C0/I0] on recovery r6 / sequence 2 / release_id `stable-0002` / `minimum_supported_sequence` 1 / `updater_protocol` 1..1). All 7 normative steps verified with controller execution anchors and hash chain.
+- **Gate #3 Status**: **PASSED** (Critical 0 / Important 0 [C0/I0]). Hosted GitHub release ID `385616276`, tag `v5.1.0a3` at target commit `6ad9bc9ee8fdcf5b770b73bec7eab2f7f31109bc`, `draft=false`, `prerelease=false`, `/releases/latest` verified. Immutable asset IDs: Launcher `552989471`, Updater `552989468`, Core `552989467`, release-v2 `552989470`.
+- **Publication Workflow & Recovery**: Workflow run `34371586108` verified and published the immutable release successfully, but concluded failure only at immediate latest readback. Reviewed operational recovery `gh release edit v5.1.0a3 --latest` corrected latest pointer; fresh hosted re-review C0/I0.
+- **Hosted Proof**: Exact download streams by immutable ID match candidate hashes/sizes bit-for-bit. Production `verify_github_release_assets.py` PASS; public `GitHubLatestReleaseGateway` PASS; production `GitHubReleaseResolver` PASS; zero Admin-Supabase update dependency.
+- **Post-Release Automation Fixes**: Fixes `ecf60837`, `b6a261a8`, `f23fa0a`, and `16dba6e` reviewed C0/I0; canonical regression 1732 passed / 35 skipped / 0 failed; fast-forward pushed to `16dba6e`. Tag `v5.1.0a3` remains `6ad9bc9`.
+- **Engineering / Blocker Status**: 0 blockers remain. Autonomous Kanban unblock policy resolved all issues autonomously.
+
+### Historical Pre-Release Gate Status (Superseeded)
+
+The following paragraphs represent the historical state prior to recovery r6 qualification and publication:
+- *Historical Gate #2 Pre-Release Checkpoint*: Operational Gate #2 qualification run `r4` was REJECTED for audit-evidence retention (failure to capture and persist separate stdout/stderr transcripts and timing metadata for Launcher smoke and Updater self-check). Sequence 1 / `stable-0001` was signed once during run r4 and is PERMANENTLY SPENT-UNPUBLISHED. It must never be published or regenerated. Subsequent recovery amendment review recorded Critical 0 / Important 1 (C0/I1) for evidence anti-reconstruction (finding that local ceremony log/hash-chain/evidence index alone can be reconstructed retroactively without contemporaneous external anchoring). Recovery Amendment Fix Round 1 anchored all Gate #2 executable/action commands through the out-of-band controller task system (@aikhai task execution) and added an event hash chain as defense-in-depth. This was superseded by successful Gate #2 PASS on recovery r6 (sequence 2).
+- *Historical Gate #3 Pre-Release Checkpoint*: Workflow dispatch, remote publication, and `/releases/latest` validation had not occurred at that time. Superseded by Gate #3 PASS (Release ID 385616276).
