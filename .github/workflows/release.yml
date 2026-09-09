@@ -264,14 +264,21 @@ jobs:
           }
           $verified = Get-Content "release/metadata/draft-release.json" -Raw | ConvertFrom-Json
           $current = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
-          $expectedAssetIds = @($verified.assets | ForEach-Object { [string]$_.id } | Sort-Object)
-          $actualAssetIds = @($current.assets | ForEach-Object { [string]$_.id } | Sort-Object)
           if ([string]$current.id -cne [string]$env:RELEASE_ID -or
               $current.draft -ne $true -or
               $current.tag_name -cne $env:RELEASE_TAG -or
-              $current.target_commitish -cne '${{ github.sha }}' -or
-              (Compare-Object $expectedAssetIds $actualAssetIds)) {
+              $current.target_commitish -cne '${{ github.sha }}') {
             throw "Verified draft release identity or binding changed; refusing publication"
+          }
+          $requiredAssetNames = @("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
+          foreach ($requiredName in $requiredAssetNames) {
+            $verifiedMatches = @($verified.assets | Where-Object { $_.name -ceq $requiredName })
+            $currentMatches = @($current.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($verifiedMatches.Count -ne 1 -or
+                $currentMatches.Count -ne 1 -or
+                [string]$verifiedMatches[0].id -cne [string]$currentMatches[0].id) {
+              throw "Verified draft release identity or binding changed; refusing publication"
+            }
           }
           gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false | Out-Null
       - name: Verify published release readback by ID
