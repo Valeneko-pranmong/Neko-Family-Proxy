@@ -207,7 +207,7 @@ jobs:
             $currentMatches = @($current.assets | Where-Object { $_.name -ceq $requiredName })
             if ($currentMatches.Count -ne 1 -or $currentMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Asset binding changed: $requiredName" }
           }
-          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false | Out-Null
+          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false -f make_latest=true | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Release publication failed." }
       - name: Verify published release and latest resolution
         shell: pwsh
@@ -229,8 +229,19 @@ jobs:
             $publishedMatches = @($published.assets | Where-Object { $_.name -ceq $requiredName })
             if ($publishedMatches.Count -ne 1 -or $publishedMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Published asset binding changed: $requiredName" }
           }
-          $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Unable to resolve latest release." }
+          $latestMaxAttempts = 5
+          $latestMatched = $false
+          $latest = $null
+          for ($attempt = 1; $attempt -le $latestMaxAttempts; $attempt++) {
+            $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw "Unable to resolve latest release." }
+            if ([string]$latest.id -eq [string]$env:RELEASE_ID -and $latest.tag_name -ceq $env:RELEASE_TAG) {
+              $latestMatched = $true
+            }
+            if ($latestMatched) { break }
+            if ($attempt -lt $latestMaxAttempts) { Start-Sleep -Seconds $attempt }
+          }
+          if (-not $latestMatched) { throw "Latest release identity mismatch after bounded retries." }
           if ([string]$latest.id -ne [string]$env:RELEASE_ID -or $latest.tag_name -cne $env:RELEASE_TAG) { throw "Latest release identity mismatch." }
           if ($latest.draft -ne $false -or $latest.prerelease -ne $false) { throw "Latest release state mismatch." }
           if ($latest.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Latest release target mismatch." }

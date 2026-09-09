@@ -87,12 +87,27 @@ def test_revalidates_same_draft_and_asset_ids_before_patch() -> None:
 
 def test_publishes_only_by_immutable_release_id_after_verification() -> None:
     job = publication_job_text()
-    expected = 'gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false'
+    expected = (
+        'gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" '
+        "--method PATCH -f draft=false -f make_latest=true"
+    )
     assert expected in job
     assert job.index("scripts/verify_github_release_assets.py") < job.index(expected)
     assert "releases/tags/" not in job
     assert "gh release create" not in job
     assert "gh release upload" not in job
+
+
+def test_latest_readback_uses_finite_retry_and_fails_closed() -> None:
+    job = publication_job_text()
+    post = job[job.index("--method PATCH") :]
+    assert "$latestMaxAttempts = 5" in post
+    assert "for ($attempt = 1; $attempt -le $latestMaxAttempts; $attempt++)" in post
+    assert "Start-Sleep -Seconds $attempt" in post
+    assert "$latestMatched = $true" in post
+    assert "if ($latestMatched) { break }" in post
+    assert 'if (-not $latestMatched) { throw "Latest release identity mismatch after bounded retries." }' in post
+    assert "while (" not in post
 
 
 def test_post_publish_same_id_and_latest_preserve_state_and_bindings() -> None:
