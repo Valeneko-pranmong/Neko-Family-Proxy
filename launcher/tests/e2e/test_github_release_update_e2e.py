@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
 import json
 import os
@@ -38,7 +40,8 @@ from neko_launcher.updater.ipc_channel import FramedIpcChannel
 from neko_launcher.updater.main import run_session
 from neko_launcher.updater.probation_runner import SelfTestResult
 from neko_launcher.updater.recovery_engine import RecoveryEngine
-from neko_launcher.updater.state_models import serialize_state
+from neko_launcher.updater.state_models import Binding, Generation, deserialize_state, serialize_state
+from tests.software_update_helpers import canonical_payload_bytes, signed_envelope
 from tests.e2e.test_live_update_balanced_e2e import BalancedLiveUpdateEnv, ClosableStore
 
 
@@ -370,41 +373,165 @@ def test_github_release_update_n_to_n_plus_one_success_e2e(
         assert req.get_header("Cookie") is None
 
 
-def test_github_release_update_signed_broken_n_plus_two_rollback_e2e(
-    tmp_path: Path,
-) -> None:
+def _retarget_as_launcher_only_n_plus_two(
+    env: BalancedLiveUpdateEnv,
+    routes: dict[str, Any],
+) -> Generation:
+    launcher_bytes = b"broken-n-plus-two-launcher"
+    launcher_sha = hashlib.sha256(launcher_bytes).hexdigest()
+    payload = env.build_release_doc(
+        3,
+        launcher_sha,
+        len(launcher_bytes),
+        env.new_core_zip_sha,
+        len(env.new_core_zip_bytes),
+        env.new_core_id,
+    )
+    payload["minimum_supported_sequence"] = 2
+    payload["components"]["launcher"]["version"] = "1.0.1"
+    payload["components"]["updater"]["version"] = "1.0.1"
+    payload["components"]["core"]["version"] = "1.0.1"
+    envelope = signed_envelope(payload)
+    manifest_bytes = canonical_payload_bytes(envelope)
+    payload_sha = hashlib.sha256(canonical_payload_bytes(payload)).hexdigest()
+    candidate = Generation(Binding(3, "rel-3", payload_sha), launcher_sha, env.new_core_id)
+
+    tag = "v1.0.1"
+    release_base = (
+        f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/"
+    )
+    cdn_base = "https://objects.githubusercontent.com/test-assets-n-plus-two/"
+    api_release = {
+        "id": 101,
+        "tag_name": tag,
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {"id": 11, "name": RELEASE_MANIFEST_ASSET_NAME, "size": len(manifest_bytes), "browser_download_url": release_base + RELEASE_MANIFEST_ASSET_NAME},
+            {"id": 12, "name": LAUNCHER_ASSET_NAME, "size": len(launcher_bytes), "browser_download_url": release_base + LAUNCHER_ASSET_NAME},
+            {"id": 13, "name": UPDATER_ASSET_NAME, "size": len(b"updater-binary-payload"), "browser_download_url": release_base + UPDATER_ASSET_NAME},
+            {"id": 14, "name": CORE_ASSET_NAME, "size": len(env.new_core_zip_bytes), "browser_download_url": release_base + CORE_ASSET_NAME},
+        ],
+    }
+    routes.clear()
+    routes.update(
+        {
+            GITHUB_RELEASE_API_URL: _SimulatedHttpResponse(json.dumps(api_release).encode(), 200),
+            release_base + RELEASE_MANIFEST_ASSET_NAME: _SimulatedHttpResponse(status=302, headers={"Location": cdn_base + RELEASE_MANIFEST_ASSET_NAME}),
+            cdn_base + RELEASE_MANIFEST_ASSET_NAME: _SimulatedHttpResponse(manifest_bytes),
+            release_base + LAUNCHER_ASSET_NAME: _SimulatedHttpResponse(status=302, headers={"Location": cdn_base + LAUNCHER_ASSET_NAME}),
+            cdn_base + LAUNCHER_ASSET_NAME: _SimulatedHttpResponse(launcher_bytes),
+        }
+    )
+    env.envelope_dict = envelope
+    env.envelope = manifest_bytes
+    env.envelope_b64 = base64.standard_b64encode(manifest_bytes).decode("ascii")
+    env.payload_doc = payload
+    env.payload_bytes = canonical_payload_bytes(payload)
+    env.new_launcher = launcher_bytes
+    env.new_launcher_sha = launcher_sha
+    env.l_sha = launcher_sha
+    env.l_size = len(launcher_bytes)
+    env.candidate = candidate
+    return candidate
+
+
+def _request_urls(opener: FakeTransportOpener) -> list[str]:
+    return [
+        request.full_url if hasattr(request, "full_url") else str(request)
+        for request in opener.captured_requests
+    ]
+
+
+def _assert_public_unauthenticated_requests(opener: FakeTransportOpener) -> None:
+    for request in opener.captured_requests:
+        url = request.full_url if hasattr(request, "full_url") else str(request)
+        assert all(term not in url.lower() for term in ("admin", "supabase", "vercel", "grant", "capability"))
+        assert request.get_header("Authorization") is None
+        assert request.get_header("Cookie") is None
+
+
+def test_github_release_update_chained_n_plus_two_rollback_e2e(tmp_path: Path) -> None:
     env, store, updater_bytes, routes = _build_simulation_fixtures(
-        tmp_path,
-        launcher_changed=True,
-        core_changed=True,
+        tmp_path, launcher_changed=True, core_changed=True
     )
-    opener = FakeTransportOpener(routes)
+    first_opener = FakeTransportOpener(routes)
+    rc1, _ = _run_full_update_pipeline(tmp_path, env, store, first_opener)
+    assert rc1 == 0
+    n_plus_one = env.candidate
+    assert store.state is not None
+    assert store.state.committed == n_plus_one
 
-    rc, service = _run_full_update_pipeline(
-        tmp_path,
-        env,
-        store,
-        opener,
-        self_test_pass=False,
+    # Durable serialization/recovery/reload is the process restart boundary.
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_bytes = serialize_state(store.state)
+    (state_dir / "slot-a.bin").write_bytes(
+        pack_slot_frame(
+            SlotFrame(revision=store.state.revision, format_version=1, body_bytes=state_bytes)
+        )
+    )
+    restarted = RecoveryEngine(tmp_path, env.keys).run_recovery()
+    assert restarted.converged is True
+    assert restarted.selected_generation == n_plus_one
+    assert restarted.final_state is not None
+    store = ClosableStore(deserialize_state(serialize_state(restarted.final_state)))
+    env.store = store
+    n_plus_two = _retarget_as_launcher_only_n_plus_two(env, routes)
+    second_opener = FakeTransportOpener(routes)
+    rc2, _ = _run_full_update_pipeline(
+        tmp_path, env, store, second_opener, self_test_pass=False
     )
 
-    assert rc != 0
+    assert rc2 != 0
     state = store.state
     assert state is not None
-    assert state.phase in ("CLEANING", "IDLE")
-    assert state.committed == env.old
-    assert state.highwater == env.old.binding
-    assert state.failed == env.candidate.binding
+    assert state.committed == n_plus_one
+    assert state.previous == env.old
+    assert state.highwater == n_plus_one.binding
+    assert state.observed == n_plus_two.binding
+    assert state.failed == n_plus_two.binding
     assert state.transaction is None
     assert state.last_error == "SELFTEST_FAILED"
 
-    # Old generation remains runnable and intact
-    old_seq = env.old.binding.release_sequence
-    old_sha = env.old.binding.payload_sha256
-    old_dir = tmp_path / "releases" / f"g-{old_seq:020d}-{old_sha}"
-    assert old_dir.is_dir()
-    assert (old_dir / "NekoLauncher.exe").is_file()
-    assert (old_dir / "ProxyCore").is_dir()
+    selected_dir = tmp_path / "releases" / (
+        f"g-{n_plus_one.binding.release_sequence:020d}-{n_plus_one.binding.payload_sha256}"
+    )
+    assert selected_dir.is_dir()
+    assert (selected_dir / "NekoLauncher.exe").is_file()
+    assert (selected_dir / "ProxyCore").is_dir()
+
+    first_names = [url.rsplit("/", 1)[-1] for url in _request_urls(first_opener)]
+    second_names = [url.rsplit("/", 1)[-1] for url in _request_urls(second_opener)]
+    assert first_names == [
+        "latest", RELEASE_MANIFEST_ASSET_NAME, RELEASE_MANIFEST_ASSET_NAME,
+        LAUNCHER_ASSET_NAME, LAUNCHER_ASSET_NAME, CORE_ASSET_NAME, CORE_ASSET_NAME,
+    ]
+    assert second_names == [
+        "latest", RELEASE_MANIFEST_ASSET_NAME, RELEASE_MANIFEST_ASSET_NAME,
+        LAUNCHER_ASSET_NAME, LAUNCHER_ASSET_NAME,
+    ]
+    assert UPDATER_ASSET_NAME not in first_names + second_names
+    _assert_public_unauthenticated_requests(first_opener)
+    _assert_public_unauthenticated_requests(second_opener)
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    for slot in (state_dir / "slot-a.bin", state_dir / "slot-b.bin"):
+        slot.unlink(missing_ok=True)
+    state_bytes = serialize_state(state)
+    (state_dir / "slot-a.bin").write_bytes(
+        pack_slot_frame(SlotFrame(revision=state.revision, format_version=1, body_bytes=state_bytes))
+    )
+    recovery = RecoveryEngine(tmp_path, env.keys)
+    recovered1 = recovery.run_recovery()
+    assert recovered1.converged is True
+    assert recovered1.selected_generation == n_plus_one
+    recovered2 = recovery.run_recovery()
+    assert recovered2.converged is True
+    assert recovered2.mutations_performed == 0
+    assert recovered2.selected_generation == n_plus_one
+    assert recovered2.final_state == recovered1.final_state
 
 
 def test_github_release_update_failure_matrix_e2e(tmp_path: Path) -> None:
@@ -415,7 +542,8 @@ def test_github_release_update_failure_matrix_e2e(tmp_path: Path) -> None:
         "missing_asset",
         "duplicate_asset",
         "redirect_denial",
-        "overrun_underrun",
+        "product_underrun",
+        "product_overrun",
         "hash_mismatch",
         "helper_incompatibility",
         "busy_session",
@@ -490,20 +618,25 @@ def test_github_release_update_failure_matrix_e2e(tmp_path: Path) -> None:
                 headers={"Location": "https://malicious.example.invalid/launcher.exe"},
             )
 
-        elif scenario == "overrun_underrun":
-            # CDN returns truncated body
+        elif scenario == "product_underrun":
             cdn_prefix = "https://objects.githubusercontent.com/test-assets/"
             routes[cdn_prefix + LAUNCHER_ASSET_NAME] = _SimulatedHttpResponse(
-                launcher_bytes[: len(launcher_bytes) // 2],
-                status=200,
+                launcher_bytes[:-1], status=200
+            )
+
+        elif scenario == "product_overrun":
+            cdn_prefix = "https://objects.githubusercontent.com/test-assets/"
+            routes[cdn_prefix + LAUNCHER_ASSET_NAME] = _SimulatedHttpResponse(
+                launcher_bytes + b"!", status=200
             )
 
         elif scenario == "hash_mismatch":
-            # CDN returns corrupted body
             cdn_prefix = "https://objects.githubusercontent.com/test-assets/"
+            corrupted = bytes([launcher_bytes[0] ^ 1]) + launcher_bytes[1:]
+            assert len(corrupted) == len(launcher_bytes)
+            assert hashlib.sha256(corrupted).digest() != hashlib.sha256(launcher_bytes).digest()
             routes[cdn_prefix + LAUNCHER_ASSET_NAME] = _SimulatedHttpResponse(
-                b"corrupted-content-mismatch",
-                status=200,
+                corrupted, status=200
             )
 
         elif scenario == "helper_incompatibility":
