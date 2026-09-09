@@ -86,11 +86,14 @@ The operator triggers final publication in GitHub Actions:
 
 ```bash
 gh workflow run release.yml \
+  --ref v5.1.0a3 \
   -f publish_release=true \
   -f release_id=<NUMERIC_GITHUB_RELEASE_ID> \
   -f release_tag=v5.1.0a3 \
   -f expected_target=<40_CHAR_COMMIT_SHA>
 ```
+
+`--ref v5.1.0a3` selects the reviewed workflow definition from the approved release tag. `expected_target` remains the exact approved checkout and authority commit; the two values serve distinct bindings and neither may be omitted.
 
 **Remote Publication Gate Execution**:
 1. Workflow checks out `expected_target` and validates inputs locally.
