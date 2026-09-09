@@ -158,7 +158,7 @@ def test_publish_is_after_remote_byte_verification() -> None:
     job = publication_job_text()
     download_idx = job.find("releases/assets/$assetId")
     verify_idx = job.find("scripts/verify_github_release_assets.py")
-    publish_idx = job.find("--draft=false")
+    publish_idx = job.find("--method PATCH")
     assert -1 not in (download_idx, verify_idx, publish_idx)
     assert download_idx < verify_idx < publish_idx
     assert "--download-dir release/remote-verification" in job
