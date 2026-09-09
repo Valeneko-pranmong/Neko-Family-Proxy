@@ -85,18 +85,16 @@ def test_verifier_invoked_with_require_draft_flag() -> None:
         )
 
 
-def test_post_publication_readback_verifies_draft_false() -> None:
+def test_post_publication_readback_uses_same_id_and_verifies_binding() -> None:
     job = publication_job_text()
-    publish_idx = job.find("--draft=false")
-    assert publish_idx != -1, "gh release edit --draft=false must be present"
+    publish_idx = job.find("--method PATCH")
+    assert publish_idx != -1, "GitHub API release PATCH must be present"
     post_job = job[publish_idx:]
 
-    assert "releases/tags/" in post_job or "releases/latest" in post_job, (
-        "publish-release job must read back published release after --draft=false"
-    )
-    assert "draft" in post_job.lower(), (
-        "post-publication readback must verify draft state is false"
-    )
+    assert 'releases/$env:RELEASE_ID' in post_job
+    assert "releases/tags/" not in post_job and "releases/latest" not in post_job
+    for binding in (".id", ".draft", ".tag_name"):
+        assert binding in post_job, f"post-publication readback must verify {binding}"
 
 
 def test_no_synthetic_core_or_secret_signing_in_workflow() -> None:

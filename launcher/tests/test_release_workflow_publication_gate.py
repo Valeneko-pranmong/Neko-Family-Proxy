@@ -302,25 +302,46 @@ def test_publication_creates_draft_release_first() -> None:
         )
 
 
-def test_publication_edits_draft_to_false_as_final_step() -> None:
+def test_publication_persists_and_requires_immutable_release_id() -> None:
     publishers = publication_jobs(workflow_text())
     assert publishers, "release.yml must have a publication job"
     for publisher in publishers:
-        assert re.search(r"(?i)\bgh\s+release\s+edit\b[^\n]*--draft=false\b", publisher.text), (
-            f"publication job {publisher.name!r} must publish last using gh release edit --draft=false"
-        )
+        assert re.search(r"release_id=\$releaseId.*GITHUB_(?:OUTPUT|ENV)", publisher.text, re.DOTALL)
+        assert re.search(r"(?mi)^\s*RELEASE_ID:\s*\$\{\{\s*(?:steps\.[^.]+\.outputs\.release_id|env\.release_id)\s*}}", publisher.text)
+        assert re.search(r"(?i)if\s*\(-not\s+\$env:RELEASE_ID\)\s*\{[^}]*throw", publisher.text)
 
 
-def test_publication_runs_verifier_before_publish() -> None:
+def test_publication_patches_verified_release_by_id_after_fresh_identity_check() -> None:
     publishers = publication_jobs(workflow_text())
     assert publishers, "release.yml must have a publication job"
     for publisher in publishers:
         create_idx = publisher.text.find("gh release create")
         verifier_idx = publisher.text.find("verify_github_release_assets.py")
-        publish_idx = publisher.text.find("--draft=false")
-        assert create_idx != -1, "gh release create missing"
-        assert verifier_idx != -1, "verifier invocation missing"
-        assert publish_idx != -1, "gh release edit --draft=false missing"
-        assert create_idx < verifier_idx < publish_idx, (
-            "verifier must run after draft creation and before --draft=false"
+        final_read_idx = publisher.text.rfind('releases/$env:RELEASE_ID')
+        patch_match = re.search(
+            r'gh api "repos/\$env:GH_REPO/releases/\$env:RELEASE_ID"\s+--method PATCH[^\n]*-f draft=false',
+            publisher.text,
         )
+        assert create_idx != -1 and verifier_idx != -1 and patch_match is not None
+        assert create_idx < verifier_idx < patch_match.start() < final_read_idx
+        assert 'gh release edit "$env:RELEASE_TAG"' not in publisher.text
+
+
+def test_immediate_prepublication_readback_revalidates_same_draft_binding() -> None:
+    publisher = publication_jobs(workflow_text())[0].text
+    patch_idx = publisher.find("--method PATCH")
+    assert patch_idx != -1
+    prepublish = publisher[ publisher.rfind("- name:", 0, patch_idx) : patch_idx]
+    assert 'releases/$env:RELEASE_ID' in prepublish
+    for binding in (".id", ".draft", ".tag_name", ".target_commitish", ".assets"):
+        assert binding in prepublish, f"pre-publication identity check must validate {binding}"
+    assert "$expectedAssetIds" in prepublish
+    assert "$actualAssetIds" in prepublish
+    assert "throw" in prepublish
+
+
+def test_publication_runs_verifier_before_publish() -> None:
+    publisher = publication_jobs(workflow_text())[0].text
+    assert publisher.find("gh release create") < publisher.find(
+        "verify_github_release_assets.py"
+    ) < publisher.find("--method PATCH")
