@@ -7,6 +7,12 @@
 - Authority: Owner explicitly replaced the Software Update distribution architecture with GitHub Releases only. This is the design approval; no additional architecture gate is invented by this document.
 - Design input: completed Sol High read-only audit and the Owner's GitHub-only decision.
 
+> ### Prominent Supersession Note (2026-09-09)
+> **NOTICE**: Publication-handoff and workflow-publication details in this specification (specifically Section 8 and related release construction/upload assumptions) are **superseded** by the approved two-phase staged-draft publication design:
+> [`docs/superpowers/specs/2026-09-09-software-update-two-phase-staged-draft-design.md`](./2026-09-09-software-update-two-phase-staged-draft-design.md).
+>
+> All client-side GitHub Releases discovery, transport allowlists, redirect policies, Ed25519 envelope signature verification, canonical JSON enforcement, manifest admission, installed Updater compatibility binding, sequence anti-downgrade, generation construction, and local transaction semantics documented below remain active, authoritative, and unchanged.
+
 ## 1. Decision
 
 Software Update discovery and artifact transport use one fixed public GitHub repository:
