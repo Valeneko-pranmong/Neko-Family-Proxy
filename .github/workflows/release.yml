@@ -116,4 +116,121 @@ jobs:
           if ($env:EXPECTED_TARGET.ToLowerInvariant() -cne $checkedOutSha.ToLowerInvariant()) {
             throw "Expected target does not match the checked-out commit SHA."
           }
-          Write-Host "Authority inputs are locally valid. Transitional workflow will not publish."
+          Write-Host "Authority inputs are locally valid."
+      - name: Fetch staged draft and download required assets by immutable IDs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_TARGET: ${{ inputs.expected_target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path release/metadata, release/remote-verification -Force | Out-Null
+          $releaseJson = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to fetch staged draft release by ID." }
+          $release = $releaseJson | ConvertFrom-Json
+          if ([string]$release.id -ne [string]$env:RELEASE_ID) { throw "Release ID mismatch." }
+          if ($release.draft -ne $true) { throw "Release is not a draft." }
+          if ($release.prerelease -ne $false) { throw "Release must not be a prerelease." }
+          if ($release.tag_name -cne $env:RELEASE_TAG) { throw "Release tag mismatch." }
+          if ($release.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target mismatch." }
+          [System.IO.File]::WriteAllText("release/metadata/draft-release.json", $releaseJson, [System.Text.UTF8Encoding]::new($false))
+
+          $requiredAssetNames = @('NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
+          $initialAssetBindings = @{}
+          foreach ($requiredName in $requiredAssetNames) {
+            $matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($matches.Count -ne 1) { throw "Required asset must occur exactly once: $requiredName" }
+            $assetId = [long]$matches[0].id
+            if ($assetId -le 0) { throw "Required asset has an invalid ID: $requiredName" }
+            $initialAssetBindings[$requiredName] = $assetId
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = 'gh'
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            [void]$startInfo.ArgumentList.Add('api')
+            [void]$startInfo.ArgumentList.Add("repos/$env:GH_REPO/releases/assets/$assetId")
+            [void]$startInfo.ArgumentList.Add('-H')
+            [void]$startInfo.ArgumentList.Add("Accept: application/octet-stream")
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) { throw "Unable to start asset download: $requiredName" }
+            $outputStream = [System.IO.File]::Create("release/remote-verification/$requiredName")
+            try { $process.StandardOutput.BaseStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+            $errorText = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($process.ExitCode -ne 0) { throw "Asset download failed for $requiredName`: $errorText" }
+            if ((Get-Item "release/remote-verification/$requiredName").Length -le 0) { throw "Downloaded asset is empty: $requiredName" }
+          }
+          $initialAssetBindings | ConvertTo-Json | Set-Content release/metadata/initial-asset-bindings.json -Encoding utf8
+      - name: Verify staged assets and signed envelope authority
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_TARGET: ${{ inputs.expected_target }}
+        run: |
+          python scripts/verify_github_release_assets.py `
+            --release-json release/metadata/draft-release.json `
+            --download-dir release/remote-verification `
+            --expected-tag "$env:RELEASE_TAG" `
+            --expected-target "$env:EXPECTED_TARGET" `
+            --require-draft
+      - name: Revalidate bindings and publish by immutable ID
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_TARGET: ${{ inputs.expected_target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $requiredAssetNames = @('NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
+          $initialAssetBindings = Get-Content release/metadata/initial-asset-bindings.json -Raw | ConvertFrom-Json -AsHashtable
+          $current = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Unable to re-fetch draft release." }
+          if ([string]$current.id -ne [string]$env:RELEASE_ID) { throw "Release ID changed." }
+          if ($current.draft -ne $true) { throw "Release is no longer a draft." }
+          if ($current.prerelease -ne $false) { throw "Prerelease state changed." }
+          if ($current.tag_name -cne $env:RELEASE_TAG) { throw "Release tag changed." }
+          if ($current.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target changed." }
+          foreach ($requiredName in $requiredAssetNames) {
+            $currentMatches = @($current.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($currentMatches.Count -ne 1 -or $currentMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Asset binding changed: $requiredName" }
+          }
+          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Release publication failed." }
+      - name: Verify published release and latest resolution
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_TARGET: ${{ inputs.expected_target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $requiredAssetNames = @('NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
+          $initialAssetBindings = Get-Content release/metadata/initial-asset-bindings.json -Raw | ConvertFrom-Json -AsHashtable
+          $published = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Unable to fetch published release." }
+          if ([string]$published.id -ne [string]$env:RELEASE_ID -or $published.draft -ne $false -or $published.prerelease -ne $false) { throw "Published state mismatch." }
+          if ($published.tag_name -cne $env:RELEASE_TAG -or $published.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Published authority mismatch." }
+          foreach ($requiredName in $requiredAssetNames) {
+            $publishedMatches = @($published.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($publishedMatches.Count -ne 1 -or $publishedMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Published asset binding changed: $requiredName" }
+          }
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Unable to resolve latest release." }
+          if ([string]$latest.id -ne [string]$env:RELEASE_ID -or $latest.tag_name -cne $env:RELEASE_TAG) { throw "Latest release identity mismatch." }
+          if ($latest.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Latest release target mismatch." }
+          foreach ($requiredName in $requiredAssetNames) {
+            $publishedMatches = @($published.assets | Where-Object { $_.name -ceq $requiredName })
+            $latestMatches = @($latest.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($latestMatches.Count -ne 1 -or $latestMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Latest asset binding mismatch: $requiredName" }
+            if ($latestMatches[0].size -ne $publishedMatches[0].size) { throw "Latest asset size mismatch: $requiredName" }
+          }
