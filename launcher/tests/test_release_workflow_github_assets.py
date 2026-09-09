@@ -44,8 +44,18 @@ def test_downloads_exact_required_assets_by_id_as_raw_nonempty_bytes() -> None:
     assert 'ArgumentList.Add("repos/$env:GH_REPO/releases/assets/$assetId")' in job
     assert 'ArgumentList.Add("Accept: application/octet-stream")' in job
     assert '[System.IO.File]::Create("release/remote-verification/$requiredName")' in job
-    assert ".StandardOutput.BaseStream.CopyTo($outputStream)" in job
-    assert ".WaitForExit()" in job
+    stderr_start = "$stderrTask = $process.StandardError.ReadToEndAsync()"
+    stdout_copy = "$process.StandardOutput.BaseStream.CopyTo($outputStream)"
+    wait_for_exit = "$process.WaitForExit()"
+    stderr_result = "$errorText = $stderrTask.GetAwaiter().GetResult()"
+    assert stderr_start in job
+    assert stdout_copy in job
+    assert wait_for_exit in job
+    assert stderr_result in job
+    assert job.index(stderr_start) < job.index(stdout_copy)
+    assert job.index(stdout_copy) < job.index(wait_for_exit)
+    assert job.index(wait_for_exit) < job.index(stderr_result)
+    assert "$process.StandardError.ReadToEnd()" not in job
     assert ".ExitCode -ne 0" in job
     assert ".Length -le 0" in job
     assert "browser_download_url" not in job
@@ -94,6 +104,8 @@ def test_post_publish_same_id_and_latest_preserve_state_and_bindings() -> None:
     assert "$publishedMatches[0].id -ne $initialAssetBindings[$requiredName]" in post
     assert 'gh api "repos/$env:GH_REPO/releases/latest"' in post
     assert "[string]$latest.id -ne [string]$env:RELEASE_ID" in post
+    assert "$latest.draft -ne $false" in post
+    assert "$latest.prerelease -ne $false" in post
     assert "$latest.tag_name -cne $env:RELEASE_TAG" in post
     assert "$latest.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()" in post
     assert "$latestMatches[0].id -ne $initialAssetBindings[$requiredName]" in post

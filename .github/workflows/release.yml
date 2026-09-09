@@ -157,14 +157,19 @@ jobs:
             [void]$startInfo.ArgumentList.Add('-H')
             [void]$startInfo.ArgumentList.Add("Accept: application/octet-stream")
             $process = [System.Diagnostics.Process]::new()
-            $process.StartInfo = $startInfo
-            if (-not $process.Start()) { throw "Unable to start asset download: $requiredName" }
-            $outputStream = [System.IO.File]::Create("release/remote-verification/$requiredName")
-            try { $process.StandardOutput.BaseStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
-            $errorText = $process.StandardError.ReadToEnd()
-            $process.WaitForExit()
-            if ($process.ExitCode -ne 0) { throw "Asset download failed for $requiredName`: $errorText" }
-            if ((Get-Item "release/remote-verification/$requiredName").Length -le 0) { throw "Downloaded asset is empty: $requiredName" }
+            try {
+              $process.StartInfo = $startInfo
+              if (-not $process.Start()) { throw "Unable to start asset download: $requiredName" }
+              $stderrTask = $process.StandardError.ReadToEndAsync()
+              $outputStream = [System.IO.File]::Create("release/remote-verification/$requiredName")
+              try { $process.StandardOutput.BaseStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+              $process.WaitForExit()
+              $errorText = $stderrTask.GetAwaiter().GetResult()
+              if ($process.ExitCode -ne 0) { throw "Asset download failed for $requiredName`: $errorText" }
+              if ((Get-Item "release/remote-verification/$requiredName").Length -le 0) { throw "Downloaded asset is empty: $requiredName" }
+            } finally {
+              $process.Dispose()
+            }
           }
           $initialAssetBindings | ConvertTo-Json | Set-Content release/metadata/initial-asset-bindings.json -Encoding utf8
       - name: Verify staged assets and signed envelope authority
@@ -227,6 +232,7 @@ jobs:
           $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw "Unable to resolve latest release." }
           if ([string]$latest.id -ne [string]$env:RELEASE_ID -or $latest.tag_name -cne $env:RELEASE_TAG) { throw "Latest release identity mismatch." }
+          if ($latest.draft -ne $false -or $latest.prerelease -ne $false) { throw "Latest release state mismatch." }
           if ($latest.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Latest release target mismatch." }
           foreach ($requiredName in $requiredAssetNames) {
             $publishedMatches = @($published.assets | Where-Object { $_.name -ceq $requiredName })
