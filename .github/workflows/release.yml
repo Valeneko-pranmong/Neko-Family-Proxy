@@ -4,24 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Publish the candidate artifact as a GitHub release
+        description: Authorize publication of the verified draft release
         required: true
         type: boolean
         default: false
+      release_id:
+        description: Immutable numeric GitHub draft release ID
+        required: true
+        type: string
       release_tag:
-        description: Existing v* tag to publish (required when publishing)
-        required: false
+        description: Expected release Git tag (strictly v5.1.0a3 for first release)
+        required: true
         type: string
-      core_artifact_path:
-        description: Path or workspace file for approved NekoProxyCore.zip
-        required: false
-        type: string
-      signed_manifest_path:
-        description: Path or workspace file for approved signed release-v2.json
-        required: false
-        type: string
-      release_public_key_path:
-        description: Existing path to the approved release verification public key file
+      expected_target:
+        description: Expected 40-character commit SHA of target_commitish
         required: true
         type: string
   push:
@@ -33,7 +29,10 @@ permissions:
 
 jobs:
   build-installer:
+    if: github.event_name == 'push'
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -74,13 +73,14 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    needs: build-installer
     if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.expected_target }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -127,51 +127,6 @@ jobs:
           catch {
             throw $mismatch
           }
-      - name: Download candidate artifact
-        uses: actions/download-artifact@v7
-        with:
-          name: neko-family-launcher-windows
-          path: release
-      - name: Stage approved update assets
-        shell: pwsh
-        env:
-          CORE_PATH: ${{ inputs.core_artifact_path }}
-          MANIFEST_PATH: ${{ inputs.signed_manifest_path }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:CORE_PATH -and (Test-Path $env:CORE_PATH)) {
-            Copy-Item $env:CORE_PATH release\NekoProxyCore.zip -Force
-          }
-          if ($env:MANIFEST_PATH -and (Test-Path $env:MANIFEST_PATH)) {
-            Copy-Item $env:MANIFEST_PATH release\release-v2.json -Force
-          }
-          $required = @(
-            "release\NekoLauncher.exe",
-            "release\NekoUpdater.exe",
-            "release\NekoProxyCore.zip",
-            "release\release-v2.json"
-          )
-          foreach ($file in $required) {
-            if (-not (Test-Path $file)) {
-              throw "Required update asset is missing before release creation: $file"
-            }
-          }
-      - name: Create draft GitHub release
-        shell: pwsh
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          gh release create "$env:RELEASE_TAG" --draft --title "$env:RELEASE_TAG" --notes "Release $env:RELEASE_TAG" --target "${{ github.sha }}"
-      - name: Upload required update assets
-        shell: pwsh
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          gh release upload "$env:RELEASE_TAG" release\NekoLauncher.exe release\NekoUpdater.exe release\NekoProxyCore.zip release\release-v2.json --clobber=false
       - name: Read back draft and download required assets by ID
         id: resolve-release
         shell: pwsh
@@ -236,19 +191,14 @@ jobs:
       - name: Verify release assets before publication
         shell: pwsh
         env:
-          PUBLIC_KEY_PATH: ${{ inputs.release_public_key_path }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not $env:PUBLIC_KEY_PATH -or -not (Test-Path $env:PUBLIC_KEY_PATH -PathType Leaf)) {
-            throw "Approved release public key path is required and must identify an existing file"
-          }
           python scripts/verify_github_release_assets.py `
             --release-json release/metadata/draft-release.json `
             --download-dir release/remote-verification `
-            --public-key-file "$env:PUBLIC_KEY_PATH" `
             --expected-tag "$env:RELEASE_TAG" `
-            --expected-target "${{ github.sha }}" `
+            --expected-target "${{ inputs.expected_target }}" `
             --require-draft
       - name: Revalidate and publish verified release by ID
         shell: pwsh
