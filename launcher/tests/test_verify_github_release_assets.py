@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -521,3 +524,69 @@ def test_verify_assets_cli_invocation_success_and_failure(tmp_path: Path, capsys
     captured_bad = capsys.readouterr()
     assert exit_code_bad == 1
     assert "github release assets verification failed" in captured_bad.err.lower()
+
+
+def test_same_size_corruption_in_remote_download_fails_with_valid_local_staging(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    staged_dir = tmp_path / "local-staging"
+    staged_dir.mkdir()
+    for path in bundle["download_dir"].iterdir():
+        (staged_dir / path.name).write_bytes(path.read_bytes())
+
+    remote_launcher = bundle["download_dir"] / "NekoLauncher.exe"
+    original = remote_launcher.read_bytes()
+    remote_launcher.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    assert remote_launcher.stat().st_size == (staged_dir / remote_launcher.name).stat().st_size
+
+    verifier.verify_github_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=staged_dir,
+        public_key_file=bundle["public_key_file"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_draft=True,
+    )
+    with pytest.raises(Exception, match="sha256 mismatch"):
+        verifier.verify_github_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            public_key_file=bundle["public_key_file"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+        )
+
+
+def test_cli_runs_from_unrelated_cwd_with_only_installed_launcher_runtime(tmp_path: Path) -> None:
+    bundle = create_test_release_bundle(tmp_path)
+    unrelated_cwd = tmp_path / "unrelated-cwd"
+    unrelated_cwd.mkdir()
+    env = os.environ.copy()
+    launcher_src = str(REPOSITORY_ROOT / "launcher" / "src")
+    env["PYTHONPATH"] = launcher_src
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--release-json",
+            str(bundle["release_json_file"]),
+            "--download-dir",
+            str(bundle["download_dir"]),
+            "--public-key-file",
+            str(bundle["public_key_file"]),
+            "--expected-tag",
+            bundle["expected_tag"],
+            "--expected-target",
+            bundle["expected_target"],
+            "--require-draft",
+        ],
+        cwd=unrelated_cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "verification passed" in result.stdout.lower()

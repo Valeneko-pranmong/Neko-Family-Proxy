@@ -113,3 +113,55 @@ def test_workflow_rejects_source_archive_consumption() -> None:
     text = workflow_text()
     for forbidden in ("zipball_url", "tarball_url", "/archive/refs/"):
         assert forbidden not in text, f"release.yml must not consume source archive {forbidden!r}"
+
+
+def test_publication_provisions_verifier_runtime_before_cli() -> None:
+    job = publication_job_text()
+    install_idx = job.find('python -m pip install -e ".\\launcher[release]"')
+    verify_idx = job.find("scripts/verify_github_release_assets.py")
+    assert install_idx != -1, "isolated publication job must install launcher release dependencies"
+    assert verify_idx != -1 and install_idx < verify_idx, (
+        "verifier runtime must be provisioned before invoking its CLI"
+    )
+
+
+def test_release_public_key_is_explicit_required_input_without_fallback() -> None:
+    text = workflow_text()
+    input_match = re.search(
+        r"(?ms)^      release_public_key_path:\s*$.*?(?=^      [a-z_]+:|^  push:)",
+        text,
+    )
+    assert input_match is not None
+    assert re.search(r"(?m)^        required:\s*true\s*$", input_match.group(0))
+    assert "neko-update-prod-1.pub" not in text
+    assert "Test-Path $env:PUBLIC_KEY_PATH -PathType Leaf" in text
+
+
+def test_required_assets_are_downloaded_by_same_release_asset_id_to_remote_directory() -> None:
+    job = publication_job_text()
+    assert "release\\remote-verification" in job
+    assert "repos/$env:GH_REPO/releases/assets/$assetId" in job
+    assert "Accept: application/octet-stream" in job
+    assert "browser_download_url" not in job
+    assert re.search(r"foreach \(\$requiredName in \$requiredAssetNames\)", job)
+    assert "--download-dir release\\remote-verification" in job
+
+
+def test_remote_download_selection_requires_four_names_once_and_ignores_extras() -> None:
+    job = publication_job_text()
+    for name in ("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json"):
+        assert name in job
+    assert "$matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })" in job
+    assert "$matches.Count -ne 1" in job
+    assert "foreach ($asset in $release.assets)" not in job
+
+
+def test_publish_is_after_remote_byte_verification() -> None:
+    job = publication_job_text()
+    download_idx = job.find("releases/assets/$assetId")
+    verify_idx = job.find("scripts/verify_github_release_assets.py")
+    publish_idx = job.find("--draft=false")
+    assert -1 not in (download_idx, verify_idx, publish_idx)
+    assert download_idx < verify_idx < publish_idx
+    assert "--download-dir release\\remote-verification" in job
+    assert "--download-dir release `" not in job
