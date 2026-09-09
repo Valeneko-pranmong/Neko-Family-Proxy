@@ -39,10 +39,23 @@ def use_test_release_public_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeExecutor:
-    def __init__(self, *, dirty: bool = False, wrong_tag: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        dirty: bool = False,
+        wrong_tag: bool = False,
+        remote_ref: Any = "default",
+        remote_tags: dict[str, Any] | None = None,
+    ) -> None:
         self.calls: list[list[str]] = []
         self.dirty = dirty
         self.wrong_tag = wrong_tag
+        self.remote_ref = (
+            {"object": {"type": "commit", "sha": TARGET}}
+            if remote_ref == "default"
+            else remote_ref
+        )
+        self.remote_tags = remote_tags or {}
 
     def run(self, args: list[str], *, capture_output: bool = True):
         self.calls.append(args)
@@ -57,7 +70,12 @@ class FakeExecutor:
         elif args[:3] == ["gh", "api", "repos/"]:
             out = ""
         elif args[:2] == ["gh", "api"]:
-            if args[2].endswith(f"/releases/tags/{TAG}"):
+            if "/git/ref/tags/" in args[2]:
+                out = json.dumps(self.remote_ref)
+            elif "/git/tags/" in args[2]:
+                tag_sha = args[2].rsplit("/", 1)[-1]
+                out = json.dumps(self.remote_tags[tag_sha])
+            elif args[2].endswith(f"/releases/tags/{TAG}"):
                 out = json.dumps({"id": 901, "draft": False, "assets": []})
             elif args[2].endswith("/releases/901"):
                 out = json.dumps(
@@ -254,6 +272,49 @@ def test_malformed_core_bundle_fails_before_github_mutation(tmp_path: Path) -> N
     assert not any(call[0] == "gh" for call in executor.calls)
 
 
+@pytest.mark.parametrize(
+    "remote_ref",
+    [
+        None,
+        {},
+        {"object": {"type": "commit", "sha": "a" * 40}},
+        {"object": {"type": "blob", "sha": TARGET}},
+    ],
+)
+def test_remote_tag_failure_precedes_release_mutation(
+    tmp_path: Path, remote_ref: Any
+) -> None:
+    module = load_module()
+    executor = FakeExecutor(remote_ref=remote_ref)
+    with pytest.raises(module.StageDraftReleaseError):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path),
+            tag=TAG,
+            target_commit=TARGET,
+            executor=executor,
+        )
+    assert not any(call[:2] == ["gh", "release"] for call in executor.calls)
+
+
+def test_remote_annotated_tag_is_peeled_to_target_before_mutation(tmp_path: Path) -> None:
+    module = load_module()
+    tag_object_sha = "c" * 40
+    executor = FakeExecutor(
+        remote_ref={"object": {"type": "tag", "sha": tag_object_sha}},
+        remote_tags={tag_object_sha: {"object": {"type": "commit", "sha": TARGET}}},
+    )
+    evidence = module.stage_draft_release(
+        staging_dir=make_stage(tmp_path), tag=TAG, target_commit=TARGET, executor=executor
+    )
+    assert evidence.release_id == 901
+    create_index = next(
+        index
+        for index, call in enumerate(executor.calls)
+        if call[:3] == ["gh", "release", "create"]
+    )
+    assert executor.calls[create_index - 1][2].endswith(f"/git/tags/{tag_object_sha}")
+
+
 def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     module = load_module()
     executor = FakeExecutor()
@@ -263,7 +324,10 @@ def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFi
     output = capsys.readouterr().out
     assert "gh release create" in output and "--draft" in output and "--clobber=false" in output
     assert "--verify-tag" in output
-    assert not any(call[0] == "gh" for call in executor.calls)
+    assert [call[2] for call in executor.calls if call[:2] == ["gh", "api"]] == [
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}"
+    ]
+    assert not any(call[:2] == ["gh", "release"] for call in executor.calls)
 
 
 def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None:
@@ -292,6 +356,7 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert "--clobber=false" in upload
     api_calls = [call for call in executor.calls if call[:2] == ["gh", "api"]]
     assert [call[2] for call in api_calls] == [
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}",
         f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/tags/{TAG}",
         "repos/Valeneko-pranmong/Neko-Family-Proxy/releases/901",
     ]

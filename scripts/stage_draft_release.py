@@ -10,6 +10,11 @@ import subprocess
 import sys
 import tempfile
 from typing import Any, Protocol, Sequence
+from urllib.parse import quote
+
+
+_REMOTE_TAG_MAX_DEPTH = 4
+_SHA = re.compile(r"[0-9a-fA-F]{40}")
 
 
 REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
@@ -195,6 +200,41 @@ def _quoted(args: list[str]) -> str:
     return subprocess.list2cmdline(args)
 
 
+def _github_object(raw: str, *, context: str) -> tuple[str, str]:
+    try:
+        document = json.loads(raw)
+        value = document["object"]
+        object_type = value["type"]
+        sha = value["sha"]
+    except Exception as error:
+        raise StageDraftReleaseError(f"{context} returned malformed JSON") from error
+    if object_type not in {"commit", "tag"} or not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
+        raise StageDraftReleaseError(f"{context} returned an invalid Git object")
+    return object_type, sha.lower()
+
+
+def _validate_remote_tag_binding(
+    *, repo: str, tag: str, target_commit: str, executor: CommandExecutor
+) -> None:
+    endpoint = f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}"
+    object_type, sha = _github_object(
+        _run(executor, ["gh", "api", endpoint]), context="Remote tag reference"
+    )
+    seen: set[str] = set()
+    while object_type == "tag":
+        if sha in seen:
+            raise StageDraftReleaseError("Canonical remote tag contains a peel cycle")
+        if len(seen) >= _REMOTE_TAG_MAX_DEPTH:
+            raise StageDraftReleaseError("Canonical remote tag exceeds maximum peel depth")
+        seen.add(sha)
+        object_type, sha = _github_object(
+            _run(executor, ["gh", "api", f"repos/{repo}/git/tags/{sha}"]),
+            context="Remote annotated tag",
+        )
+    if sha != target_commit.lower():
+        raise StageDraftReleaseError("Canonical remote tag does not bind to target commit")
+
+
 def stage_draft_release(
     *,
     staging_dir: Path,
@@ -211,6 +251,9 @@ def stage_draft_release(
     assets = validate_staging_preconditions(
         staging_dir=Path(staging_dir), tag=tag, target_commit=target_commit,
         repo_root=repo_root, executor=runner,
+    )
+    _validate_remote_tag_binding(
+        repo=repo, tag=tag, target_commit=target_commit, executor=runner
     )
     create = [
         "gh",
