@@ -148,6 +148,49 @@ def invocation_log(tmp_path: Path) -> list[list[str]]:
     return [json.loads(line) for line in (tmp_path / "gh.log").read_text(encoding="utf-8").splitlines()]
 
 
+def test_noncanonical_repository_is_rejected_before_first_release_api(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    gh_log = tmp_path / "gh.log"
+    fake_gh = fake_bin / "gh.cmd"
+    fake_gh.write_text(f'@echo called>>"{gh_log}"\r\n', encoding="utf-8")
+    script_path = tmp_path / "canonical-guard.ps1"
+    script_path.write_text(
+        workflow_step_run("Validate transitional publication authority inputs locally"),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": str(fake_bin) + os.pathsep + env["PATH"],
+            "GH_REPO": "copied-owner/Neko-Family-Proxy",
+            "RELEASE_ID": RELEASE_ID,
+            "RELEASE_TAG": RELEASE_TAG,
+            "EXPECTED_TARGET": subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=REPOSITORY_ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip(),
+        }
+    )
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(script_path)],
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "canonical repository" in (result.stdout + result.stderr).lower()
+    assert not gh_log.exists(), "canonical guard must fail before any gh invocation"
+
+
 def test_fetches_draft_by_numeric_release_id_and_locks_initial_bindings() -> None:
     job = publication_job_text()
     assert 'gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID"' in job

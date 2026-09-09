@@ -91,11 +91,15 @@ jobs:
       - name: Validate transitional publication authority inputs locally
         shell: pwsh
         env:
+          GH_REPO: ${{ github.repository }}
           RELEASE_ID: ${{ inputs.release_id }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           EXPECTED_TARGET: ${{ inputs.expected_target }}
         run: |
           $ErrorActionPreference = 'Stop'
+          if ($env:GH_REPO -cne 'Valeneko-pranmong/Neko-Family-Proxy') {
+            throw "Publication is restricted to the canonical repository."
+          }
           $checkedOutSha = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) {
             throw "Unable to resolve the checked-out commit SHA."
