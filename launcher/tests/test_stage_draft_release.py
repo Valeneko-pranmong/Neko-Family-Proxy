@@ -25,10 +25,16 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(autouse=True)
+def use_test_release_public_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
-    PRODUCTION_RELEASE_PUBLIC_KEYS["neko-update-prod-1"] = TEST_PUBLIC_KEY
-    return module
+    monkeypatch.setitem(
+        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
+    )
 
 
 class FakeExecutor:
