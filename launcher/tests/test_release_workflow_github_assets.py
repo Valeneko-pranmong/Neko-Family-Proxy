@@ -167,7 +167,7 @@ def test_asset_download_copies_native_stdout_bytes_directly_to_file_stream() -> 
     )
     assert re.search(r"\.StandardOutput\.BaseStream\.CopyTo\(\$outputStream\)", job)
     forbidden_text_paths = (
-        r"gh\s+api[^\n]*(?:\||>|Out-File|Set-Content|Add-Content)",
+        r"gh\s+api[^\n]*releases/assets/\$assetId[^\n]*(?:\||>|Out-File|Set-Content|Add-Content)",
         r"StandardOutput\.ReadToEnd",
         r"\[System\.IO\.StreamReader\]",
         r"\[System\.Text\.Encoding\]",

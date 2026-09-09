@@ -197,9 +197,40 @@ jobs:
               throw "Draft release must contain required asset exactly once: $requiredName"
             }
             $assetId = $matches[0].id
-            gh api "repos/$env:GH_REPO/releases/assets/$assetId" -H "Accept: application/octet-stream" --output "release/remote-verification/$requiredName"
-            if ($LASTEXITCODE -ne 0) {
-              throw "Required draft release asset download failed: $requiredName"
+            $destination = "release/remote-verification/$requiredName"
+            $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $processInfo.FileName = (Get-Command gh -ErrorAction Stop).Source
+            $processInfo.UseShellExecute = $false
+            $processInfo.RedirectStandardOutput = $true
+            $processInfo.RedirectStandardError = $true
+            $processInfo.ArgumentList.Add("api")
+            $processInfo.ArgumentList.Add("repos/$env:GH_REPO/releases/assets/$assetId")
+            $processInfo.ArgumentList.Add("-H")
+            $processInfo.ArgumentList.Add("Accept: application/octet-stream")
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $processInfo
+            $outputStream = $null
+            try {
+              if (-not $process.Start()) {
+                throw "Required draft release asset download failed: $requiredName"
+              }
+              $stderrTask = $process.StandardError.ReadToEndAsync()
+              $outputStream = [System.IO.File]::Create("release/remote-verification/$requiredName")
+              $process.StandardOutput.BaseStream.CopyTo($outputStream)
+              $outputStream.Dispose()
+              $outputStream = $null
+              $process.WaitForExit()
+              $stderrTask.GetAwaiter().GetResult() | Out-Null
+              if ($process.ExitCode -ne 0) {
+                Remove-Item $destination -Force -ErrorAction SilentlyContinue
+                throw "Required draft release asset download failed: $requiredName"
+              }
+            }
+            finally {
+              if ($null -ne $outputStream) {
+                $outputStream.Dispose()
+              }
+              $process.Dispose()
             }
           }
       - name: Verify release assets before publication
