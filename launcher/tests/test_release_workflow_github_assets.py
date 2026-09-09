@@ -145,6 +145,46 @@ def test_required_assets_are_downloaded_by_same_release_asset_id_to_remote_direc
     assert "--download-dir release/remote-verification" in job
 
 
+def test_asset_download_uses_supported_gh_api_arguments_and_checks_exit_code() -> None:
+    job = publication_job_text()
+    assert not re.search(r"(?i)\bgh\s+api\b[^\n]*\s--output(?:\s|=)", job)
+    assert re.search(
+        r"ArgumentList\.Add\(\"repos/\$env:GH_REPO/releases/assets/\$assetId\"\)",
+        job,
+    )
+    assert re.search(
+        r"ArgumentList\.Add\(\"Accept: application/octet-stream\"\)", job
+    )
+    assert re.search(r"\.WaitForExit\(\)", job)
+    assert re.search(r"\.ExitCode\s+-ne\s+0", job)
+
+
+def test_asset_download_copies_native_stdout_bytes_directly_to_file_stream() -> None:
+    job = publication_job_text()
+    assert re.search(
+        r"\[System\.IO\.File\]::Create\(\"release/remote-verification/\$requiredName\"\)",
+        job,
+    )
+    assert re.search(r"\.StandardOutput\.BaseStream\.CopyTo\(\$outputStream\)", job)
+    forbidden_text_paths = (
+        r"gh\s+api[^\n]*(?:\||>|Out-File|Set-Content|Add-Content)",
+        r"StandardOutput\.ReadToEnd",
+        r"\[System\.IO\.StreamReader\]",
+        r"\[System\.Text\.Encoding\]",
+    )
+    for pattern in forbidden_text_paths:
+        assert not re.search(pattern, job, re.IGNORECASE), (
+            "release asset bytes must never pass through PowerShell text conversion"
+        )
+
+
+def test_asset_download_does_not_put_token_or_download_url_in_process_arguments() -> None:
+    job = publication_job_text()
+    assert "browser_download_url" not in job
+    assert not re.search(r"ArgumentList\.Add\([^\n]*(?:GH_TOKEN|github\.token)", job)
+    assert not re.search(r"(?:Write-(?:Host|Output|Error)|throw)[^\n]*(?:GH_TOKEN|https?://)", job, re.IGNORECASE)
+
+
 def test_remote_download_selection_requires_four_names_once_and_ignores_extras() -> None:
     job = publication_job_text()
     for name in ("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json"):
