@@ -71,7 +71,7 @@ def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _verify_manifest_signature(document: dict[str, Any]) -> None:
+def _verify_manifest_signature(document: dict[str, Any]) -> Any:
     launcher_root = str(Path(__file__).resolve().parents[1] / "launcher")
     if launcher_root not in sys.path:
         sys.path.insert(0, launcher_root)
@@ -79,7 +79,10 @@ def _verify_manifest_signature(document: dict[str, Any]) -> None:
         from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
         from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
-        verify_release_envelope_v2(document, PRODUCTION_RELEASE_PUBLIC_KEYS)
+        release_set, _payload_sha256 = verify_release_envelope_v2(
+            document, PRODUCTION_RELEASE_PUBLIC_KEYS
+        )
+        return release_set
     except Exception as error:
         raise StageDraftReleaseError("Manifest signature verification failed") from error
 
@@ -98,36 +101,37 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         raise StageDraftReleaseError("release-v2.json is not canonical JSON")
     if document.get("key_id") != "neko-update-prod-1":
         raise StageDraftReleaseError("First-release key authority mismatch")
-    _verify_manifest_signature(document)
-    payload = document.get("payload")
-    if not isinstance(payload, dict):
-        raise StageDraftReleaseError("Manifest payload missing")
-    invariants = {
-        "channel": "stable",
-        "release_sequence": 1,
-        "minimum_supported_sequence": 1,
-        "release_id": "stable-0001",
-    }
-    if any(payload.get(key) != value for key, value in invariants.items()):
+    release_set = _verify_manifest_signature(document)
+    if (
+        release_set.channel != "stable"
+        or release_set.release_sequence != 1
+        or release_set.minimum_supported_sequence != 1
+        or release_set.release_id != "stable-0001"
+    ):
         raise StageDraftReleaseError("First-release authority mismatch")
-    if payload.get("updater_protocol") != {"minimum": 1, "maximum": 1} or tag != _TAG:
+    if (
+        release_set.updater_protocol.minimum != 1
+        or release_set.updater_protocol.maximum != 1
+        or tag != _TAG
+    ):
         raise StageDraftReleaseError("First-release protocol or tag mismatch")
-    components = payload.get("components")
-    if not isinstance(components, dict) or set(components) != set(_COMPONENTS):
+    if set(release_set.components) != set(_COMPONENTS):
         raise StageDraftReleaseError("Manifest component set mismatch")
     for component_name, (file_name, file_format) in _COMPONENTS.items():
-        descriptor = components.get(component_name)
-        if not isinstance(descriptor, dict):
-            raise StageDraftReleaseError(f"Manifest component missing: {component_name}")
+        descriptor = release_set.components[component_name]
         file_data = assets[file_name].read_bytes()
-        expected = {
-            "version": "5.1.0a3",
-            "artifact_id": file_name,
-            "artifact_sha256": hashlib.sha256(file_data).hexdigest(),
-            "artifact_size": len(file_data),
-            "artifact_format": file_format,
-        }
-        if any(descriptor.get(key) != value for key, value in expected.items()):
+        digest = hashlib.sha256(file_data).hexdigest()
+        if (
+            descriptor.version != "5.1.0a3"
+            or descriptor.artifact_id != file_name
+            or descriptor.artifact_sha256 != digest
+            or descriptor.artifact_size != len(file_data)
+            or descriptor.artifact_format != file_format
+            or (
+                component_name in {"launcher", "updater"}
+                and descriptor.installed_identity_sha256 != digest
+            )
+        ):
             raise StageDraftReleaseError(f"Manifest descriptor mismatch: {component_name}")
 
 
@@ -194,16 +198,26 @@ def stage_draft_release(
         return None
     _run(runner, create)
     _run(runner, upload)
-    release_raw = _run(runner, ["gh", "api", f"repos/{repo}/releases/tags/{tag}"])
+    discovery_raw = _run(runner, ["gh", "api", f"repos/{repo}/releases/tags/{tag}"])
+    try:
+        discovery = json.loads(discovery_raw)
+        release_id = discovery.get("id")
+    except Exception as error:
+        raise StageDraftReleaseError("Draft ID discovery returned invalid JSON") from error
+    if type(release_id) is not int or release_id <= 0:
+        raise StageDraftReleaseError("Draft ID discovery has invalid numeric release ID")
+    release_raw = _run(runner, ["gh", "api", f"repos/{repo}/releases/{release_id}"])
     try:
         release = json.loads(release_raw)
     except Exception as error:
         raise StageDraftReleaseError("Draft readback returned invalid JSON") from error
-    release_id = release.get("id")
-    if type(release_id) is not int or release_id <= 0:
-        raise StageDraftReleaseError("Draft readback has invalid numeric release ID")
-    if (release.get("tag_name") != tag or release.get("target_commitish", "").lower() != target_commit.lower()
-            or release.get("draft") is not True or release.get("prerelease") is not False):
+    if (
+        release.get("id") != release_id
+        or release.get("tag_name") != tag
+        or release.get("target_commitish", "").lower() != target_commit.lower()
+        or release.get("draft") is not True
+        or release.get("prerelease") is not False
+    ):
         raise StageDraftReleaseError("Draft readback identity or state mismatch")
     bindings: dict[str, int] = {}
     raw_assets = release.get("assets")

@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
+
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "stage_draft_release.py"
 TARGET = "b4dab9e9571cbe6d05c6fdb17617137b302856d2"
@@ -23,7 +25,9 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    module._verify_manifest_signature = lambda document: None
+    from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+
+    PRODUCTION_RELEASE_PUBLIC_KEYS["neko-update-prod-1"] = TEST_PUBLIC_KEY
     return module
 
 
@@ -46,21 +50,26 @@ class FakeExecutor:
         elif args[:3] == ["gh", "api", "repos/"]:
             out = ""
         elif args[:2] == ["gh", "api"]:
-            out = json.dumps(
-                {
-                    "id": 901,
-                    "tag_name": TAG,
-                    "target_commitish": TARGET,
-                    "draft": True,
-                    "prerelease": False,
-                    "assets": [
-                        {"id": i + 10, "name": name}
-                        for i, name in enumerate(
-                            ("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
-                        )
-                    ],
-                }
-            )
+            if args[2].endswith(f"/releases/tags/{TAG}"):
+                out = json.dumps({"id": 901, "draft": False, "assets": []})
+            elif args[2].endswith("/releases/901"):
+                out = json.dumps(
+                    {
+                        "id": 901,
+                        "tag_name": TAG,
+                        "target_commitish": TARGET,
+                        "draft": True,
+                        "prerelease": False,
+                        "assets": [
+                            {"id": i + 10, "name": name}
+                            for i, name in enumerate(
+                                ("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
+                            )
+                        ] + [{"id": 99, "name": "SHA256SUMS.txt"}],
+                    }
+                )
+            else:
+                raise AssertionError(f"unexpected API endpoint: {args}")
         else:
             raise AssertionError(f"unexpected command: {args}")
         return subprocess.CompletedProcess(args, 0, stdout=out, stderr="")
@@ -91,22 +100,23 @@ def make_stage(path: Path) -> Path:
             "artifact_sha256": hashlib.sha256(data).hexdigest(),
             "artifact_size": len(data),
             "artifact_format": fmt,
-            "installed_identity_sha256": "1" * 64,
+            "installed_identity_sha256": (
+                hashlib.sha256(data).hexdigest() if component != "core" else "1" * 64
+            ),
         }
-    envelope = {
-        "envelope_version": 1,
-        "key_id": "neko-update-prod-1",
-        "payload": {
-            "schema_version": 2,
-            "channel": "stable",
-            "release_sequence": 1,
-            "minimum_supported_sequence": 1,
-            "release_id": "stable-0001",
-            "updater_protocol": {"minimum": 1, "maximum": 1},
-            "mandatory": False,
-            "components": components,
-        },
-        "signature": "test-offline-signature",
+    payload = {
+        "schema_version": 2,
+        "channel": "stable",
+        "release_sequence": 1,
+        "minimum_supported_sequence": 1,
+        "release_id": "stable-0001",
+        "updater_protocol": {"minimum": 1, "maximum": 1},
+        "mandatory": False,
+        "components": components,
+    }
+    envelope = signed_envelope(payload, key_id="neko-update-prod-1")
+    assert set(envelope) == {
+        "envelope_version", "key_id", "payload_b64", "signature_b64"
     }
     (path / "release-v2.json").write_bytes(canonical(envelope))
     return path
@@ -153,8 +163,25 @@ def test_validation_fails_closed(tmp_path: Path, case: str) -> None:
 def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     module = load_module()
     stage = make_stage(tmp_path)
-    doc = json.loads((stage / "release-v2.json").read_bytes())
-    doc["payload"]["components"]["launcher"][field] = 99 if field == "artifact_size" else "0" * 64
+    payloads = {"NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
+    payload = {
+        "schema_version": 2, "channel": "stable", "release_sequence": 1,
+        "minimum_supported_sequence": 1, "release_id": "stable-0001", "mandatory": False,
+        "updater_protocol": {"minimum": 1, "maximum": 1}, "components": {},
+    }
+    for component, name, fmt in (
+        ("launcher", "NekoLauncher.exe", "raw-pe-v1"),
+        ("updater", "NekoUpdater.exe", "raw-pe-v1"),
+        ("core", "NekoProxyCore.zip", "zip-core-v1"),
+    ):
+        digest = hashlib.sha256(payloads[name]).hexdigest()
+        payload["components"][component] = {
+            "version": "5.1.0a3", "artifact_id": name, "artifact_sha256": digest,
+            "artifact_size": len(payloads[name]), "artifact_format": fmt,
+            "installed_identity_sha256": digest if component != "core" else "1" * 64,
+        }
+    payload["components"]["launcher"][field] = 99 if field == "artifact_size" else "0" * 64
+    doc = signed_envelope(payload, key_id="neko-update-prod-1")
     (stage / "release-v2.json").write_bytes(canonical(doc))
     with pytest.raises(module.StageDraftReleaseError):
         validate(module, stage, FakeExecutor())
@@ -186,6 +213,9 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     upload = next(call for call in executor.calls if call[:3] == ["gh", "release", "upload"])
     assert [TAG, "--target", TARGET, "--draft", "--prerelease=false"] == create[3:8]
     assert "--clobber=false" in upload
-    api = next(call for call in executor.calls if call[:2] == ["gh", "api"])
-    assert "releases/tags/" in api[2]
+    api_calls = [call for call in executor.calls if call[:2] == ["gh", "api"]]
+    assert [call[2] for call in api_calls] == [
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/tags/{TAG}",
+        "repos/Valeneko-pranmong/Neko-Family-Proxy/releases/901",
+    ]
     assert not any("workflow" in part for call in executor.calls for part in call)
