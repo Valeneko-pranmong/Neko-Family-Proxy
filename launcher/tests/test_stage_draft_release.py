@@ -254,8 +254,8 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     stage = make_stage(tmp_path)
     payloads = {"NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
     payload = {
-        "schema_version": 2, "channel": "stable", "release_sequence": 1,
-        "minimum_supported_sequence": 1, "release_id": "stable-0001", "mandatory": False,
+        "schema_version": 2, "channel": "stable", "release_sequence": 2,
+        "minimum_supported_sequence": 1, "release_id": "stable-0002", "mandatory": False,
         "updater_protocol": {"minimum": 1, "maximum": 1}, "components": {},
     }
     for component, name, fmt in (
@@ -270,9 +270,13 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
             "installed_identity_sha256": digest if component != "core" else "1" * 64,
         }
     payload["components"]["launcher"][field] = 99 if field == "artifact_size" else "0" * 64
+    if field == "artifact_sha256":
+        payload["components"]["launcher"]["installed_identity_sha256"] = "0" * 64
     doc = signed_envelope(payload, key_id="neko-update-prod-1")
     (stage / "release-v2.json").write_bytes(canonical(doc))
-    with pytest.raises(module.StageDraftReleaseError):
+    with pytest.raises(
+        module.StageDraftReleaseError, match="Manifest descriptor mismatch: launcher"
+    ):
         validate(module, stage, FakeExecutor())
 
 
