@@ -207,7 +207,7 @@ jobs:
             $currentMatches = @($current.assets | Where-Object { $_.name -ceq $requiredName })
             if ($currentMatches.Count -ne 1 -or $currentMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Asset binding changed: $requiredName" }
           }
-          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false -f make_latest=true | Out-Null
+          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -F draft=false -f make_latest=true | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Release publication failed." }
       - name: Verify published release and latest resolution
         shell: pwsh
