@@ -94,9 +94,15 @@ jobs:
           RELEASE_ID: ${{ inputs.release_id }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           EXPECTED_TARGET: ${{ inputs.expected_target }}
-          CHECKED_OUT_SHA: ${{ github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $checkedOutSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to resolve the checked-out commit SHA."
+          }
+          if ($checkedOutSha -notmatch '^[0-9a-fA-F]{40}$') {
+            throw "Checked-out commit SHA must be a 40-character hexadecimal value."
+          }
           if ($env:RELEASE_ID -notmatch '^[0-9]+$' -or [decimal]$env:RELEASE_ID -le 0) {
             throw "Release ID must be a positive numeric value."
           }
@@ -107,7 +113,7 @@ jobs:
           if ($env:EXPECTED_TARGET -notmatch '^[0-9a-fA-F]{40}$') {
             throw "Expected target must be a 40-character hexadecimal commit SHA."
           }
-          if ($env:EXPECTED_TARGET.ToLowerInvariant() -cne $env:CHECKED_OUT_SHA.ToLowerInvariant()) {
-            throw "Expected target does not match the checked-out workflow SHA."
+          if ($env:EXPECTED_TARGET.ToLowerInvariant() -cne $checkedOutSha.ToLowerInvariant()) {
+            throw "Expected target does not match the checked-out commit SHA."
           }
           Write-Host "Authority inputs are locally valid. Transitional workflow will not publish."

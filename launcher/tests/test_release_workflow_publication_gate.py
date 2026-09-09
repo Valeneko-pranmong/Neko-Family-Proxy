@@ -116,8 +116,22 @@ def test_publication_locally_validates_all_authority_inputs() -> None:
     assert "^v[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.-]*$" in publication
     assert "v5.1.0a3" in publication
     assert "^[0-9a-fA-F]{40}$" in publication
-    assert "${{ github.sha }}" in publication
     assert ".ToLowerInvariant()" in publication
+
+
+def test_publication_validates_the_actual_local_checkout_head() -> None:
+    publication = job(workflow_text(), "publish-release")
+
+    assert re.search(r"(?im)git\s+rev-parse\s+HEAD", publication)
+    assert re.search(r"(?m)\$checkedOutSha\s*=.*git\s+rev-parse\s+HEAD", publication)
+    assert re.search(r"(?m)\$LASTEXITCODE\s+-ne\s+0", publication)
+    assert re.search(
+        r"(?m)\$checkedOutSha\s+-notmatch\s+['\"]\^\[0-9a-fA-F\]\{40\}\$['\"]",
+        publication,
+    )
+    assert "CHECKED_OUT_SHA:" not in publication
+    assert "${{ github.sha }}" not in publication
+    assert "$env:CHECKED_OUT_SHA" not in publication
 
 
 def test_publication_does_not_build_transfer_verify_or_publish_release_assets() -> None:
