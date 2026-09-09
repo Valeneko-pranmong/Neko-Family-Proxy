@@ -66,13 +66,14 @@ launcher\.venv\Scripts\python.exe scripts\stage_draft_release.py --staging-dir <
 
 Optional arguments:
 - `--dry-run`: Validates preconditions and prints planned commands without mutating GitHub state.
-- `--repo Valeneko-pranmong/Neko-Family-Proxy`: Target GitHub repository (defaults to canonical repo).
+
+The production staging repository is fixed to `Valeneko-pranmong/Neko-Family-Proxy`. It is non-configurable: the CLI accepts no repository-selection argument, and every GitHub CLI command and API path uses that canonical repository.
 
 **Staging Preconditions and Guarantees**:
 - The staging directory must contain strictly the exact four required files (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, `release-v2.json`). No extra or untrusted files are permitted in the staging directory.
 - The worktree must be clean and the local Git tag must point to the target commit.
 - Manifest descriptors must match candidate files bit-for-bit. Before any GitHub mutation, the script strictly extracts `NekoProxyCore.zip`, verifies its canonical bundle, and binds the verified canonical-manifest SHA-256 to the signed Core installed identity.
-- Before draft creation, `scripts/stage_draft_release.py` uses the read-only GitHub Git-data API to verify that the release tag on the selected canonical repository peels exactly to the approved target commit. It also preserves `gh release create --verify-tag --target <exact-target> --draft`, creates only an unpublished non-prerelease release, and uploads without clobbering (`--clobber=false`). It has no tag-creation or tag-mutation authority.
+- Before draft creation, `scripts/stage_draft_release.py` uses the read-only GitHub Git-data API to verify that the release tag on the fixed canonical repository peels exactly to the approved target commit. It also preserves `gh release create --verify-tag --target <exact-target> --draft`, creates only an unpublished non-prerelease release, and uploads without clobbering (`--clobber=false`). It has no tag-creation or tag-mutation authority.
 - The script captures GitHub's numeric `release_id` and the four numeric `asset_id` bindings, then formats the exact Phase 2 workflow dispatch command.
 - **Safety Boundary**: Staging tooling NEVER final-publishes, NEVER signs manifests, NEVER compiles binaries, and NEVER moves tags.
 

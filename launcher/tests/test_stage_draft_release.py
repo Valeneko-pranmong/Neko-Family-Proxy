@@ -193,6 +193,30 @@ def test_argument_parsing() -> None:
     assert args.tag == TAG and args.target_commit == TARGET and args.dry_run is True
 
 
+def test_argument_parsing_rejects_caller_selected_repository() -> None:
+    module = load_module()
+    with pytest.raises(SystemExit):
+        module.parse_args(
+            [
+                "--staging-dir",
+                "candidate",
+                "--tag",
+                TAG,
+                "--target-commit",
+                TARGET,
+                "--repo",
+                "evil/example",
+            ]
+        )
+
+
+def test_public_staging_path_has_no_repository_authority_parameter() -> None:
+    import inspect
+
+    module = load_module()
+    assert "repo" not in inspect.signature(module.stage_draft_release).parameters
+
+
 @pytest.mark.parametrize("case", ["dirty", "wrong_sha", "wrong_tag", "missing", "extra", "empty", "large_manifest", "noncanonical"])
 def test_validation_fails_closed(tmp_path: Path, case: str) -> None:
     module = load_module()
@@ -345,6 +369,10 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
     create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])
     upload = next(call for call in executor.calls if call[:3] == ["gh", "release", "upload"])
+    canonical_repo = "Valeneko-pranmong/Neko-Family-Proxy"
+    assert module.CANONICAL_REPO == canonical_repo
+    assert create[create.index("--repo") + 1] == canonical_repo
+    assert upload[upload.index("--repo") + 1] == canonical_repo
     assert [
         TAG,
         "--target",

@@ -13,6 +13,7 @@ from typing import Any, Protocol, Sequence
 from urllib.parse import quote
 
 
+CANONICAL_REPO = "Valeneko-pranmong/Neko-Family-Proxy"
 _REMOTE_TAG_MAX_DEPTH = 4
 _SHA = re.compile(r"[0-9a-fA-F]{40}")
 
@@ -214,9 +215,9 @@ def _github_object(raw: str, *, context: str) -> tuple[str, str]:
 
 
 def _validate_remote_tag_binding(
-    *, repo: str, tag: str, target_commit: str, executor: CommandExecutor
+    *, tag: str, target_commit: str, executor: CommandExecutor
 ) -> None:
-    endpoint = f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}"
+    endpoint = f"repos/{CANONICAL_REPO}/git/ref/tags/{quote(tag, safe='')}"
     object_type, sha = _github_object(
         _run(executor, ["gh", "api", endpoint]), context="Remote tag reference"
     )
@@ -228,7 +229,10 @@ def _validate_remote_tag_binding(
             raise StageDraftReleaseError("Canonical remote tag exceeds maximum peel depth")
         seen.add(sha)
         object_type, sha = _github_object(
-            _run(executor, ["gh", "api", f"repos/{repo}/git/tags/{sha}"]),
+            _run(
+                executor,
+                ["gh", "api", f"repos/{CANONICAL_REPO}/git/tags/{sha}"],
+            ),
             context="Remote annotated tag",
         )
     if sha != target_commit.lower():
@@ -240,7 +244,6 @@ def stage_draft_release(
     staging_dir: Path,
     tag: str,
     target_commit: str,
-    repo: str = "Valeneko-pranmong/Neko-Family-Proxy",
     title: str | None = None,
     notes: str | None = None,
     dry_run: bool = False,
@@ -253,7 +256,7 @@ def stage_draft_release(
         repo_root=repo_root, executor=runner,
     )
     _validate_remote_tag_binding(
-        repo=repo, tag=tag, target_commit=target_commit, executor=runner
+        tag=tag, target_commit=target_commit, executor=runner
     )
     create = [
         "gh",
@@ -266,20 +269,31 @@ def stage_draft_release(
         "--draft",
         "--prerelease=false",
         "--repo",
-        repo,
+        CANONICAL_REPO,
     ]
     if title is not None:
         create.extend(["--title", title])
     if notes is not None:
         create.extend(["--notes", notes])
-    upload = ["gh", "release", "upload", tag, *(str(assets[name]) for name in REQUIRED_STAGE_ASSETS), "--clobber=false", "--repo", repo]
+    upload = [
+        "gh",
+        "release",
+        "upload",
+        tag,
+        *(str(assets[name]) for name in REQUIRED_STAGE_ASSETS),
+        "--clobber=false",
+        "--repo",
+        CANONICAL_REPO,
+    ]
     if dry_run:
         print(_quoted(create))
         print(_quoted(upload))
         return None
     _run(runner, create)
     _run(runner, upload)
-    discovery_raw = _run(runner, ["gh", "api", f"repos/{repo}/releases/tags/{tag}"])
+    discovery_raw = _run(
+        runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/tags/{tag}"]
+    )
     try:
         discovery = json.loads(discovery_raw)
         release_id = discovery.get("id")
@@ -287,7 +301,9 @@ def stage_draft_release(
         raise StageDraftReleaseError("Draft ID discovery returned invalid JSON") from error
     if type(release_id) is not int or release_id <= 0:
         raise StageDraftReleaseError("Draft ID discovery has invalid numeric release ID")
-    release_raw = _run(runner, ["gh", "api", f"repos/{repo}/releases/{release_id}"])
+    release_raw = _run(
+        runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{release_id}"]
+    )
     try:
         release = json.loads(release_raw)
     except Exception as error:
@@ -327,7 +343,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--staging-dir", required=True, type=Path)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--target-commit", required=True)
-    parser.add_argument("--repo", default="Valeneko-pranmong/Neko-Family-Proxy")
     parser.add_argument("--title")
     parser.add_argument("--notes")
     parser.add_argument("--dry-run", action="store_true")
