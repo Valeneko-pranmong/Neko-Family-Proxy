@@ -139,12 +139,12 @@ def test_release_public_key_is_explicit_required_input_without_fallback() -> Non
 
 def test_required_assets_are_downloaded_by_same_release_asset_id_to_remote_directory() -> None:
     job = publication_job_text()
-    assert "release\\remote-verification" in job
+    assert "release/remote-verification" in job
     assert "repos/$env:GH_REPO/releases/assets/$assetId" in job
     assert "Accept: application/octet-stream" in job
     assert "browser_download_url" not in job
     assert re.search(r"foreach \(\$requiredName in \$requiredAssetNames\)", job)
-    assert "--download-dir release\\remote-verification" in job
+    assert "--download-dir release/remote-verification" in job
 
 
 def test_remote_download_selection_requires_four_names_once_and_ignores_extras() -> None:
@@ -163,5 +163,5 @@ def test_publish_is_after_remote_byte_verification() -> None:
     publish_idx = job.find("--draft=false")
     assert -1 not in (download_idx, verify_idx, publish_idx)
     assert download_idx < verify_idx < publish_idx
-    assert "--download-dir release\\remote-verification" in job
+    assert "--download-dir release/remote-verification" in job
     assert "--download-dir release `" not in job

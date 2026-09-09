@@ -21,8 +21,8 @@ on:
         required: false
         type: string
       release_public_key_path:
-        description: Path to approved release verification public key file
-        required: false
+        description: Existing path to the approved release verification public key file
+        required: true
         type: string
   push:
     tags:
@@ -84,6 +84,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: launcher/pyproject.toml
+      - name: Install release verifier runtime
+        run: python -m pip install -e ".\launcher[release]"
       - name: Validate release tag
         shell: pwsh
         env:
@@ -168,7 +172,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           gh release upload "$env:RELEASE_TAG" release\NekoLauncher.exe release\NekoUpdater.exe release\NekoProxyCore.zip release\release-v2.json --clobber=false
-      - name: Read back draft release by ID
+      - name: Read back draft and download required assets by ID
         shell: pwsh
         env:
           GH_REPO: ${{ github.repository }}
@@ -181,20 +185,35 @@ jobs:
           if (-not $releaseId) {
             throw "Unable to resolve release ID for tag $env:RELEASE_TAG"
           }
-          $releaseById = gh api "repos/$env:GH_REPO/releases/$releaseId"
-          New-Item -ItemType Directory -Path release\metadata -Force | Out-Null
-          $releaseById | Set-Content release\metadata\draft-release.json -Encoding utf8
+          $release = gh api "repos/$env:GH_REPO/releases/$releaseId" | ConvertFrom-Json
+          New-Item -ItemType Directory -Path "release/metadata", "release/remote-verification" -Force | Out-Null
+          $release | ConvertTo-Json -Depth 20 | Set-Content "release/metadata/draft-release.json" -Encoding utf8
+          $requiredAssetNames = @("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
+          foreach ($requiredName in $requiredAssetNames) {
+            $matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($matches.Count -ne 1) {
+              throw "Draft release must contain required asset exactly once: $requiredName"
+            }
+            $assetId = $matches[0].id
+            gh api "repos/$env:GH_REPO/releases/assets/$assetId" -H "Accept: application/octet-stream" --output "release/remote-verification/$requiredName"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Required draft release asset download failed: $requiredName"
+            }
+          }
       - name: Verify release assets before publication
         shell: pwsh
         env:
           PUBLIC_KEY_PATH: ${{ inputs.release_public_key_path }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          $pubKey = if ($env:PUBLIC_KEY_PATH) { $env:PUBLIC_KEY_PATH } else { "launcher\tests\keys\neko-update-prod-1.pub" }
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:PUBLIC_KEY_PATH -or -not (Test-Path $env:PUBLIC_KEY_PATH -PathType Leaf)) {
+            throw "Approved release public key path is required and must identify an existing file"
+          }
           python scripts/verify_github_release_assets.py `
-            --release-json release\metadata\draft-release.json `
-            --download-dir release `
-            --public-key-file $pubKey `
+            --release-json release/metadata/draft-release.json `
+            --download-dir release/remote-verification `
+            --public-key-file "$env:PUBLIC_KEY_PATH" `
             --expected-tag "$env:RELEASE_TAG" `
             --expected-target "${{ github.sha }}" `
             --require-draft
