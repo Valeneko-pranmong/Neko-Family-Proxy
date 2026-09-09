@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import builtins
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -46,6 +48,7 @@ class FakeExecutor:
         wrong_tag: bool = False,
         remote_ref: Any = "default",
         remote_tags: dict[str, Any] | None = None,
+        releases: list[dict[str, Any]] | None = None,
     ) -> None:
         self.calls: list[list[str]] = []
         self.dirty = dirty
@@ -56,6 +59,18 @@ class FakeExecutor:
             else remote_ref
         )
         self.remote_tags = remote_tags or {}
+        self.releases = (
+            [
+                {
+                    "id": 901,
+                    "tag_name": TAG,
+                    "target_commitish": TARGET,
+                    "draft": True,
+                }
+            ]
+            if releases is None
+            else releases
+        )
 
     def run(self, args: list[str], *, capture_output: bool = True):
         self.calls.append(args)
@@ -75,8 +90,10 @@ class FakeExecutor:
             elif "/git/tags/" in args[2]:
                 tag_sha = args[2].rsplit("/", 1)[-1]
                 out = json.dumps(self.remote_tags[tag_sha])
+            elif args[2].endswith("/releases?per_page=100"):
+                out = json.dumps([self.releases])
             elif args[2].endswith(f"/releases/tags/{TAG}"):
-                out = json.dumps({"id": 901, "draft": False, "assets": []})
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="HTTP 404")
             elif args[2].endswith("/releases/901"):
                 out = json.dumps(
                     {
@@ -191,6 +208,51 @@ def validate(module, stage: Path, executor: FakeExecutor):
     return module.validate_staging_preconditions(
         staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
     )
+
+
+def test_script_imports_launcher_from_unrelated_cwd_without_pythonpath(
+    tmp_path: Path,
+) -> None:
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            (
+                "import importlib.util, pathlib, sys; "
+                f"p=pathlib.Path({str(SCRIPT)!r}); "
+                "s=importlib.util.spec_from_file_location('isolated_stage', p); "
+                "m=importlib.util.module_from_spec(s); sys.modules[s.name]=m; "
+                "s.loader.exec_module(m); m._ensure_launcher_import_path(); "
+                "import neko_launcher; print(pathlib.Path(neko_launcher.__file__).resolve())"
+            ),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert str((SCRIPT.parents[1] / "launcher" / "src").resolve()) in result.stdout
+
+
+def test_manifest_signature_setup_error_is_not_reported_as_crypto_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_module()
+    real_import = builtins.__import__
+
+    def reject_launcher_import(name, *args, **kwargs):
+        if name.startswith("neko_launcher"):
+            raise ModuleNotFoundError("No module named 'neko_launcher'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_launcher_import)
+    with pytest.raises(ModuleNotFoundError):
+        module._verify_manifest_signature({})
 
 
 def test_argument_parsing() -> None:
@@ -433,7 +495,36 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     api_calls = [call for call in executor.calls if call[:2] == ["gh", "api"]]
     assert [call[2] for call in api_calls] == [
         f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}",
-        f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/tags/{TAG}",
+        "repos/Valeneko-pranmong/Neko-Family-Proxy/releases?per_page=100",
         "repos/Valeneko-pranmong/Neko-Family-Proxy/releases/901",
     ]
+    collection_call = api_calls[1]
+    assert collection_call[3:] == ["--paginate", "--slurp"]
+    assert not any("/releases/tags/" in call[2] for call in api_calls)
     assert not any("workflow" in part for call in executor.calls for part in call)
+
+
+@pytest.mark.parametrize("matches", [0, 2])
+def test_draft_discovery_requires_exactly_one_matching_draft(
+    tmp_path: Path, matches: int
+) -> None:
+    module = load_module()
+    matching = {
+        "id": 901,
+        "tag_name": TAG,
+        "target_commitish": TARGET,
+        "draft": True,
+    }
+    releases = [matching.copy() for _ in range(matches)]
+    executor = FakeExecutor(releases=releases)
+    with pytest.raises(
+        module.StageDraftReleaseError,
+        match="exactly one draft matching tag and target",
+    ):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path),
+            tag=TAG,
+            target_commit=TARGET,
+            executor=executor,
+        )
+    assert not any(call[2].endswith("/releases/901") for call in executor.calls if call[:2] == ["gh", "api"])

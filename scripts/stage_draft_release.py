@@ -79,17 +79,18 @@ def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _ensure_launcher_import_path() -> None:
-    launcher_root = str(Path(__file__).resolve().parents[1] / "launcher")
-    if launcher_root not in sys.path:
-        sys.path.insert(0, launcher_root)
+    launcher_src = str(Path(__file__).resolve().parents[1] / "launcher" / "src")
+    if launcher_src in sys.path:
+        sys.path.remove(launcher_src)
+    sys.path.insert(0, launcher_src)
 
 
 def _verify_manifest_signature(document: dict[str, Any]) -> Any:
     _ensure_launcher_import_path()
-    try:
-        from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
-        from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+    from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+    from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
+    try:
         release_set, _payload_sha256 = verify_release_envelope_v2(
             document, PRODUCTION_RELEASE_PUBLIC_KEYS
         )
@@ -292,13 +293,36 @@ def stage_draft_release(
     _run(runner, create)
     _run(runner, upload)
     discovery_raw = _run(
-        runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/tags/{tag}"]
+        runner,
+        [
+            "gh",
+            "api",
+            f"repos/{CANONICAL_REPO}/releases?per_page=100",
+            "--paginate",
+            "--slurp",
+        ],
     )
     try:
-        discovery = json.loads(discovery_raw)
-        release_id = discovery.get("id")
+        pages = json.loads(discovery_raw)
+        if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+            raise ValueError("expected paginated release arrays")
+        matches = [
+            release
+            for page in pages
+            for release in page
+            if isinstance(release, dict)
+            and release.get("draft") is True
+            and release.get("tag_name") == tag
+            and isinstance(release.get("target_commitish"), str)
+            and release["target_commitish"].lower() == target_commit.lower()
+        ]
     except Exception as error:
         raise StageDraftReleaseError("Draft ID discovery returned invalid JSON") from error
+    if len(matches) != 1:
+        raise StageDraftReleaseError(
+            "Draft ID discovery requires exactly one draft matching tag and target"
+        )
+    release_id = matches[0].get("id")
     if type(release_id) is not int or release_id <= 0:
         raise StageDraftReleaseError("Draft ID discovery has invalid numeric release ID")
     release_raw = _run(
