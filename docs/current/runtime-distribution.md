@@ -17,7 +17,7 @@ Software update release publication is partitioned into two sequential phases ac
 1. **Phase 1: Local Operator Environment (Controlled Machine)**:
    - Candidate binaries (`NekoLauncher.exe`, `NekoUpdater.exe`) are compiled and the Core bundle (`NekoProxyCore.zip`) is assembled.
    - Release qualification executes under strict **Gate #2 normative ordering**.
-   - Offline Ed25519 signing (`neko-update-prod-1`) generates canonical `release-v2.json` from fresh post-smoke measurements.
+   - Offline Ed25519 signing (`neko-update-prod-1`) generates canonical `release-v2.json` from fresh post-smoke measurements (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, `release_id=stable-0002`, component versions `5.1.0a3`). Note: initial release sequence 1 / `stable-0001` is historical spent-unpublished authority following rejected Gate #2 run r4.
    - After Gate #2 clearance, the operator pushes the Git commit and tag (`v5.1.0a3`), then stages an unpublished draft release on GitHub using `scripts/stage_draft_release.py`. Before draft creation, the staging tool read-only verifies via the GitHub Git-data API that the canonical remote tag peels to the exact approved target commit.
    - Tooling uploads the exact four candidate assets (`--clobber=false`) and captures the numeric `release_id` and name-to-asset-ID bindings.
 2. **Phase 2: Remote CI Authority Gate (GitHub Actions Hosted Runner)**:
@@ -25,7 +25,7 @@ Software update release publication is partitioned into two sequential phases ac
    - The publication workflow is manually triggered via `workflow_dispatch` with exact parameters: numeric `release_id`, `release_tag=v5.1.0a3`, `expected_target=<SHA>`, and `publish_release=true`.
    - The hosted runner downloads staged assets by immutable numeric `asset_id` as raw binary streams.
    - The runner enforces key binding to in-repo `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']` and verifies cryptographic signatures, canonical JSON formatting, formats, and hashes via `scripts/verify_github_release_assets.py`.
-   - The workflow enforces first-release fail-closed parameters, re-validates draft state and asset ID bindings immediately before publication to eliminate TOCTOU race conditions, activates the release via `PATCH draft=false`, and verifies public visibility on `/releases/latest`.
+   - The workflow enforces first-release fail-closed parameters (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, `release_id=stable-0002`, `updater_protocol=1..1`, component versions `5.1.0a3`), re-validates draft state and asset ID bindings immediately before publication to eliminate TOCTOU race conditions, activates the release via `PATCH draft=false`, and verifies public visibility on `/releases/latest`.
 
 ---
 
@@ -42,7 +42,9 @@ Gate #2 MUST execute in the following exact sequence:
 3. **Freshly recompute measurements after smoke**:
    Directly following smoke completion, freshly compute byte sizes and SHA-256 digests for `NekoLauncher.exe`, `NekoUpdater.exe`, and `NekoProxyCore.zip`, and the Core installed identity SHA-256 digest from the canonical sorted inventory of `NekoProxyCore.zip`.
 4. **Construct and sign canonical release-v2.json**:
-   Using the fresh post-smoke measurements from Step 3, construct the manifest payload (`channel=stable`, `release_sequence=1`, `minimum_supported_sequence=1`, signed string `release_id=stable-0001`, `updater_protocol={"minimum": 1, "maximum": 1}`, component versions `5.1.0a3`) and sign it locally using the offline Ed25519 private key for `neko-update-prod-1` in Vault MASTER.
+   Using the fresh post-smoke measurements from Step 3, construct the manifest payload (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, signed string `release_id=stable-0002`, `updater_protocol={"minimum": 1, "maximum": 1}`, component versions `5.1.0a3`) and sign it locally using the offline Ed25519 private key for `neko-update-prod-1` in Vault MASTER.
+   *Compatibility Floor Invariant*: `minimum_supported_sequence` remains `1` because it is the monotonic floor for client compatibility and mandatory updates. The internal spending of sequence 1 during an uncompleted, rejected Gate #2 run does not revoke client compatibility or advance any installed client's high-water mark, as sequence 1 was never published to or observed by clients.
+   *No Architecture/Schema Changes*: No architecture, schema, or client-policy changes are introduced; this is strictly a release-parameter and evidence-contract correction.
 5. **Locally verify envelope, signature, and component bindings**:
    Locally verify canonical JSON formatting, Ed25519 envelope signature, and exact three component descriptors against the frozen candidate bytes using `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`.
 6. **Execute repository safety and scope checks**:
@@ -52,6 +54,44 @@ Gate #2 MUST execute in the following exact sequence:
 
 ### Byte Mutation Invalidation Rule
 Any byte mutation, file touch, recompilation, or test re-run after the fresh measurement in Step 3 immediately invalidates Gate #2. If any candidate file is altered or re-tested after measurement, the candidate is void and the operator must stage a new candidate and restart the entire qualification sequence from Step 1. If `release-v2.json` was already signed, that `release_sequence` is permanently spent and the subsequent candidate must increment `release_sequence`.
+
+### Durable Recovery Gate #2 Evidence Contract
+Following the sequence 1 burn and rejection of Gate #2 run `r4` for missing retained Step 2 audit evidence, any subsequent Gate #2 qualification attempt MUST execute under the following strict durable evidence contract:
+
+1. **Fresh Candidate ID and Path Isolation**:
+   - The qualification attempt MUST use a fresh, distinct candidate staging directory and candidate identifier (e.g. `candidate-r5` at `E:\Github\candidate-release-5.1.0a3-r5`).
+   - The candidate staging directory must contain strictly the candidate files being qualified.
+2. **Provenance and Byte-Equality Verification**:
+   - When reusing binaries from candidate r4, provenance must be mathematically proven before Step 2 begins: source file paths, source file sizes and SHA-256 digests, destination file sizes and SHA-256 digests, and bit-for-bit byte equality must be validated and recorded in a retained provenance manifest (`provenance_manifest.json`). Binary reuse is permitted ONLY byte-identically.
+3. **Execution Transcripts and Exit Codes for Step 2**:
+   - For both Launcher packaged smoke tests and Updater self-check (`NekoUpdater.exe --self-check`), the audit log must capture:
+     - Exact `argv` command invocation
+     - Exact `cwd` (working directory)
+     - UTC ISO-8601 start timestamp
+     - UTC ISO-8601 end timestamp
+     - Elapsed duration in seconds
+     - Process exit code (must be `0`)
+4. **Separate Retained Stdout and Stderr Streams**:
+   - For every Step 2 command, stdout and stderr MUST be captured into separate retained files (e.g. `launcher_smoke.stdout.log`, `launcher_smoke.stderr.log`, `updater_self_check.stdout.log`, `updater_self_check.stderr.log`), even if a stream is zero bytes. Zero-byte files must be retained as explicit proof of clean stderr.
+5. **Candidate Byte Stability (Pre-Smoke vs Post-Smoke Hash Equality)**:
+   - Candidate byte sizes and SHA-256 digests must be measured immediately prior to smoke testing (pre-smoke) and immediately following smoke completion (post-smoke).
+   - Pre-smoke and post-smoke sizes and SHA-256 digests MUST match bit-for-bit, proving that running the binaries did not mutate candidate bytes on disk.
+6. **Normative Sequence Timing Guard**:
+   - Step 3 (fresh post-smoke measurement) MUST have a recorded start timestamp that is strictly later than the recorded end timestamps of BOTH Step 2 executions (Launcher smoke and Updater self-check).
+7. **No Executable Runs After Step 3 Measurement**:
+   - Once Step 3 fresh measurement commences, no candidate executable (`NekoLauncher.exe`, `NekoUpdater.exe`) may be executed or touched again in that candidate directory. Any execution after Step 3 measurement voids the candidate immediately.
+8. **Retention of All Ceremony Commands and Results**:
+   - Retained evidence files must capture exact commands, inputs, transcripts, and outputs for:
+     - Step 4: canonical manifest construction and Ed25519 signing.
+     - Step 5: local envelope, signature, and 3-component verification against candidate bytes.
+     - Step 6: repository safety checks (`check_repository_safety.py`) and git clean worktree verification.
+     - Step 7: independent review clearance (C0/I0).
+9. **Strict Ordered Ceremony Log**:
+   - A single, chronologically ordered ceremony log (`ceremony.log` / `gate2_execution_audit.log`) must record each step's transition, timestamps, and outcomes in strict normative order.
+10. **Evidence Index with Cryptographic Digests**:
+    - An authoritative evidence index file (`evidence_index.sha256` / `EVIDENCE_MANIFEST.json`) must enumerate and SHA-256 hash every retained log, transcript, output file, and candidate artifact.
+11. **Quarantine of Rejected Run r4 Evidence**:
+    - The rejected run `r4` evidence must remain quarantined in its own separate directory (e.g. `candidate-release-5.1.0a3-r4-REJECTED/`), explicitly labeled as rejected/incomplete, and never mixed with recovery candidate evidence.
 
 ---
 
@@ -80,7 +120,7 @@ The production staging repository is fixed to `Valeneko-pranmong/Neko-Family-Pro
 ### 3.2 Distinction of Release Identifiers
 To prevent operational confusion:
 1. **GitHub Draft Release ID** (`release_id` in workflow dispatch / API): An immutable positive integer assigned by GitHub REST API to the draft release object. Used for lookup, asset streaming, pre-publish binding locks, and activation.
-2. **Signed Manifest Envelope Release ID** (`release_id` inside `release-v2.json`): A string embedded within the signed JSON payload representing logical update identity (strictly `"stable-0001"` for the initial release).
+2. **Signed Manifest Envelope Release ID** (`release_id` inside `release-v2.json`): A string embedded within the signed JSON payload representing logical update identity (strictly `"stable-0002"` for this operative first-public-release; historical `"stable-0001"` is permanently spent-unpublished).
 
 ### 3.3 Phase 2: Remote Publication Workflow Dispatch
 The operator triggers final publication in GitHub Actions:
@@ -103,7 +143,7 @@ gh workflow run release.yml \
 4. The workflow executes `scripts/verify_github_release_assets.py`:
    - Verifies manifest envelope `key_id == "neko-update-prod-1"`.
    - Derives Ed25519 public key strictly from in-repo `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`.
-   - Validates first-release invariants: `channel=stable`, `release_sequence=1`, `minimum_supported_sequence=1`, string `release_id=stable-0001`, `updater_protocol=1..1`, component versions `5.1.0a3`, and tag `v5.1.0a3`.
+   - Validates first-release invariants: `channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, string `release_id=stable-0002`, `updater_protocol=1..1`, component versions `5.1.0a3`, and tag `v5.1.0a3` (rejects spent sequence 1 / stable-0001).
    - Validates exact component formats (`raw-pe-v1`, `zip-core-v1`), sizes, and SHA-256 digests.
 5. Pre-publish TOCTOU lock: re-queries release by numeric `release_id`, asserting release state and all four `name -> asset_id` bindings are unchanged.
 6. Publication activation: issues `PATCH /repos/.../releases/:release_id` with `{"draft": false}`.
@@ -140,7 +180,7 @@ Launcher resolves `NekoProxyCore.exe` only from the external runtime path above.
 
 ## 6. Current Release Gate Status
 
-- **Gate #2 Status**: **NOT PASSED**. There has been no candidate rebuild after this final implementation HEAD yet, no production signing, push, tag, draft creation, or asset upload.
+- **Gate #2 Status**: **NOT PASSED**. Operational Gate #2 qualification run `r4` was **REJECTED** for audit-evidence retention (failure to capture and persist separate stdout/stderr transcripts and timing metadata for Launcher smoke and Updater self-check). Sequence 1 / `stable-0001` was signed once during run r4 and is **PERMANENTLY SPENT-UNPUBLISHED**. It must never be published or regenerated. Recovery correction is **PENDING** (recovery parameters to sequence 2 / stable-0002, review C0/I0, fresh candidate reuse proof, and Gate #2 ceremony sequence 2 under durable evidence contract are pending).
 - **Gate #3 Status**: **NOT PASSED**. Workflow dispatch, remote publication, and `/releases/latest` validation have not occurred.
-- **Implementation Status**: Two-phase implementation Tasks 1–6 are COMPLETE with final engineering review PASS (Sol architecture review at HEAD b882ea5: SPEC_COMPLIANCE PASS, ARCHITECTURE_QUALITY PASS, Critical 0, Important 0, FINAL_ENGINEERING_STATUS PASS, TASK6_STATUS COMPLETE). Controller evidence: focused release suite 73 passed / 0 failed; full canonical Launcher with admitted Core fixture 1719 passed / 35 skipped / 0 failed; Ruff PASS; repository safety PASS; all 3 workflow YAML parse PASS; `git diff --check` PASS; worktree clean. Next phase is formal Gate #2 candidate qualification under normative order.
+- **Implementation Status**: Engineering implementation at HEAD `419a3ec593709b84afdf8e74a70ce737cd7832d9` was C0/I0 before operational Gate #2. However, operational Gate #2 r4 was REJECTED for audit-evidence retention, sequence 1 is spent-unpublished, and recovery correction is pending; Gate #2 and Gate #3 remain NOT PASSED.
 - **Explicit Boundary**: Documentation does not claim candidate qualification, production signing, push, tag creation, draft release, asset upload, workflow dispatch, publication, deployment, live auto-update completion, Gate #2 clearance, or Gate #3 clearance.

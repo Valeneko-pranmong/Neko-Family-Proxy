@@ -20,17 +20,18 @@
 4. **Publication Workflow Role**: The publication workflow is an independent verification authority gate, not an artifact creation authority. It contains no PyInstaller builds, accepts no local workstation file paths (`core_artifact_path`, `signed_manifest_path`, `release_public_key_path`), and uploads no update payloads.
 5. **Exact Four Trusted Assets**: The release asset set consists strictly of four files: `NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, and `release-v2.json`. Permitted human-facing extra assets (such as `SHA256SUMS.txt` or installers) are ignored during update asset binding.
 6. **Exact Signed Component Set**: The signed manifest dictionary consists strictly of `{launcher, updater, core}`.
-7. **First-Release Normative Parameters**: For release `v5.1.0a3`, publication authority rejects unless:
+7. **First-Release Normative Parameters (Operative Recovery Authority)**: For release `v5.1.0a3`, publication authority rejects unless:
    - `channel == "stable"`
-   - `release_sequence == 1`
-   - `minimum_supported_sequence == 1`
-   - `release_id == "stable-0001"` (distinguished from numeric GitHub release ID)
+   - `release_sequence == 2` (operative recovery sequence; sequence 1 spent-unpublished in rejected Gate #2 r4)
+   - `minimum_supported_sequence == 1` (client compatibility floor remains 1; sequence burn does not advance client high-water mark)
+   - `release_id == "stable-0002"` (signed string identifier; historical `stable-0001` spent-unpublished; distinguished from numeric GitHub release ID)
    - `updater_protocol == {"minimum": 1, "maximum": 1}`
    - `components['launcher'].version == "5.1.0a3"`
    - `components['updater'].version == "5.1.0a3"`
    - `components['core'].version == "5.1.0a3"`
    - `key_id == "neko-update-prod-1"`
    - `expected_tag == "v5.1.0a3"` (matching `"v" + components['launcher'].version`)
+   *Historical Note*: Sequence 1 / `stable-0001` was signed once during local Gate #2 run `r4`, which was subsequently rejected for missing retained Step 2 audit evidence. Sequence 1 is permanently spent and unpublished; no remote release side effects occurred. `minimum_supported_sequence` remains 1 because it is client compatibility / mandatory floor; sequence burn does not revoke compatibility or advance any client high-water mark. No architecture, schema, or client-policy changes are introduced; this is strictly release-parameter + evidence-contract correction.
 8. **Candidate Byte Freezing & Measurement**: Candidate bytes must be frozen in a dedicated staging directory, smoke-tested, and freshly measured immediately after smoke completion before manifest construction and signing. Any byte mutation after measurement invalidates Gate #2.
 9. **Private Key Isolation**: The Ed25519 private signing key remains offline in Vault MASTER. It must never touch GitHub Secrets, CI runner environments, or repository history.
 10. **Public Key Binding**: Verification must resolve strictly through `neko_launcher.updater.trust.PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`. No manifest-supplied or unvetted key registration is permitted.
@@ -44,7 +45,7 @@
 ## Dependency Order and Execution Graph
 
 ```
-Task 1: Verifier First-Release Authority & Key Binding
+Task 1: Verifier First-Release Authority & Key Binding (Initial sequence 1 impl)
   │
   ▼
 Task 2: Publication Workflow Contract & CI Build Decoupling
@@ -59,15 +60,34 @@ Task 4: Local Controlled Draft Staging Tooling (stage_draft_release.py)
 Task 5: Documentation & Operator Runbook Migration
   │
   ▼
-Task 6: Final End-to-End Acceptance & Quality Gate
+Task 6: Final End-to-End Acceptance & Quality Gate (Completed at HEAD 419a3ec)
+  │
+  ▼
+══════════════════════════════════════════════════════════════════════════════
+RECOVERY AMENDMENT (Post-Gate #2 Sequence-1 Burn & Rejection)
+══════════════════════════════════════════════════════════════════════════════
+  │
+  ▼
+Task R1: Recovery Parameter Code & Test Updates (sequence 2, stable-0002, min_seq 1) [PENDING]
+  │
+  ▼
+Task R2: Independent Sol Review Clearance (C0/I0) [PENDING]
+  │
+  ▼
+Task R3: Fresh Candidate Reuse & Provenance Copy Proof [PENDING]
+  │
+  ▼
+Task R4: Gate #2 Ceremony Sequence 2 Execution under Durable Evidence Contract [PENDING]
 ```
 
 ---
 
 ## Task 1 — Verifier First-Release Authority and Exact Key-ID Binding
 
+*(Completed in initial implementation at HEAD 419a3ec; sequence 1 / stable-0001 spent-unpublished in rejected Gate #2 r4; superseded by Task R1 for operative sequence 2 / stable-0002)*
+
 ### Goal
-Upgrade `scripts/verify_github_release_assets.py` to enforce the exact production key ID `neko-update-prod-1` bound strictly to `neko_launcher.updater.trust.PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`, and validate all first-release normative invariants (`channel=stable`, `release_sequence=1`, `minimum_supported_sequence=1`, `release_id=stable-0001`, `updater_protocol=1..1`, component versions `5.1.0a3`, tag `v5.1.0a3`).
+Upgrade `scripts/verify_github_release_assets.py` to enforce the exact production key ID `neko-update-prod-1` bound strictly to `neko_launcher.updater.trust.PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`, and validate all first-release normative invariants (initial values: `channel=stable`, `release_sequence=1`, `minimum_supported_sequence=1`, `release_id=stable-0001`, `updater_protocol=1..1`, component versions `5.1.0a3`, tag `v5.1.0a3`; amended to sequence 2 / stable-0002 in Task R1).
 
 ### Files
 - Modify: `scripts/verify_github_release_assets.py`
@@ -81,6 +101,7 @@ Upgrade `scripts/verify_github_release_assets.py` to enforce the exact productio
 EXPECTED_PRODUCTION_KEY_ID: str = "neko-update-prod-1"
 FIRST_RELEASE_EXPECTED_TAG: str = "v5.1.0a3"
 FIRST_RELEASE_EXPECTED_CHANNEL: str = "stable"
+# Note: Initial implementation values; amended in Task R1 to SEQUENCE = 2 and RELEASE_ID = "stable-0002"
 FIRST_RELEASE_EXPECTED_SEQUENCE: int = 1
 FIRST_RELEASE_EXPECTED_MIN_SEQUENCE: int = 1
 FIRST_RELEASE_EXPECTED_RELEASE_ID: str = "stable-0001"
@@ -122,11 +143,11 @@ python scripts/verify_github_release_assets.py \
    - If `public_key_file` is provided and `expected_key_id == EXPECTED_PRODUCTION_KEY_ID`, assert file bytes match `PRODUCTION_RELEASE_PUBLIC_KEYS[EXPECTED_PRODUCTION_KEY_ID]`. Any byte discrepancy raises `GitHubReleaseAssetsVerificationError("Public key file does not match in-repo production key registry")`.
    - If `public_key_file` is omitted, derive key bytes directly from `PRODUCTION_RELEASE_PUBLIC_KEYS[expected_key_id]`.
    - Cryptographic envelope verification must use `{expected_key_id: key_bytes}` so manifest-supplied arbitrary keys cannot pass verification.
-3. **First-Release Normative Invariants** (when `enforce_first_release=True`):
+3. **First-Release Normative Invariants** (when `enforce_first_release=True`; initial implementation values; amended in Task R1 to sequence 2 / stable-0002):
    - `release_set_v2.channel == "stable"`
-   - `release_set_v2.release_sequence == 1`
+   - `release_set_v2.release_sequence == 1` (amended to 2 in Task R1)
    - `release_set_v2.minimum_supported_sequence == 1`
-   - `release_set_v2.release_id == "stable-0001"`
+   - `release_set_v2.release_id == "stable-0001"` (amended to "stable-0002" in Task R1)
    - `release_set_v2.updater_protocol.minimum == 1` and `release_set_v2.updater_protocol.maximum == 1`
    - `release_set_v2.components['launcher'].version == "5.1.0a3"`
    - `release_set_v2.components['updater'].version == "5.1.0a3"`
@@ -597,3 +618,56 @@ Execute comprehensive validation across all unit, workflow, and security test su
 - [ ] 8. Operational Boundary Verification:
   - Confirm Gate #2 remains NOT PASSED (candidate rebuild, fresh measurements, offline signing, local verification, and draft creation remain to be executed by authorized operator).
   - Confirm remote publication was NOT triggered during implementation.
+
+---
+
+## Recovery Correction Task Chain (Pre-Gate #2 Sequence 2)
+
+Following an independent Sol recovery ruling (Critical 0 / Important 0) after Gate #2 run `r4` sequence 1 burn and rejection, the following task chain MUST be executed in strict sequence before any new Gate #2 attempt. **None of these implementation corrections are claimed done yet.**
+
+### Task R1 — Recovery Parameter Updates in Code and Tests [PENDING]
+- **Goal**: Update publication authority verifier constants, staging preconditions, and test suites to enforce operative first-public-release values (`release_sequence=2`, `release_id="stable-0002"`, `minimum_supported_sequence=1`), ensuring sequence 1 and `stable-0001` fail closed.
+- **Files**:
+  - Modify: `scripts/verify_github_release_assets.py` (`FIRST_RELEASE_EXPECTED_SEQUENCE = 2`, `FIRST_RELEASE_EXPECTED_RELEASE_ID = "stable-0002"`, `FIRST_RELEASE_EXPECTED_MIN_SEQUENCE = 1`)
+  - Modify: `scripts/stage_draft_release.py` (manifest precondition check for sequence `2` and `stable-0002`)
+  - Modify: `launcher/tests/test_verify_github_release_assets.py` (update fixtures and assertions to sequence 2, stable-0002, and add negative tests asserting rejection of sequence 1 / stable-0001)
+  - Modify: `launcher/tests/test_stage_draft_release.py` (update fixtures and assertions to sequence 2, stable-0002)
+  - Modify: `launcher/tests/test_release_workflow_publication_gate.py`
+  - Modify: `launcher/tests/test_release_workflow_github_assets.py`
+- **Discipline**: Strict TDD: failing assertions first (RED), update constants/logic (GREEN), Ruff check, safety verification.
+- **Status**: **PENDING** — Not yet implemented.
+
+### Task R2 — Independent Sol Review Clearance (C0/I0) [PENDING]
+- **Goal**: Perform an independent Sol architecture review of the recovery parameter code changes and test suite updates.
+- **Scope**: Confirm that:
+  - `release_sequence == 2`, `release_id == "stable-0002"`, `minimum_supported_sequence == 1` are strictly enforced.
+  - Manifests specifying sequence 1 or `stable-0001` fail closed unconditionally.
+  - Zero architecture, schema, or client-policy changes were introduced.
+  - Independent review verdict is Critical 0 / Important 0 (C0/I0).
+- **Status**: **PENDING** — Not yet executed.
+
+### Task R3 — Fresh Candidate Staging and Provenance Copy Proof [PENDING]
+- **Goal**: Establish a fresh candidate staging directory and mathematically prove byte-identical reuse of candidate executables and Core bundle from run r4.
+- **Protocol**:
+  - Create dedicated fresh directory (e.g. `candidate-release-5.1.0a3-r5` / candidate r5).
+  - Copy `NekoLauncher.exe`, `NekoUpdater.exe`, and `NekoProxyCore.zip` byte-identically from r4.
+  - Measure source file sizes and SHA-256 digests; measure destination file sizes and SHA-256 digests; assert bit-for-bit equality.
+  - Record provenance manifest (`provenance_manifest.json`) capturing source paths, destination paths, sizes, digests, copy timestamp, and operator identity.
+  - Verify that run r4 directory remains quarantined and labeled `rejected/incomplete`.
+- **Status**: **PENDING** — Not yet executed.
+
+### Task R4 — Gate #2 Ceremony Sequence 2 Execution Under Durable Evidence Contract [PENDING]
+- **Goal**: Execute a complete restart of the Gate #2 local release qualification ceremony for sequence 2 from Step 1 in strict normative order under the Durable Recovery Gate #2 Evidence Contract.
+- **Requirements**:
+  - Step 1: Freeze candidate bytes in candidate staging directory.
+  - Step 2: Execute Launcher packaged smoke and Updater self-check (`NekoUpdater.exe --self-check`) with:
+    - Exact argv, cwd, start/end timestamps, elapsed duration, exit code (must be 0).
+    - Separate retained stdout and stderr files (even if zero bytes).
+    - Pre-smoke and post-smoke candidate SHA-256 hashes and sizes verified equal.
+  - Step 3: Fresh measurement of sizes, SHA-256 digests, and Core installed identity strictly after both Step 2 end times. No executables run after Step 3 measurement.
+  - Step 4: Construct and sign canonical `release-v2.json` (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, `release_id=stable-0002`, `updater_protocol=1..1`, component versions `5.1.0a3`, key ID `neko-update-prod-1`) using offline private key in Vault MASTER.
+  - Step 5: Locally verify canonical envelope, Ed25519 signature, and 3-component bindings against candidate bytes using `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`.
+  - Step 6: Repository safety check (`check_repository_safety.py`) and clean worktree verification.
+  - Step 7: Independent review clearance (C0/I0).
+  - Retain chronologically ordered ceremony log (`ceremony.log`) and cryptographic evidence index (`evidence_index.sha256`) covering all transcripts, outputs, and artifacts.
+- **Status**: **PENDING** — Not yet executed.
