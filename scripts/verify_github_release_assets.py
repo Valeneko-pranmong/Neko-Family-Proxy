@@ -206,22 +206,18 @@ def verify_github_release_assets(
         except KeyError as err:
             raise GitHubReleaseAssetsVerificationError("Expected trusted public key not found") from err
     else:
-        if public_key_file is not None and expected_key_id != EXPECTED_PRODUCTION_KEY_ID:
-            public_key_bytes = _load_public_key(Path(public_key_file))
-        else:
-            try:
-                registry_key_bytes = PRODUCTION_RELEASE_PUBLIC_KEYS[expected_key_id]
-            except KeyError as err:
-                raise GitHubReleaseAssetsVerificationError("Expected production public key not found") from err
-            public_key_bytes = (
-                registry_key_bytes
-                if public_key_file is None
-                else _load_public_key(Path(public_key_file))
+        if expected_key_id != EXPECTED_PRODUCTION_KEY_ID:
+            raise GitHubReleaseAssetsVerificationError("Production key_id mismatch")
+        registry_key_bytes = PRODUCTION_RELEASE_PUBLIC_KEYS[EXPECTED_PRODUCTION_KEY_ID]
+        public_key_bytes = (
+            registry_key_bytes
+            if public_key_file is None
+            else _load_public_key(Path(public_key_file))
+        )
+        if public_key_file is not None and public_key_bytes != registry_key_bytes:
+            raise GitHubReleaseAssetsVerificationError(
+                "Public key file does not match in-repo production key registry"
             )
-            if public_key_file is not None and public_key_bytes != registry_key_bytes:
-                raise GitHubReleaseAssetsVerificationError(
-                    "Public key file does not match in-repo production key registry"
-                )
 
     try:
         release_set_v2, _payload_sha256 = verify_release_envelope_v2(
@@ -316,7 +312,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--release-json", required=True, type=Path)
     parser.add_argument("--download-dir", required=True, type=Path)
     parser.add_argument("--public-key-file", type=Path)
-    parser.add_argument("--trusted-key-id", default=EXPECTED_PRODUCTION_KEY_ID)
     parser.add_argument("--expected-tag", required=True)
     parser.add_argument("--expected-target", required=True)
     parser.add_argument("--require-draft", action="store_true", default=False)
@@ -332,7 +327,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_tag=args.expected_tag,
             expected_target=args.expected_target,
             require_draft=args.require_draft,
-            expected_key_id=args.trusted_key_id,
             enforce_first_release=not args.no_enforce_first_release,
         )
     except GitHubReleaseAssetsVerificationError as err:

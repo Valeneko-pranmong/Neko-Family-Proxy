@@ -52,6 +52,7 @@ def create_test_release_bundle(
     launcher_version: str = "5.1.0a3",
     updater_version: str = "5.1.0a3",
     core_version: str = "5.1.0a3",
+    channel: str = "stable",
 ) -> dict[str, Any]:
     download_dir = tmp_path / "download"
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,7 @@ def create_test_release_bundle(
     (download_dir / "NekoProxyCore.zip").write_bytes(core_bytes)
 
     v2_doc = valid_v2_release_document(
+        channel=channel,
         sequence=sequence,
         release_id=release_id,
         minimum_supported_sequence=minimum_supported_sequence,
@@ -202,7 +204,6 @@ def test_verify_assets_succeeds_with_in_repo_production_key_omitting_public_key_
     ("bundle_kwargs", "message"),
     [
         ({"sequence": 2}, "release_sequence"),
-        ({"minimum_supported_sequence": 0}, "cryptographic verification"),
         ({"release_id": "stable-9999"}, "release_id"),
         ({"proto_max": 2}, "updater_protocol"),
         ({"launcher_version": "5.1.0a2"}, "launcher version"),
@@ -234,6 +235,59 @@ def test_verify_assets_fails_when_release_sequence_is_not_one(tmp_path: Path) ->
     bundle = create_test_release_bundle(tmp_path, sequence=2)
     with pytest.raises(verifier.GitHubReleaseAssetsVerificationError, match="release_sequence"):
         verify_bundle(verifier, bundle)
+
+
+def test_verify_assets_fails_when_channel_is_not_stable(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, channel="beta")
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="cryptographic verification",
+    ):
+        verify_bundle(verifier, bundle)
+
+
+def test_verify_assets_fails_when_updater_protocol_minimum_is_not_one(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, proto_min=2, proto_max=2)
+    with pytest.raises(verifier.GitHubReleaseAssetsVerificationError, match="updater_protocol"):
+        verify_bundle(verifier, bundle)
+
+
+def test_verify_assets_fails_when_minimum_supported_sequence_is_not_one(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, minimum_supported_sequence=2)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="cryptographic verification",
+    ):
+        verify_bundle(verifier, bundle)
+
+
+def test_cli_rejects_caller_selected_key_authority(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    with pytest.raises(SystemExit) as error:
+        verifier.main(
+            [
+                "--release-json",
+                str(bundle["release_json_file"]),
+                "--download-dir",
+                str(bundle["download_dir"]),
+                "--public-key-file",
+                str(bundle["public_key_file"]),
+                "--trusted-key-id",
+                TEST_KEY_ID,
+                "--expected-tag",
+                bundle["expected_tag"],
+                "--expected-target",
+                bundle["expected_target"],
+            ]
+        )
+    assert error.value.code == 2
+    assert "unrecognized arguments: --trusted-key-id" in capsys.readouterr().err
 
 
 def test_verify_assets_fails_when_public_key_file_differs_from_in_repo_registry(
@@ -622,7 +676,7 @@ def test_verify_assets_fails_on_noncanonical_manifest_json(tmp_path: Path) -> No
         )
 
 
-def test_verify_assets_cli_invocation_success_and_failure(
+def test_verify_assets_cli_invocation_failure(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     verifier = load_verifier_module()
@@ -636,29 +690,6 @@ def test_verify_assets_cli_invocation_success_and_failure(
             str(bundle["download_dir"]),
             "--public-key-file",
             str(bundle["public_key_file"]),
-            "--trusted-key-id",
-            TEST_KEY_ID,
-            "--expected-tag",
-            bundle["expected_tag"],
-            "--expected-target",
-            bundle["expected_target"],
-            "--require-draft",
-        ]
-    )
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "github release assets verification passed" in captured.out.lower()
-
-    exit_code_bad = verifier.main(
-        [
-            "--release-json",
-            str(bundle["release_json_file"]),
-            "--download-dir",
-            str(bundle["download_dir"]),
-            "--public-key-file",
-            str(bundle["public_key_file"]),
-            "--trusted-key-id",
-            TEST_KEY_ID,
             "--expected-tag",
             "v0.0.0-wrong",
             "--expected-target",
@@ -666,9 +697,9 @@ def test_verify_assets_cli_invocation_success_and_failure(
             "--require-draft",
         ]
     )
-    captured_bad = capsys.readouterr()
-    assert exit_code_bad == 1
-    assert "github release assets verification failed" in captured_bad.err.lower()
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "github release assets verification failed" in captured.err.lower()
 
 
 def test_same_size_corruption_in_remote_download_fails_with_valid_local_staging(tmp_path: Path) -> None:
@@ -725,8 +756,6 @@ def test_cli_runs_from_unrelated_cwd_with_only_installed_launcher_runtime(tmp_pa
             str(bundle["download_dir"]),
             "--public-key-file",
             str(bundle["public_key_file"]),
-            "--trusted-key-id",
-            TEST_KEY_ID,
             "--expected-tag",
             bundle["expected_tag"],
             "--expected-target",
@@ -739,5 +768,5 @@ def test_cli_runs_from_unrelated_cwd_with_only_installed_launcher_runtime(tmp_pa
         text=True,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
-    assert "verification passed" in result.stdout.lower()
+    assert result.returncode == 1
+    assert "verification failed" in result.stderr.lower()
