@@ -327,17 +327,42 @@ def test_publication_patches_verified_release_by_id_after_fresh_identity_check()
         assert 'gh release edit "$env:RELEASE_TAG"' not in publisher.text
 
 
-def test_immediate_prepublication_readback_revalidates_same_draft_binding() -> None:
+def test_immediate_prepublication_readback_revalidates_exact_required_name_id_bindings() -> None:
     publisher = publication_jobs(workflow_text())[0].text
     patch_idx = publisher.find("--method PATCH")
     assert patch_idx != -1
-    prepublish = publisher[ publisher.rfind("- name:", 0, patch_idx) : patch_idx]
+    prepublish = publisher[publisher.rfind("- name:", 0, patch_idx) : patch_idx]
     assert 'releases/$env:RELEASE_ID' in prepublish
     for binding in (".id", ".draft", ".tag_name", ".target_commitish", ".assets"):
         assert binding in prepublish, f"pre-publication identity check must validate {binding}"
-    assert "$expectedAssetIds" in prepublish
-    assert "$actualAssetIds" in prepublish
+
+    required_names = (
+        "NekoLauncher.exe",
+        "NekoUpdater.exe",
+        "NekoProxyCore.zip",
+        "release-v2.json",
+    )
+    for name in required_names:
+        assert name in prepublish
+    assert "foreach ($requiredName in $requiredAssetNames)" in prepublish
+    assert "$verifiedMatches.Count -ne 1" in prepublish
+    assert "$currentMatches.Count -ne 1" in prepublish
+    assert "[string]$verifiedMatches[0].id -cne [string]$currentMatches[0].id" in prepublish
+    assert "$expectedAssetIds" not in prepublish
+    assert "$actualAssetIds" not in prepublish
     assert "throw" in prepublish
+
+
+def test_immediate_prepublication_binding_check_ignores_unrelated_extra_assets() -> None:
+    publisher = publication_jobs(workflow_text())[0].text
+    patch_idx = publisher.find("--method PATCH")
+    prepublish = publisher[publisher.rfind("- name:", 0, patch_idx) : patch_idx]
+
+    assert "$verified.assets | Where-Object { $_.name -ceq $requiredName }" in prepublish
+    assert "$current.assets | Where-Object { $_.name -ceq $requiredName }" in prepublish
+    assert "Compare-Object" not in prepublish
+    assert "foreach ($asset in $current.assets)" not in prepublish
+    assert "foreach ($asset in $verified.assets)" not in prepublish
 
 
 def test_publication_runs_verifier_before_publish() -> None:
