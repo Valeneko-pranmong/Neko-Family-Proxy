@@ -134,7 +134,14 @@ def _make_core_zip(path: Path) -> tuple[bytes, str]:
     return path.read_bytes(), hashlib.sha256(manifest_bytes).hexdigest()
 
 
-def make_stage(path: Path, *, core_identity: str | None = None) -> Path:
+def make_stage(
+    path: Path,
+    *,
+    core_identity: str | None = None,
+    sequence: int = 2,
+    minimum_supported_sequence: int = 1,
+    release_id: str = "stable-0002",
+) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
         "NekoLauncher.exe": b"launcher",
@@ -165,9 +172,9 @@ def make_stage(path: Path, *, core_identity: str | None = None) -> Path:
     payload = {
         "schema_version": 2,
         "channel": "stable",
-        "release_sequence": 1,
-        "minimum_supported_sequence": 1,
-        "release_id": "stable-0001",
+        "release_sequence": sequence,
+        "minimum_supported_sequence": minimum_supported_sequence,
+        "release_id": release_id,
         "updater_protocol": {"minimum": 1, "maximum": 1},
         "mandatory": False,
         "components": components,
@@ -267,6 +274,43 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     (stage / "release-v2.json").write_bytes(canonical(doc))
     with pytest.raises(module.StageDraftReleaseError):
         validate(module, stage, FakeExecutor())
+
+
+@pytest.mark.parametrize(
+    "authority",
+    [
+        {"sequence": 1, "release_id": "stable-0001"},
+        {"sequence": 2, "release_id": "stable-0001"},
+        {"sequence": 1, "release_id": "stable-0002"},
+        {"sequence": 2, "release_id": "stable-9999"},
+    ],
+)
+def test_recovery_authority_mismatch_fails_before_github_mutation(
+    tmp_path: Path, authority: dict[str, Any]
+) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError, match="First-release authority mismatch"):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path, **authority),
+            tag=TAG,
+            target_commit=TARGET,
+            executor=executor,
+        )
+    assert not any(call[0] == "gh" for call in executor.calls)
+
+
+def test_recovery_minimum_sequence_two_fails_closed(tmp_path: Path) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path, minimum_supported_sequence=2),
+            tag=TAG,
+            target_commit=TARGET,
+            executor=executor,
+        )
+    assert not any(call[0] == "gh" for call in executor.calls)
 
 
 def test_core_installed_identity_mismatch_fails_before_github_mutation(

@@ -115,9 +115,9 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
     release_set = _verify_manifest_signature(document)
     if (
         release_set.channel != "stable"
-        or release_set.release_sequence != 1
+        or release_set.release_sequence != 2
         or release_set.minimum_supported_sequence != 1
-        or release_set.release_id != "stable-0001"
+        or release_set.release_id != "stable-0002"
     ):
         raise StageDraftReleaseError("First-release authority mismatch")
     if (

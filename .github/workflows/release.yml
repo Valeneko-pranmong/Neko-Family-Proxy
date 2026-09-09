@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       release_tag:
-        description: Expected release Git tag (strictly v5.1.0a3 for first release)
+        description: Expected release Git tag (strictly v5.1.0a3 for recovered first public release)
         required: true
         type: string
       expected_target:

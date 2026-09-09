@@ -44,9 +44,9 @@ def create_test_release_bundle(
     prerelease: bool = False,
     include_extra_asset: bool = False,
     key_id: str = TEST_KEY_ID,
-    sequence: int = 1,
+    sequence: int = 2,
     minimum_supported_sequence: int = 1,
-    release_id: str = "stable-0001",
+    release_id: str = "stable-0002",
     proto_min: int = 1,
     proto_max: int = 1,
     launcher_version: str = "5.1.0a3",
@@ -203,8 +203,10 @@ def test_verify_assets_succeeds_with_in_repo_production_key_omitting_public_key_
 @pytest.mark.parametrize(
     ("bundle_kwargs", "message"),
     [
-        ({"sequence": 2}, "release_sequence"),
+        ({"sequence": 1, "release_id": "stable-0001"}, "release_sequence"),
+        ({"release_id": "stable-0001"}, "release_id"),
         ({"release_id": "stable-9999"}, "release_id"),
+        ({"minimum_supported_sequence": 2}, "minimum_supported_sequence"),
         ({"proto_max": 2}, "updater_protocol"),
         ({"launcher_version": "5.1.0a2"}, "launcher version"),
         ({"updater_version": "5.1.0a2"}, "updater version"),
@@ -230,13 +232,6 @@ def test_verify_assets_fails_when_envelope_key_id_mismatches_expected(tmp_path: 
         verify_bundle(verifier, bundle, expected_key_id="other-key")
 
 
-def test_verify_assets_fails_when_release_sequence_is_not_one(tmp_path: Path) -> None:
-    verifier = load_verifier_module()
-    bundle = create_test_release_bundle(tmp_path, sequence=2)
-    with pytest.raises(verifier.GitHubReleaseAssetsVerificationError, match="release_sequence"):
-        verify_bundle(verifier, bundle)
-
-
 def test_verify_assets_fails_when_channel_is_not_stable(tmp_path: Path) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(tmp_path, channel="beta")
@@ -259,7 +254,7 @@ def test_verify_assets_fails_when_minimum_supported_sequence_is_not_one(tmp_path
     bundle = create_test_release_bundle(tmp_path, minimum_supported_sequence=2)
     with pytest.raises(
         verifier.GitHubReleaseAssetsVerificationError,
-        match="cryptographic verification",
+        match="minimum_supported_sequence",
     ):
         verify_bundle(verifier, bundle)
 
