@@ -15,6 +15,7 @@ from neko_launcher.updater.canonical_json import canonical_json_dumps
 from tests.software_update_helpers import (
     TEST_KEY_ID,
     TEST_PUBLIC_KEY,
+    get_test_key_registry,
     signed_envelope,
     valid_v2_release_document,
 )
@@ -37,11 +38,20 @@ def load_verifier_module():
 def create_test_release_bundle(
     tmp_path: Path,
     *,
-    tag_name: str = "v5.1.0",
+    tag_name: str = "v5.1.0a3",
     target_commit: str = "0123456789abcdef0123456789abcdef01234567",
     draft: bool = True,
     prerelease: bool = False,
     include_extra_asset: bool = False,
+    key_id: str = TEST_KEY_ID,
+    sequence: int = 1,
+    minimum_supported_sequence: int = 1,
+    release_id: str = "stable-0001",
+    proto_min: int = 1,
+    proto_max: int = 1,
+    launcher_version: str = "5.1.0a3",
+    updater_version: str = "5.1.0a3",
+    core_version: str = "5.1.0a3",
 ) -> dict[str, Any]:
     download_dir = tmp_path / "download"
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -59,19 +69,24 @@ def create_test_release_bundle(
     (download_dir / "NekoProxyCore.zip").write_bytes(core_bytes)
 
     v2_doc = valid_v2_release_document(
-        launcher_version="5.1.0",
+        sequence=sequence,
+        release_id=release_id,
+        minimum_supported_sequence=minimum_supported_sequence,
+        proto_min=proto_min,
+        proto_max=proto_max,
+        launcher_version=launcher_version,
         launcher_sha=launcher_sha,
         launcher_size=len(launcher_bytes),
-        updater_version="5.1.0",
+        updater_version=updater_version,
         updater_sha=updater_sha,
         updater_size=len(updater_bytes),
-        core_version="1.0.0",
+        core_version=core_version,
         core_sha=core_sha,
         core_size=len(core_bytes),
         core_installed_sha=core_sha,
     )
 
-    envelope = signed_envelope(v2_doc, key_id=TEST_KEY_ID)
+    envelope = signed_envelope(v2_doc, key_id=key_id)
     manifest_bytes = canonical_json_dumps(envelope)
     (download_dir / "release-v2.json").write_bytes(manifest_bytes)
 
@@ -150,6 +165,95 @@ def create_test_release_bundle(
     }
 
 
+def verify_bundle(verifier: Any, bundle: dict[str, Any], **overrides: Any) -> None:
+    arguments = {
+        "release_json_path": bundle["release_json_file"],
+        "download_dir": bundle["download_dir"],
+        "public_key_file": None,
+        "expected_tag": bundle["expected_tag"],
+        "expected_target": bundle["expected_target"],
+        "require_draft": True,
+        "expected_key_id": TEST_KEY_ID,
+        "trusted_public_keys": get_test_key_registry(),
+    }
+    arguments.update(overrides)
+    verifier.verify_github_release_assets(**arguments)
+
+
+def test_verify_assets_succeeds_with_in_repo_production_key_omitting_public_key_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, key_id=verifier.EXPECTED_PRODUCTION_KEY_ID)
+    monkeypatch.setitem(
+        verifier.PRODUCTION_RELEASE_PUBLIC_KEYS,
+        verifier.EXPECTED_PRODUCTION_KEY_ID,
+        TEST_PUBLIC_KEY,
+    )
+    verify_bundle(
+        verifier,
+        bundle,
+        expected_key_id=verifier.EXPECTED_PRODUCTION_KEY_ID,
+        trusted_public_keys=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("bundle_kwargs", "message"),
+    [
+        ({"sequence": 2}, "release_sequence"),
+        ({"minimum_supported_sequence": 0}, "cryptographic verification"),
+        ({"release_id": "stable-9999"}, "release_id"),
+        ({"proto_max": 2}, "updater_protocol"),
+        ({"launcher_version": "5.1.0a2"}, "launcher version"),
+        ({"updater_version": "5.1.0a2"}, "updater version"),
+        ({"core_version": "5.1.0a2"}, "core version"),
+        ({"tag_name": "v5.1.0a2"}, "First-release tag"),
+    ],
+)
+def test_verify_assets_fails_first_release_invariant(
+    tmp_path: Path, bundle_kwargs: dict[str, Any], message: str
+) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, **bundle_kwargs)
+    with pytest.raises(verifier.GitHubReleaseAssetsVerificationError, match=message):
+        verify_bundle(verifier, bundle)
+
+
+def test_verify_assets_fails_when_envelope_key_id_mismatches_expected(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="Manifest key_id mismatch"
+    ):
+        verify_bundle(verifier, bundle, expected_key_id="other-key")
+
+
+def test_verify_assets_fails_when_release_sequence_is_not_one(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, sequence=2)
+    with pytest.raises(verifier.GitHubReleaseAssetsVerificationError, match="release_sequence"):
+        verify_bundle(verifier, bundle)
+
+
+def test_verify_assets_fails_when_public_key_file_differs_from_in_repo_registry(
+    tmp_path: Path,
+) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, key_id=verifier.EXPECTED_PRODUCTION_KEY_ID)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="Public key file does not match in-repo production key registry",
+    ):
+        verify_bundle(
+            verifier,
+            bundle,
+            public_key_file=bundle["public_key_file"],
+            expected_key_id=verifier.EXPECTED_PRODUCTION_KEY_ID,
+            trusted_public_keys=None,
+        )
+
+
 def test_verifier_module_loads() -> None:
     module = load_verifier_module()
     assert hasattr(module, "verify_github_release_assets")
@@ -167,6 +271,8 @@ def test_verify_assets_success_with_required_four_assets(tmp_path: Path) -> None
         expected_tag=bundle["expected_tag"],
         expected_target=bundle["expected_target"],
         require_draft=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
     )
 
 
@@ -181,6 +287,8 @@ def test_verify_assets_permits_and_ignores_human_facing_extras(tmp_path: Path) -
         expected_tag=bundle["expected_tag"],
         expected_target=bundle["expected_target"],
         require_draft=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
     )
 
 
@@ -198,6 +306,8 @@ def test_verify_assets_fails_when_missing_required_asset(tmp_path: Path) -> None
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -224,6 +334,8 @@ def test_verify_assets_fails_when_duplicate_required_asset_name(tmp_path: Path) 
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -243,6 +355,8 @@ def test_verify_assets_fails_when_duplicate_asset_id(tmp_path: Path) -> None:
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -258,6 +372,8 @@ def test_verify_assets_fails_when_tag_mismatch(tmp_path: Path) -> None:
             expected_tag="v9.9.9",
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -273,6 +389,8 @@ def test_verify_assets_fails_when_target_commit_mismatch(tmp_path: Path) -> None
             expected_tag=bundle["expected_tag"],
             expected_target="ffffffffffffffffffffffffffffffffffffffff",
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -288,6 +406,8 @@ def test_verify_assets_fails_when_require_draft_and_draft_is_false(tmp_path: Pat
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -303,6 +423,8 @@ def test_verify_assets_fails_when_prerelease_is_true(tmp_path: Path) -> None:
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -320,6 +442,8 @@ def test_verify_assets_fails_on_launcher_size_or_hash_mismatch(tmp_path: Path) -
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -337,6 +461,8 @@ def test_verify_assets_fails_on_updater_size_or_hash_mismatch(tmp_path: Path) ->
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -354,6 +480,8 @@ def test_verify_assets_fails_on_core_size_or_hash_mismatch(tmp_path: Path) -> No
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -375,6 +503,8 @@ def test_verify_assets_fails_on_manifest_size_mismatch(tmp_path: Path) -> None:
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -399,6 +529,8 @@ def test_verify_assets_fails_on_forged_envelope_signature(tmp_path: Path) -> Non
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -416,6 +548,7 @@ def test_verify_assets_fails_on_wrong_public_key(tmp_path: Path) -> None:
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
         )
 
 
@@ -438,6 +571,8 @@ def test_verify_assets_fails_on_wrong_three_product_binding(tmp_path: Path) -> N
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -455,6 +590,8 @@ def test_verify_assets_fails_on_oversized_manifest(tmp_path: Path) -> None:
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -480,10 +617,14 @@ def test_verify_assets_fails_on_noncanonical_manifest_json(tmp_path: Path) -> No
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
-def test_verify_assets_cli_invocation_success_and_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_verify_assets_cli_invocation_success_and_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(tmp_path)
 
@@ -495,6 +636,8 @@ def test_verify_assets_cli_invocation_success_and_failure(tmp_path: Path, capsys
             str(bundle["download_dir"]),
             "--public-key-file",
             str(bundle["public_key_file"]),
+            "--trusted-key-id",
+            TEST_KEY_ID,
             "--expected-tag",
             bundle["expected_tag"],
             "--expected-target",
@@ -514,6 +657,8 @@ def test_verify_assets_cli_invocation_success_and_failure(tmp_path: Path, capsys
             str(bundle["download_dir"]),
             "--public-key-file",
             str(bundle["public_key_file"]),
+            "--trusted-key-id",
+            TEST_KEY_ID,
             "--expected-tag",
             "v0.0.0-wrong",
             "--expected-target",
@@ -546,6 +691,8 @@ def test_same_size_corruption_in_remote_download_fails_with_valid_local_staging(
         expected_tag=bundle["expected_tag"],
         expected_target=bundle["expected_target"],
         require_draft=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
     )
     with pytest.raises(Exception, match="sha256 mismatch"):
         verifier.verify_github_release_assets(
@@ -555,6 +702,8 @@ def test_same_size_corruption_in_remote_download_fails_with_valid_local_staging(
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
         )
 
 
@@ -576,6 +725,8 @@ def test_cli_runs_from_unrelated_cwd_with_only_installed_launcher_runtime(tmp_pa
             str(bundle["download_dir"]),
             "--public-key-file",
             str(bundle["public_key_file"]),
+            "--trusted-key-id",
+            TEST_KEY_ID,
             "--expected-tag",
             bundle["expected_tag"],
             "--expected-target",

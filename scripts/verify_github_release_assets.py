@@ -6,13 +6,24 @@ import json
 from pathlib import Path
 import re
 import sys
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from neko_launcher.updater.canonical_json import canonical_json_dumps
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+
+EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
+FIRST_RELEASE_EXPECTED_TAG = "v5.1.0a3"
+FIRST_RELEASE_EXPECTED_CHANNEL = "stable"
+FIRST_RELEASE_EXPECTED_SEQUENCE = 1
+FIRST_RELEASE_EXPECTED_MIN_SEQUENCE = 1
+FIRST_RELEASE_EXPECTED_RELEASE_ID = "stable-0001"
+FIRST_RELEASE_EXPECTED_COMPONENT_VERSION = "5.1.0a3"
+FIRST_RELEASE_EXPECTED_PROTOCOL_MIN = 1
+FIRST_RELEASE_EXPECTED_PROTOCOL_MAX = 1
 
 REQUIRED_UPDATE_ASSETS = (
     "NekoLauncher.exe",
@@ -70,10 +81,13 @@ def verify_github_release_assets(
     *,
     release_json_path: Path | str,
     download_dir: Path | str,
-    public_key_file: Path | str,
+    public_key_file: Path | str | None = None,
     expected_tag: str,
     expected_target: str,
     require_draft: bool = False,
+    expected_key_id: str = EXPECTED_PRODUCTION_KEY_ID,
+    enforce_first_release: bool = True,
+    trusted_public_keys: Mapping[str, bytes] | None = None,
 ) -> None:
     release_path = Path(release_json_path)
     if not release_path.is_file():
@@ -150,8 +164,6 @@ def verify_github_release_assets(
     if not dir_path.is_dir():
         raise GitHubReleaseAssetsVerificationError(f"Download directory does not exist: {dir_path}")
 
-    public_key_bytes = _load_public_key(Path(public_key_file))
-
     manifest_path = dir_path / "release-v2.json"
     if not manifest_path.is_file():
         raise GitHubReleaseAssetsVerificationError("Local release-v2.json missing")
@@ -185,16 +197,69 @@ def verify_github_release_assets(
     key_id = manifest_doc.get("key_id")
     if not isinstance(key_id, str):
         raise GitHubReleaseAssetsVerificationError("release-v2.json key_id must be a string")
+    if key_id != expected_key_id:
+        raise GitHubReleaseAssetsVerificationError("Manifest key_id mismatch")
+
+    if trusted_public_keys is not None:
+        try:
+            public_key_bytes = trusted_public_keys[expected_key_id]
+        except KeyError as err:
+            raise GitHubReleaseAssetsVerificationError("Expected trusted public key not found") from err
+    else:
+        if public_key_file is not None and expected_key_id != EXPECTED_PRODUCTION_KEY_ID:
+            public_key_bytes = _load_public_key(Path(public_key_file))
+        else:
+            try:
+                registry_key_bytes = PRODUCTION_RELEASE_PUBLIC_KEYS[expected_key_id]
+            except KeyError as err:
+                raise GitHubReleaseAssetsVerificationError("Expected production public key not found") from err
+            public_key_bytes = (
+                registry_key_bytes
+                if public_key_file is None
+                else _load_public_key(Path(public_key_file))
+            )
+            if public_key_file is not None and public_key_bytes != registry_key_bytes:
+                raise GitHubReleaseAssetsVerificationError(
+                    "Public key file does not match in-repo production key registry"
+                )
 
     try:
         release_set_v2, _payload_sha256 = verify_release_envelope_v2(
             manifest_doc,
-            {key_id: public_key_bytes},
+            {expected_key_id: public_key_bytes},
         )
     except Exception as err:
         raise GitHubReleaseAssetsVerificationError("Envelope cryptographic verification failed") from err
 
-    if release_set_v2.channel != "stable":
+    if enforce_first_release:
+        invariant_checks = (
+            (release_set_v2.channel == FIRST_RELEASE_EXPECTED_CHANNEL, "channel"),
+            (release_set_v2.release_sequence == FIRST_RELEASE_EXPECTED_SEQUENCE, "release_sequence"),
+            (
+                release_set_v2.minimum_supported_sequence == FIRST_RELEASE_EXPECTED_MIN_SEQUENCE,
+                "minimum_supported_sequence",
+            ),
+            (release_set_v2.release_id == FIRST_RELEASE_EXPECTED_RELEASE_ID, "release_id"),
+            (
+                release_set_v2.updater_protocol.minimum == FIRST_RELEASE_EXPECTED_PROTOCOL_MIN
+                and release_set_v2.updater_protocol.maximum == FIRST_RELEASE_EXPECTED_PROTOCOL_MAX,
+                "updater_protocol",
+            ),
+        )
+        for valid, name in invariant_checks:
+            if not valid:
+                raise GitHubReleaseAssetsVerificationError(
+                    f"First-release {name} invariant mismatch"
+                )
+        for component_name in ("launcher", "updater", "core"):
+            component = release_set_v2.components.get(component_name)
+            if component is None or component.version != FIRST_RELEASE_EXPECTED_COMPONENT_VERSION:
+                raise GitHubReleaseAssetsVerificationError(
+                    f"First-release {component_name} version invariant mismatch"
+                )
+        if expected_tag != FIRST_RELEASE_EXPECTED_TAG:
+            raise GitHubReleaseAssetsVerificationError("First-release tag invariant mismatch")
+    elif release_set_v2.channel != "stable":
         raise GitHubReleaseAssetsVerificationError(
             f"Release channel must be 'stable', got {release_set_v2.channel!r}"
         )
@@ -250,10 +315,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--release-json", required=True, type=Path)
     parser.add_argument("--download-dir", required=True, type=Path)
-    parser.add_argument("--public-key-file", required=True, type=Path)
+    parser.add_argument("--public-key-file", type=Path)
+    parser.add_argument("--trusted-key-id", default=EXPECTED_PRODUCTION_KEY_ID)
     parser.add_argument("--expected-tag", required=True)
     parser.add_argument("--expected-target", required=True)
     parser.add_argument("--require-draft", action="store_true", default=False)
+    parser.add_argument("--no-enforce-first-release", action="store_true", default=False)
 
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
@@ -265,6 +332,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_tag=args.expected_tag,
             expected_target=args.expected_target,
             require_draft=args.require_draft,
+            expected_key_id=args.trusted_key_id,
+            enforce_first_release=not args.no_enforce_first_release,
         )
     except GitHubReleaseAssetsVerificationError as err:
         safe_message = re.sub(r"https?://\S+", "<sanitized-url>", str(err))
