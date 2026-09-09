@@ -33,36 +33,37 @@ Software update release publication is partitioned into two sequential phases ac
 
 Gate #2 is the mandatory local release qualification checkpoint. Remote publication actions (Git commit push, tag push, draft release creation, asset upload) are strictly prohibited until Gate #2 is formally passed.
 
-Gate #2 MUST execute in the following exact sequence:
+Gate #2 MUST execute in the following exact sequence, with every executable/action command executed through the out-of-band controller task system (`@aikhai task execution`) as an authoritative execution anchor:
 
-1. **Freeze exact candidate bytes**:
-   Isolate candidate files (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`) in a dedicated candidate staging directory. Candidate bytes are locked against further modification.
+1. **Freeze exact candidate bytes and provenance proof**:
+   Isolate candidate files (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`) in a dedicated candidate staging directory. Candidate bytes are locked against further modification. If reusing binaries from candidate r4, copy and byte-equality provenance verification is executed through the out-of-band controller task system.
 2. **Execute packaged smoke and self-check on frozen bytes**:
-   Run Launcher packaged smoke tests and Updater self-check (`NekoUpdater.exe --self-check`) directly on those exact frozen candidate bytes.
+   Run Launcher packaged smoke tests and Updater self-check (`NekoUpdater.exe --self-check`) directly on those exact frozen candidate bytes through the out-of-band controller task system, capturing separate stdout/stderr files and execution timing.
 3. **Freshly recompute measurements after smoke**:
-   Directly following smoke completion, freshly compute byte sizes and SHA-256 digests for `NekoLauncher.exe`, `NekoUpdater.exe`, and `NekoProxyCore.zip`, and the Core installed identity SHA-256 digest from the canonical sorted inventory of `NekoProxyCore.zip`.
+   Directly following smoke completion, freshly compute byte sizes and SHA-256 digests for `NekoLauncher.exe`, `NekoUpdater.exe`, and `NekoProxyCore.zip`, and the Core installed identity SHA-256 digest from the canonical sorted inventory of `NekoProxyCore.zip` through the out-of-band controller task system.
 4. **Construct and sign canonical release-v2.json**:
-   Using the fresh post-smoke measurements from Step 3, construct the manifest payload (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, signed string `release_id=stable-0002`, `updater_protocol={"minimum": 1, "maximum": 1}`, component versions `5.1.0a3`) and sign it locally using the offline Ed25519 private key for `neko-update-prod-1` in Vault MASTER.
+   Using the fresh post-smoke measurements from Step 3, construct the manifest payload (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, signed string `release_id=stable-0002`, `updater_protocol={"minimum": 1, "maximum": 1}`, component versions `5.1.0a3`) and sign it locally using the offline Ed25519 private key for `neko-update-prod-1` in Vault MASTER through the out-of-band controller task system.
    *Compatibility Floor Invariant*: `minimum_supported_sequence` remains `1` because it is the monotonic floor for client compatibility and mandatory updates. The internal spending of sequence 1 during an uncompleted, rejected Gate #2 run does not revoke client compatibility or advance any installed client's high-water mark, as sequence 1 was never published to or observed by clients.
    *No Architecture/Schema Changes*: No architecture, schema, or client-policy changes are introduced; this is strictly a release-parameter and evidence-contract correction.
 5. **Locally verify envelope, signature, and component bindings**:
-   Locally verify canonical JSON formatting, Ed25519 envelope signature, and exact three component descriptors against the frozen candidate bytes using `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`.
+   Locally verify canonical JSON formatting, Ed25519 envelope signature, and exact three component descriptors against the frozen candidate bytes using `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']` through the out-of-band controller task system.
 6. **Execute repository safety and scope checks**:
-   Run `scripts/check_repository_safety.py` and inspect Git status to verify a clean worktree with no uncommitted modifications, no untracked release debris, and no leaked private authority materials or secrets.
+   Run `scripts/check_repository_safety.py` and inspect Git status to verify a clean worktree with no uncommitted modifications, no untracked release debris, and no leaked private authority materials or secrets through the out-of-band controller task system.
 7. **Obtain independent review clearance**:
-   Obtain formal independent review approval with Critical 0 and Important 0 (C0/I0) findings.
+   Obtain formal independent review approval with Critical 0 and Important 0 (C0/I0) findings. The independent reviewer MUST retrieve and confirm referenced controller task results directly from the controller task system (or controller-provided immutable result view) and compare task ID, argv, cwd, times, exit code, and stdout/stderr hashes to the candidate evidence index and local event hash chain. A locally fabricated transcript with no matching controller task ID fails Gate #2.
 
 ### Byte Mutation Invalidation Rule
 Any byte mutation, file touch, recompilation, or test re-run after the fresh measurement in Step 3 immediately invalidates Gate #2. If any candidate file is altered or re-tested after measurement, the candidate is void and the operator must stage a new candidate and restart the entire qualification sequence from Step 1. If `release-v2.json` was already signed, that `release_sequence` is permanently spent and the subsequent candidate must increment `release_sequence`.
 
 ### Durable Recovery Gate #2 Evidence Contract
-Following the sequence 1 burn and rejection of Gate #2 run `r4` for missing retained Step 2 audit evidence, any subsequent Gate #2 qualification attempt MUST execute under the following strict durable evidence contract:
+Following the sequence 1 burn and rejection of Gate #2 run `r4` for missing retained Step 2 audit evidence, and the subsequent recovery amendment review finding (Critical 0 / Important 1, C0/I1) regarding the risk of retroactive local evidence reconstruction, any subsequent Gate #2 qualification attempt MUST execute under the following strict durable evidence contract:
 
 1. **Fresh Candidate ID and Path Isolation**:
    - The qualification attempt MUST use a fresh, distinct candidate staging directory and candidate identifier (e.g. `candidate-r5` at `E:\Github\candidate-release-5.1.0a3-r5`).
    - The candidate staging directory must contain strictly the candidate files being qualified.
 2. **Provenance and Byte-Equality Verification**:
    - When reusing binaries from candidate r4, provenance must be mathematically proven before Step 2 begins: source file paths, source file sizes and SHA-256 digests, destination file sizes and SHA-256 digests, and bit-for-bit byte equality must be validated and recorded in a retained provenance manifest (`provenance_manifest.json`). Binary reuse is permitted ONLY byte-identically.
+   - The copy and provenance verification ceremony is executed through the out-of-band controller task system.
 3. **Execution Transcripts and Exit Codes for Step 2**:
    - For both Launcher packaged smoke tests and Updater self-check (`NekoUpdater.exe --self-check`), the audit log must capture:
      - Exact `argv` command invocation
@@ -86,11 +87,32 @@ Following the sequence 1 burn and rejection of Gate #2 run `r4` for missing reta
      - Step 5: local envelope, signature, and 3-component verification against candidate bytes.
      - Step 6: repository safety checks (`check_repository_safety.py`) and git clean worktree verification.
      - Step 7: independent review clearance (C0/I0).
-9. **Strict Ordered Ceremony Log**:
-   - A single, chronologically ordered ceremony log (`ceremony.log` / `gate2_execution_audit.log`) must record each step's transition, timestamps, and outcomes in strict normative order.
-10. **Evidence Index with Cryptographic Digests**:
-    - An authoritative evidence index file (`evidence_index.sha256` / `EVIDENCE_MANIFEST.json`) must enumerate and SHA-256 hash every retained log, transcript, output file, and candidate artifact.
-11. **Quarantine of Rejected Run r4 Evidence**:
+9. **Out-of-Band Controller Task Execution Anchor (@aikhai task execution)**:
+   - For every Gate #2 executable/action command (copy/provenance ceremony, Launcher smoke, Updater self-check, post-smoke measurement/Core proof, signing, local verifier, repository safety), execution MUST occur through the out-of-band controller task system (`@aikhai task execution`).
+   - Each command must have a unique controller task ID created at execution time.
+   - The controller system records `task_id`, system-recorded `started_at`, finished state, `exit_code`, `argv`, `cwd`, and `stdout`/`stderr` streams externally, outside the candidate directory and worktree.
+   - These external controller records are the authoritative contemporaneous execution anchors against retroactive synthesis.
+10. **Candidate Evidence Event Index Binding and Secondary Local Evidence**:
+    - The candidate evidence event records and index (`evidence_index.json` / `ceremony.log`) MUST reference each exact controller task ID and bind it to:
+      - candidate ID (e.g. `candidate-r5`)
+      - event sequence number
+      - expected `argv` and `cwd`
+      - copied stdout and stderr file SHA-256 hashes
+      - process exit code (must be `0`)
+      - start and end timestamps.
+    - Candidate-local copies and transcripts are secondary convenience evidence, never the sole authority.
+11. **Independent Gate #2 Review Task Retrieval and Direct Verification**:
+    - Independent Gate #2 review (Step 7) MUST retrieve and confirm the referenced controller task results directly from the controller/task system (or controller-provided immutable result view).
+    - The reviewer MUST compare controller task ID, `argv`, `cwd`, start/end timestamps, exit code, and stdout/stderr hashes to the candidate evidence index.
+    - A locally fabricated transcript with no matching controller task ID fails Gate #2 unconditionally.
+12. **Local Event Hash Chain as Defense-in-Depth**:
+    - As defense-in-depth, each event record includes `previous_event_hash` (pointing to the canonical hash of the preceding event, with a defined genesis string for event 1) and its own canonical `event_hash`.
+    - *Anti-Reconstruction Invariant*: The external controller task record is the contemporaneous anti-reconstruction anchor. The local hash chain alone is explicitly insufficient to prevent retroactive synthesis.
+13. **Strict Normative Ordering and Zero Remote Pre-Gate-2 Side Effects**:
+    - Strict sequential ordering across all 7 steps is strictly preserved.
+    - Zero remote Git or release side effects before Gate #2 clearance: no remote git commit push, no tag push, no GitHub draft release creation, no asset upload, no TSA (timestamp authority) calls, and no new external public services.
+    - This is PM/evidence-process infrastructure, not product architecture or client security-policy change.
+14. **Quarantine of Rejected Run r4 Evidence**:
     - The rejected run `r4` evidence must remain quarantined in its own separate directory (e.g. `candidate-release-5.1.0a3-r4-REJECTED/`), explicitly labeled as rejected/incomplete, and never mixed with recovery candidate evidence.
 
 ---
@@ -180,7 +202,7 @@ Launcher resolves `NekoProxyCore.exe` only from the external runtime path above.
 
 ## 6. Current Release Gate Status
 
-- **Gate #2 Status**: **NOT PASSED**. Operational Gate #2 qualification run `r4` was **REJECTED** for audit-evidence retention (failure to capture and persist separate stdout/stderr transcripts and timing metadata for Launcher smoke and Updater self-check). Sequence 1 / `stable-0001` was signed once during run r4 and is **PERMANENTLY SPENT-UNPUBLISHED**. It must never be published or regenerated. Recovery correction is **PENDING** (recovery parameters to sequence 2 / stable-0002, review C0/I0, fresh candidate reuse proof, and Gate #2 ceremony sequence 2 under durable evidence contract are pending).
+- **Gate #2 Status**: **NOT PASSED**. Operational Gate #2 qualification run `r4` was **REJECTED** for audit-evidence retention (failure to capture and persist separate stdout/stderr transcripts and timing metadata for Launcher smoke and Updater self-check). Sequence 1 / `stable-0001` was signed once during run r4 and is **PERMANENTLY SPENT-UNPUBLISHED**. It must never be published or regenerated. Subsequent recovery amendment review recorded Critical 0 / Important 1 (C0/I1) for evidence anti-reconstruction (finding that local ceremony log/hash-chain/evidence index alone can be reconstructed retroactively without contemporaneous external anchoring). Recovery Amendment Fix Round 1 anchors all Gate #2 executable/action commands through the out-of-band controller task system (@aikhai task execution) and adds an event hash chain as defense-in-depth; this fix is pending re-review. Gate #2 and Gate #3 remain NOT PASSED.
 - **Gate #3 Status**: **NOT PASSED**. Workflow dispatch, remote publication, and `/releases/latest` validation have not occurred.
-- **Implementation Status**: Engineering implementation at HEAD `419a3ec593709b84afdf8e74a70ce737cd7832d9` was C0/I0 before operational Gate #2. However, operational Gate #2 r4 was REJECTED for audit-evidence retention, sequence 1 is spent-unpublished, and recovery correction is pending; Gate #2 and Gate #3 remain NOT PASSED.
+- **Implementation Status**: Engineering implementation at HEAD `419a3ec593709b84afdf8e74a70ce737cd7832d9` was C0/I0 before operational Gate #2. However, operational Gate #2 r4 was REJECTED for audit-evidence retention, sequence 1 is spent-unpublished, recovery amendment review had C0/I1 for evidence anti-reconstruction, and this fix is pending re-review; Gate #2 and Gate #3 remain NOT PASSED.
 - **Explicit Boundary**: Documentation does not claim candidate qualification, production signing, push, tag creation, draft release, asset upload, workflow dispatch, publication, deployment, live auto-update completion, Gate #2 clearance, or Gate #3 clearance.

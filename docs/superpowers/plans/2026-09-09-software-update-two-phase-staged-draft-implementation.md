@@ -39,6 +39,7 @@
 12. **Threat Model Scope**: Mitigations focus strictly on Critical and Important threats per spec Section 9; hostile local administrator and kernel attacks are explicit non-goals.
 13. **TDD Discipline**: Follow strict TDD for all code changes: failing test assertions first (RED), minimal implementation (GREEN), regression validation, linting, diff-checking, and narrow review at Critical 0 / Important 0.
 14. **No Remote Publication During Implementation**: Implementation tasks establish contracts, verifiers, workflows, and tests. Candidate compilation, offline signing, Gate #2 execution, draft creation, and publication occur strictly after implementation clearance.
+15. **Out-of-Band Contemporaneous Evidence Anchor**: For every Gate #2 executable/action command (copy/provenance ceremony, Launcher smoke, Updater self-check, post-smoke measurement/Core proof, signing, local verifier, repository safety), execution MUST occur through the out-of-band controller task system (`@aikhai task execution`). Each command receives a unique controller task ID created at execution time; controller records are external to candidate/worktree and serve as authoritative execution anchors. Candidate evidence event index binds each controller task ID to candidate ID, event number, expected argv/cwd, copied stdout/stderr file hashes, exit code, and start/end timestamps. Candidate-local copies are secondary convenience evidence; independent review retrieves and validates controller task records directly. A local event hash chain provides defense-in-depth, but the external controller record is the contemporaneous anti-reconstruction anchor. Strict ordering is preserved; zero remote Git or release side effects before Gate #2.
 
 ---
 
@@ -71,13 +72,13 @@ RECOVERY AMENDMENT (Post-Gate #2 Sequence-1 Burn & Rejection)
 Task R1: Recovery Parameter Code & Test Updates (sequence 2, stable-0002, min_seq 1) [PENDING]
   │
   ▼
-Task R2: Independent Sol Review Clearance (C0/I0) [PENDING]
+Task R2: Independent Sol Review Clearance (C0/I0; initial review C0/I1, Round 1 fix pending re-review) [PENDING]
   │
   ▼
-Task R3: Fresh Candidate Reuse & Provenance Copy Proof [PENDING]
+Task R3: Fresh Candidate Reuse & Provenance Copy Proof (via out-of-band controller task system) [PENDING]
   │
   ▼
-Task R4: Gate #2 Ceremony Sequence 2 Execution under Durable Evidence Contract [PENDING]
+Task R4: Gate #2 Ceremony Sequence 2 Execution under Durable Evidence Contract (out-of-band anchored) [PENDING]
 ```
 
 ---
@@ -623,7 +624,7 @@ Execute comprehensive validation across all unit, workflow, and security test su
 
 ## Recovery Correction Task Chain (Pre-Gate #2 Sequence 2)
 
-Following an independent Sol recovery ruling (Critical 0 / Important 0) after Gate #2 run `r4` sequence 1 burn and rejection, the following task chain MUST be executed in strict sequence before any new Gate #2 attempt. **None of these implementation corrections are claimed done yet.**
+Following an independent Sol recovery ruling (Critical 0 / Important 0) after Gate #2 run `r4` sequence 1 burn and rejection, and subsequent recovery amendment review finding Critical 0 / Important 1 (C0/I1) for evidence anti-reconstruction (finding that local ceremony log/hash-chain/evidence index alone can be reconstructed retroactively without contemporaneous external anchoring), the following task chain MUST be executed in strict sequence before any new Gate #2 attempt. **None of these implementation corrections are claimed done yet.**
 
 ### Task R1 — Recovery Parameter Updates in Code and Tests [PENDING]
 - **Goal**: Update publication authority verifier constants, staging preconditions, and test suites to enforce operative first-public-release values (`release_sequence=2`, `release_id="stable-0002"`, `minimum_supported_sequence=1`), ensuring sequence 1 and `stable-0001` fail closed.
@@ -638,36 +639,48 @@ Following an independent Sol recovery ruling (Critical 0 / Important 0) after Ga
 - **Status**: **PENDING** — Not yet implemented.
 
 ### Task R2 — Independent Sol Review Clearance (C0/I0) [PENDING]
-- **Goal**: Perform an independent Sol architecture review of the recovery parameter code changes and test suite updates.
+- **Goal**: Perform an independent Sol architecture review of the recovery parameter code changes, test suite updates, and out-of-band controller task evidence anchoring specification.
 - **Scope**: Confirm that:
   - `release_sequence == 2`, `release_id == "stable-0002"`, `minimum_supported_sequence == 1` are strictly enforced.
   - Manifests specifying sequence 1 or `stable-0001` fail closed unconditionally.
+  - Every Gate #2 executable/action command is required to execute through the out-of-band controller task system (`@aikhai task execution`).
+  - Candidate evidence index binds each controller task ID, and independent review retrieves and validates controller records directly.
+  - Local event hash chaining is specified as defense-in-depth with external controller records as contemporaneous anchors.
   - Zero architecture, schema, or client-policy changes were introduced.
-  - Independent review verdict is Critical 0 / Important 0 (C0/I0).
-- **Status**: **PENDING** — Not yet executed.
+  - Independent review verdict reaches Critical 0 / Important 0 (C0/I0).
+- **Status**: **PENDING** — Re-review pending following Round 1 fix.
 
 ### Task R3 — Fresh Candidate Staging and Provenance Copy Proof [PENDING]
-- **Goal**: Establish a fresh candidate staging directory and mathematically prove byte-identical reuse of candidate executables and Core bundle from run r4.
+- **Goal**: Establish a fresh candidate staging directory and mathematically prove byte-identical reuse of candidate executables and Core bundle from run r4 via out-of-band controller task execution.
 - **Protocol**:
   - Create dedicated fresh directory (e.g. `candidate-release-5.1.0a3-r5` / candidate r5).
+  - Execute copy and provenance verification ceremony through the out-of-band controller task system (`@aikhai task execution`), generating a unique controller task ID and external execution record.
   - Copy `NekoLauncher.exe`, `NekoUpdater.exe`, and `NekoProxyCore.zip` byte-identically from r4.
   - Measure source file sizes and SHA-256 digests; measure destination file sizes and SHA-256 digests; assert bit-for-bit equality.
-  - Record provenance manifest (`provenance_manifest.json`) capturing source paths, destination paths, sizes, digests, copy timestamp, and operator identity.
+  - Record provenance manifest (`provenance_manifest.json`) capturing source paths, destination paths, sizes, digests, copy timestamp, controller task ID, and operator identity.
   - Verify that run r4 directory remains quarantined and labeled `rejected/incomplete`.
 - **Status**: **PENDING** — Not yet executed.
 
 ### Task R4 — Gate #2 Ceremony Sequence 2 Execution Under Durable Evidence Contract [PENDING]
-- **Goal**: Execute a complete restart of the Gate #2 local release qualification ceremony for sequence 2 from Step 1 in strict normative order under the Durable Recovery Gate #2 Evidence Contract.
+- **Goal**: Execute a complete restart of the Gate #2 local release qualification ceremony for sequence 2 from Step 1 in strict normative order under the Durable Recovery Gate #2 Evidence Contract with out-of-band controller task anchoring.
 - **Requirements**:
-  - Step 1: Freeze candidate bytes in candidate staging directory.
-  - Step 2: Execute Launcher packaged smoke and Updater self-check (`NekoUpdater.exe --self-check`) with:
-    - Exact argv, cwd, start/end timestamps, elapsed duration, exit code (must be 0).
-    - Separate retained stdout and stderr files (even if zero bytes).
-    - Pre-smoke and post-smoke candidate SHA-256 hashes and sizes verified equal.
-  - Step 3: Fresh measurement of sizes, SHA-256 digests, and Core installed identity strictly after both Step 2 end times. No executables run after Step 3 measurement.
-  - Step 4: Construct and sign canonical `release-v2.json` (`channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, `release_id=stable-0002`, `updater_protocol=1..1`, component versions `5.1.0a3`, key ID `neko-update-prod-1`) using offline private key in Vault MASTER.
+  - Every Gate #2 executable/action command MUST execute through the out-of-band controller task system (`@aikhai task execution`):
+    1. Copy and provenance verification ceremony (Step 1).
+    2. Launcher packaged smoke tests (Step 2).
+    3. Updater self-check (`NekoUpdater.exe --self-check`) (Step 2).
+    4. Post-smoke fresh measurement and Core proof (Step 3).
+    5. Canonical manifest construction and Ed25519 signing (Step 4).
+    6. Local envelope, signature, and 3-component verification (Step 5).
+    7. Repository safety and clean worktree checks (Step 6).
+  - Each command generates a unique controller task ID assigned at execution time. External controller records (`task_id`, system-recorded `started_at`, finished state, `exit_code`, `argv`, `cwd`, `stdout`/`stderr`) are authoritative contemporaneous execution anchors outside candidate directory and worktree.
+  - Candidate evidence event log and index (`evidence_index.json` / `ceremony.log`) binds each exact controller task ID to: candidate ID (e.g. `candidate-r5`), event sequence number, expected argv/cwd, copied stdout/stderr hashes, exit code 0, start/end timestamps.
+  - Candidate-local copies and transcripts are secondary convenience evidence, never sole authority.
+  - Local event hash chain: Each event record includes `previous_event_hash` (pointing to previous canonical event hash, with genesis string for event 1) and canonical `event_hash` as defense-in-depth. External controller task records are the contemporaneous anti-reconstruction anchor; hash chain alone is explicitly insufficient.
+  - Step 2 Smoke & self-check: Separate retained stdout and stderr files (even if zero bytes). Pre-smoke and post-smoke candidate SHA-256 hashes and sizes verified equal.
+  - Step 3: Fresh measurement strictly after both Step 2 end times. No executables run after Step 3 measurement.
+  - Step 4: Manifest constructed with `channel=stable`, `release_sequence=2`, `minimum_supported_sequence=1`, `release_id=stable-0002`, `updater_protocol=1..1`, component versions `5.1.0a3`, key ID `neko-update-prod-1` using offline private key in Vault MASTER.
   - Step 5: Locally verify canonical envelope, Ed25519 signature, and 3-component bindings against candidate bytes using `PRODUCTION_RELEASE_PUBLIC_KEYS['neko-update-prod-1']`.
   - Step 6: Repository safety check (`check_repository_safety.py`) and clean worktree verification.
-  - Step 7: Independent review clearance (C0/I0).
-  - Retain chronologically ordered ceremony log (`ceremony.log`) and cryptographic evidence index (`evidence_index.sha256`) covering all transcripts, outputs, and artifacts.
+  - Step 7: Independent review clearance (C0/I0). Independent reviewer MUST retrieve and confirm referenced controller task results directly from the controller task execution system (or controller-provided immutable result view) and compare task ID, argv, cwd, times, exit, and stdout/stderr hashes to candidate evidence index. Fabricated transcripts with no matching controller task ID fail Gate #2.
+  - Zero remote Git or release side effects before Gate #2 clearance. PM/evidence-process infrastructure, not product architecture or client security-policy change.
 - **Status**: **PENDING** — Not yet executed.
