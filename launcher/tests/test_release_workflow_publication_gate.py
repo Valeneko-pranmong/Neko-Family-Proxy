@@ -60,9 +60,18 @@ def test_dispatch_has_only_immutable_publication_authority_inputs() -> None:
         "release_public_key_path",
     }.isdisjoint(input_names(inputs))
 
-    publish_release = indented_block(inputs, "publish_release", 6)
-    assert scalar(publish_release, "type") == "boolean"
-    assert scalar(publish_release, "default") == "false"
+    expected_contract = {
+        "publish_release": {"required": "true", "type": "boolean", "default": "false"},
+        "release_id": {"required": "true", "type": "string", "default": None},
+        "release_tag": {"required": "true", "type": "string", "default": None},
+        "expected_target": {"required": "true", "type": "string", "default": None},
+    }
+    for name, expected_metadata in expected_contract.items():
+        input_block = indented_block(inputs, name, 6)
+        assert {
+            metadata: scalar(input_block, metadata)
+            for metadata in ("required", "type", "default")
+        } == expected_metadata
 
 
 def test_build_installer_is_read_only_and_tag_push_only() -> None:
@@ -98,7 +107,20 @@ def test_publication_checks_out_exact_expected_target() -> None:
     )
 
 
-def test_publication_does_not_build_or_transfer_release_assets() -> None:
+def test_publication_locally_validates_all_authority_inputs() -> None:
+    publication = job(workflow_text(), "publish-release")
+
+    for name in ("release_id", "release_tag", "expected_target"):
+        assert f"${{{{ inputs.{name} }}}}" in publication
+    assert "^[0-9]+$" in publication
+    assert "^v[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.-]*$" in publication
+    assert "v5.1.0a3" in publication
+    assert "^[0-9a-fA-F]{40}$" in publication
+    assert "${{ github.sha }}" in publication
+    assert ".ToLowerInvariant()" in publication
+
+
+def test_publication_does_not_build_transfer_verify_or_publish_release_assets() -> None:
     publication = job(workflow_text(), "publish-release")
     lowered = publication.lower()
 
@@ -108,3 +130,9 @@ def test_publication_does_not_build_or_transfer_release_assets() -> None:
     assert "gh release create" not in lowered
     assert "gh release upload" not in lowered
     assert "stage approved update assets" not in lowered
+    assert "repos/$env:gh_repo/releases/tags/" not in lowered
+    assert "gh api" not in lowered
+    assert "--method patch" not in lowered
+    assert "verify_github_release_assets.py" not in lowered
+    assert "application/octet-stream" not in lowered
+    assert "release/remote-verification" not in lowered

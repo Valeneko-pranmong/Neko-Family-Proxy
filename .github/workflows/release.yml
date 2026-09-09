@@ -88,164 +88,26 @@ jobs:
           cache-dependency-path: launcher/pyproject.toml
       - name: Install release verifier runtime
         run: python -m pip install -e ".\launcher[release]"
-      - name: Validate release tag
+      - name: Validate transitional publication authority inputs locally
         shell: pwsh
         env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_TARGET: ${{ inputs.expected_target }}
+          CHECKED_OUT_SHA: ${{ github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $mismatch = "Release tag does not match this workflow run."
-          if ($env:RELEASE_TAG -notmatch '^v.+$') {
-            throw $mismatch
+          if ($env:RELEASE_ID -notmatch '^[0-9]+$' -or [decimal]$env:RELEASE_ID -le 0) {
+            throw "Release ID must be a positive numeric value."
           }
-
-          try {
-            $target = gh api "repos/$env:GH_REPO/git/ref/tags/$env:RELEASE_TAG" 2>$null |
-              ConvertFrom-Json
-            if ($LASTEXITCODE -ne 0) {
-              throw $mismatch
-            }
-            $targetType = $target.object.type
-            $targetSha = $target.object.sha
-
-            if ($targetType -eq 'tag') {
-              $target = gh api "repos/$env:GH_REPO/git/tags/$targetSha" 2>$null |
-                ConvertFrom-Json
-              if ($LASTEXITCODE -ne 0) {
-                throw $mismatch
-              }
-              $targetType = $target.object.type
-              $targetSha = $target.object.sha
-            }
-
-            if ($targetType -ne 'commit' -or $targetSha -ne '${{ github.sha }}') {
-              throw $mismatch
-            }
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*$' -or
+              $env:RELEASE_TAG -cne 'v5.1.0a3') {
+            throw "Release tag is invalid for this release."
           }
-          catch {
-            throw $mismatch
+          if ($env:EXPECTED_TARGET -notmatch '^[0-9a-fA-F]{40}$') {
+            throw "Expected target must be a 40-character hexadecimal commit SHA."
           }
-      - name: Read back draft and download required assets by ID
-        id: resolve-release
-        shell: pwsh
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $draftView = gh api "repos/$env:GH_REPO/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
-          $releaseId = $draftView.id
-          if (-not $releaseId) {
-            throw "Unable to resolve release ID for tag $env:RELEASE_TAG"
+          if ($env:EXPECTED_TARGET.ToLowerInvariant() -cne $env:CHECKED_OUT_SHA.ToLowerInvariant()) {
+            throw "Expected target does not match the checked-out workflow SHA."
           }
-          "release_id=$releaseId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          $release = gh api "repos/$env:GH_REPO/releases/$releaseId" | ConvertFrom-Json
-          New-Item -ItemType Directory -Path "release/metadata", "release/remote-verification" -Force | Out-Null
-          $release | ConvertTo-Json -Depth 20 | Set-Content "release/metadata/draft-release.json" -Encoding utf8
-          $requiredAssetNames = @("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
-          foreach ($requiredName in $requiredAssetNames) {
-            $matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })
-            if ($matches.Count -ne 1) {
-              throw "Draft release must contain required asset exactly once: $requiredName"
-            }
-            $assetId = $matches[0].id
-            $destination = "release/remote-verification/$requiredName"
-            $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
-            $processInfo.FileName = (Get-Command gh -ErrorAction Stop).Source
-            $processInfo.UseShellExecute = $false
-            $processInfo.RedirectStandardOutput = $true
-            $processInfo.RedirectStandardError = $true
-            $processInfo.ArgumentList.Add("api")
-            $processInfo.ArgumentList.Add("repos/$env:GH_REPO/releases/assets/$assetId")
-            $processInfo.ArgumentList.Add("-H")
-            $processInfo.ArgumentList.Add("Accept: application/octet-stream")
-            $process = [System.Diagnostics.Process]::new()
-            $process.StartInfo = $processInfo
-            $outputStream = $null
-            try {
-              if (-not $process.Start()) {
-                throw "Required draft release asset download failed: $requiredName"
-              }
-              $stderrTask = $process.StandardError.ReadToEndAsync()
-              $outputStream = [System.IO.File]::Create("release/remote-verification/$requiredName")
-              $process.StandardOutput.BaseStream.CopyTo($outputStream)
-              $outputStream.Dispose()
-              $outputStream = $null
-              $process.WaitForExit()
-              $stderrTask.GetAwaiter().GetResult() | Out-Null
-              if ($process.ExitCode -ne 0) {
-                Remove-Item $destination -Force -ErrorAction SilentlyContinue
-                throw "Required draft release asset download failed: $requiredName"
-              }
-            }
-            finally {
-              if ($null -ne $outputStream) {
-                $outputStream.Dispose()
-              }
-              $process.Dispose()
-            }
-          }
-      - name: Verify release assets before publication
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          python scripts/verify_github_release_assets.py `
-            --release-json release/metadata/draft-release.json `
-            --download-dir release/remote-verification `
-            --expected-tag "$env:RELEASE_TAG" `
-            --expected-target "${{ inputs.expected_target }}" `
-            --require-draft
-      - name: Revalidate and publish verified release by ID
-        shell: pwsh
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.resolve-release.outputs.release_id }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:RELEASE_ID) {
-            throw "Verified release ID is missing; refusing publication"
-          }
-          $verified = Get-Content "release/metadata/draft-release.json" -Raw | ConvertFrom-Json
-          $current = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
-          if ([string]$current.id -cne [string]$env:RELEASE_ID -or
-              $current.draft -ne $true -or
-              $current.tag_name -cne $env:RELEASE_TAG -or
-              $current.target_commitish -cne '${{ github.sha }}') {
-            throw "Verified draft release identity or binding changed; refusing publication"
-          }
-          $requiredAssetNames = @("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
-          foreach ($requiredName in $requiredAssetNames) {
-            $verifiedMatches = @($verified.assets | Where-Object { $_.name -ceq $requiredName })
-            $currentMatches = @($current.assets | Where-Object { $_.name -ceq $requiredName })
-            if ($verifiedMatches.Count -ne 1 -or
-                $currentMatches.Count -ne 1 -or
-                [string]$verifiedMatches[0].id -cne [string]$currentMatches[0].id) {
-              throw "Verified draft release identity or binding changed; refusing publication"
-            }
-          }
-          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -f draft=false | Out-Null
-      - name: Verify published release readback by ID
-        shell: pwsh
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.resolve-release.outputs.release_id }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:RELEASE_ID) {
-            throw "Verified release ID is missing; post-publication verification failed"
-          }
-          $published = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
-          if ([string]$published.id -cne [string]$env:RELEASE_ID -or
-              $published.tag_name -cne $env:RELEASE_TAG -or
-              $published.draft -ne $false) {
-            throw "Post-publication release identity or state check failed"
-          }
+          Write-Host "Authority inputs are locally valid. Transitional workflow will not publish."
