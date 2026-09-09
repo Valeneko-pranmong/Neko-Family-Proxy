@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any
+import zipfile
 
 import pytest
 
@@ -85,11 +86,42 @@ def canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
 
 
-def make_stage(path: Path) -> Path:
+def _make_core_zip(path: Path) -> tuple[bytes, str]:
+    core_file = b"minimal core executable"
+    core_hash = hashlib.sha256(core_file).hexdigest()
+    manifest = {
+        "source_commit": TARGET,
+        "candidate": "test-only",
+        "authority": "test-only",
+        "file_count": 1,
+        "total_bytes": len(core_file),
+        "neko_proxy_core_exe_hash": core_hash,
+        "neko_proxy_core_dll_hash": "0" * 64,
+        "protected_settings_payload_hash": "0" * 64,
+        "redirector_bin_hash": "0" * 64,
+        "nfapi_dll_hash": "0" * 64,
+        "v2ray_sn_exe_hash": "0" * 64,
+        "security": {
+            "runtime_settings_key_files": 0,
+            "plaintext_settings_files": 0,
+            "plaintext_secret_marker_hits": 0,
+            "external_dotnet_dependency": False,
+        },
+        "files": {"NekoProxyCore.exe": core_hash},
+    }
+    manifest_bytes = canonical(manifest)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("canonical-core-manifest.json", manifest_bytes)
+        archive.writestr("NekoProxyCore.exe", core_file)
+    return path.read_bytes(), hashlib.sha256(manifest_bytes).hexdigest()
+
+
+def make_stage(path: Path, *, core_identity: str | None = None) -> Path:
+    core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
         "NekoLauncher.exe": b"launcher",
         "NekoUpdater.exe": b"updater",
-        "NekoProxyCore.zip": b"core",
+        "NekoProxyCore.zip": core_bytes,
     }
     for name, data in payloads.items():
         (path / name).write_bytes(data)
@@ -107,7 +139,9 @@ def make_stage(path: Path) -> Path:
             "artifact_size": len(data),
             "artifact_format": fmt,
             "installed_identity_sha256": (
-                hashlib.sha256(data).hexdigest() if component != "core" else "1" * 64
+                hashlib.sha256(data).hexdigest()
+                if component != "core"
+                else core_identity or actual_core_identity
             ),
         }
     payload = {
@@ -193,6 +227,33 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
         validate(module, stage, FakeExecutor())
 
 
+def test_core_installed_identity_mismatch_fails_before_github_mutation(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path, core_identity="f" * 64),
+            tag=TAG,
+            target_commit=TARGET,
+            executor=executor,
+        )
+    assert not any(call[0] == "gh" for call in executor.calls)
+
+
+def test_malformed_core_bundle_fails_before_github_mutation(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    (stage / "NekoProxyCore.zip").write_bytes(b"not a zip")
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+    assert not any(call[0] == "gh" for call in executor.calls)
+
+
 def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     module = load_module()
     executor = FakeExecutor()
@@ -201,6 +262,7 @@ def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFi
     ) is None
     output = capsys.readouterr().out
     assert "gh release create" in output and "--draft" in output and "--clobber=false" in output
+    assert "--verify-tag" in output
     assert not any(call[0] == "gh" for call in executor.calls)
 
 
@@ -219,7 +281,14 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
     create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])
     upload = next(call for call in executor.calls if call[:3] == ["gh", "release", "upload"])
-    assert [TAG, "--target", TARGET, "--draft", "--prerelease=false"] == create[3:8]
+    assert [
+        TAG,
+        "--target",
+        TARGET,
+        "--verify-tag",
+        "--draft",
+        "--prerelease=false",
+    ] == create[3:9]
     assert "--clobber=false" in upload
     api_calls = [call for call in executor.calls if call[:2] == ["gh", "api"]]
     assert [call[2] for call in api_calls] == [

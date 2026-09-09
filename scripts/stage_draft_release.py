@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from typing import Any, Protocol, Sequence
 
 
@@ -71,10 +72,14 @@ def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _verify_manifest_signature(document: dict[str, Any]) -> Any:
+def _ensure_launcher_import_path() -> None:
     launcher_root = str(Path(__file__).resolve().parents[1] / "launcher")
     if launcher_root not in sys.path:
         sys.path.insert(0, launcher_root)
+
+
+def _verify_manifest_signature(document: dict[str, Any]) -> Any:
+    _ensure_launcher_import_path()
     try:
         from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
         from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
@@ -134,6 +139,27 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         ):
             raise StageDraftReleaseError(f"Manifest descriptor mismatch: {component_name}")
 
+    _ensure_launcher_import_path()
+    try:
+        from neko_launcher.updater.core_manifest_verifier import (
+            verify_canonical_core_bundle,
+        )
+        from neko_launcher.updater.zip_extractor import extract_core_bundle
+
+        with tempfile.TemporaryDirectory(prefix="neko-core-proof-") as extraction_dir:
+            extracted = Path(extraction_dir)
+            extract_core_bundle(assets["NekoProxyCore.zip"], extracted)
+            verification = verify_canonical_core_bundle(extracted)
+    except Exception as error:
+        raise StageDraftReleaseError("Core bundle extraction or verification failed") from error
+    if not verification.valid:
+        raise StageDraftReleaseError("Core bundle verification failed")
+    if (
+        verification.manifest_sha256
+        != release_set.components["core"].installed_identity_sha256
+    ):
+        raise StageDraftReleaseError("Core installed identity mismatch")
+
 
 def validate_staging_preconditions(
     *,
@@ -186,7 +212,19 @@ def stage_draft_release(
         staging_dir=Path(staging_dir), tag=tag, target_commit=target_commit,
         repo_root=repo_root, executor=runner,
     )
-    create = ["gh", "release", "create", tag, "--target", target_commit, "--draft", "--prerelease=false", "--repo", repo]
+    create = [
+        "gh",
+        "release",
+        "create",
+        tag,
+        "--target",
+        target_commit,
+        "--verify-tag",
+        "--draft",
+        "--prerelease=false",
+        "--repo",
+        repo,
+    ]
     if title is not None:
         create.extend(["--title", title])
     if notes is not None:

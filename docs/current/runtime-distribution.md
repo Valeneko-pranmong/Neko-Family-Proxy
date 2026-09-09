@@ -71,8 +71,8 @@ Optional arguments:
 **Staging Preconditions and Guarantees**:
 - The staging directory must contain strictly the exact four required files (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, `release-v2.json`). No extra or untrusted files are permitted in the staging directory.
 - The worktree must be clean and the local Git tag must point to the target commit.
-- Manifest descriptors must match candidate files bit-for-bit.
-- `scripts/stage_draft_release.py` strictly creates an unpublished draft release (`draft=true`, `prerelease=false`) with non-clobbering asset uploads (`--clobber=false`).
+- Manifest descriptors must match candidate files bit-for-bit. Before any GitHub mutation, the script strictly extracts `NekoProxyCore.zip`, verifies its canonical bundle, and binds the verified canonical-manifest SHA-256 to the signed Core installed identity.
+- `scripts/stage_draft_release.py` requires the release tag to exist remotely (`gh release create --verify-tag`), targets the exact approved commit, and strictly creates an unpublished draft release (`draft=true`, `prerelease=false`) with non-clobbering asset uploads (`--clobber=false`). It has no tag-creation or tag-mutation authority.
 - The script captures GitHub's numeric `release_id` and the four numeric `asset_id` bindings, then formats the exact Phase 2 workflow dispatch command.
 - **Safety Boundary**: Staging tooling NEVER final-publishes, NEVER signs manifests, NEVER compiles binaries, and NEVER moves tags.
 
@@ -139,7 +139,7 @@ Launcher resolves `NekoProxyCore.exe` only from the external runtime path above.
 
 ## 6. Current Release Gate Status
 
-- **Gate #2 Status**: **NOT PASSED**. Candidate rebuild after latest implementation, fresh post-smoke remeasurement, offline production Ed25519 signing, local verification, and draft creation remain to be executed under separate release authority. Real staging has NOT been executed.
-- **Gate #3 Status**: **NOT PASSED**. Remote GitHub Actions publication and `/releases/latest` validation have NOT occurred.
-- **Implementation Status**: Two-phase staged-draft publication architecture implementation (`docs/superpowers/plans/2026-09-09-software-update-two-phase-staged-draft-implementation.md`) has completed Tasks 1–4 with per-task C0/I0; Task 5 documentation migration is in progress; Task 6 final branch acceptance has not yet run.
-- **Explicit Boundary**: Documentation does not claim production signing, tag creation, draft release, asset upload, publication, merge, push, deployment, live auto-update completion, Gate #2 clearance, or Gate #3 clearance.
+- **Gate #2 Status**: **NOT PASSED**. There has been no candidate rebuild after the latest implementation, production signing, push, tag, draft creation, or asset upload.
+- **Gate #3 Status**: **NOT PASSED**. Workflow dispatch, remote publication, and `/releases/latest` validation have not occurred.
+- **Implementation Status**: Tasks 1–5 implementation and per-task reviews are complete. Task 6 controller acceptance ran successfully at the pre-fix HEAD: focused release suite 64 passed; full canonical Launcher suite 1710 passed / 35 skipped / 0 failed; Ruff, repository safety, YAML parsing, and `git diff --check` passed. Final architecture clearance remains a required gate; this correction and its re-review are not claimed complete by that earlier evidence.
+- **Explicit Boundary**: Documentation does not claim candidate qualification, production signing, push, tag creation, draft release, asset upload, workflow dispatch, publication, deployment, live auto-update completion, Gate #2 clearance, or Gate #3 clearance.
