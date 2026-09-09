@@ -66,8 +66,8 @@ Software Update on `release/5.1` is governed by the Owner-approved Two-Phase Sta
 - **Engineering and Implementation Status**:
   - Current implementation plan: [`docs/superpowers/plans/2026-09-09-software-update-two-phase-staged-draft-implementation.md`](../superpowers/plans/2026-09-09-software-update-two-phase-staged-draft-implementation.md).
   - Tasks 1–5 implementation and per-task reviews are complete.
-  - Task 6 controller acceptance ran successfully at the pre-fix HEAD: focused release suite 64 passed; full canonical Launcher suite 1710 passed / 35 skipped / 0 failed; Ruff, repository safety, YAML parsing, and `git diff --check` passed.
-  - Final architecture clearance remains required. The earlier acceptance does not claim this correction or its re-review complete.
+  - Task 6 controller acceptance after final-review corrections is green: focused release suite 66 passed / 0 failed; full canonical Launcher with admitted Core fixture 1712 passed / 35 skipped / 0 failed; Ruff PASS; repository safety PASS; all 3 workflow YAML parse PASS; `git diff --check` PASS; worktree clean.
+  - Independent final architecture re-review has not yet run after this fix and remains the last implementation gate (do not claim final engineering pass or Task 6 complete yet).
   - Historical implementation evidence: Earlier 2026-09-08 plan Tasks 1–7 achieved canonical Launcher suite passing 1673 / skipped 35 / failed 0. Stale operative reviews from that cycle are superseded by the two-phase correction implementation.
 - **Release Gates & Explicit Boundary**: Gate #2 remains NOT PASSED. Gate #3 remains NOT PASSED. There has been no candidate rebuild after the latest implementation, production signing, push, tag, draft creation, asset upload, workflow dispatch, or publication. Never claim production release or live update completion. Operational discipline requires Hermes as sole repository mutation executor with dedup checks before dispatch.
 
