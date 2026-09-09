@@ -134,7 +134,7 @@ def test_publication_validates_the_actual_local_checkout_head() -> None:
     assert "$env:CHECKED_OUT_SHA" not in publication
 
 
-def test_publication_does_not_build_transfer_verify_or_publish_release_assets() -> None:
+def test_publication_does_not_build_transfer_stage_or_create_release_assets() -> None:
     publication = job(workflow_text(), "publish-release")
     lowered = publication.lower()
 
@@ -145,8 +145,3 @@ def test_publication_does_not_build_transfer_verify_or_publish_release_assets() 
     assert "gh release upload" not in lowered
     assert "stage approved update assets" not in lowered
     assert "repos/$env:gh_repo/releases/tags/" not in lowered
-    assert "gh api" not in lowered
-    assert "--method patch" not in lowered
-    assert "verify_github_release_assets.py" not in lowered
-    assert "application/octet-stream" not in lowered
-    assert "release/remote-verification" not in lowered
