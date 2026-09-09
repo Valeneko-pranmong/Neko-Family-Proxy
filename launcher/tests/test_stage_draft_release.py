@@ -49,6 +49,7 @@ class FakeExecutor:
         remote_ref: Any = "default",
         remote_tags: dict[str, Any] | None = None,
         releases: list[dict[str, Any]] | None = None,
+        mismatched_asset_size: str | None = None,
     ) -> None:
         self.calls: list[list[str]] = []
         self.dirty = dirty
@@ -59,6 +60,7 @@ class FakeExecutor:
             else remote_ref
         )
         self.remote_tags = remote_tags or {}
+        self.mismatched_asset_size = mismatched_asset_size
         self.releases = (
             [
                 {
@@ -81,6 +83,10 @@ class FakeExecutor:
         elif args[:3] == ["gh", "release", "create"]:
             out = ""
         elif args[:3] == ["gh", "release", "upload"]:
+            self.uploaded_sizes = {
+                Path(value).name: Path(value).stat().st_size
+                for value in args[4 : args.index("--clobber=false")]
+            }
             out = ""
         elif args[:3] == ["gh", "api", "repos/"]:
             out = ""
@@ -103,7 +109,15 @@ class FakeExecutor:
                         "draft": True,
                         "prerelease": False,
                         "assets": [
-                            {"id": i + 10, "name": name}
+                            {
+                                "id": i + 10,
+                                "name": name,
+                                "size": (
+                                    self.uploaded_sizes[name] + 1
+                                    if name == self.mismatched_asset_size
+                                    else self.uploaded_sizes[name]
+                                ),
+                            }
                             for i, name in enumerate(
                                 ("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
                             )
@@ -462,6 +476,22 @@ def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFi
         f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}"
     ]
     assert not any(call[:2] == ["gh", "release"] for call in executor.calls)
+
+
+def test_readback_asset_size_mismatch_emits_no_evidence_or_dispatch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load_module()
+    executor = FakeExecutor(mismatched_asset_size="NekoUpdater.exe")
+    with pytest.raises(module.StageDraftReleaseError, match="asset size"):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path),
+            tag=TAG,
+            target_commit=TARGET,
+            executor=executor,
+        )
+    assert capsys.readouterr().out == ""
+    assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
 
 
 def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None:

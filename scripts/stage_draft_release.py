@@ -346,9 +346,15 @@ def stage_draft_release(
         raise StageDraftReleaseError("Draft readback assets missing")
     for asset in raw_assets:
         if isinstance(asset, dict) and asset.get("name") in REQUIRED_STAGE_ASSETS:
-            name, asset_id = asset["name"], asset.get("id")
+            name, asset_id, asset_size = asset["name"], asset.get("id"), asset.get("size")
             if name in bindings or type(asset_id) is not int or asset_id <= 0:
                 raise StageDraftReleaseError("Duplicate or invalid required asset binding")
+            if (
+                type(asset_size) is not int
+                or asset_size <= 0
+                or asset_size != assets[name].stat().st_size
+            ):
+                raise StageDraftReleaseError("Invalid or mismatched required asset size")
             bindings[name] = asset_id
     if set(bindings) != set(REQUIRED_STAGE_ASSETS):
         raise StageDraftReleaseError("Draft readback does not contain each required asset exactly once")
