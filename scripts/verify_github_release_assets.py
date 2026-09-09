@@ -16,14 +16,14 @@ from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
 EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
-FIRST_RELEASE_EXPECTED_TAG = "v5.1.0a3"
-FIRST_RELEASE_EXPECTED_CHANNEL = "stable"
-FIRST_RELEASE_EXPECTED_SEQUENCE = 2
-FIRST_RELEASE_EXPECTED_MIN_SEQUENCE = 1
-FIRST_RELEASE_EXPECTED_RELEASE_ID = "stable-0002"
-FIRST_RELEASE_EXPECTED_COMPONENT_VERSION = "5.1.0a3"
-FIRST_RELEASE_EXPECTED_PROTOCOL_MIN = 1
-FIRST_RELEASE_EXPECTED_PROTOCOL_MAX = 1
+STABLE_RELEASE_EXPECTED_TAG = "v5.1.0"
+STABLE_RELEASE_EXPECTED_CHANNEL = "stable"
+STABLE_RELEASE_EXPECTED_SEQUENCE = 3
+STABLE_RELEASE_EXPECTED_MIN_SEQUENCE = 1
+STABLE_RELEASE_EXPECTED_RELEASE_ID = "stable-0003"
+STABLE_RELEASE_EXPECTED_COMPONENT_VERSION = "5.1.0"
+STABLE_RELEASE_EXPECTED_PROTOCOL_MIN = 1
+STABLE_RELEASE_EXPECTED_PROTOCOL_MAX = 1
 
 REQUIRED_UPDATE_ASSETS = (
     "NekoLauncher.exe",
@@ -229,32 +229,32 @@ def verify_github_release_assets(
 
     if enforce_first_release:
         invariant_checks = (
-            (release_set_v2.channel == FIRST_RELEASE_EXPECTED_CHANNEL, "channel"),
-            (release_set_v2.release_sequence == FIRST_RELEASE_EXPECTED_SEQUENCE, "release_sequence"),
+            (release_set_v2.channel == STABLE_RELEASE_EXPECTED_CHANNEL, "channel"),
+            (release_set_v2.release_sequence == STABLE_RELEASE_EXPECTED_SEQUENCE, "release_sequence"),
             (
-                release_set_v2.minimum_supported_sequence == FIRST_RELEASE_EXPECTED_MIN_SEQUENCE,
+                release_set_v2.minimum_supported_sequence == STABLE_RELEASE_EXPECTED_MIN_SEQUENCE,
                 "minimum_supported_sequence",
             ),
-            (release_set_v2.release_id == FIRST_RELEASE_EXPECTED_RELEASE_ID, "release_id"),
+            (release_set_v2.release_id == STABLE_RELEASE_EXPECTED_RELEASE_ID, "release_id"),
             (
-                release_set_v2.updater_protocol.minimum == FIRST_RELEASE_EXPECTED_PROTOCOL_MIN
-                and release_set_v2.updater_protocol.maximum == FIRST_RELEASE_EXPECTED_PROTOCOL_MAX,
+                release_set_v2.updater_protocol.minimum == STABLE_RELEASE_EXPECTED_PROTOCOL_MIN
+                and release_set_v2.updater_protocol.maximum == STABLE_RELEASE_EXPECTED_PROTOCOL_MAX,
                 "updater_protocol",
             ),
         )
         for valid, name in invariant_checks:
             if not valid:
                 raise GitHubReleaseAssetsVerificationError(
-                    f"First-release {name} invariant mismatch"
+                    f"Stable-release {name} invariant mismatch"
                 )
         for component_name in ("launcher", "updater", "core"):
             component = release_set_v2.components.get(component_name)
-            if component is None or component.version != FIRST_RELEASE_EXPECTED_COMPONENT_VERSION:
+            if component is None or component.version != STABLE_RELEASE_EXPECTED_COMPONENT_VERSION:
                 raise GitHubReleaseAssetsVerificationError(
-                    f"First-release {component_name} version invariant mismatch"
+                    f"Stable-release {component_name} version invariant mismatch"
                 )
-        if expected_tag != FIRST_RELEASE_EXPECTED_TAG:
-            raise GitHubReleaseAssetsVerificationError("First-release tag invariant mismatch")
+        if expected_tag != STABLE_RELEASE_EXPECTED_TAG:
+            raise GitHubReleaseAssetsVerificationError("Stable-release tag invariant mismatch")
     elif release_set_v2.channel != "stable":
         raise GitHubReleaseAssetsVerificationError(
             f"Release channel must be 'stable', got {release_set_v2.channel!r}"

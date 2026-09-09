@@ -24,7 +24,7 @@ REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
     "NekoProxyCore.zip",
     "release-v2.json",
 )
-_TAG = "v5.1.0a3"
+_TAG = "v5.1.0"
 _COMPONENTS = {
     "launcher": ("NekoLauncher.exe", "raw-pe-v1"),
     "updater": ("NekoUpdater.exe", "raw-pe-v1"),
@@ -112,21 +112,21 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
     if not isinstance(document, dict) or _canonical_json(document) != data:
         raise StageDraftReleaseError("release-v2.json is not canonical JSON")
     if document.get("key_id") != "neko-update-prod-1":
-        raise StageDraftReleaseError("First-release key authority mismatch")
+        raise StageDraftReleaseError("Stable-release key authority mismatch")
     release_set = _verify_manifest_signature(document)
     if (
         release_set.channel != "stable"
-        or release_set.release_sequence != 2
+        or release_set.release_sequence != 3
         or release_set.minimum_supported_sequence != 1
-        or release_set.release_id != "stable-0002"
+        or release_set.release_id != "stable-0003"
     ):
-        raise StageDraftReleaseError("First-release authority mismatch")
+        raise StageDraftReleaseError("Stable-release authority mismatch")
     if (
         release_set.updater_protocol.minimum != 1
         or release_set.updater_protocol.maximum != 1
         or tag != _TAG
     ):
-        raise StageDraftReleaseError("First-release protocol or tag mismatch")
+        raise StageDraftReleaseError("Stable-release protocol or tag mismatch")
     if set(release_set.components) != set(_COMPONENTS):
         raise StageDraftReleaseError("Manifest component set mismatch")
     for component_name, (file_name, file_format) in _COMPONENTS.items():
@@ -134,7 +134,7 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         file_data = assets[file_name].read_bytes()
         digest = hashlib.sha256(file_data).hexdigest()
         if (
-            descriptor.version != "5.1.0a3"
+            descriptor.version != "5.1.0"
             or descriptor.artifact_id != file_name
             or descriptor.artifact_sha256 != digest
             or descriptor.artifact_size != len(file_data)

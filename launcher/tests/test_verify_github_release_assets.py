@@ -38,20 +38,20 @@ def load_verifier_module():
 def create_test_release_bundle(
     tmp_path: Path,
     *,
-    tag_name: str = "v5.1.0a3",
+    tag_name: str = "v5.1.0",
     target_commit: str = "0123456789abcdef0123456789abcdef01234567",
     draft: bool = True,
     prerelease: bool = False,
     include_extra_asset: bool = False,
     key_id: str = TEST_KEY_ID,
-    sequence: int = 2,
+    sequence: int = 3,
     minimum_supported_sequence: int = 1,
-    release_id: str = "stable-0002",
+    release_id: str = "stable-0003",
     proto_min: int = 1,
     proto_max: int = 1,
-    launcher_version: str = "5.1.0a3",
-    updater_version: str = "5.1.0a3",
-    core_version: str = "5.1.0a3",
+    launcher_version: str = "5.1.0",
+    updater_version: str = "5.1.0",
+    core_version: str = "5.1.0",
     channel: str = "stable",
 ) -> dict[str, Any]:
     download_dir = tmp_path / "download"
@@ -204,6 +204,7 @@ def test_verify_assets_succeeds_with_in_repo_production_key_omitting_public_key_
     ("bundle_kwargs", "message"),
     [
         ({"sequence": 1, "release_id": "stable-0001"}, "release_sequence"),
+        ({"sequence": 2, "release_id": "stable-0002"}, "release_sequence"),
         ({"release_id": "stable-0001"}, "release_id"),
         ({"release_id": "stable-9999"}, "release_id"),
         ({"minimum_supported_sequence": 2}, "minimum_supported_sequence"),
@@ -211,7 +212,7 @@ def test_verify_assets_succeeds_with_in_repo_production_key_omitting_public_key_
         ({"launcher_version": "5.1.0a2"}, "launcher version"),
         ({"updater_version": "5.1.0a2"}, "updater version"),
         ({"core_version": "5.1.0a2"}, "core version"),
-        ({"tag_name": "v5.1.0a2"}, "First-release tag"),
+        ({"tag_name": "v5.1.0a2"}, "Stable-release tag"),
     ],
 )
 def test_verify_assets_fails_first_release_invariant(
