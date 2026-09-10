@@ -12,25 +12,70 @@ This architecture separates the readiness of a release candidate from its user r
 - **Historical:** v5.1.1 remains a `PUBLISHED_NOT_ACCEPTED HOLD C0/I1` state and must not be rewritten.
 - **Current Target:** v5.1.2 sequence 6 stable-0006 at source commit `e867dea`.
 
-*Migration Note:* v5.1.2 adopts this staged rollout architecture. v5.1.1 remains historical.
+*Historical Compatibility Note:* v5.1.0 and v5.1.1 utilized an earlier direct-to-stable release workflow and are considered historical baseline. v5.1.2 adopts this staged rollout architecture. Historical releases are immutable and never rewritten.
+
+### 2.1 Explicit Invariant Table for v5.1.2
+
+| Property | Target Invariant |
+| --- | --- |
+| version | 5.1.2 |
+| tag | v5.1.2 |
+| release_sequence | 6 |
+| release_id | stable-0006 |
+| minimum_supported_sequence | 1 |
+| channel | stable |
+| mandatory | false |
+| updater protocol | 1..1 |
+| key id | neko-update-prod-1 |
+
+**Hosted Assets (Exact Component Names):**
+1. `NekoLauncher.exe`
+2. `NekoUpdater.exe`
+3. `NekoProxyCore.zip`
+4. `release-v2.json`
 
 ## 3. Required Lifecycle for Patch Releases
 
 1. **Source Acceptance:** Source commit is approved.
-2. **Build Frozen Candidate:** Build process generates exact artifacts.
-3. **Gate2:** Metadata validation against artifacts.
-4. **Immutable Tag:** Create an exact tag for the source commit.
-5. **Exact-Tag CI Gate:** CI builds, tests, and smoke verifies the exact tag.
-6. **Staged Prerelease:** Create a GitHub prerelease containing exactly four signed assets.
+2. **Build Frozen Candidate:** Build process generates exact artifacts (frozen bytes built first).
+3. **Gate2:** Metadata validation measures the exact frozen bytes.
+4. **Sign:** `release-v2.json` is signed against those exact bytes before any staged upload. No asset changes are allowed afterward.
+5. **Immutable Tag:** Create an exact tag for the source commit.
+6. **Exact-Tag CI Gate Acceptance:** CI runs against the exact tag. This requires:
+    - Windows canonical non-integration test suite.
+    - Build-installer/package jobs.
+    - Launcher packaged smoke tests.
+    - Updater self-check tests.
+    - Core update-preflight/manifest verification as applicable.
+    - *Failure Transition:* Failed or skipped required jobs result in immediate `HOLD`. No staged publication occurs.
+7. **Staged Prerelease Publication:** Create a GitHub prerelease containing exactly the four signed assets.
     - **Visibility Invariant:** This prerelease MUST NOT become `/releases/latest` and MUST NOT be visible to stable clients.
-7. **Hosted Verification:** Independent verification using immutable release IDs/asset IDs.
-    - **Discovery Invariant:** Prerelease verification cannot rely on `/releases/latest`. It MUST use the immutable numeric release ID, exact tag, and asset IDs.
-8. **READY_FOR_ROLLOUT:** Prerelease is fully verified and staged.
-9. **Rollout (Promotion):** Explicit rollout action promotes the verified prerelease to stable/latest.
-    - **Immutability Invariant:** This step requires NO rebuilding, resigning, retagging, or replacing assets. Hashes must remain identical. Rollout is the activation event for user update discovery.
-10. **Rollout Verification:** Final confirmation that `/releases/latest` resolves to the promoted release.
+8. **Staged Hosted Verification:** Independent verification using immutable release IDs. Criteria:
+    - Release must be `prerelease=true`, `draft=false`, and NOT returned by `/releases/latest`.
+    - Verification uses immutable numeric release ID, exact tag, and exact asset IDs.
+    - Run the unmodified verifier, complete signature verification, Core identity/provenance checks, and execute a resolver-equivalent path that does not depend on latest discovery.
+9. **READY_FOR_ROLLOUT:** Prerelease is fully verified and staged.
+    - *Release-Ready Definition:* `HOSTED_VERIFIED_READY_FOR_ROLLOUT` means "release complete and ready" but NOT user rollout. User rollout requires a separate explicit owner/PM rollout task.
+10. **Rollout (Promotion):** Explicit rollout action promotes the verified prerelease to stable/latest.
+    - Only a `HOSTED_VERIFIED_READY_FOR_ROLLOUT` release can be promoted.
+    - Promotion only flips release metadata needed for stable/latest (`prerelease=false`, `make_latest="true"`).
+    - **Immutability Invariant:** This step must re-read immutable asset IDs, hashes, and sizes before and after, rejecting any drift. Hashes must remain identical.
+11. **Rollout Verification (Gate3):** Final read-only Gate3 must confirm:
+    - `/releases/latest` successfully resolves the release.
+    - Production `GitHubLatestReleaseGateway` and `GitHubReleaseResolver` accept the exact same bytes, manifest, and sequence verified during staging.
 
-## 4. Ledger States
+## 4. Failure and Hold Transitions
+
+Failure at any phase requires transitioning to a terminal `FAILED` or `HOLD` state. A published or tagged failed release is never repaired in place; it must be superseded by the next patch version and sequence number.
+
+- **Gate2 Failure:** Aborts release. Fix code and re-initiate new source commit.
+- **Exact-Tag CI Failure:** Any failed or skipped required CI job results in `HOLD`. No staged publication.
+- **Staged Publication Failure:** Network or API failure during upload. If partial, tag may be left but must be marked as `HOLD` or `FAILED`.
+- **Staged Verification Failure:** If the staged release fails verification (e.g., signature mismatch, missing asset), it is marked `HOLD`.
+- **Rollout Promotion Failure:** If the API fails to flip the metadata or drift is detected in asset hashes/IDs, abort immediately to `HOLD`.
+- **Post-Rollout Verification (Gate3) Failure:** If production gateways fail to resolve `/releases/latest` or asset hashes differ, manual emergency mitigation is required (e.g. unpublishing) and a new sequence must be prepared.
+
+## 5. Ledger States
 
 The release lifecycle tracks these defined ledger states:
 
@@ -38,21 +83,22 @@ The release lifecycle tracks these defined ledger states:
 - **GATE2_PASS:** Artifacts pass Gate2 metadata validation.
 - **TAG_CI_PASS:** Exact-tag CI, build, test, and smoke checks pass.
 - **STAGED_PRERELEASE:** GitHub prerelease is created with the exact 4 signed assets.
-- **HOSTED_VERIFIED_READY_FOR_ROLLOUT:** Staged prerelease independently verified via immutable IDs.
+- **HOSTED_VERIFIED_READY_FOR_ROLLOUT:** Staged prerelease independently verified via immutable IDs. Release complete but not rolled out.
 - **ROLLED_OUT_STABLE:** Prerelease promoted to stable (`/releases/latest`).
-- **ROLLOUT_GATE3_PASS:** Post-rollout verification confirms client discovery via `/releases/latest`.
-- **FAILED / HOLD (variants):** State indicating failure at any step or a deliberate hold (e.g., `PUBLISHED_NOT_ACCEPTED HOLD C0/I1`).
+- **ROLLOUT_GATE3_PASS:** Post-rollout verification confirms client discovery via `/releases/latest` and asset hash/manifest integrity.
+- **FAILED / HOLD (variants):** State indicating failure at any step or a deliberate hold.
 
-## 5. Client Discovery Behavior
+## 6. Testing
+
+The staging and rollout architecture requires specific test coverage:
+- **Predicate Tests:** Unit tests for release-state predicates (e.g., verifying a release is `prerelease=true` and `draft=false`).
+- **Verifier Tests:** Workflow and staging verifier tests validating signature and provenance checks on pre-release assets.
+- **Negative Discovery Tests:** Tests confirming negative discovery on `/releases/latest` (staged releases must not resolve to latest).
+- **Drift Tests:** Immutable-ID drift tests ensuring asset IDs and hashes match exactly before and after promotion.
+- **End-to-End Verification:** End-to-end dry-run and read-only verification of the full rollout pipeline.
+
+## 7. Client Discovery Behavior
 Stable clients poll `/releases/latest` or equivalent stable feeds to discover updates. During the `STAGED_PRERELEASE` phase, clients will not discover the update. Only after transitioning to `ROLLED_OUT_STABLE` does the activation event occur, making the update visible to stable clients.
 
-## 6. Manifest, Signature, and Asset Immutability
+## 8. Manifest, Signature, and Asset Immutability
 All assets, including signatures and update manifests, are frozen at the `STAGED_PRERELEASE` step. Promotion to stable is purely a metadata state change on the GitHub Release object (unchecking the prerelease flag and making it the latest release). Since the release body, tag, and assets are strictly immutable, security and provenance rules are maintained end-to-end.
-
-## 7. Security and Provenance Rules
-- No asset is allowed to change hash after `GATE2_PASS`.
-- Signatures applied before `STAGED_PRERELEASE` must be verifiable against the final assets.
-- Hosted verification strictly targets specific asset IDs ensuring no silent replacement attacks.
-
-## 8. Rollback and Supersession Behavior
-If an issue is found in `STAGED_PRERELEASE`, the release transitions to a `FAILED` or `HOLD` variant, and a new sequence is initiated (e.g., moving to the next patch version). Rollbacks from `ROLLED_OUT_STABLE` require issuing a new patch release that supersedes the bad release, following this same staged rollout architecture. Historical releases are never rewritten.
