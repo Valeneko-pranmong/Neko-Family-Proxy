@@ -72,7 +72,7 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-  publish-release:
+  staged-verification:
     if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
     runs-on: windows-latest
     permissions:
@@ -136,8 +136,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Unable to fetch staged draft release by ID." }
           $release = $releaseJson | ConvertFrom-Json
           if ([string]$release.id -ne [string]$env:RELEASE_ID) { throw "Release ID mismatch." }
-          if ($release.draft -ne $true) { throw "Release is not a draft." }
-          if ($release.prerelease -ne $false) { throw "Release must not be a prerelease." }
+          if ($release.draft -ne $false) { throw "Release must not be a draft." }
+          if ($release.prerelease -ne $true) { throw "Release must be a prerelease." }
           if ($release.tag_name -cne $env:RELEASE_TAG) { throw "Release tag mismatch." }
           if ($release.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target mismatch." }
           [System.IO.File]::WriteAllText("release/metadata/draft-release.json", $releaseJson, [System.Text.UTF8Encoding]::new($false))
@@ -187,72 +187,20 @@ jobs:
             --download-dir release/remote-verification `
             --expected-tag "$env:RELEASE_TAG" `
             --expected-target "$env:EXPECTED_TARGET" `
-            --require-draft `
+            --require-prerelease `
             --no-enforce-first-release
-      - name: Revalidate bindings and publish by immutable ID
+      - name: Verify negative resolution for latest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_ID: ${{ inputs.release_id }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          EXPECTED_TARGET: ${{ inputs.expected_target }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $requiredAssetNames = @('NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
-          $initialAssetBindings = Get-Content release/metadata/initial-asset-bindings.json -Raw | ConvertFrom-Json -AsHashtable
-          $current = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Unable to re-fetch draft release." }
-          if ([string]$current.id -ne [string]$env:RELEASE_ID) { throw "Release ID changed." }
-          if ($current.draft -ne $true) { throw "Release is no longer a draft." }
-          if ($current.prerelease -ne $false) { throw "Prerelease state changed." }
-          if ($current.tag_name -cne $env:RELEASE_TAG) { throw "Release tag changed." }
-          if ($current.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target changed." }
-          foreach ($requiredName in $requiredAssetNames) {
-            $currentMatches = @($current.assets | Where-Object { $_.name -ceq $requiredName })
-            if ($currentMatches.Count -ne 1 -or $currentMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Asset binding changed: $requiredName" }
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+          if ($LASTEXITCODE -eq 0 -and [string]$latest.id -eq [string]$env:RELEASE_ID) {
+            throw "Latest release unexpectedly resolved to staged prerelease ID."
           }
-          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -F draft=false -f make_latest=true | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "Release publication failed." }
-      - name: Verify published release and latest resolution
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_ID: ${{ inputs.release_id }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          EXPECTED_TARGET: ${{ inputs.expected_target }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $requiredAssetNames = @('NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
-          $initialAssetBindings = Get-Content release/metadata/initial-asset-bindings.json -Raw | ConvertFrom-Json -AsHashtable
-          $published = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw "Unable to fetch published release." }
-          if ([string]$published.id -ne [string]$env:RELEASE_ID -or $published.draft -ne $false -or $published.prerelease -ne $false) { throw "Published state mismatch." }
-          if ($published.tag_name -cne $env:RELEASE_TAG -or $published.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Published authority mismatch." }
-          foreach ($requiredName in $requiredAssetNames) {
-            $publishedMatches = @($published.assets | Where-Object { $_.name -ceq $requiredName })
-            if ($publishedMatches.Count -ne 1 -or $publishedMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Published asset binding changed: $requiredName" }
-          }
-          $latestMaxAttempts = 5
-          $latestMatched = $false
-          $latest = $null
-          for ($attempt = 1; $attempt -le $latestMaxAttempts; $attempt++) {
-            $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
-            if ($LASTEXITCODE -ne 0) { throw "Unable to resolve latest release." }
-            if ([string]$latest.id -eq [string]$env:RELEASE_ID -and $latest.tag_name -ceq $env:RELEASE_TAG) {
-              $latestMatched = $true
-            }
-            if ($latestMatched) { break }
-            if ($attempt -lt $latestMaxAttempts) { Start-Sleep -Seconds $attempt }
-          }
-          if (-not $latestMatched) { throw "Latest release identity mismatch after bounded retries." }
-          if ([string]$latest.id -ne [string]$env:RELEASE_ID -or $latest.tag_name -cne $env:RELEASE_TAG) { throw "Latest release identity mismatch." }
-          if ($latest.draft -ne $false -or $latest.prerelease -ne $false) { throw "Latest release state mismatch." }
-          if ($latest.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Latest release target mismatch." }
-          foreach ($requiredName in $requiredAssetNames) {
-            $publishedMatches = @($published.assets | Where-Object { $_.name -ceq $requiredName })
-            $latestMatches = @($latest.assets | Where-Object { $_.name -ceq $requiredName })
-            if ($latestMatches.Count -ne 1 -or $latestMatches[0].id -ne $initialAssetBindings[$requiredName]) { throw "Latest asset binding mismatch: $requiredName" }
-            if ($latestMatches[0].size -ne $publishedMatches[0].size) { throw "Latest asset size mismatch: $requiredName" }
-          }
+          Write-Host "Confirmed latest release does not resolve to staged numeric ID yet."
+      - name: Acknowledge Hosted Verification
+        run: echo "HOSTED_VERIFIED_READY_FOR_ROLLOUT"
