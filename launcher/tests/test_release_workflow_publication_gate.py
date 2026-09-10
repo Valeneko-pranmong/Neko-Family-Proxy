@@ -63,6 +63,7 @@ def test_dispatch_has_only_immutable_publication_authority_inputs() -> None:
 
     expected_contract = {
         "publish_release": {"required": "true", "type": "boolean", "default": "false"},
+        "rollout_release": {"required": "true", "type": "boolean", "default": "false"},
         "release_id": {"required": "true", "type": "string", "default": None},
         "release_tag": {"required": "true", "type": "string", "default": None},
         "expected_target": {"required": "true", "type": "string", "default": None},
@@ -146,3 +147,47 @@ def test_publication_does_not_build_transfer_stage_or_create_release_assets() ->
     assert "gh release upload" not in lowered
     assert "stage approved update assets" not in lowered
     assert "repos/$env:gh_repo/releases/tags/" not in lowered
+
+def test_rollout_job_is_independent_and_manually_authorized() -> None:
+    rollout = job(workflow_text(), "rollout-stable")
+
+    assert not re.search(r"(?m)^\s+needs:\s*(?:build-installer|staged-verification)\s*$", rollout)
+    assert scalar(rollout, "if") == (
+        "github.event_name == 'workflow_dispatch' && inputs.rollout_release == true"
+    )
+    assert scalar(indented_block(rollout, "permissions", 4), "contents") == "write"
+
+
+def test_rollout_locally_validates_authority_inputs_and_immutability() -> None:
+    rollout = job(workflow_text(), "rollout-stable")
+
+    for name in ("release_id", "release_tag", "expected_target"):
+        assert f"${{{{ inputs.{name} }}}}" in rollout
+    assert "Valeneko-pranmong/Neko-Family-Proxy" in rollout
+    assert "^[0-9]+$" in rollout
+    assert ".ToLowerInvariant()" in rollout
+    assert "gh api" in rollout
+    assert "-notmatch" in rollout
+    assert "-cne" in rollout
+
+
+def test_rollout_does_not_build_transfer_stage_or_create_release_assets() -> None:
+    rollout = job(workflow_text(), "rollout-stable")
+    lowered = rollout.lower()
+
+    assert "pyinstaller" not in lowered
+    assert ".spec" not in lowered
+    assert "actions/download-artifact" not in lowered
+    assert "gh release create" not in lowered
+    assert "gh release upload" not in lowered
+    assert "stage approved update assets" not in lowered
+    assert "releases/assets/" not in lowered
+
+
+def test_rollout_patches_release_to_latest() -> None:
+    rollout = job(workflow_text(), "rollout-stable")
+
+    assert "PATCH" in rollout
+    assert "prerelease=false" in rollout
+    assert "make_latest=true" in rollout
+    assert "$env:RELEASE_ID" in rollout
