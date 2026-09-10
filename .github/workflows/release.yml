@@ -20,6 +20,11 @@ on:
         description: Expected 40-character commit SHA of target_commitish
         required: true
         type: string
+      rollout_release:
+        description: Authorize rollout of the staged prerelease to stable
+        required: true
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -204,3 +209,119 @@ jobs:
           Write-Host "Confirmed latest release does not resolve to staged numeric ID yet."
       - name: Acknowledge Hosted Verification
         run: echo "HOSTED_VERIFIED_READY_FOR_ROLLOUT"
+
+  rollout-stable:
+    if: github.event_name == 'workflow_dispatch' && inputs.rollout_release == true
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch and verify immutable prerelease for rollout
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_TARGET: ${{ inputs.expected_target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GH_REPO -cne 'Valeneko-pranmong/Neko-Family-Proxy') { throw "Rollout is restricted to the canonical repository." }
+          if ($env:RELEASE_ID -notmatch '^[0-9]+$' -or [decimal]$env:RELEASE_ID -le 0) { throw "Release ID must be a positive numeric value." }
+          $releaseJson = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to fetch staged release by ID." }
+          $release = $releaseJson | ConvertFrom-Json
+          if ([string]$release.id -ne [string]$env:RELEASE_ID) { throw "Release ID mismatch." }
+          if ($release.draft -ne $false) { throw "Release must not be a draft." }
+          if ($release.prerelease -ne $true) { throw "Release must be a prerelease." }
+          if ($release.tag_name -cne $env:RELEASE_TAG) { throw "Release tag mismatch." }
+          if ($release.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target mismatch." }
+
+          # Capture asset sizes/IDs to prevent drift
+          $requiredAssetNames = @('NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
+          $preRolloutAssets = @{}
+          foreach ($requiredName in $requiredAssetNames) {
+            $matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })
+            if ($matches.Count -ne 1) { throw "Required asset must occur exactly once: $requiredName" }
+            $preRolloutAssets[$requiredName] = @{
+              id = [long]$matches[0].id
+              size = [long]$matches[0].size
+            }
+          }
+          $preRolloutAssets | ConvertTo-Json | Set-Content pre-rollout-assets.json -Encoding utf8
+
+      - name: Promote prerelease to stable rollout
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID" --method PATCH -F prerelease=false -f make_latest=true
+          if ($LASTEXITCODE -ne 0) { throw "Unable to promote release to stable." }
+          Write-Host "Rollout metadata promotion complete."
+
+      - name: Verify post-rollout immutability and exact assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseJson = gh api "repos/$env:GH_REPO/releases/$env:RELEASE_ID"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to fetch promoted release by ID." }
+          $release = $releaseJson | ConvertFrom-Json
+          if ($release.draft -ne $false) { throw "Release must not be a draft after rollout." }
+          if ($release.prerelease -ne $false) { throw "Release must not be a prerelease after rollout." }
+
+          $preRolloutAssets = Get-Content pre-rollout-assets.json -Raw | ConvertFrom-Json
+          foreach ($prop in $preRolloutAssets.psobject.properties) {
+            $name = $prop.Name
+            $expectedId = $prop.Value.id
+            $expectedSize = $prop.Value.size
+            $matches = @($release.assets | Where-Object { $_.name -ceq $name })
+            if ($matches.Count -ne 1) { throw "Post-rollout missing asset: $name" }
+            if ([long]$matches[0].id -ne $expectedId) { throw "Post-rollout asset ID drift for $name" }
+            if ([long]$matches[0].size -ne $expectedSize) { throw "Post-rollout asset size drift for $name" }
+          }
+          Write-Host "Post-rollout exact asset verification passed."
+
+      - name: Gate3 Latest Resolver Validation
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $maxAttempts = 10
+          $attempt = 1
+          $resolved = $false
+          while ($attempt -le $maxAttempts) {
+            Write-Host "Attempt $attempt of $maxAttempts: Resolving /releases/latest"
+            $latestJson = gh api "repos/$env:GH_REPO/releases/latest"
+            if ($LASTEXITCODE -eq 0) {
+              $latest = $latestJson | ConvertFrom-Json
+              if ([string]$latest.id -eq [string]$env:RELEASE_ID -and $latest.tag_name -ceq $env:RELEASE_TAG) {
+                $resolved = $true
+                break
+              }
+            }
+            Start-Sleep -Seconds 5
+            $attempt++
+          }
+          if (-not $resolved) { throw "Gate3 timeout: /releases/latest did not resolve to rollout ID $env:RELEASE_ID and tag $env:RELEASE_TAG" }
+
+          # Final gate3 asset check
+          $preRolloutAssets = Get-Content pre-rollout-assets.json -Raw | ConvertFrom-Json
+          foreach ($prop in $preRolloutAssets.psobject.properties) {
+            $name = $prop.Name
+            $expectedSize = $prop.Value.size
+            $matches = @($latest.assets | Where-Object { $_.name -ceq $name })
+            if ($matches.Count -ne 1) { throw "Gate3 missing asset: $name" }
+            if ([long]$matches[0].size -ne $expectedSize) { throw "Gate3 asset size drift for $name" }
+          }
+          Write-Host "Gate3 rollout accepted."

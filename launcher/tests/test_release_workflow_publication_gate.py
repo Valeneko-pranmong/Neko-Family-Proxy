@@ -53,6 +53,7 @@ def test_dispatch_has_only_immutable_publication_authority_inputs() -> None:
         "release_id",
         "release_tag",
         "expected_target",
+        "rollout_release",
     }
     assert {
         "core_artifact_path",
