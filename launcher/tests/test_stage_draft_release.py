@@ -50,10 +50,12 @@ class FakeExecutor:
         remote_tags: dict[str, Any] | None = None,
         releases: list[dict[str, Any]] | None = None,
         mismatched_asset_size: str | None = None,
+        prerelease: bool = False,
     ) -> None:
         self.calls: list[list[str]] = []
         self.dirty = dirty
         self.wrong_tag = wrong_tag
+        self.prerelease = prerelease
         self.remote_ref = (
             {"object": {"type": "commit", "sha": TARGET}}
             if remote_ref == "default"
@@ -107,7 +109,7 @@ class FakeExecutor:
                         "tag_name": TAG,
                         "target_commitish": TARGET,
                         "draft": True,
-                        "prerelease": False,
+                        "prerelease": self.prerelease,
                         "assets": [
                             {
                                 "id": i + 10,
@@ -535,6 +537,31 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert collection_call[3:] == ["--paginate", "--slurp"]
     assert not any("/releases/tags/" in call[2] for call in api_calls)
     assert not any("workflow" in part for call in executor.calls for part in call)
+
+
+def test_execution_stages_with_prerelease_semantics(tmp_path: Path) -> None:
+    module = load_module()
+    executor = FakeExecutor(prerelease=True)
+    evidence = module.stage_draft_release(
+        staging_dir=make_stage(tmp_path), tag=TAG, target_commit=TARGET, as_prerelease=True, executor=executor
+    )
+    assert evidence.release_id == 901
+    create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])
+    assert "--prerelease=true" in create
+
+def test_execution_rejects_prerelease_mismatch_during_readback(tmp_path: Path) -> None:
+    module = load_module()
+    # Mock returns prerelease=False, but we asked for True
+    executor = FakeExecutor(prerelease=False)
+    with pytest.raises(module.StageDraftReleaseError, match="Draft readback identity or state mismatch"):
+        module.stage_draft_release(
+            staging_dir=make_stage(tmp_path), tag=TAG, target_commit=TARGET, as_prerelease=True, executor=executor
+        )
+
+def test_argument_parsing_as_prerelease() -> None:
+    module = load_module()
+    args = module.parse_args(["--staging-dir", "candidate", "--tag", TAG, "--target-commit", TARGET, "--as-prerelease"])
+    assert args.as_prerelease is True
 
 
 @pytest.mark.parametrize("matches", [0, 2])

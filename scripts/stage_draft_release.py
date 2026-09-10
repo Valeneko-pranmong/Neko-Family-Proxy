@@ -247,6 +247,7 @@ def stage_draft_release(
     target_commit: str,
     title: str | None = None,
     notes: str | None = None,
+    as_prerelease: bool = False,
     dry_run: bool = False,
     executor: CommandExecutor | None = None,
 ) -> StagedDraftEvidence | None:
@@ -268,7 +269,7 @@ def stage_draft_release(
         target_commit,
         "--verify-tag",
         "--draft",
-        "--prerelease=false",
+        f"--prerelease={str(as_prerelease).lower()}",
         "--repo",
         CANONICAL_REPO,
     ]
@@ -337,7 +338,7 @@ def stage_draft_release(
         or release.get("tag_name") != tag
         or release.get("target_commitish", "").lower() != target_commit.lower()
         or release.get("draft") is not True
-        or release.get("prerelease") is not False
+        or release.get("prerelease") is not as_prerelease
     ):
         raise StageDraftReleaseError("Draft readback identity or state mismatch")
     bindings: dict[str, int] = {}
@@ -375,6 +376,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-commit", required=True)
     parser.add_argument("--title")
     parser.add_argument("--notes")
+    parser.add_argument("--as-prerelease", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
