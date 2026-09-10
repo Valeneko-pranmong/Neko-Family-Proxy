@@ -301,3 +301,55 @@ def test_gateway_fetch_by_id_rejects_draft(monkeypatch: pytest.MonkeyPatch) -> N
     module, gateway, opener = _gateway(monkeypatch, response)
 
     assert _error_code(lambda: gateway.fetch_by_id(12345)) == "GITHUB_RELEASE_INELIGIBLE"
+
+
+def test_parse_retains_four_update_assets_and_unique_setup() -> None:
+    module = _module()
+    assert module is not None, "Task 1 production module must exist"
+    
+    document = _valid_document()
+    document["assets"] = [
+        {
+            "id": 11,
+            "name": "release-v2.json",
+            "size": 123,
+            "browser_download_url": DOWNLOAD_PREFIX + "release-v2.json",
+        },
+        {
+            "id": 12,
+            "name": "NekoLauncher.exe",
+            "size": 456,
+            "browser_download_url": DOWNLOAD_PREFIX + "NekoLauncher.exe",
+        },
+        {
+            "id": 13,
+            "name": "NekoUpdater.exe",
+            "size": 789,
+            "browser_download_url": DOWNLOAD_PREFIX + "NekoUpdater.exe",
+        },
+        {
+            "id": 14,
+            "name": "NekoProxyCore.zip",
+            "size": 1011,
+            "browser_download_url": DOWNLOAD_PREFIX + "NekoProxyCore.zip",
+        },
+        {
+            "id": 15,
+            "name": "NekoFamilyProxy-Setup.exe",
+            "size": 99999,
+            "browser_download_url": DOWNLOAD_PREFIX + "NekoFamilyProxy-Setup.exe",
+        },
+    ]
+
+    release = module.parse_github_release(document)
+
+    assert len(release.assets) == 5
+    names = {asset.name for asset in release.assets}
+    assert names == {
+        "release-v2.json",
+        "NekoLauncher.exe",
+        "NekoUpdater.exe",
+        "NekoProxyCore.zip",
+        "NekoFamilyProxy-Setup.exe",
+    }
+

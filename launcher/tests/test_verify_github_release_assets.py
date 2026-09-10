@@ -134,10 +134,10 @@ def create_test_release_bundle(
         assets.append(
             {
                 "id": 105,
-                "name": "NekoBetaInstaller-Setup.exe",
+                "name": "NekoFamilyProxy-Setup.exe",
                 "size": 999999,
                 "browser_download_url": (
-                    f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag_name}/NekoBetaInstaller-Setup.exe"
+                    f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag_name}/NekoFamilyProxy-Setup.exe"
                 ),
             }
         )
