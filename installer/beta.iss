@@ -60,7 +60,7 @@ Compression=lzma2
 SolidCompression=yes
 
 OutputDir={#BuildOutDir}
-OutputBaseFilename=NekoFamilyProxy-Beta-Setup
+OutputBaseFilename=NekoFamilyProxy-Setup
 
 SetupIconFile=..\icon_app.ico
 
@@ -165,9 +165,10 @@ end;
 
 function LaunchAllowed(): Boolean;
 begin
-  { The optional launch is suppressed unless the Core is verified AND the
-    .NET Desktop Runtime 6.x x64 prerequisite ended up present. }
-  Result := g_CoreVerifyOK and g_DotnetOK;
+  { The optional launch is suppressed unless the Core is verified, the
+    .NET Desktop Runtime 6.x x64 prerequisite ended up present, AND the
+    netfilter2 driver is ready. }
+  Result := g_CoreVerifyOK and g_DotnetOK and g_DriverOK;
 end;
 
 { Machine-wide x64 .NET runtime installs live under the NATIVE Program Files

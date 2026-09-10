@@ -26,7 +26,7 @@ import subprocess
 REPO = str(Path(__file__).resolve().parents[2])
 STAGE = r"E:\Github\NekoBetaInstaller"
 ISS_PATH = os.path.join(REPO, "installer", "beta.iss")
-SETUP_NAME = "NekoFamilyProxy-Beta-Setup.exe"
+SETUP_NAME = "NekoFamilyProxy-Setup.exe"
 
 APPROVED_V2RAY_SHA256 = (
     "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
@@ -87,7 +87,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--launcher-sha256", required=True, type=canonical_sha256)
     parser.add_argument("--updater-sha256", required=True, type=canonical_sha256)
     parser.add_argument("--core-authority", required=True)
+    parser.add_argument("--release-version", required=True)
     args = parser.parse_args(argv)
+    if not re.match(r"^5\.1\.\d+$", args.release_version):
+        parser.error("--release-version must be stable 5.1.x format (e.g., 5.1.3)")
     if not args.core_authority.strip():
         parser.error("--core-authority must not be empty")
     return args
@@ -248,6 +251,8 @@ def build_candidate(args: argparse.Namespace) -> int:
             iscc,
             f"/DPayloadDir={payload}",
             f"/DBuildOutDir={out_dir}",
+            f"/DAppVersion={args.release_version}.0",
+            f"/DAppDisplayVersion={args.release_version}",
             "/Qp",
             ISS_PATH,
         ],
@@ -266,13 +271,14 @@ def build_candidate(args: argparse.Namespace) -> int:
     digest = sha256_file(setup_path)
 
     record = {
-        "installer_version": "1.0.0.1 (1.0.0-beta.1)",
+        "installer_version": args.release_version,
         "installer_file": SETUP_NAME,
         "installer_size_bytes": size,
         "installer_sha256": digest,
         "launcher_sha256": args.launcher_sha256,
         "updater_sha256": args.updater_sha256,
         "core_authority": args.core_authority,
+        "core_installed_identity": sha256_file(manifest_path),
         "v2ray_sha256": APPROVED_V2RAY_SHA256,
         "dotnet_desktop_runtime": {
             "version": DOTNET_RUNTIME_VERSION_PIN,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -44,6 +45,8 @@ def _argv(stage: Path, launcher_hash: str = HEX_A, updater_hash: str = HEX_B) ->
         updater_hash,
         "--core-authority",
         CORE_AUTHORITY,
+        "--release-version",
+        "5.1.3",
     ]
 
 
@@ -168,3 +171,42 @@ def test_matching_explicit_hashes_reach_controlled_later_gate(
             parse_args(_argv(stage, _digest(b"launcher"), _digest(b"updater")))
         )
     assert observed == ["find_iscc"]
+
+def test_static_beta_iss_inspection() -> None:
+    iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    assert "g_CoreVerifyOK and g_DotnetOK and g_DriverOK" in iss_text, "LaunchAllowed must check driver"
+    assert "OutputBaseFilename=NekoFamilyProxy-Setup" in iss_text, "Output exactly NekoFamilyProxy-Setup.exe"
+
+def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    
+    def mock_find_iscc() -> str:
+        return "mock_iscc.exe"
+        
+    def mock_subprocess_run(args, **kwargs) -> Any:
+        if args and args[0] == "mock_iscc.exe":
+            out_dir = stage / "out"
+            out_dir.mkdir(exist_ok=True)
+            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        # Mock for updater --self-check
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", mock_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
+    
+    assert build_candidate(parse_args(_argv(stage, _digest(b"launcher"), _digest(b"updater")))) == 0
+    
+    record_path = stage / "out" / "build-record.json"
+    assert record_path.exists()
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    
+    assert "core_installed_identity" in record
+    manifest_bytes = (stage / "payload" / "CoreBundle" / "core-manifest.json").read_bytes()
+    assert record["core_installed_identity"] == _digest(manifest_bytes)
+    assert record["installer_version"] == "5.1.3"
+    assert record["installer_file"] == "NekoFamilyProxy-Setup.exe"
