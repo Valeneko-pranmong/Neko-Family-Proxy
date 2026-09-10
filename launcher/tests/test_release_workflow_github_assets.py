@@ -16,7 +16,7 @@ REQUIRED_ASSETS = (
     "release-v2.json",
 )
 RELEASE_ID = "987654"
-RELEASE_TAG = "v5.1.3"
+RELEASE_TAG = "v5.1.4"
 EXPECTED_TARGET = "a" * 40
 
 

@@ -25,7 +25,7 @@ REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
     "NekoProxyCore.zip",
     "release-v2.json",
 )
-_TAG = "v5.1.3"
+_TAG = "v5.1.4"
 _COMPONENTS = {
     "launcher": ("NekoLauncher.exe", "raw-pe-v1"),
     "updater": ("NekoUpdater.exe", "raw-pe-v1"),
@@ -117,9 +117,9 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
     release_set = _verify_manifest_signature(document)
     if (
         release_set.channel != "stable"
-        or release_set.release_sequence != 7
+        or release_set.release_sequence != 8
         or release_set.minimum_supported_sequence != 1
-        or release_set.release_id != "stable-0007"
+        or release_set.release_id != "stable-0008"
     ):
         raise StageDraftReleaseError("Stable-release authority mismatch")
     if (
@@ -135,7 +135,7 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         file_data = assets[file_name].read_bytes()
         digest = hashlib.sha256(file_data).hexdigest()
         if (
-            descriptor.version != "5.1.3"
+            descriptor.version != "5.1.4"
             or descriptor.artifact_id != file_name
             or descriptor.artifact_sha256 != digest
             or descriptor.artifact_size != len(file_data)
