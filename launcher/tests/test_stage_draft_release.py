@@ -18,7 +18,7 @@ from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "stage_draft_release.py"
 TARGET = "b4dab9e9571cbe6d05c6fdb17617137b302856d2"
-TAG = "v5.1.2"
+TAG = "v5.1.3"
 
 
 def load_module():
@@ -121,7 +121,7 @@ class FakeExecutor:
                                 ),
                             }
                             for i, name in enumerate(
-                                ("NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
+                                ("NekoFamilyProxy-Setup.exe", "NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
                             )
                         ] + [{"id": 99, "name": "SHA256SUMS.txt"}],
                     }
@@ -173,13 +173,13 @@ def make_stage(
     path: Path,
     *,
     core_identity: str | None = None,
-    sequence: int = 6,
+    sequence: int = 7,
     minimum_supported_sequence: int = 1,
-    release_id: str = "stable-0006",
+    release_id: str = "stable-0007",
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
-        "NekoLauncher.exe": b"launcher",
+        "NekoFamilyProxy-Setup.exe": b"setup", "NekoLauncher.exe": b"launcher",
         "NekoUpdater.exe": b"updater",
         "NekoProxyCore.zip": core_bytes,
     }
@@ -193,7 +193,7 @@ def make_stage(
     ):
         data = payloads[name]
         components[component] = {
-            "version": "5.1.2",
+            "version": "5.1.3",
             "artifact_id": name,
             "artifact_sha256": hashlib.sha256(data).hexdigest(),
             "artifact_size": len(data),
@@ -332,10 +332,10 @@ def test_validation_fails_closed(tmp_path: Path, case: str) -> None:
 def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     module = load_module()
     stage = make_stage(tmp_path)
-    payloads = {"NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
+    payloads = {"NekoFamilyProxy-Setup.exe": b"setup", "NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
     payload = {
-        "schema_version": 2, "channel": "stable", "release_sequence": 6,
-        "minimum_supported_sequence": 1, "release_id": "stable-0006", "mandatory": False,
+        "schema_version": 2, "channel": "stable", "release_sequence": 7,
+        "minimum_supported_sequence": 1, "release_id": "stable-0007", "mandatory": False,
         "updater_protocol": {"minimum": 1, "maximum": 1}, "components": {},
     }
     for component, name, fmt in (
@@ -345,7 +345,7 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     ):
         digest = hashlib.sha256(payloads[name]).hexdigest()
         payload["components"][component] = {
-            "version": "5.1.2", "artifact_id": name, "artifact_sha256": digest,
+            "version": "5.1.3", "artifact_id": name, "artifact_sha256": digest,
             "artifact_size": len(payloads[name]), "artifact_format": fmt,
             "installed_identity_sha256": digest if component != "core" else "1" * 64,
         }
@@ -366,7 +366,7 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
         {"sequence": 1, "release_id": "stable-0001"},  # spent, unpublished
         {"sequence": 2, "release_id": "stable-0002"},  # published alpha history
         {"sequence": 2, "release_id": "stable-0001"},
-        {"sequence": 1, "release_id": "stable-0006"},
+        {"sequence": 1, "release_id": "stable-0007"},
         {"sequence": 2, "release_id": "stable-9999"},
     ],
 )
@@ -506,7 +506,7 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
         staging_dir=make_stage(tmp_path), tag=TAG, target_commit=TARGET, executor=executor
     )
     assert evidence.release_id == 901
-    assert evidence.assets == {"NekoLauncher.exe": 10, "NekoUpdater.exe": 11, "NekoProxyCore.zip": 12, "release-v2.json": 13}
+    assert evidence.assets == {"NekoFamilyProxy-Setup.exe": 10, "NekoLauncher.exe": 11, "NekoUpdater.exe": 12, "NekoProxyCore.zip": 13, "release-v2.json": 14}
     assert evidence.dispatch_command == (
         f"gh workflow run release.yml --ref {TAG} -f publish_release=true -f release_id=901 "
         f"-f release_tag={TAG} -f expected_target={TARGET}"

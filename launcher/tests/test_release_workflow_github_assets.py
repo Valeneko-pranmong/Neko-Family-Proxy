@@ -9,13 +9,14 @@ import subprocess
 REPOSITORY_ROOT = Path(__file__).parents[2]
 WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
 REQUIRED_ASSETS = (
+    "NekoFamilyProxy-Setup.exe",
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",
     "release-v2.json",
 )
 RELEASE_ID = "987654"
-RELEASE_TAG = "v5.1.0"
+RELEASE_TAG = "v5.1.3"
 EXPECTED_TARGET = "a" * 40
 
 

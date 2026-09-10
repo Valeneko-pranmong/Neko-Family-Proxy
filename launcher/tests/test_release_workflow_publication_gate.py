@@ -106,7 +106,7 @@ def test_publication_locally_validates_all_authority_inputs() -> None:
         assert f"${{{{ inputs.{name} }}}}" in publication
     assert "^[0-9]+$" in publication
     assert "^v[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.-]*$" in publication
-    assert "v5.1.2" in publication
+    assert "v5.1.3" in publication
     assert "^[0-9a-fA-F]{40}$" in publication
     assert ".ToLowerInvariant()" in publication
 

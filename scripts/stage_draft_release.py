@@ -19,12 +19,13 @@ _SHA = re.compile(r"[0-9a-fA-F]{40}")
 
 
 REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
+    "NekoFamilyProxy-Setup.exe",
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",
     "release-v2.json",
 )
-_TAG = "v5.1.2"
+_TAG = "v5.1.3"
 _COMPONENTS = {
     "launcher": ("NekoLauncher.exe", "raw-pe-v1"),
     "updater": ("NekoUpdater.exe", "raw-pe-v1"),
@@ -116,9 +117,9 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
     release_set = _verify_manifest_signature(document)
     if (
         release_set.channel != "stable"
-        or release_set.release_sequence != 6
+        or release_set.release_sequence != 7
         or release_set.minimum_supported_sequence != 1
-        or release_set.release_id != "stable-0006"
+        or release_set.release_id != "stable-0007"
     ):
         raise StageDraftReleaseError("Stable-release authority mismatch")
     if (
@@ -134,7 +135,7 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         file_data = assets[file_name].read_bytes()
         digest = hashlib.sha256(file_data).hexdigest()
         if (
-            descriptor.version != "5.1.2"
+            descriptor.version != "5.1.3"
             or descriptor.artifact_id != file_name
             or descriptor.artifact_sha256 != digest
             or descriptor.artifact_size != len(file_data)
@@ -190,7 +191,7 @@ def validate_staging_preconditions(
     names = {item.name for item in staging_dir.iterdir()}
     required = set(REQUIRED_STAGE_ASSETS)
     if names != required:
-        raise StageDraftReleaseError("Staging directory must contain exactly the four required files")
+        raise StageDraftReleaseError("Staging directory must contain exactly the five required files")
     assets = {name: staging_dir / name for name in REQUIRED_STAGE_ASSETS}
     if any(not path.is_file() or path.stat().st_size <= 0 for path in assets.values()):
         raise StageDraftReleaseError("Every staging asset must be a non-empty regular file")
