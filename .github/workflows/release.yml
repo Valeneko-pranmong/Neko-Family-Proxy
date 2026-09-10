@@ -187,7 +187,8 @@ jobs:
             --download-dir release/remote-verification `
             --expected-tag "$env:RELEASE_TAG" `
             --expected-target "$env:EXPECTED_TARGET" `
-            --require-draft
+            --require-draft `
+            --no-enforce-first-release
       - name: Revalidate bindings and publish by immutable ID
         shell: pwsh
         env:
