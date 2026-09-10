@@ -49,7 +49,11 @@ def get_expected_install_root() -> Path:
         ctypes.byref(path_ptr),
     )
     if hr != 0 or not path_ptr.value:
-        raise OSError(f"SHGetKnownFolderPath failed with HRESULT {hr:#x}")
+        import os
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if not local_app_data:
+            raise OSError(f"SHGetKnownFolderPath failed with HRESULT {hr:#x} and no LOCALAPPDATA fallback")
+        return Path(local_app_data) / "Programs" / "NEKO FAMILY"
 
     base_path = path_ptr.value
     ctypes.windll.ole32.CoTaskMemFree(path_ptr)

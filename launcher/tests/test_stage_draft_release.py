@@ -18,7 +18,7 @@ from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "stage_draft_release.py"
 TARGET = "b4dab9e9571cbe6d05c6fdb17617137b302856d2"
-TAG = "v5.1.0"
+TAG = "v5.1.1"
 
 
 def load_module():
@@ -171,9 +171,9 @@ def make_stage(
     path: Path,
     *,
     core_identity: str | None = None,
-    sequence: int = 3,
+    sequence: int = 5,
     minimum_supported_sequence: int = 1,
-    release_id: str = "stable-0003",
+    release_id: str = "stable-0005",
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
@@ -191,7 +191,7 @@ def make_stage(
     ):
         data = payloads[name]
         components[component] = {
-            "version": "5.1.0",
+            "version": "5.1.1",
             "artifact_id": name,
             "artifact_sha256": hashlib.sha256(data).hexdigest(),
             "artifact_size": len(data),
@@ -332,8 +332,8 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     stage = make_stage(tmp_path)
     payloads = {"NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
     payload = {
-        "schema_version": 2, "channel": "stable", "release_sequence": 3,
-        "minimum_supported_sequence": 1, "release_id": "stable-0003", "mandatory": False,
+        "schema_version": 2, "channel": "stable", "release_sequence": 5,
+        "minimum_supported_sequence": 1, "release_id": "stable-0005", "mandatory": False,
         "updater_protocol": {"minimum": 1, "maximum": 1}, "components": {},
     }
     for component, name, fmt in (
@@ -343,7 +343,7 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     ):
         digest = hashlib.sha256(payloads[name]).hexdigest()
         payload["components"][component] = {
-            "version": "5.1.0", "artifact_id": name, "artifact_sha256": digest,
+            "version": "5.1.1", "artifact_id": name, "artifact_sha256": digest,
             "artifact_size": len(payloads[name]), "artifact_format": fmt,
             "installed_identity_sha256": digest if component != "core" else "1" * 64,
         }
@@ -364,7 +364,7 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
         {"sequence": 1, "release_id": "stable-0001"},  # spent, unpublished
         {"sequence": 2, "release_id": "stable-0002"},  # published alpha history
         {"sequence": 2, "release_id": "stable-0001"},
-        {"sequence": 1, "release_id": "stable-0003"},
+        {"sequence": 1, "release_id": "stable-0005"},
         {"sequence": 2, "release_id": "stable-9999"},
     ],
 )
