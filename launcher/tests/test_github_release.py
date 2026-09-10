@@ -269,3 +269,24 @@ def test_gateway_rejects_api_redirect_without_following(monkeypatch: pytest.Monk
     _, gateway, opener = _gateway(monkeypatch, redirect)
     assert _error_code(gateway.fetch) == "GITHUB_RELEASE_UNAVAILABLE"
     assert len(opener.requests) == 1
+
+def test_gateway_exact_get_by_id_accepts_prerelease_not_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    document = _valid_document()
+    document["id"] = 12345
+    document["prerelease"] = True
+    body = json.dumps(document).encode("utf-8")
+    response = FakeResponse(body)
+    module, gateway, opener = _gateway(monkeypatch, response)
+
+    release = gateway.fetch_by_id(12345)
+
+    assert release.id == 12345
+    assert release.prerelease is True
+    assert release.draft is False
+    assert len(opener.requests) == 1
+    request, _ = opener.requests[0]
+    expected_url = (
+        "https://api.github.com/repos/Valeneko-pranmong/"
+        "Neko-Family-Proxy/releases/12345"
+    )
+    assert request.full_url == expected_url

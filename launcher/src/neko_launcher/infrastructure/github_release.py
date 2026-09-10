@@ -92,7 +92,7 @@ def _valid_asset_url(value: object) -> bool:
     )
 
 
-def parse_github_release(document: object) -> GitHubRelease:
+def parse_github_release(document: object, allow_prerelease: bool = False) -> GitHubRelease:
     if not isinstance(document, dict):
         raise _invalid()
 
@@ -108,7 +108,7 @@ def parse_github_release(document: object) -> GitHubRelease:
         raise _invalid()
     if type(draft) is not bool or type(prerelease) is not bool:
         raise _invalid()
-    if draft or prerelease:
+    if draft or (prerelease and not allow_prerelease):
         raise GitHubReleaseDiscoveryError("GITHUB_RELEASE_INELIGIBLE")
     if not isinstance(raw_assets, list) or not 1 <= len(raw_assets) <= 64:
         raise _invalid()
@@ -170,9 +170,9 @@ class GitHubLatestReleaseGateway:
         self._timeout = timeout
         self._opener = urllib.request.build_opener(_NoRedirectHandler())
 
-    def fetch(self) -> GitHubRelease | None:
+    def _execute_request(self, url: str, allow_prerelease: bool) -> GitHubRelease | None:
         request = urllib.request.Request(
-            GITHUB_RELEASE_API_URL,
+            url,
             method="GET",
             headers={
                 "Accept": "application/vnd.github+json",
@@ -201,4 +201,14 @@ class GitHubLatestReleaseGateway:
             )
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
             raise _invalid() from None
-        return parse_github_release(document)
+        return parse_github_release(document, allow_prerelease=allow_prerelease)
+
+    def fetch(self) -> GitHubRelease | None:
+        return self._execute_request(GITHUB_RELEASE_API_URL, allow_prerelease=False)
+
+    def fetch_by_id(self, release_id: int) -> GitHubRelease | None:
+        url = (
+            f"https://api.github.com/repos/{GITHUB_RELEASE_OWNER}/"
+            f"{GITHUB_RELEASE_REPOSITORY}/releases/{release_id}"
+        )
+        return self._execute_request(url, allow_prerelease=True)

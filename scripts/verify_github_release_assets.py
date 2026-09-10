@@ -85,6 +85,7 @@ def verify_github_release_assets(
     expected_tag: str,
     expected_target: str,
     require_draft: bool = False,
+    require_prerelease: bool = False,
     expected_key_id: str = EXPECTED_PRODUCTION_KEY_ID,
     enforce_first_release: bool = True,
     trusted_public_keys: Mapping[str, bytes] | None = None,
@@ -119,9 +120,15 @@ def verify_github_release_assets(
         raise GitHubReleaseAssetsVerificationError("Release draft flag must be a boolean")
     if require_draft and not draft:
         raise GitHubReleaseAssetsVerificationError("Release draft flag must be true when require-draft is set")
+    if require_prerelease and draft:
+        raise GitHubReleaseAssetsVerificationError("Release draft flag must be false when require-prerelease is set")
 
     prerelease = release_doc.get("prerelease")
-    if type(prerelease) is not bool or prerelease:
+    if type(prerelease) is not bool:
+        raise GitHubReleaseAssetsVerificationError("Release prerelease flag must be a boolean")
+    if require_prerelease and not prerelease:
+        raise GitHubReleaseAssetsVerificationError("Release prerelease flag must be true when require-prerelease is set")
+    if not require_prerelease and prerelease:
         raise GitHubReleaseAssetsVerificationError("Release prerelease flag must be false")
 
     raw_assets = release_doc.get("assets")
@@ -315,6 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-tag", required=True)
     parser.add_argument("--expected-target", required=True)
     parser.add_argument("--require-draft", action="store_true", default=False)
+    parser.add_argument("--require-prerelease", action="store_true", default=False)
     parser.add_argument("--no-enforce-first-release", action="store_true", default=False)
 
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
@@ -327,6 +335,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_tag=args.expected_tag,
             expected_target=args.expected_target,
             require_draft=args.require_draft,
+            require_prerelease=args.require_prerelease,
             enforce_first_release=not args.no_enforce_first_release,
         )
     except GitHubReleaseAssetsVerificationError as err:
