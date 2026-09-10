@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       release_tag:
-        description: Expected release Git tag (strictly v5.1.1 for stable release)
+        description: Expected release Git tag (strictly v5.1.2 for stable release)
         required: true
         type: string
       expected_target:
@@ -111,7 +111,7 @@ jobs:
             throw "Release ID must be a positive numeric value."
           }
           if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*$' -or
-              $env:RELEASE_TAG -cne 'v5.1.1') {
+              $env:RELEASE_TAG -cne 'v5.1.2') {
             throw "Release tag is invalid for this release."
           }
           if ($env:EXPECTED_TARGET -notmatch '^[0-9a-fA-F]{40}$') {

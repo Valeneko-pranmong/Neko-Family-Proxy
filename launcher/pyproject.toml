@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neko-family-launcher"
-version = "5.1.1"
+version = "5.1.2"
 description = "Neko Family Proxy desktop launcher"
 requires-python = ">=3.11"
 dependencies = [
@@ -30,7 +30,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-m 'not integration'"
 markers = [
-  "integration: requires disposable Supabase credentials and changes remote test data",
+  "integration: requires disposable Supabase credentials, remote changes, or external Core fixtures",
 ]
 
 [tool.ruff]

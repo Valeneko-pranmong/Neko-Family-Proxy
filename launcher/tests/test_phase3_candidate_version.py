@@ -7,7 +7,7 @@ from pathlib import Path
 import neko_launcher
 
 
-EXPECTED_STABLE_VERSION = "5.1.1"
+EXPECTED_STABLE_VERSION = "5.1.2"
 
 
 def test_phase3_product_tree_has_exact_stable_identity() -> None:
@@ -17,10 +17,10 @@ def test_phase3_product_tree_has_exact_stable_identity() -> None:
     )["project"]
 
     assert project["version"] == EXPECTED_STABLE_VERSION, (
-        "canonical launcher/pyproject.toml is not stable 5.1.1"
+        "canonical launcher/pyproject.toml is not stable 5.1.2"
     )
     assert neko_launcher.__version__ == EXPECTED_STABLE_VERSION, (
-        "neko_launcher.__version__ is not stable 5.1.1"
+        "neko_launcher.__version__ is not stable 5.1.2"
     )
 
 
@@ -28,9 +28,9 @@ def test_stable_version_is_declared_only_on_canonical_surfaces() -> None:
     launcher_root = Path(__file__).resolve().parents[1]
     declarations: list[str] = []
     patterns = {
-        launcher_root / "pyproject.toml": re.compile(r'^version\s*=\s*"5\.1\.1"$', re.MULTILINE),
+        launcher_root / "pyproject.toml": re.compile(r'^version\s*=\s*"5\.1\.2"$', re.MULTILINE),
         launcher_root / "src" / "neko_launcher" / "__init__.py": re.compile(
-            r'^__version__\s*=\s*"5\.1\.1"$', re.MULTILINE
+            r'^__version__\s*=\s*"5\.1\.2"$', re.MULTILINE
         ),
     }
     for path, pattern in patterns.items():
@@ -38,5 +38,5 @@ def test_stable_version_is_declared_only_on_canonical_surfaces() -> None:
             declarations.append(path.relative_to(launcher_root).as_posix())
 
     assert declarations == ["pyproject.toml", "src/neko_launcher/__init__.py"], (
-        "production must declare stable 5.1.1 only in pyproject.toml and neko_launcher.__version__"
+        "production must declare stable 5.1.2 only in pyproject.toml and neko_launcher.__version__"
     )

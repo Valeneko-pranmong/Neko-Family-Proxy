@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
 import shutil
+import os
+import pytest
 from unittest.mock import MagicMock
 
 from neko_launcher.updater.probation_runner import run_probation_self_test
+from tests.updater.test_core_manifest_verifier import _create_test_bundle
 
-CANONICAL_A43_ROOT = Path("E:/Github/worktrees/NekoProxyCore-live-update/TestResults/task12/a43-core")
+CANONICAL_A43_ROOT = Path(os.environ.get("NEKO_TEST_FIXTURE_A43", "E:/Github/worktrees/NekoProxyCore-live-update/TestResults/task12/a43-core"))
 
 
 def test_probation_fails_when_core_missing(tmp_path: Path) -> None:
@@ -18,7 +21,10 @@ def test_probation_fails_when_core_missing(tmp_path: Path) -> None:
     assert res.error_code == "CORE_INVENTORY_INVALID"
 
 
+@pytest.mark.integration
 def test_probation_fails_on_legacy_a43_core_without_preflight(tmp_path: Path) -> None:
+    if not CANONICAL_A43_ROOT.exists():
+        pytest.skip(f"Missing external fixture: {CANONICAL_A43_ROOT}")
     gen_dir = tmp_path / "g-legacy"
     gen_dir.mkdir()
     (gen_dir / "NekoLauncher.exe").write_bytes(b"dummy launcher")
@@ -38,8 +44,9 @@ def test_probation_passes_when_preflight_returns_pass(tmp_path: Path, monkeypatc
     gen_dir.mkdir()
     (gen_dir / "NekoLauncher.exe").write_bytes(b"dummy launcher")
     core_dir = gen_dir / "ProxyCore"
-    core_dir.mkdir()
-    shutil.copytree(CANONICAL_A43_ROOT, core_dir, dirs_exist_ok=True)
+
+    # Use deterministic mock bundle instead of real external fixture
+    _create_test_bundle(core_dir)
 
     # Mock subprocess.Popen for Core preflight to return PASS
     mock_proc = MagicMock()

@@ -2,15 +2,20 @@ import hashlib
 import json
 from pathlib import Path
 
+import os
+import pytest
+
 from neko_launcher.updater.core_manifest_verifier import (
     CORE_MANIFEST_FILENAME,
     verify_canonical_core_bundle,
 )
 
-CANONICAL_A43_ROOT = Path("E:/Github/worktrees/NekoProxyCore-live-update/TestResults/task12/a43-core")
+CANONICAL_A43_ROOT = Path(os.environ.get("NEKO_TEST_FIXTURE_A43", "E:/Github/worktrees/NekoProxyCore-live-update/TestResults/task12/a43-core"))
 
-
+@pytest.mark.integration
 def test_verifies_canonical_a43_fixture() -> None:
+    if not CANONICAL_A43_ROOT.exists():
+        pytest.skip(f"Missing external fixture: {CANONICAL_A43_ROOT}")
     res = verify_canonical_core_bundle(CANONICAL_A43_ROOT)
     assert res.valid
     assert res.file_count == 1022
