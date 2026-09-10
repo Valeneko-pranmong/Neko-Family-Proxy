@@ -24,8 +24,12 @@
 ; ============================================================================
 
 #define MyAppName "NEKO FAMILY PROXY"
-#define MyAppVersion "1.0.0.1"
-#define MyAppDisplayVersion "1.0.0-beta.1"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0.1"
+#endif
+#ifndef MyAppDisplayVersion
+  #define MyAppDisplayVersion "1.0.0-beta.1"
+#endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both
 ; from the build orchestrator with:  ISCC /DPayloadDir=... /DBuildOutDir=...
@@ -309,11 +313,10 @@ begin
   if not g_DotnetOK then begin
     AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
     SuppressibleMsgBox(
-      'Setup could not prepare the Microsoft .NET Desktop Runtime 6.x (x64). '#13#10#13#10 +
-      'ต้องติดตั้ง Microsoft .NET Desktop Runtime 6.x (x64) ก่อนจึงจะเริ่มใช้งานได้'#13#10#13#10 +
-      'Installation files are in place, but NEKO FAMILY PROXY cannot start its ' +
-      'runtime without it. Please install the runtime and run setup again.'#13#10#13#10 +
-      'The launch shortcut is disabled until the runtime is present.',
+      'Setup could not complete readiness for the Microsoft .NET Desktop Runtime 6.x (x64).'#13#10#13#10 +
+      'Please run this same Setup again and allow the required Windows UAC prompt.'#13#10#13#10 +
+      'หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล'#13#10#13#10 +
+      'The launch shortcut is disabled until readiness is complete.',
       mbError, MB_OK, IDOK);
   end;
 

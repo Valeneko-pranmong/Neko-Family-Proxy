@@ -251,8 +251,8 @@ def build_candidate(args: argparse.Namespace) -> int:
             iscc,
             f"/DPayloadDir={payload}",
             f"/DBuildOutDir={out_dir}",
-            f"/DAppVersion={args.release_version}.0",
-            f"/DAppDisplayVersion={args.release_version}",
+            f"/DMyAppVersion={args.release_version}",
+            f"/DMyAppDisplayVersion={args.release_version}",
             "/Qp",
             ISS_PATH,
         ],
@@ -271,7 +271,7 @@ def build_candidate(args: argparse.Namespace) -> int:
     digest = sha256_file(setup_path)
 
     record = {
-        "installer_version": args.release_version,
+        "release_version": args.release_version,
         "installer_file": SETUP_NAME,
         "installer_size_bytes": size,
         "installer_sha256": digest,
