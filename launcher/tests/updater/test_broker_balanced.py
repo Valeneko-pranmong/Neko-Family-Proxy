@@ -132,26 +132,19 @@ class Env:
             "bin/nfapi.dll": b"nfapi-content",
             "bin/v2ray-sn.exe": b"v2ray-content",
         }
-        total_bytes = sum(len(c) for c in files.values())
+        files_array = [
+            {
+                "path": name,
+                "size": len(content),
+                "sha256": sha256_bytes(content),
+            }
+            for name, content in sorted(files.items())
+        ]
         return {
+            "rid": "win-x64",
+            "executable": "NekoProxyCore.exe",
             "source_commit": commit,
-            "candidate": "candidate-1",
-            "authority": "auth-1",
-            "file_count": 6,
-            "total_bytes": total_bytes,
-            "neko_proxy_core_exe_hash": sha256_bytes(files["NekoProxyCore.exe"]),
-            "neko_proxy_core_dll_hash": sha256_bytes(files["NekoProxyCore.dll"]),
-            "protected_settings_payload_hash": sha256_bytes(files["runtime-settings.nkps"]),
-            "redirector_bin_hash": sha256_bytes(files["bin/Redirector.bin"]),
-            "nfapi_dll_hash": sha256_bytes(files["bin/nfapi.dll"]),
-            "v2ray_sn_exe_hash": sha256_bytes(files["bin/v2ray-sn.exe"]),
-            "security": {
-                "runtime_settings_key_files": 0,
-                "plaintext_settings_files": 0,
-                "plaintext_secret_marker_hits": 0,
-                "external_dotnet_dependency": False
-            },
-            "files": {name: sha256_bytes(content) for name, content in files.items()}
+            "files": files_array,
         }
 
     def write_core_files(self, core_dir: Path, manifest_bytes: bytes) -> None:
@@ -163,7 +156,7 @@ class Env:
         (bin_dir / "Redirector.bin").write_bytes(b"redir-content")
         (bin_dir / "nfapi.dll").write_bytes(b"nfapi-content")
         (bin_dir / "v2ray-sn.exe").write_bytes(b"v2ray-content")
-        (core_dir / "canonical-core-manifest.json").write_bytes(manifest_bytes)
+        (core_dir / "core-manifest.json").write_bytes(manifest_bytes)
 
     def build_core_zip(self, manifest_bytes: bytes) -> bytes:
         import io
@@ -175,7 +168,7 @@ class Env:
             z.writestr("bin/Redirector.bin", b"redir-content")
             z.writestr("bin/nfapi.dll", b"nfapi-content")
             z.writestr("bin/v2ray-sn.exe", b"v2ray-content")
-            z.writestr("canonical-core-manifest.json", manifest_bytes)
+            z.writestr("core-manifest.json", manifest_bytes)
         return buf.getvalue()
 
     def build_release_doc(

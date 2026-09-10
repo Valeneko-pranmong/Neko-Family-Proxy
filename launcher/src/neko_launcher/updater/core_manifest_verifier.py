@@ -5,37 +5,29 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
+
+CORE_MANIFEST_FILENAME = "core-manifest.json"
 
 _REQUIRED_TOP_KEYS = {
+    "rid",
+    "executable",
     "source_commit",
-    "candidate",
-    "authority",
-    "file_count",
-    "total_bytes",
-    "neko_proxy_core_exe_hash",
-    "neko_proxy_core_dll_hash",
-    "protected_settings_payload_hash",
-    "redirector_bin_hash",
-    "nfapi_dll_hash",
-    "v2ray_sn_exe_hash",
-    "security",
     "files",
 }
 
-_REQUIRED_SECURITY_KEYS = {
-    "runtime_settings_key_files",
-    "plaintext_settings_files",
-    "plaintext_secret_marker_hits",
-    "external_dotnet_dependency",
+_MANDATORY_CORE_FILES = {
+    "NekoProxyCore.exe",
+    "NekoProxyCore.dll",
+    "runtime-settings.nkps",
+    "bin/Redirector.bin",
+    "bin/nfapi.dll",
+    "bin/v2ray-sn.exe",
 }
 
-_DESIGNATED_HASH_KEYS = {
-    "NekoProxyCore.exe": "neko_proxy_core_exe_hash",
-    "NekoProxyCore.dll": "neko_proxy_core_dll_hash",
-    "runtime-settings.nkps": "protected_settings_payload_hash",
-    "bin/Redirector.bin": "redirector_bin_hash",
-    "bin/nfapi.dll": "nfapi_dll_hash",
-    "bin/v2ray-sn.exe": "v2ray_sn_exe_hash",
+_FORBIDDEN_LEAF_NAMES = {
+    "runtime-settings.key",
+    "settings.json",
 }
 
 
@@ -53,13 +45,13 @@ class CoreVerificationResult:
 
 
 def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
-    """Verify that bundle_dir contains a valid canonical-core-manifest.json matching all on-disk files."""
+    """Verify that bundle_dir contains a valid core-manifest.json matching all on-disk files."""
     if not bundle_dir.is_dir():
         return CoreVerificationResult(valid=False, error=f"Bundle directory does not exist: {bundle_dir}")
 
-    manifest_path = bundle_dir / "canonical-core-manifest.json"
+    manifest_path = bundle_dir / CORE_MANIFEST_FILENAME
     if not manifest_path.is_file():
-        return CoreVerificationResult(valid=False, error="canonical-core-manifest.json missing from bundle")
+        return CoreVerificationResult(valid=False, error=f"{CORE_MANIFEST_FILENAME} missing from bundle")
 
     manifest_bytes = manifest_path.read_bytes()
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
@@ -69,42 +61,98 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
     except Exception as err:
         return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Invalid manifest JSON: {err}")
 
-    if not isinstance(manifest, dict) or set(manifest.keys()) != _REQUIRED_TOP_KEYS:
-        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Invalid manifest top-level fields")
+    if not isinstance(manifest, dict):
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest must be a JSON object")
 
-    sec = manifest["security"]
-    if not isinstance(sec, dict) or set(sec.keys()) != _REQUIRED_SECURITY_KEYS:
-        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Invalid manifest security fields")
+    if not _REQUIRED_TOP_KEYS.issubset(manifest.keys()):
+        missing_keys = sorted(_REQUIRED_TOP_KEYS - set(manifest.keys()))
+        return CoreVerificationResult(
+            valid=False,
+            manifest_sha256=manifest_sha256,
+            error=f"Missing required manifest fields: {', '.join(missing_keys)}",
+        )
 
-    if (
-        sec["runtime_settings_key_files"] != 0
-        or sec["plaintext_settings_files"] != 0
-        or sec["plaintext_secret_marker_hits"] != 0
-        or sec["external_dotnet_dependency"] is not False
-    ):
-        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Security assertions violation in manifest")
+    # Validate rid
+    rid = manifest["rid"]
+    if not isinstance(rid, str) or not rid.strip():
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Invalid manifest rid")
+    if rid != "win-x64":
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Unsupported RID: {rid}")
 
-    files_map = manifest["files"]
-    if not isinstance(files_map, dict):
-        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest files field must be a dictionary")
+    # Validate executable
+    executable = manifest["executable"]
+    if not isinstance(executable, str) or not executable.strip():
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Invalid manifest executable")
+    if executable != "NekoProxyCore.exe":
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Unsupported executable: {executable}")
 
-    if len(files_map) != manifest["file_count"]:
-        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="file_count does not match files map count")
+    # Validate source_commit
+    source_commit = manifest["source_commit"]
+    if not isinstance(source_commit, str) or not source_commit.strip():
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Invalid manifest source_commit")
 
-    # Reject forbidden filenames
-    for rel_path in files_map:
-        leaf = Path(rel_path).name.lower()
-        if leaf in ("runtime-settings.key", "settings.json"):
+    # Validate files array
+    files_list = manifest["files"]
+    if not isinstance(files_list, list):
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest files field must be a list")
+
+    if len(files_list) == 0:
+        return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest declares zero files")
+
+    files_map: dict[str, dict[str, Any]] = {}
+    for item in files_list:
+        if not isinstance(item, dict):
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest files entry must be an object")
+        if not {"path", "size", "sha256"}.issubset(item.keys()):
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest files entry missing required fields")
+
+        rel_path = item["path"]
+        if not isinstance(rel_path, str) or not rel_path.strip():
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Invalid file path in manifest")
+        norm_path = rel_path.replace("\\", "/")
+        if norm_path.startswith("/") or ".." in norm_path.split("/"):
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Path traversal or absolute path in manifest: {rel_path}")
+        if norm_path in files_map:
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Duplicate file path in manifest: {rel_path}")
+
+        leaf = Path(norm_path).name.lower()
+        if leaf in _FORBIDDEN_LEAF_NAMES:
             return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Forbidden file in manifest: {rel_path}")
 
+        size_val = item["size"]
+        if not isinstance(size_val, int) or size_val < 0:
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Invalid file size in manifest for {rel_path}: {size_val}")
+
+        sha_val = item["sha256"]
+        if not isinstance(sha_val, str) or len(sha_val) != 64 or not all(c in "0123456789abcdefABCDEF" for c in sha_val):
+            return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error=f"Invalid SHA256 in manifest for {rel_path}: {sha_val}")
+
+        files_map[norm_path] = {"size": size_val, "sha256": sha_val.lower()}
+
+    # Check mandatory files
+    for mandatory_file in _MANDATORY_CORE_FILES:
+        if mandatory_file not in files_map:
+            return CoreVerificationResult(
+                valid=False,
+                manifest_sha256=manifest_sha256,
+                error=f"Missing mandatory Core file in manifest: {mandatory_file}",
+            )
+
+    if executable not in files_map:
+        return CoreVerificationResult(
+            valid=False,
+            manifest_sha256=manifest_sha256,
+            error=f"Manifest executable '{executable}' missing from files map",
+        )
+
     # Enumerate all files on disk
-    disk_files: dict[str, str] = {}
+    disk_files: set[str] = set()
     actual_total_bytes = 0
 
     for file_path in bundle_dir.rglob("*"):
         if file_path.is_file():
             rel_name = file_path.relative_to(bundle_dir).as_posix()
-            if rel_name == "canonical-core-manifest.json":
+            if rel_name in (CORE_MANIFEST_FILENAME, "canonical-core-manifest.json"):
                 continue
 
             if rel_name not in files_map:
@@ -115,9 +163,16 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
                 )
 
             data = file_path.read_bytes()
-            sha = hashlib.sha256(data).hexdigest()
-            expected_sha = files_map[rel_name]
+            expected_size = files_map[rel_name]["size"]
+            if len(data) != expected_size:
+                return CoreVerificationResult(
+                    valid=False,
+                    manifest_sha256=manifest_sha256,
+                    error=f"Size mismatch on {rel_name}: expected {expected_size}, got {len(data)}",
+                )
 
+            sha = hashlib.sha256(data).hexdigest()
+            expected_sha = files_map[rel_name]["sha256"]
             if sha != expected_sha:
                 return CoreVerificationResult(
                     valid=False,
@@ -125,33 +180,16 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
                     error=f"Hash mismatch on {rel_name}: expected {expected_sha}, got {sha}",
                 )
 
-            disk_files[rel_name] = sha
+            disk_files.add(rel_name)
             actual_total_bytes += len(data)
 
-    if set(disk_files.keys()) != set(files_map.keys()):
-        missing = set(files_map.keys()) - set(disk_files.keys())
+    if disk_files != set(files_map.keys()):
+        missing = set(files_map.keys()) - disk_files
         return CoreVerificationResult(
             valid=False,
             manifest_sha256=manifest_sha256,
             error=f"Missing files from disk: {next(iter(missing))}",
         )
-
-    if actual_total_bytes != manifest["total_bytes"]:
-        return CoreVerificationResult(
-            valid=False,
-            manifest_sha256=manifest_sha256,
-            error=f"total_bytes mismatch: expected {manifest['total_bytes']}, got {actual_total_bytes}",
-        )
-
-    # Validate designated executable hashes
-    for rel_key, manifest_key in _DESIGNATED_HASH_KEYS.items():
-        if rel_key in files_map:
-            if files_map[rel_key] != manifest[manifest_key]:
-                return CoreVerificationResult(
-                    valid=False,
-                    manifest_sha256=manifest_sha256,
-                    error=f"Designated hash mismatch for {rel_key}",
-                )
 
     return CoreVerificationResult(
         valid=True,

@@ -137,31 +137,33 @@ def canonical(value: Any) -> bytes:
 
 def _make_core_zip(path: Path) -> tuple[bytes, str]:
     core_file = b"minimal core executable"
-    core_hash = hashlib.sha256(core_file).hexdigest()
+    files = {
+        "NekoProxyCore.exe": core_file,
+        "NekoProxyCore.dll": b"dummy",
+        "runtime-settings.nkps": b"dummy",
+        "bin/Redirector.bin": b"dummy",
+        "bin/nfapi.dll": b"dummy",
+        "bin/v2ray-sn.exe": b"dummy",
+    }
+    files_array = [
+        {
+            "path": k,
+            "size": len(v),
+            "sha256": hashlib.sha256(v).hexdigest(),
+        }
+        for k, v in sorted(files.items())
+    ]
     manifest = {
+        "rid": "win-x64",
+        "executable": "NekoProxyCore.exe",
         "source_commit": TARGET,
-        "candidate": "test-only",
-        "authority": "test-only",
-        "file_count": 1,
-        "total_bytes": len(core_file),
-        "neko_proxy_core_exe_hash": core_hash,
-        "neko_proxy_core_dll_hash": "0" * 64,
-        "protected_settings_payload_hash": "0" * 64,
-        "redirector_bin_hash": "0" * 64,
-        "nfapi_dll_hash": "0" * 64,
-        "v2ray_sn_exe_hash": "0" * 64,
-        "security": {
-            "runtime_settings_key_files": 0,
-            "plaintext_settings_files": 0,
-            "plaintext_secret_marker_hits": 0,
-            "external_dotnet_dependency": False,
-        },
-        "files": {"NekoProxyCore.exe": core_hash},
+        "files": files_array,
     }
     manifest_bytes = canonical(manifest)
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("canonical-core-manifest.json", manifest_bytes)
-        archive.writestr("NekoProxyCore.exe", core_file)
+        archive.writestr("core-manifest.json", manifest_bytes)
+        for k, v in files.items():
+            archive.writestr(k, v)
     return path.read_bytes(), hashlib.sha256(manifest_bytes).hexdigest()
 
 

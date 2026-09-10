@@ -75,7 +75,9 @@ class BrokerCoordinator:
         if not core_res.valid:
             raise ValueError("CORE_INVENTORY_INVALID")
             
-        core_manifest = published_path / "ProxyCore" / "canonical-core-manifest.json"
+        core_manifest = published_path / "ProxyCore" / "core-manifest.json"
+        if not core_manifest.is_file():
+            core_manifest = published_path / "ProxyCore" / "canonical-core-manifest.json"
         if not core_manifest.is_file():
             raise ValueError("CORE_INVENTORY_INVALID")
         if hashlib.sha256(core_manifest.read_bytes()).hexdigest() != candidate.core_identity_sha256:

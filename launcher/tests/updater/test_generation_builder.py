@@ -40,43 +40,32 @@ CORE = {
     "bin/nfapi.dll": b"nfapi",
     "bin/v2ray-sn.exe": b"v2ray",
 }
-CORE_FILES = {"canonical-core-manifest.json", *CORE}
+CORE_FILES = {"core-manifest.json", *CORE}
 FILES = {"release-envelope.json", "NekoLauncher.exe", *(f"ProxyCore/{p}" for p in CORE_FILES)}
 DIRS = {"ProxyCore", "ProxyCore/bin"}
 
 
 def _bundle(root: Path, *, salt: bytes = b"") -> str:
-    hashes = {}
-    total = 0
-    for name, original in CORE.items():
+    files_array = []
+    for name in sorted(CORE.keys()):
+        original = CORE[name]
         data = original + salt
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-        hashes[name] = hashlib.sha256(data).hexdigest()
-        total += len(data)
+        files_array.append({
+            "path": name,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        })
     manifest = {
+        "rid": "win-x64",
+        "executable": "NekoProxyCore.exe",
         "source_commit": "1234567",
-        "candidate": "5.1.0",
-        "authority": "test",
-        "file_count": len(CORE),
-        "total_bytes": total,
-        "neko_proxy_core_exe_hash": hashes["NekoProxyCore.exe"],
-        "neko_proxy_core_dll_hash": hashes["NekoProxyCore.dll"],
-        "protected_settings_payload_hash": hashes["runtime-settings.nkps"],
-        "redirector_bin_hash": hashes["bin/Redirector.bin"],
-        "nfapi_dll_hash": hashes["bin/nfapi.dll"],
-        "v2ray_sn_exe_hash": hashes["bin/v2ray-sn.exe"],
-        "security": {
-            "runtime_settings_key_files": 0,
-            "plaintext_settings_files": 0,
-            "plaintext_secret_marker_hits": 0,
-            "external_dotnet_dependency": False,
-        },
-        "files": hashes,
+        "files": files_array,
     }
     raw = canonical_json_dumps(manifest)
-    (root / "canonical-core-manifest.json").write_bytes(raw)
+    (root / "core-manifest.json").write_bytes(raw)
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -451,7 +440,7 @@ def test_exact_whole_fresh_generation(tmp_path: Path, lc: bool, cc: bool) -> Non
             assert (result.generation_dir / "ProxyCore" / relative).read_bytes() == (
                 expected_core / relative
             ).read_bytes()
-        manifest = result.generation_dir / "ProxyCore" / "canonical-core-manifest.json"
+        manifest = result.generation_dir / "ProxyCore" / "core-manifest.json"
         assert (
             hashlib.sha256(manifest.read_bytes()).hexdigest() == env.candidate.core_identity_sha256
         )
@@ -691,7 +680,7 @@ def test_core_inventory_failures(
             )
         elif target in {"old_manifest", "old_inventory"}:
             rel = (
-                "canonical-core-manifest.json" if target == "old_manifest" else "NekoProxyCore.exe"
+                "core-manifest.json" if target == "old_manifest" else "NekoProxyCore.exe"
             )
             path = env.old_dir / "ProxyCore" / rel
             raw = path.read_bytes()
