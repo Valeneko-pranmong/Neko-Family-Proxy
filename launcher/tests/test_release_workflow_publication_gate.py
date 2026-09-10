@@ -6,10 +6,8 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).parents[2]
 WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
 
-
 def workflow_text() -> str:
     return WORKFLOW_PATH.read_text(encoding="utf-8")
-
 
 def indented_block(text: str, key: str, indent: int) -> str:
     lines = text.splitlines()
@@ -25,7 +23,6 @@ def indented_block(text: str, key: str, indent: int) -> str:
         return "\n".join(block)
     raise AssertionError(f"release.yml is missing the {key!r} mapping")
 
-
 def scalar(block: str, key: str) -> str | None:
     match = re.search(rf"(?mi)^\s*{re.escape(key)}:\s*([^#\n]+?)\s*$", block)
     if not match:
@@ -35,14 +32,11 @@ def scalar(block: str, key: str) -> str | None:
         return value[1:-1]
     return value
 
-
 def input_names(inputs: str) -> set[str]:
     return set(re.findall(r"(?m)^      ([A-Za-z0-9_-]+):\s*$", inputs))
 
-
 def job(text: str, name: str) -> str:
     return indented_block(indented_block(text, "jobs", 0), name, 2)
-
 
 def test_dispatch_has_only_immutable_publication_authority_inputs() -> None:
     dispatch = indented_block(indented_block(workflow_text(), "on", 0), "workflow_dispatch", 2)
@@ -75,7 +69,6 @@ def test_dispatch_has_only_immutable_publication_authority_inputs() -> None:
             for metadata in ("required", "type", "default")
         } == expected_metadata
 
-
 def test_build_installer_is_read_only_and_tag_push_only() -> None:
     text = workflow_text()
     build = job(text, "build-installer")
@@ -85,7 +78,6 @@ def test_build_installer_is_read_only_and_tag_push_only() -> None:
     assert scalar(indented_block(build, "permissions", 4), "contents") == "read"
     assert re.search(r"(?m)^\s+-\s*['\"]?v\*['\"]?\s*$", push)
 
-
 def test_publication_job_is_independent_and_manually_authorized() -> None:
     publication = job(workflow_text(), "staged-verification")
 
@@ -94,7 +86,6 @@ def test_publication_job_is_independent_and_manually_authorized() -> None:
         "github.event_name == 'workflow_dispatch' && inputs.publish_release == true"
     )
     assert scalar(indented_block(publication, "permissions", 4), "contents") == "write"
-
 
 def test_publication_checks_out_exact_expected_target() -> None:
     publication = job(workflow_text(), "staged-verification")
@@ -108,7 +99,6 @@ def test_publication_checks_out_exact_expected_target() -> None:
         r"(?m)^\s+ref:\s*\$\{\{\s*inputs\.expected_target\s*}}\s*$", checkout
     )
 
-
 def test_publication_locally_validates_all_authority_inputs() -> None:
     publication = job(workflow_text(), "staged-verification")
 
@@ -119,7 +109,6 @@ def test_publication_locally_validates_all_authority_inputs() -> None:
     assert "v5.1.2" in publication
     assert "^[0-9a-fA-F]{40}$" in publication
     assert ".ToLowerInvariant()" in publication
-
 
 def test_publication_validates_the_actual_local_checkout_head() -> None:
     publication = job(workflow_text(), "staged-verification")
@@ -134,7 +123,6 @@ def test_publication_validates_the_actual_local_checkout_head() -> None:
     assert "CHECKED_OUT_SHA:" not in publication
     assert "${{ github.sha }}" not in publication
     assert "$env:CHECKED_OUT_SHA" not in publication
-
 
 def test_publication_does_not_build_transfer_stage_or_create_release_assets() -> None:
     publication = job(workflow_text(), "staged-verification")
@@ -157,7 +145,6 @@ def test_rollout_job_is_independent_and_manually_authorized() -> None:
     )
     assert scalar(indented_block(rollout, "permissions", 4), "contents") == "write"
 
-
 def test_rollout_locally_validates_authority_inputs_and_immutability() -> None:
     rollout = job(workflow_text(), "rollout-stable")
 
@@ -169,7 +156,6 @@ def test_rollout_locally_validates_authority_inputs_and_immutability() -> None:
     assert "gh api" in rollout
     assert "-notmatch" in rollout
     assert "-cne" in rollout
-
 
 def test_rollout_does_not_build_transfer_stage_or_create_release_assets() -> None:
     rollout = job(workflow_text(), "rollout-stable")
@@ -183,7 +169,6 @@ def test_rollout_does_not_build_transfer_stage_or_create_release_assets() -> Non
     assert "stage approved update assets" not in lowered
     assert "releases/assets/" not in lowered
 
-
 def test_rollout_patches_release_to_latest() -> None:
     rollout = job(workflow_text(), "rollout-stable")
 
@@ -191,3 +176,20 @@ def test_rollout_patches_release_to_latest() -> None:
     assert "prerelease=false" in rollout
     assert "make_latest=true" in rollout
     assert "$env:RELEASE_ID" in rollout
+
+def test_rollout_performs_gate3_verification() -> None:
+    rollout = job(workflow_text(), "rollout-stable")
+
+    assert "Gate3 Latest Resolver Validation" in rollout
+    assert "repos/$env:GH_REPO/releases/latest" in rollout
+    assert "$maxAttempts = 10" in rollout
+    assert "Start-Sleep -Seconds 5" in rollout
+    assert "$latest.id -eq [string]$env:RELEASE_ID" in rollout
+    assert "$latest.tag_name -ceq $env:RELEASE_TAG" in rollout
+    assert "Gate3 timeout: /releases/latest did not resolve" in rollout
+
+    assert "$preRolloutAssets = Get-Content pre-rollout-assets.json" in rollout
+    assert "$matches = @($latest.assets | Where-Object { $_.name -ceq $name })" in rollout
+    assert "Gate3 missing asset: $name" in rollout
+    assert "Gate3 asset size drift for $name" in rollout
+    assert "Gate3 rollout accepted." in rollout

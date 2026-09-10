@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import re
 import subprocess
 
-import pytest
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
