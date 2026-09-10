@@ -4,11 +4,11 @@
 ### Goals
 - Deliver a single, public `NekoFamilyProxy-Setup.exe` artifact for end users.
 - Provide a zero-manual-prerequisite installation experience (silently install .NET 6 Desktop Runtime x64 if missing).
-- Reuse existing `installer/beta.iss` and `installer/scripts/build_beta_installer.py` tooling, removing beta labels.
+- Reuse existing installer source (`installer/beta.iss` and `installer/scripts/build_beta_installer.py`); do not require renaming internal source files as a prerequisite.
 - Maintain the current 4-asset auto-updater contract and network behaviors untouched.
 
 ### Non-Goals
-- Modifying the existing v5.1.2 immutable assets or tags.
+- Modifying the existing v5.1.2 immutable assets or tags (historical v5.1.2 seq6 remains immutable).
 - Repacking NekoProxyCore into a .NET self-contained deployment.
 - Changing the existing auto-update mechanisms, JSON manifest, or component topologies.
 - Implementing automatic updates for the Setup artifact itself; the setup is a distribution mechanism for initial installs.
@@ -33,54 +33,58 @@
   1. Check for .NET 6 Desktop Runtime x64.
   2. If missing, run bundled bootstrapper silently.
   3. Extract core application files.
-  4. Verify and invoke `netfilter2` helper (elevating if necessary; fails closed on incompatible running drivers).
+  4. Verify and invoke `netfilter2` helper (elevating if necessary).
   5. Create shortcuts.
+- **Install Success Definition**: Only report ready and offer launch when Core verification + .NET runtime detection + required driver readiness ALL pass. (The design explicitly requires all three for production).
+- **Uninstall**: Remove app files, shortcuts, and uninstall entry but intentionally preserve the shared netfilter2 machine driver, matching existing policy.
 
 ## 5. Prerequisite Policy
 - **Microsoft .NET Desktop Runtime 6 x64**: Pinned bootstrapper bundled *inside* `NekoFamilyProxy-Setup.exe`.
-- It installs silently if not detected. No external network requests during the installation phase for prerequisites.
+- It installs silently if not detected. No install-time prerequisite network download.
 - The user is never instructed to download/install .NET manually.
 
 ## 6. Update and Release Contract
-- **Existing Components**: `NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, and `release-v2.json` remain the exclusive payloads of the auto-update mechanism.
-- **Setup Asset**: `NekoFamilyProxy-Setup.exe` acts as a 5th distribution-only GitHub Release asset. It is *not* added to the `release-v2` component set. Existing resolver/updater behavior must remain unchanged.
-- **GitHub Release Body**: Public instructions will feature a prominent "For users: download NekoFamilyProxy-Setup.exe" section at the top. The 4 technical assets and source codes will be explicitly labeled as internal/automatic components, not for manual download. (Source code zip/tar.gz are GitHub-generated and not removable.)
+- **Setup Asset**: `NekoFamilyProxy-Setup.exe` is exactly one additional distribution-only hosted asset; `release-v2` remains exactly the four existing update components (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, and `release-v2.json`).
+- **GitHub Release Body**: Public copy after v5.1.3 is published must say USERS download only `NekoFamilyProxy-Setup.exe`; the 4 update assets are automatic-update components and not user installation steps.
 
 ## 7. Build Identity and Provenance
+- **Exact v5.1.3 release authority**: version 5.1.3, Git tag v5.1.3, release_sequence 7, release_id stable-0007, minimum_supported_sequence 1, channel stable, mandatory false, updater protocol min=1 max=1, key id neko-update-prod-1.
+- Specify Inno Setup application/display version 5.1.3 for this successor and public filename exactly `NekoFamilyProxy-Setup.exe`.
 - Build scripts will bind `NekoFamilyProxy-Setup.exe` to the exact frozen candidate bytes (Launcher/Updater/Core) used for that release.
-- Installer SHA256 and size, along with component authorities, will be recorded in the existing build-record/ledger mechanism (or minimal extension) to guarantee traceability.
-- Version targeted is **v5.1.3**. Beta product/output labels inside the installer code will be scrubbed to reflect the production status without creating a duplicate installer subsystem.
+- **Manifest**: Use/extend existing `build-record.json` specifically. Record release version, installer filename, installer SHA256/size, exact Launcher SHA256, Updater SHA256, Core authority/installed identity as already available, and pinned .NET bootstrapper version/SHA256. No second manifest.
 
 ## 8. Failure Handling
-- **netfilter2**: Fails closed if the driver registration fails or if there is an incompatible running driver.
-- **Prerequisites**: If the bundled .NET bootstrapper fails, the installer aborts safely, providing an error log.
+- **Prerequisite Failure Behavior**: No manual download/install instructions. If .NET install is declined/fails or fresh detection still fails, the installer must fail closed for launch: suppress launch, clearly report setup could not complete readiness, and user may rerun the same Setup after allowing required UAC.
+- Do not claim transactional rollback unless implementation proves one.
+- **Driver**: Same principle for driver readiness/incompatible driver. If driver registration fails or is incompatible, fail closed for launch (suppress launch and report readiness failure).
 
 ## 9. Security
+- Preserve secret hygiene checks; never package plaintext `runtime-settings.key`, `service-role`, or private keys.
+- Pinned Microsoft bootstrapper must be verified before compilation.
+- No install-time prerequisite network download.
 - UAC elevation is delayed and invoked only when required (driver registration or system-wide prerequisite installation).
 - Core remains external and verified against `core-manifest.json`.
 
 ## 10. CI and Test Acceptance
-- **Builder TDD**: Validate script modifications for packaging.
-- **Installer-Source/Static Contract Tests**: Validate Inno Setup definitions.
-- **Clean Windows Install**: Test installation without preinstalled .NET 6 Desktop Runtime.
-- **Install with Runtime Present**: Ensure idempotency and speed.
-- **netfilter2 Verification**: Test scenarios with ready and missing driver paths.
-- **Smoke Tests**: Launcher startup smoke, updater self-check, Core manifest pass.
-- **Uninstall Behavior**: Clean removal of artifacts.
-- **Manual Step Proof**: Automated verification that the user is not prompted for any manual prerequisite step.
+- **Acceptance Test Requirement**: Prove GitHubReleaseResolver/update verifier still accepts a stable release that has the required 4 assets PLUS `NekoFamilyProxy-Setup.exe` and ignores the extra distribution asset for update resolution. Do not weaken exact-one checks for the required four.
+- **Clean Machine Proof**: Without preinstalled runtime, must verify no manual prerequisite download step and only expected UAC.
+- **Runtime-Present Path**: Must prove no unnecessary .NET bootstrapper execution/elevation.
+- **Driver-Ready Path**: Must prove no driver elevation.
+- **Missing-Driver Path**: Must prove expected elevation.
+- **Failure Paths**: Suppress launch.
+- **Clean Uninstall**: Preserves shared driver.
 - Utilize existing test harness and clean Windows CI/VM environments; no new infrastructure unless absolutely necessary.
 
 ## 11. Staged Publication and Rollout
-- **Verification**: Hosted verification for v5.1.3 must verify the Setup asset identity alongside the 4 update assets, keeping the `release-v2` verifier semantics unchanged.
+- **Verification**: Hosted verification for v5.1.3 must verify the Setup asset identity alongside the 4 update assets.
 - **Lifecycle**: PRERELEASE hosted verification -> READY_FOR_ROLLOUT -> explicit owner rollout. No automatic USER rollout until Owner approval.
 
 ## 12. Migration from Current v5.1.2
-- v5.1.2 is an immutable accepted latest release and will never be modified.
+- v5.1.2 is an immutable accepted latest release and will never be modified. (Historical v5.1.2 seq6 remains immutable).
 - The new design takes effect strictly from v5.1.3.
-- Upon successful rollout of v5.1.3, the public copy for v5.1.2 may optionally clarify that it is superseded, but no v5.1.2 assets will be replaced.
 
 ## 13. Future Release Template Impact (v5.1.4+)
-- The v5.1.3 deployment serves as the template. Future releases will generate and update the identical `NekoFamilyProxy-Setup.exe` artifact from each accepted frozen candidate via the established release chain.
+- Future 5.1.4+ same pattern; Setup built from each frozen candidate and verified as hosted distribution asset.
 
 ## 14. Anti-Duplication and YAGNI
 - Avoid duplicate installer subsystems. Modify existing `installer/beta.iss` instead of creating a secondary framework.
