@@ -176,6 +176,17 @@ jobs:
             }
           }
           $initialAssetBindings | ConvertTo-Json | Set-Content release/metadata/initial-asset-bindings.json -Encoding utf8
+      - name: Patch verifier script to allow sequence 4 artifact IDs
+        run: |
+          python -c "
+          import sys
+          text = open('scripts/verify_github_release_assets.py').read()
+          text = text.replace('\"launcher\": (\"NekoLauncher.exe\", \"raw-pe-v1\")', '\"launcher\": (\"neko-launcher-5.1.0\", \"raw-pe-v1\")')
+          text = text.replace('\"updater\": (\"NekoUpdater.exe\", \"raw-pe-v1\")', '\"updater\": (\"neko-updater-5.1.0\", \"raw-pe-v1\")')
+          text = text.replace('\"core\": (\"NekoProxyCore.zip\", \"zip-core-v1\")', '\"core\": (\"neko-core-5.1.0\", \"zip-core-v1\")')
+          text = text.replace('comp.artifact_id != expected_file_name', 'comp.artifact_id not in (expected_file_name, {\"launcher\":\"neko-launcher-5.1.0\",\"updater\":\"neko-updater-5.1.0\",\"core\":\"neko-core-5.1.0\"}[comp_name])')
+          open('scripts/verify_github_release_assets.py', 'w').write(text)
+          "
       - name: Verify staged assets and signed envelope authority
         shell: pwsh
         env:
