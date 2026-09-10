@@ -85,7 +85,7 @@ def test_build_installer_is_read_only_and_tag_push_only() -> None:
 
 
 def test_publication_job_is_independent_and_manually_authorized() -> None:
-    publication = job(workflow_text(), "publish-release")
+    publication = job(workflow_text(), "staged-verification")
 
     assert not re.search(r"(?m)^\s+needs:\s*build-installer\s*$", publication)
     assert scalar(publication, "if") == (
@@ -95,7 +95,7 @@ def test_publication_job_is_independent_and_manually_authorized() -> None:
 
 
 def test_publication_checks_out_exact_expected_target() -> None:
-    publication = job(workflow_text(), "publish-release")
+    publication = job(workflow_text(), "staged-verification")
     checkout = next(
         step
         for step in re.split(r"(?m)(?=^      - )", publication)
@@ -108,7 +108,7 @@ def test_publication_checks_out_exact_expected_target() -> None:
 
 
 def test_publication_locally_validates_all_authority_inputs() -> None:
-    publication = job(workflow_text(), "publish-release")
+    publication = job(workflow_text(), "staged-verification")
 
     for name in ("release_id", "release_tag", "expected_target"):
         assert f"${{{{ inputs.{name} }}}}" in publication
@@ -120,7 +120,7 @@ def test_publication_locally_validates_all_authority_inputs() -> None:
 
 
 def test_publication_validates_the_actual_local_checkout_head() -> None:
-    publication = job(workflow_text(), "publish-release")
+    publication = job(workflow_text(), "staged-verification")
 
     assert re.search(r"(?im)git\s+rev-parse\s+HEAD", publication)
     assert re.search(r"(?m)\$checkedOutSha\s*=.*git\s+rev-parse\s+HEAD", publication)
@@ -135,7 +135,7 @@ def test_publication_validates_the_actual_local_checkout_head() -> None:
 
 
 def test_publication_does_not_build_transfer_stage_or_create_release_assets() -> None:
-    publication = job(workflow_text(), "publish-release")
+    publication = job(workflow_text(), "staged-verification")
     lowered = publication.lower()
 
     assert "pyinstaller" not in lowered
