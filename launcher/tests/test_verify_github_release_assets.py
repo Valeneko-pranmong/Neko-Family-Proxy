@@ -495,6 +495,22 @@ def test_verify_assets_fails_when_require_prerelease_and_draft_is_true(tmp_path:
         )
 
 
+def test_verify_assets_succeeds_when_require_prerelease_and_prerelease_is_true(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, prerelease=True, draft=False)
+
+    verifier.verify_github_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        public_key_file=bundle["public_key_file"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_prerelease=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+
 def test_verify_assets_fails_when_prerelease_is_true(tmp_path: Path) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(tmp_path, prerelease=True)

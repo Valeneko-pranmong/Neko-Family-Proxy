@@ -290,3 +290,14 @@ def test_gateway_exact_get_by_id_accepts_prerelease_not_draft(monkeypatch: pytes
         "Neko-Family-Proxy/releases/12345"
     )
     assert request.full_url == expected_url
+
+
+def test_gateway_fetch_by_id_rejects_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    document = _valid_document()
+    document["id"] = 12345
+    document["draft"] = True
+    body = json.dumps(document).encode("utf-8")
+    response = FakeResponse(body)
+    module, gateway, opener = _gateway(monkeypatch, response)
+
+    assert _error_code(lambda: gateway.fetch_by_id(12345)) == "GITHUB_RELEASE_INELIGIBLE"
