@@ -1,10 +1,11 @@
-def get_next_patch(releases: list[dict]) -> str:
+def get_next_patch(releases: list[dict], extra_tags: list[str] = None) -> str:
     stable_patches = []
-    occupied_tags = set()
+    occupied_tags = set(extra_tags or [])
     
     for r in releases:
         t = r.get("tag_name", "")
-        occupied_tags.add(t)
+        if t:
+            occupied_tags.add(t)
         # Distinguish stable from prerelease via GitHub metadata and tag shape
         if r.get("prerelease") is False and t.startswith("v5.1.") and "-" not in t:
             try:
@@ -43,3 +44,19 @@ def get_github_releases() -> list[dict]:
     out = subprocess.check_output(["gh", "release", "list", "--repo", "Valeneko-pranmong/Neko-Family-Proxy", "--json", "tagName,isPrerelease", "--limit", "100"])
     releases = json.loads(out)
     return [{"tag_name": r["tagName"], "prerelease": r["isPrerelease"]} for r in releases]
+
+def get_remote_tags() -> list[str]:
+    import subprocess
+    try:
+        out = subprocess.check_output(["git", "ls-remote", "--tags", "origin"])
+        tags = []
+        for line in out.decode().splitlines():
+            parts = line.split("\t")
+            if len(parts) == 2 and parts[1].startswith("refs/tags/"):
+                tag = parts[1].replace("refs/tags/", "")
+                if tag.endswith("^{}"):
+                    tag = tag[:-3]
+                tags.append(tag)
+        return tags
+    except subprocess.CalledProcessError:
+        return []

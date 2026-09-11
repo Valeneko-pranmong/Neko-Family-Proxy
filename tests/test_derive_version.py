@@ -42,3 +42,21 @@ def test_derive_patch_jump_over_multiple_occupied():
 def test_derive_patch_empty():
     from scripts.derive_version import get_next_patch
     assert get_next_patch([]) == "v5.1.0"
+
+def test_derive_patch_current_state_fixture():
+    from scripts.derive_version import get_next_patch, get_release_sequence
+    # Prove current state yields next v5.1.7 and sequence 11
+    releases = [
+        {"tag_name": "v5.1.6", "prerelease": True},
+        {"tag_name": "v5.1.2", "prerelease": False},
+        {"tag_name": "v5.1.1", "prerelease": False},
+        {"tag_name": "v5.1.0", "prerelease": False},
+    ]
+    extra_tags = [
+        "v5.1.0", "v5.1.1", "v5.1.2", 
+        "v5.1.3", "v5.1.4", "v5.1.5", "v5.1.6"
+    ]
+    
+    next_patch = get_next_patch(releases, extra_tags)
+    assert next_patch == "v5.1.7"
+    assert get_release_sequence(next_patch) == 11
