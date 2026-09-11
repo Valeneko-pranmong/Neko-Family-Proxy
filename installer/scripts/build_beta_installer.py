@@ -146,7 +146,9 @@ def build_candidate(args: argparse.Namespace) -> int:
     if manifest.get("source_commit") != args.core_authority:
         fail(f"source_commit mismatch: {manifest.get('source_commit')}")
     bad: list[str] = []
-    for rel, want in manifest["files"].items():
+    files_obj = manifest["files"]
+    items = [(item["path"], item["sha256"]) for item in files_obj] if isinstance(files_obj, list) else files_obj.items()
+    for rel, want in items:
         p = os.path.join(core_bundle, rel.replace("/", os.sep))
         if not os.path.isfile(p):
             bad.append(f"MISSING {rel}")

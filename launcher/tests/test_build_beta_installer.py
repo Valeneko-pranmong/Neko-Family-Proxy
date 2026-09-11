@@ -172,6 +172,54 @@ def test_matching_explicit_hashes_reach_controlled_later_gate(
         )
     assert observed == ["find_iscc"]
 
+def test_core_manifest_list_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    core = stage / "payload" / "CoreBundle"
+
+    (core / "dummy.dll").write_bytes(b"dummy")
+
+    list_manifest = {
+        "source_commit": CORE_AUTHORITY,
+        "v2ray_sn_exe_hash": _digest(b"v2ray"),
+        "files": [
+            {
+                "path": "dummy.dll",
+                "size": 5,
+                "sha256": _digest(b"dummy")
+            }
+        ]
+    }
+    (core / "core-manifest.json").write_text(json.dumps(list_manifest), encoding="utf-8")
+
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
+
+    def controlled_iscc() -> str:
+        raise RuntimeError("CONTROLLED_LATER_GATE")
+    monkeypatch.setattr(module, "find_iscc", controlled_iscc)
+
+    with pytest.raises(RuntimeError, match="CONTROLLED_LATER_GATE"):
+        build_candidate(parse_args(_argv(stage, _digest(b"launcher"), _digest(b"updater"))))
+
+def test_core_manifest_list_schema_malformed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    core = stage / "payload" / "CoreBundle"
+
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
+
+    # Missing sha256
+    (core / "core-manifest.json").write_text(json.dumps({
+        "source_commit": CORE_AUTHORITY,
+        "v2ray_sn_exe_hash": _digest(b"v2ray"),
+        "files": [{"path": "dummy.dll"}]
+    }), encoding="utf-8")
+
+    with pytest.raises(KeyError, match="sha256"):
+        build_candidate(parse_args(_argv(stage, _digest(b"launcher"), _digest(b"updater"))))
+
 def test_static_beta_iss_inspection() -> None:
     iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
     assert "g_CoreVerifyOK and g_DotnetOK and g_DriverOK" in iss_text, "LaunchAllowed must check driver"
@@ -187,10 +235,10 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
     module = _load_builder()
     parse_args, build_candidate = _candidate_api(module)
     stage = _stage(tmp_path)
-    
+
     def mock_find_iscc() -> str:
         return "mock_iscc.exe"
-        
+
     def mock_subprocess_run(args, **kwargs) -> Any:
         if args and args[0] == "mock_iscc.exe":
             assert "/DMyAppVersion=5.1.3" in args
@@ -207,13 +255,13 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
     monkeypatch.setattr(module, "find_iscc", mock_find_iscc)
     monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
-    
+
     assert build_candidate(parse_args(_argv(stage, _digest(b"launcher"), _digest(b"updater")))) == 0
-    
+
     record_path = stage / "out" / "build-record.json"
     assert record_path.exists()
     record = json.loads(record_path.read_text(encoding="utf-8"))
-    
+
     assert "core_installed_identity" in record
     manifest_bytes = (stage / "payload" / "CoreBundle" / "core-manifest.json").read_bytes()
     assert record["core_installed_identity"] == _digest(manifest_bytes)
