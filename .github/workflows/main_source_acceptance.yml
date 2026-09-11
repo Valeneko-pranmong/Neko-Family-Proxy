@@ -2,6 +2,9 @@ name: Main Source Acceptance
 on:
   push:
     branches: [ "main" ]
+permissions:
+  contents: read
+
 jobs:
   acceptance:
     runs-on: windows-latest
