@@ -289,11 +289,11 @@ def process_accepted_commits(commit: str, run_id: int):
         "sequence": sequence,
         "release_id": release_id,
         "assets": {
-            "launcher": launcher_hash,
-            "updater": updater_hash,
-            "core": core_hash,
-            "setup": _get_sha256(final_setup_exe),
-            "manifest": _get_sha256(release_json_out)
+            "launcher": {"sha256": launcher_hash, "size": final_launcher_exe.stat().st_size},
+            "updater": {"sha256": updater_hash, "size": final_updater_exe.stat().st_size},
+            "core": {"sha256": core_hash, "size": final_core_zip.stat().st_size},
+            "setup": {"sha256": _get_sha256(final_setup_exe), "size": final_setup_exe.stat().st_size},
+            "manifest": {"sha256": _get_sha256(release_json_out), "size": release_json_out.stat().st_size}
         }
     }
     (staging_base / "build-record.json").write_text(json.dumps(build_record, indent=2))

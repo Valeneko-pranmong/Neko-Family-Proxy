@@ -70,6 +70,10 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
                 )
             return subprocess.CompletedProcess(args, 0)
         if "build_beta_installer.py" in str(args[1]):
+            idx = args.index("--release-version")
+            assert args[idx+1] == "5.1.7"
+            idx_core = args.index("--core-authority")
+            assert args[idx_core+1] == "fake_auth"
             setup_out = Path(args[3]) / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
             (setup_out / "NekoFamilyProxy-Setup.exe").write_bytes(b"")
@@ -140,7 +144,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         st_size = 100
 
     def fake_stat(self):
-        if "NekoProxyCore.zip" in str(self):
+        if any(x in str(self) for x in ["NekoProxyCore.zip", "NekoLauncher.exe", "NekoUpdater.exe", "NekoFamilyProxy-Setup.exe", "release-v2.json"]):
             return FakeStat()
         return original_stat(self)
 
