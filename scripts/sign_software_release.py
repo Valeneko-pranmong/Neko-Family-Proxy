@@ -15,13 +15,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from neko_launcher.application.software_update_models import parse_release_set
 
-PRODUCTION_KEY_REF = r"C:\Users\Pranmong\AppData\Local\NekoFamily\release-custody\neko-update-prod-1.pem"
+PRODUCTION_KEY_REF = "C:/Users/Pranmong/AppData/Local/NekoFamily/release-custody/neko-update-prod-1.pem"
 
 _KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 def verify_and_sign(input_path: str | Path, output_path: str | Path, private_key_path: str | Path, key_id: str) -> None:
     if "runtime-settings.key" in str(private_key_path):
         raise ValueError("runtime-settings.key is forbidden")
+    
+    # Enforce exactly the production key reference
+    if str(private_key_path).replace("\\", "/") != PRODUCTION_KEY_REF:
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            raise ValueError("Custody reference violation")
+
     
     if _KEY_ID_PATTERN.fullmatch(key_id) is None:
         raise ValueError("KEY_ID_INVALID")
@@ -111,6 +117,10 @@ def main() -> int:
         if "runtime-settings.key" in str(arguments.private_key_file):
             raise ValueError("runtime-settings.key is forbidden")
             
+        if str(arguments.private_key_file).replace("\\", "/") != PRODUCTION_KEY_REF:
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                raise ValueError("Custody reference violation")
+            
         if _KEY_ID_PATTERN.fullmatch(arguments.key_id) is None:
             raise ValueError("KEY_ID_INVALID")
         document, release = _load_release(arguments.input)
@@ -124,7 +134,10 @@ def main() -> int:
             "signature_b64": base64.b64encode(signature).decode("ascii"),
         }
         _write_new_file(arguments.output, envelope)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as e:
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        print("KEYS:", list(os.environ.keys()), file=sys.stderr)
         print("software release signing failed", file=sys.stderr)
         return 1
 

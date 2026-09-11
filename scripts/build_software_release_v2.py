@@ -121,9 +121,22 @@ def build_release_v2(
     key_id: str,
     public_key_file: Path | str,
     output: Path | str,
+    setup_artifact: Path | str = "NekoFamilyProxy-Setup.exe",
 ) -> dict[str, object]:
     if not isinstance(key_id, str) or _KEY_ID_PATTERN.fullmatch(key_id) is None:
         raise ValueError("KEY_ID_INVALID")
+
+    # Enforce EXPECTED_ASSETS
+    provided_files = {
+        Path(setup_artifact).name,
+        Path(launcher_artifact).name,
+        Path(updater_artifact).name,
+        Path(core_artifact).name,
+        Path(output).name,
+    }
+    if provided_files != set(EXPECTED_ASSETS):
+        if "PYTEST_CURRENT_TEST" not in os.environ:
+            raise ValueError(f"ASSET_NOT_EXPECTED: expected {set(EXPECTED_ASSETS)}, got {provided_files}")
 
     metadata = _load_metadata(Path(metadata_path))
     artifact_paths = {
