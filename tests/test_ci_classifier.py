@@ -7,7 +7,7 @@ def test_classifier_skips_docs_and_ci_only():
     assert not should_trigger(["README.md"])
     assert not should_trigger(["CHANGELOG.md"])
     assert not should_trigger(["docs/README.md", "tests/test_x.py"])
-    
+
     # Release controller infra scripts should not trigger release
     assert not should_trigger(["scripts/kanban_release_adapter.py"])
     assert not should_trigger(["scripts/release_controller.py"])

@@ -42,7 +42,7 @@ def test_idempotent_task_creation(mock_check_output, mock_hermes_kanban):
     assert "--assignee" in args
     assert "release" in args
     assert "--workspace" in args
-    assert "dir:E:/Github/Project manager" in args
+    assert "worktree:E:/Github/Neko-Family-Proxy" in args
     assert "--idempotency-key" in args
     assert "release-100-sha_abc123" in args
 
@@ -90,3 +90,28 @@ def test_release_controller_import_no_error():
         import pytest
         pytest.fail(f"ImportError in release_controller: {e}")
 
+@patch("scripts.kanban_release_adapter.subprocess.run")
+@patch("scripts.kanban_release_adapter.subprocess.check_output")
+def test_kanban_task_workspace_and_cwd_contract(mock_check_output, mock_hermes_kanban):
+    def mock_check_output_side_effect(cmd, **kwargs):
+        if "gh" in cmd and "run" in cmd:
+            return b'[{"databaseId": 100, "headSha": "sha_abc123", "createdAt": "2026-09-11T10:00:00Z"}]'
+        elif "diff-tree" in cmd:
+            return b"src/main.py\n"
+        return b""
+    mock_check_output.side_effect = mock_check_output_side_effect
+
+    poll_github_and_create_tasks()
+
+    mock_hermes_kanban.assert_called_once()
+    args = mock_hermes_kanban.call_args[0][0]
+
+    # PM finding: workspace must be product checkout contract, not Project manager
+    ws_idx = args.index("--workspace") + 1
+    workspace = args[ws_idx]
+    assert workspace == "worktree:E:/Github/Neko-Family-Proxy"
+
+    # PM finding: path/cwd behavior asserts the controller is run in that repo
+    body_idx = args.index("--body") + 1
+    body = args[body_idx]
+    assert "`python scripts/release_controller.py`" in body

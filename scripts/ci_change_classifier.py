@@ -1,6 +1,6 @@
 def should_trigger(changed_files: list[str]) -> bool:
     ignored_prefixes = (
-        'docs/', 'tests/', '.github/', 
+        'docs/', 'tests/', '.github/',
         'README.md', 'CHANGELOG.md', 'SECURITY.md', 'CONTRIBUTING.md',
         'scripts/kanban_release_adapter.py',
         'scripts/release_controller.py',

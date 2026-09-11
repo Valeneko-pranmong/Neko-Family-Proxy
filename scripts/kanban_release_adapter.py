@@ -66,7 +66,7 @@ def create_kanban_task(run_id: int, sha: str):
         title,
         "--body", body,
         "--assignee", "release",
-        "--workspace", "dir:E:/Github/Project manager",
+        "--workspace", "worktree:E:/Github/Neko-Family-Proxy",
         "--idempotency-key", f"release-{run_id}-{sha}"
     ]
     
