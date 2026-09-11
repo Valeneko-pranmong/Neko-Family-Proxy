@@ -55,7 +55,7 @@ def verify_and_fetch_core() -> tuple[Path, str, int, str]:
         expected_size = core_comp.artifact_size
         installed_identity = core_comp.installed_identity_sha256.lower()
 
-    local_zip = Path("E:/Github/artifacts/v5.1.3-one-click-installer/NekoProxyCore.zip")
+    local_zip = Path("E:/Github/artifacts/v5.1.0-one-click-installer/NekoProxyCore.zip")
     if not local_zip.exists():
         raise RuntimeError("Local Core zip missing.")
 
@@ -188,7 +188,7 @@ def process_accepted_commits(commit: str, run_id: int):
     prereqs_dir = payload_dir / "Prereqs"
     prereqs_dir.mkdir(exist_ok=True)
 
-    dotnet_src = Path("E:/Github/artifacts/v5.1.3-one-click-installer/payload/Prereqs/windowsdesktop-runtime-6.0.36-win-x64.exe")
+    dotnet_src = Path("E:/Github/artifacts/v5.1.0-one-click-installer/payload/Prereqs/windowsdesktop-runtime-6.0.36-win-x64.exe")
     expected_dotnet_sha = "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
     if _get_sha256(dotnet_src) != expected_dotnet_sha:
         raise RuntimeError(".NET runtime source SHA mismatch.")

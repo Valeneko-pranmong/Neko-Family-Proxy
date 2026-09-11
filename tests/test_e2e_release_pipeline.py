@@ -36,6 +36,8 @@ def create_fake_core_zip(path: Path):
 def test_release_controller_e2e(monkeypatch, tmp_path):
     sha = "1111111111111111111111111111111111111111"
     run_id = 12345
+    import shutil
+    shutil.rmtree(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}", ignore_errors=True)
 
     monkeypatch.setattr(
         "scripts.release_controller.get_successful_main_runs",
@@ -43,7 +45,10 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "scripts.release_controller.get_github_releases",
-        lambda: [{"tag_name": "v5.1.6", "prerelease": False}],
+        lambda: [
+            {"tag_name": "v5.1.0", "prerelease": True},
+            {"tag_name": "v5.1.0", "prerelease": True}
+        ],
     )
     monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
 
@@ -140,7 +145,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         if args[0:3] == ["gh", "release", "view"]:
             return subprocess.CompletedProcess(args, 0, stdout='{"targetCommitish": "fake"}', stderr="")
         if args[0:2] == ["gh", "api"]:
-            return subprocess.CompletedProcess(args, 0, stdout='{"id": 123, "tag_name": "v5.1.7", "target_commitish": "1111111111111111111111111111111111111111", "draft": true, "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Setup.exe", "id": 5, "size": 9}]}', stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout='{"id": 123, "tag_name": "v5.1.0", "target_commitish": "1111111111111111111111111111111111111111", "draft": true, "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Setup.exe", "id": 5, "size": 9}]}', stderr="")
         if args[0] == "curl":
             Path(args[3]).write_text(signed_json)
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
@@ -160,7 +165,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "build_beta_installer.py" in str(args[1]):
             idx = args.index("--release-version")
-            assert args[idx+1] == "5.1.7"
+            assert args[idx+1] == "5.1.0"
             setup_out = Path(args[3]) / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
             (setup_out / "NekoFamilyProxy-Setup.exe").write_bytes(b"setup_exe")
@@ -239,18 +244,24 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     # Run 1
     process_accepted_commits(sha, run_id)
 
-    assert publish_calls == [("v5.1.7", sha)]
+    assert publish_calls == [("v5.1.0", sha)]
+
+    metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/base-metadata.json")
+    metadata_content = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata_content["release_sequence"] == 4
+    assert metadata_content["release_id"] == "stable-0004"
+    assert metadata_content["components"]["core"]["version"] == "5.1.0"
 
     init_path = list(
-        Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/v5.1.7/source/launcher/src/neko_launcher").rglob("__init__.py")
+        Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/source/launcher/src/neko_launcher").rglob("__init__.py")
     )
     if init_path:
         content = init_path[0].read_text(encoding="utf-8")
-        assert "5.1.7" in content
+        assert "5.1.0" in content
 
     # Run 2 for idempotency test
     process_accepted_commits(sha, run_id)
-    assert publish_calls == [("v5.1.7", sha), ("v5.1.7", sha)]
+    assert publish_calls == [("v5.1.0", sha), ("v5.1.0", sha)]
 
 
 def test_release_controller_unaccepted_commit(monkeypatch):
@@ -262,6 +273,8 @@ def test_release_controller_unaccepted_commit(monkeypatch):
 def test_release_controller_ignored_paths(monkeypatch):
     sha = "1111111111111111111111111111111111111111"
     run_id = 12345
+    import shutil
+    shutil.rmtree(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}", ignore_errors=True)
     monkeypatch.setattr("scripts.release_controller.get_successful_main_runs", lambda: [{"databaseId": run_id, "headSha": sha}])
 
     def fake_check_output(args, **kwargs):
