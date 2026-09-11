@@ -23,7 +23,7 @@ The architecture abandons the "Remote Build -> Local Sign" model in favor of a *
 
 ### Phase 2: Local Controller Execution (Hermes)
 - **Mechanism:** A persistent local Hermes release controller observes successful, accepted `main` commits.
-- **Serialization & Offline Queueing:** The single local release queue acts as the final version/tag allocator to prevent races. If the controller is offline, accepted commits queue up and are processed later in order. No manual intervention is needed.
+- **Serialization & Offline Queueing:** The Hermes Kanban DB acts as the durable local release queue and final version/tag allocator to prevent races. If the controller is offline, a thin adapter idempotently creates Kanban tasks from accepted CI commits which queue up and are processed later in order. No manual intervention or secondary bespoke queue system is needed.
 - **Exact Patch Allocation:** At controller execution time, the controller evaluates the repository state and allocates the exact next stable patch version (e.g., v5.1.x), ensuring strictly monotonic increments.
 - **Local Build & Acceptance Tests:** The controller builds the exact one-click installer + current updater artifacts using the trusted canonical pipeline, and immediately runs acceptance tests on the built artifacts to ensure correctness before signing.
 
