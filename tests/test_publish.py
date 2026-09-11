@@ -134,3 +134,73 @@ def test_execute_publish_hosted_verification_drift(monkeypatch):
 
     with pytest.raises(StageDraftReleaseError, match="mutated before promotion"):
         execute_publish("v5.1.5", "sha_123")
+
+def test_execute_publish_token_redaction_regression(monkeypatch):
+    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence
+
+    run_calls = []
+
+    def mock_run(runner, args):
+        run_calls.append(args)
+        if args == ["gh", "auth", "token"]:
+            return "gho_SENTINEL_TOKEN_12345\n"
+        if args[0:3] == ["gh", "release", "view"]:
+            raise Exception("Not found")
+        if args[0] == "gh" and args[1] == "api":
+            return '{"id": 123, "tag_name": "v5.1.5", "target_commitish": "sha_123", "draft": true, "assets": [{"name": "asset.zip", "id": 99, "size": 100}]}'
+        if args[0] == "curl":
+            return ""
+        return "sha_123"
+
+    monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
+    monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
+
+    def mock_stage(*args, **kwargs):
+        return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"asset.zip": 99}, "")
+    monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
+
+    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake_content")
+
+    # Needs a mock for writing release.json to avoid FileNotFoundError
+    monkeypatch.setattr("pathlib.Path.write_text", lambda self, text, encoding=None: None)
+
+    execute_publish("v5.1.5", "sha_123")
+
+    curl_args = [args for args in run_calls if args[0] == "curl"]
+    assert len(curl_args) == 1
+
+    assert "Authorization: Bearer gho_SENTINEL_TOKEN_12345" in curl_args[0], "Generated curl argv must contain exactly Authorization: Bearer <sentinel>"
+
+    for arg in curl_args[0]:
+        assert "***" not in arg, "argv must never contain literal ***"
+
+def test_execute_publish_token_failure_before_promotion(monkeypatch):
+    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence
+
+    run_calls = []
+
+    def mock_run(runner, args):
+        run_calls.append(args)
+        if args == ["gh", "auth", "token"]:
+            raise Exception("gh auth token failed")
+        if args[0:3] == ["gh", "release", "view"]:
+            raise Exception("Not found")
+        return "sha_123"
+
+    monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
+
+    def mock_stage(*args, **kwargs):
+        return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"asset.zip": 99}, "")
+    monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
+
+    import pytest
+    with pytest.raises(Exception, match="gh auth token failed"):
+        execute_publish("v5.1.5", "sha_123")
+
+    # Ensure no curl or promote commands were issued
+    for args in run_calls:
+        if args[0] == "curl":
+            pytest.fail("Should not execute curl if token fetch fails")
+        if args[0:3] == ["gh", "release", "edit"]:
+            pytest.fail("Should not promote if token fetch fails")
