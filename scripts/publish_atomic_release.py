@@ -122,7 +122,7 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         sys.path.pop(0)
     expected_sequence = get_release_sequence(tag)
     expected_release_id = get_release_id(expected_sequence)
-    
+
     if (
         release_set.channel != "stable"
         or release_set.release_sequence != expected_sequence
@@ -411,12 +411,19 @@ def build_release_payload(version: str, sha: str) -> dict:
         "prerelease": False,
         "generate_release_notes": True
     }
+
+
 def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
     from pathlib import Path
+    import tempfile
+    import json
+    import time
+    import hashlib
+    from scripts.verify_github_release_assets import verify_github_release_assets
+
     runner = _SubprocessExecutor()
     repo_root = Path(__file__).resolve().parents[1]
 
-    # Check for duplicate publish
     try:
         out = _run(runner, ["gh", "release", "view", version, "--repo", CANONICAL_REPO, "--json", "targetCommitish"])
         view = json.loads(out)
@@ -426,19 +433,15 @@ def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
     except Exception:
         pass
 
-    # Ensure local tag exists and binds to sha
     git = ["git", "-C", str(repo_root)]
     try:
         bound = _run(runner, [*git, "rev-parse", f"{version}^{{commit}}"]).strip()
         if bound.lower() != sha.lower():
             raise StageDraftReleaseError(f"Local tag {version} already exists but points to {bound}, expected {sha}")
     except Exception:
-        # Tag doesn't exist, create it locally
         _run(runner, [*git, "tag", version, sha])
-        # Push tag to remote so it's immutable history before draft creation
         _run(runner, [*git, "push", "origin", version])
 
-    # 1. Draft staging: creates draft, uploads assets, validates remote sizes
     evidence = stage_draft_release(
         staging_dir=Path(staging_dir),
         tag=version,
@@ -446,10 +449,84 @@ def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
         as_prerelease=False,
         executor=runner
     )
-    
+
     if not evidence:
         raise StageDraftReleaseError("Draft staging failed to return evidence")
 
-    # 2. Publish unified Stable/Latest release (promotion from draft)
+    with tempfile.TemporaryDirectory(prefix="neko-hosted-verify-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        token = _run(runner, ["gh", "auth", "token"]).strip()
+
+        for name, asset_id in evidence.assets.items():
+            out_path = tmp_path / name
+            url = f"https://api.github.com/repos/{CANONICAL_REPO}/releases/assets/{asset_id}"
+            curl = ["curl", "-sSL", "-H", f"Authorization: Bearer {token}", "-H", "Accept: application/octet-stream", "-o", str(out_path), url]
+            _run(runner, curl)
+
+            local_path = Path(staging_dir, name)
+            if out_path.stat().st_size != local_path.stat().st_size:
+                raise StageDraftReleaseError(f"Downloaded asset {name} size mismatch")
+
+            hosted_digest = hashlib.sha256(out_path.read_bytes()).hexdigest()
+            local_digest = hashlib.sha256(local_path.read_bytes()).hexdigest()
+            if hosted_digest != local_digest:
+                raise StageDraftReleaseError(f"Downloaded asset {name} digest mismatch")
+
+        release_json_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"])
+        release_json_path = tmp_path / "release.json"
+        release_json_path.write_text(release_json_raw, encoding="utf-8")
+
+        try:
+            verify_github_release_assets(
+                release_json_path=release_json_path,
+                download_dir=tmp_path,
+                expected_tag=version,
+                expected_target=sha,
+                require_draft=True
+            )
+        except Exception as e:
+            raise StageDraftReleaseError(f"Hosted verification failed: {e}") from e
+
+        pre_promote_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"])
+        pre_promote = json.loads(pre_promote_raw)
+
+        if (
+            pre_promote.get("tag_name") != version
+            or pre_promote.get("target_commitish", "").lower() != sha.lower()
+            or pre_promote.get("draft") is not True
+        ):
+            raise StageDraftReleaseError("Draft state mutated before promotion")
+
+        current_assets = {a.get("name"): {"id": a.get("id"), "size": a.get("size")} for a in pre_promote.get("assets", []) if isinstance(a, dict)}
+        for name, asset_id in evidence.assets.items():
+            if name not in current_assets:
+                raise StageDraftReleaseError(f"Asset {name} missing before promotion")
+            if current_assets[name]["id"] != asset_id:
+                raise StageDraftReleaseError(f"Asset {name} ID mutated before promotion")
+            if current_assets[name]["size"] != Path(staging_dir, name).stat().st_size:
+                raise StageDraftReleaseError(f"Asset {name} size mutated before promotion")
+
     _run(runner, ["gh", "release", "edit", version, "--draft=false", "--repo", CANONICAL_REPO])
+
+    timeout = time.time() + 300
+    success = False
+    latest_error = None
+    while time.time() < timeout:
+        try:
+            latest_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/latest"])
+            latest = json.loads(latest_raw)
+            if latest.get("id") == evidence.release_id and latest.get("tag_name") == version:
+                latest_assets = {a.get("name"): {"id": a.get("id"), "size": a.get("size")} for a in latest.get("assets", []) if isinstance(a, dict)}
+                for name, asset_id in evidence.assets.items():
+                    if name not in latest_assets or latest_assets[name]["id"] != asset_id or latest_assets[name]["size"] != Path(staging_dir, name).stat().st_size:
+                        raise ValueError(f"Gate3: Asset {name} mismatch in latest release")
+                success = True
+                break
+        except Exception as e:
+            latest_error = e
+        time.sleep(5)
+
+    if not success:
+        raise StageDraftReleaseError(f"Gate3 failed: Latest release did not resolve to {version} correctly: {latest_error}")
+
     print(f"Successfully published {version}")

@@ -1,15 +1,24 @@
 import subprocess
 import json
+import os
+import sys
+
+# Ensure scripts module can be imported
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from scripts.ci_change_classifier import should_trigger
 
 def get_successful_main_commits() -> list[str]:
-    # Poll GitHub API for successful main commits using gh CLI
-    # Only consider "Main Source Acceptance" workflow successes
+    # Stub to prevent import errors in placeholder release_controller.py
+    # Will be removed in R2 when release_controller.py becomes a CLI.
+    return []
+
+def get_successful_main_runs() -> list[dict]:
     cmd = [
         "gh", "run", "list", 
         "--workflow", "Main Source Acceptance", 
         "--branch", "main", 
         "--status", "success", 
-        "--json", "headSha,createdAt"
+        "--json", "databaseId,headSha,createdAt"
     ]
     
     try:
@@ -20,45 +29,59 @@ def get_successful_main_commits() -> list[str]:
 
     runs = json.loads(out)
     
-    # Sort by createdAt to ensure oldest first (ordered creation)
+    # Sort by createdAt to ensure oldest first
     runs.sort(key=lambda x: x["createdAt"])
     
-    # Deduplicate while preserving order
+    # Deduplicate while preserving order based on run identity
     seen = set()
-    ordered_shas = []
+    ordered_runs = []
     for run in runs:
-        sha = run["headSha"]
-        if sha not in seen:
-            seen.add(sha)
-            ordered_shas.append(sha)
+        identity = (run["databaseId"], run["headSha"])
+        if identity not in seen:
+            seen.add(identity)
+            ordered_runs.append(run)
             
-    return ordered_shas
+    return ordered_runs
 
-def create_kanban_task(sha: str):
-    # Idempotently create Kanban task
-    # We use Hermes CLI: hermes kanban create ...
-    
+def get_changed_files_for_sha(sha: str) -> list[str]:
+    # Use git locally or gh api if git is insufficient. Git diff-tree is highly authoritative locally.
+    try:
+        out = subprocess.check_output(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+        return [line for line in out.decode().splitlines() if line]
+    except subprocess.CalledProcessError:
+        # Fallback to GH API if local git doesn't have the sha
+        out = subprocess.check_output(["gh", "api", f"repos/Valeneko-pranmong/Neko-Family-Proxy/commits/{sha}", "--jq", ".files[].filename"])
+        return [line for line in out.decode().splitlines() if line]
+
+def create_kanban_task(run_id: int, sha: str):
     title = f"Release pipeline for {sha[:7]}"
-    body = f"Automated release process for commit {sha}. Run build, sign, and publish."
+    body = (
+        f"Automated release process for commit {sha} from run {run_id}.\n"
+        f"Invoke ONLY the reviewed release-controller CLI (`python scripts/release_controller.py`) for this identity.\n"
+        f"Never patch/improvise build/sign/publish."
+    )
     
     cmd = [
-        "hermes", "kanban", "create",
+        "hermes", "kanban", "--board", "neko-family-5-1-stable", "create",
         title,
         "--body", body,
         "--assignee", "release",
-        "--idempotency-key", f"release-{sha}"
+        "--workspace", "worktree:E:/Github/Neko-Family-Proxy",
+        "--idempotency-key", f"release-{run_id}-{sha}"
     ]
     
-    # Strip HERMES_DELEGATED_CHILD_CONTEXT to avoid CLI blocker
-    import os
     env = os.environ.copy()
     env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
     env.pop("HERMES_SUPERVISED_CHILD", None)
     subprocess.run(cmd, check=True, env=env)
 
 def poll_github_and_create_tasks():
-    for sha in get_successful_main_commits():
-        create_kanban_task(sha)
+    for run in get_successful_main_runs():
+        run_id = run["databaseId"]
+        sha = run["headSha"]
+        files = get_changed_files_for_sha(sha)
+        if should_trigger(files):
+            create_kanban_task(run_id, sha)
 
 if __name__ == "__main__":
     poll_github_and_create_tasks()

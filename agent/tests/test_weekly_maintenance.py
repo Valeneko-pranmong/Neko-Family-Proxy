@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 #!/usr/bin/env python3
 """
 Unit tests for Weekly Maintenance Automation & Discord Maintenance State (Phase T9A)

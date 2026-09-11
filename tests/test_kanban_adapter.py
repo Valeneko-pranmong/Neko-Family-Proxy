@@ -1,42 +1,117 @@
 from unittest.mock import patch
-from scripts.kanban_release_adapter import get_successful_main_commits, poll_github_and_create_tasks
+from scripts.kanban_release_adapter import get_successful_main_runs, poll_github_and_create_tasks
 
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
-def test_get_successful_main_commits(mock_gh_run_list):
+def test_get_successful_main_runs(mock_gh_run_list):
     mock_gh_run_list.return_value = b'''
     [
-      {"headSha": "sha_3", "createdAt": "2026-09-11T10:05:00Z"},
-      {"headSha": "sha_2", "createdAt": "2026-09-11T10:00:00Z"},
-      {"headSha": "sha_2", "createdAt": "2026-09-11T09:55:00Z"},
-      {"headSha": "sha_1", "createdAt": "2026-09-11T09:50:00Z"}
+      {"databaseId": 3, "headSha": "sha_3", "createdAt": "2026-09-11T10:05:00Z"},
+      {"databaseId": 2, "headSha": "sha_2", "createdAt": "2026-09-11T10:00:00Z"},
+      {"databaseId": 1, "headSha": "sha_2", "createdAt": "2026-09-11T09:55:00Z"},
+      {"databaseId": 4, "headSha": "sha_1", "createdAt": "2026-09-11T09:50:00Z"}
     ]
     '''
-    # Should deduplicate, ignore non-success (which gh CLI filters), 
-    # and return ordered by createdAt (oldest first) so we release in order.
-    commits = get_successful_main_commits()
-    assert commits == ["sha_1", "sha_2", "sha_3"]
+    # Should deduplicate based on identity (run_id, sha) and order by createdAt (oldest first).
+    runs = get_successful_main_runs()
+    assert len(runs) == 4 # wait, sha_2 is in two different runs (databaseId 1 and 2), they shouldn't be deduped if run ids differ.
+    # Actually, deduplication is by identity = (databaseId, headSha), so all 4 are kept.
+    assert [r["databaseId"] for r in runs] == [4, 1, 2, 3]
 
 @patch("scripts.kanban_release_adapter.subprocess.run")
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
-def test_idempotent_task_creation(mock_gh_run_list, mock_hermes_kanban):
-    mock_gh_run_list.return_value = b'[{"headSha": "sha_abc123", "createdAt": "2026-09-11T10:00:00Z"}]'
-    
+def test_idempotent_task_creation(mock_check_output, mock_hermes_kanban):
+    # gh run list returns 1 run.
+    # git diff-tree returns files indicating a product change
+    def mock_check_output_side_effect(cmd, **kwargs):
+        if "gh" in cmd and "run" in cmd:
+            return b'[{"databaseId": 100, "headSha": "sha_abc123", "createdAt": "2026-09-11T10:00:00Z"}]'
+        elif "diff-tree" in cmd:
+            return b"src/main.py\n"
+        return b""
+    mock_check_output.side_effect = mock_check_output_side_effect
+
     poll_github_and_create_tasks()
-    
+
     mock_hermes_kanban.assert_called_once()
     args = mock_hermes_kanban.call_args[0][0]
     assert "hermes" in args
     assert "kanban" in args
+    assert "--board" in args
+    assert "neko-family-5-1-stable" in args
     assert "create" in args
-    # Ensure idempotency key is passed
+    assert "--assignee" in args
+    assert "release" in args
+    assert "--workspace" in args
+    assert "worktree:E:/Github/Neko-Family-Proxy" in args
     assert "--idempotency-key" in args
-    assert "release-sha_abc123" in args
-    
+    assert "release-100-sha_abc123" in args
+
+    # Assert body contents
+    body_idx = args.index("--body") + 1
+    body = args[body_idx]
+    assert "100" in body
+    assert "sha_abc123" in body
+    assert "ONLY the reviewed release-controller CLI" in body
+
 @patch("scripts.kanban_release_adapter.subprocess.run")
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
-def test_no_mutation_for_empty(mock_gh_run_list, mock_hermes_kanban):
-    mock_gh_run_list.return_value = b'[]'
-    
+def test_no_task_for_docs_only(mock_check_output, mock_hermes_kanban):
+    def mock_check_output_side_effect(cmd, **kwargs):
+        if "gh" in cmd and "run" in cmd:
+            return b'[{"databaseId": 101, "headSha": "sha_doc", "createdAt": "2026-09-11T10:00:00Z"}]'
+        elif "diff-tree" in cmd:
+            return b"docs/README.md\n"
+        return b""
+    mock_check_output.side_effect = mock_check_output_side_effect
+
     poll_github_and_create_tasks()
-    
+
     mock_hermes_kanban.assert_not_called()
+
+@patch("scripts.kanban_release_adapter.subprocess.run")
+@patch("scripts.kanban_release_adapter.subprocess.check_output")
+def test_no_mutation_for_empty(mock_check_output, mock_hermes_kanban):
+    def mock_check_output_side_effect(cmd, **kwargs):
+        if "gh" in cmd and "run" in cmd:
+            return b'[]'
+        return b""
+    mock_check_output.side_effect = mock_check_output_side_effect
+
+    poll_github_and_create_tasks()
+
+    mock_hermes_kanban.assert_not_called()
+
+def test_release_controller_import_no_error():
+    # Proves no ImportError when importing release controller
+    try:
+        from scripts.release_controller import process_accepted_commits
+        assert callable(process_accepted_commits)
+    except ImportError as e:
+        import pytest
+        pytest.fail(f"ImportError in release_controller: {e}")
+
+@patch("scripts.kanban_release_adapter.subprocess.run")
+@patch("scripts.kanban_release_adapter.subprocess.check_output")
+def test_kanban_task_workspace_and_cwd_contract(mock_check_output, mock_hermes_kanban):
+    def mock_check_output_side_effect(cmd, **kwargs):
+        if "gh" in cmd and "run" in cmd:
+            return b'[{"databaseId": 100, "headSha": "sha_abc123", "createdAt": "2026-09-11T10:00:00Z"}]'
+        elif "diff-tree" in cmd:
+            return b"src/main.py\n"
+        return b""
+    mock_check_output.side_effect = mock_check_output_side_effect
+
+    poll_github_and_create_tasks()
+
+    mock_hermes_kanban.assert_called_once()
+    args = mock_hermes_kanban.call_args[0][0]
+
+    # PM finding: workspace must be product checkout contract, not Project manager
+    ws_idx = args.index("--workspace") + 1
+    workspace = args[ws_idx]
+    assert workspace == "worktree:E:/Github/Neko-Family-Proxy"
+
+    # PM finding: path/cwd behavior asserts the controller is run in that repo
+    body_idx = args.index("--body") + 1
+    body = args[body_idx]
+    assert "`python scripts/release_controller.py`" in body

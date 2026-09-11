@@ -151,6 +151,7 @@ def build_release_v2(
             component["artifact_sha256"] != actual_hash
             or component["artifact_size"] != actual_size
         ):
+            print(f"Mismatch in {name}: expected {component['artifact_sha256']} / {component['artifact_size']}, got {actual_hash} / {actual_size}", file=sys.stderr)
             raise ValueError("ARTIFACT_METADATA_MISMATCH")
         component["artifact_sha256"] = actual_hash
         component["artifact_size"] = actual_size
@@ -210,8 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             output=arguments.output,
         )
 
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        print("release-v2 build failed", file=sys.stderr)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as err:
+        print(f"release-v2 build failed: {err}", file=sys.stderr)
         return 1
     print("release-v2 build succeeded")
     return 0
