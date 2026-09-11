@@ -131,7 +131,7 @@ def process_accepted_commits(commit: str, run_id: int):
     staging_base = staging_base / version
     staging_base.mkdir(parents=True, exist_ok=True)
 
-    build_record_file = staging_base / "build-record.json"
+    build_record_file = staging_base / "evidence" / "build-record.json"
     if build_record_file.exists():
         print(f"Build already completed for {version_tag}. Resuming publish...")
         publish_dir = staging_base / "publish"
@@ -149,13 +149,15 @@ def process_accepted_commits(commit: str, run_id: int):
         subprocess.run(["tar", "-xf", str(tar_path), "-C", str(source_dir)], check=True)
         tar_path.unlink()
 
-    # 4. Inject version
+    # 4. Validate version
     init_py_path = source_dir / "launcher" / "src" / "neko_launcher" / "__init__.py"
     if init_py_path.exists():
         content = init_py_path.read_text(encoding="utf-8")
         import re
-        content = re.sub(r'__version__\s*=\s*".*?"', f'__version__ = "{version}"', content)
-        init_py_path.write_text(content, encoding="utf-8")
+        m = re.search(r'__version__\s*=\s*"([^"]+)"', content)
+        if not m or m.group(1) != version:
+            print(f"Error: Committed version declarations do not equal release_target target. Expected {version}, found {m.group(1) if m else 'none'}", file=sys.stderr)
+            sys.exit(1)
 
     # 5. Build Launcher/Updater
     env = os.environ.copy()
@@ -257,7 +259,9 @@ def process_accepted_commits(commit: str, run_id: int):
         }
     }
 
-    metadata_path = staging_base / "base-metadata.json"
+    evidence_dir = staging_base / "evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    metadata_path = evidence_dir / "base-metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     # 9. Sign software release
@@ -304,7 +308,7 @@ def process_accepted_commits(commit: str, run_id: int):
             "manifest": {"sha256": _get_sha256(release_json_out), "size": release_json_out.stat().st_size}
         }
     }
-    (staging_base / "build-record.json").write_text(json.dumps(build_record, indent=2))
+    (evidence_dir / "build-record.json").write_text(json.dumps(build_record, indent=2))
 
     print("Publishing release...")
     execute_publish(version_tag, commit, staging_dir=str(publish_dir))

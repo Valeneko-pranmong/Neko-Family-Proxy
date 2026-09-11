@@ -198,7 +198,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         if "__init__.py" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
-                self.write_text('__version__ = "1.0.0"', encoding="utf-8")
+                self.write_text('__version__ = "5.1.0"', encoding="utf-8")
             return True
         if "NekoProxyCore.zip" in str(self) or "windowsdesktop-runtime" in str(self):
             return True
@@ -246,7 +246,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     assert publish_calls == [("v5.1.0", sha)]
 
-    metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/base-metadata.json")
+    metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/evidence/base-metadata.json")
     metadata_content = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata_content["release_sequence"] == 4
     assert metadata_content["release_id"] == "stable-0004"
@@ -299,3 +299,60 @@ def test_security_boundary_no_private_key_read():
             if isinstance(node.func, ast.Attribute) and node.func.attr in ("open", "read_text", "read_bytes"):
                 if isinstance(node.func.value, ast.Name) and "key" in node.func.value.id.lower():
                     pytest.fail("Private key read detected in code")
+
+def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
+    sha = "2222222222222222222222222222222222222222"
+    run_id = 54321
+
+    import shutil
+    shutil.rmtree(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}", ignore_errors=True)
+
+    monkeypatch.setattr(
+        "scripts.release_controller.get_successful_main_runs",
+        lambda: [{"databaseId": run_id, "headSha": sha}],
+    )
+    monkeypatch.setattr(
+        "scripts.release_controller.get_github_releases",
+        lambda: [{"tag_name": "v5.1.0", "prerelease": True}],
+    )
+    monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
+
+    def fake_run(args, **kwargs):
+        import subprocess
+        from pathlib import Path
+        if args[0] == "git" and "merge-base" in args:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[0] == "git" and "archive" in args:
+            out_idx = args.index("-o") + 1
+            Path(args[out_idx]).write_bytes(b"tar")
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[0] == "tar":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    def fake_check_output(args, **kwargs):
+        if args[0] == "git" and "show" in args:
+            ret = "src/main.py\n"
+            return ret if kwargs.get("text") else ret.encode()
+        return "" if kwargs.get("text") else b""
+
+    monkeypatch.setattr("scripts.release_controller.subprocess.run", fake_run)
+    monkeypatch.setattr("scripts.release_controller.subprocess.check_output", fake_check_output)
+
+    from pathlib import Path
+    real_exists = Path.exists
+    def fake_exists(self):
+        if "__init__.py" in str(self) and "launcher" in str(self):
+            self.parent.mkdir(parents=True, exist_ok=True)
+            if not real_exists(self):
+                self.write_text('__version__ = "5.1.1"', encoding="utf-8")
+            return True
+        return real_exists(self)
+    monkeypatch.setattr("scripts.release_controller.Path.exists", fake_exists)
+
+    import pytest
+    with pytest.raises(SystemExit):
+        process_accepted_commits(sha, run_id)
+
+    init_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/source/launcher/src/neko_launcher/__init__.py")
+    assert init_path.read_text(encoding="utf-8") == '__version__ = "5.1.1"'
