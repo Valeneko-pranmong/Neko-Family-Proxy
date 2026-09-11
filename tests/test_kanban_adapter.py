@@ -13,14 +13,14 @@ def test_get_successful_main_runs(mock_gh_run_list):
     '''
     # Should deduplicate based on identity (run_id, sha) and order by createdAt (oldest first).
     runs = get_successful_main_runs()
-    assert len(runs) == 4 # wait, sha_2 is in two different runs (databaseId 1 and 2), they shouldn't be deduped if run ids differ. 
+    assert len(runs) == 4 # wait, sha_2 is in two different runs (databaseId 1 and 2), they shouldn't be deduped if run ids differ.
     # Actually, deduplication is by identity = (databaseId, headSha), so all 4 are kept.
     assert [r["databaseId"] for r in runs] == [4, 1, 2, 3]
 
 @patch("scripts.kanban_release_adapter.subprocess.run")
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
 def test_idempotent_task_creation(mock_check_output, mock_hermes_kanban):
-    # gh run list returns 1 run. 
+    # gh run list returns 1 run.
     # git diff-tree returns files indicating a product change
     def mock_check_output_side_effect(cmd, **kwargs):
         if "gh" in cmd and "run" in cmd:
@@ -29,9 +29,9 @@ def test_idempotent_task_creation(mock_check_output, mock_hermes_kanban):
             return b"src/main.py\n"
         return b""
     mock_check_output.side_effect = mock_check_output_side_effect
-    
+
     poll_github_and_create_tasks()
-    
+
     mock_hermes_kanban.assert_called_once()
     args = mock_hermes_kanban.call_args[0][0]
     assert "hermes" in args
@@ -45,7 +45,7 @@ def test_idempotent_task_creation(mock_check_output, mock_hermes_kanban):
     assert "dir:E:/Github/Project manager" in args
     assert "--idempotency-key" in args
     assert "release-100-sha_abc123" in args
-    
+
     # Assert body contents
     body_idx = args.index("--body") + 1
     body = args[body_idx]
@@ -63,9 +63,9 @@ def test_no_task_for_docs_only(mock_check_output, mock_hermes_kanban):
             return b"docs/README.md\n"
         return b""
     mock_check_output.side_effect = mock_check_output_side_effect
-    
+
     poll_github_and_create_tasks()
-    
+
     mock_hermes_kanban.assert_not_called()
 
 @patch("scripts.kanban_release_adapter.subprocess.run")
@@ -76,9 +76,9 @@ def test_no_mutation_for_empty(mock_check_output, mock_hermes_kanban):
             return b'[]'
         return b""
     mock_check_output.side_effect = mock_check_output_side_effect
-    
+
     poll_github_and_create_tasks()
-    
+
     mock_hermes_kanban.assert_not_called()
 
 def test_release_controller_import_no_error():
