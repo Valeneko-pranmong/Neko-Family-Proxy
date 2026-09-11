@@ -134,7 +134,7 @@ def main() -> int:
             "signature_b64": base64.b64encode(signature).decode("ascii"),
         }
         _write_new_file(arguments.output, envelope)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as e:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         import traceback
         traceback.print_exc(file=sys.stderr)
         print("KEYS:", list(os.environ.keys()), file=sys.stderr)

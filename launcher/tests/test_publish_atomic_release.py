@@ -16,14 +16,14 @@ import pytest
 from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
 
 
-SCRIPT = Path(__file__).parents[2] / "scripts" / "stage_draft_release.py"
+SCRIPT = Path(__file__).parents[2] / "scripts" / "publish_atomic_release.py"
 TARGET = "b4dab9e9571cbe6d05c6fdb17617137b302856d2"
 TAG = "v5.1.4"
 
 
 def load_module():
-    assert SCRIPT.is_file(), "scripts/stage_draft_release.py must be implemented"
-    spec = importlib.util.spec_from_file_location("stage_draft_release", SCRIPT)
+    assert SCRIPT.is_file(), "scripts/publish_atomic_release.py must be implemented"
+    spec = importlib.util.spec_from_file_location("publish_atomic_release", SCRIPT)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

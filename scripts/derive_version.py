@@ -36,3 +36,10 @@ def get_release_sequence(version: str) -> int:
 
 def get_release_id(sequence: int) -> str:
     return f"stable-{sequence:04d}"
+
+def get_github_releases() -> list[dict]:
+    import subprocess
+    import json
+    out = subprocess.check_output(["gh", "release", "list", "--repo", "Valeneko-pranmong/Neko-Family-Proxy", "--json", "tagName,isPrerelease", "--limit", "100"])
+    releases = json.loads(out)
+    return [{"tag_name": r["tagName"], "prerelease": r["isPrerelease"]} for r in releases]

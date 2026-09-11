@@ -11,7 +11,6 @@ def test_expected_assets_list():
 def test_sign_software_release_custody(monkeypatch):
     from scripts.sign_software_release import PRODUCTION_KEY_REF, verify_and_sign
     import pytest
-    import os
     
     assert PRODUCTION_KEY_REF == "C:/Users/Pranmong/AppData/Local/NekoFamily/release-custody/neko-update-prod-1.pem"
     

@@ -402,3 +402,54 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+def build_release_payload(version: str, sha: str) -> dict:
+    return {
+        "tag_name": version,
+        "target_commitish": sha,
+        "name": version,
+        "draft": False,
+        "prerelease": False,
+        "generate_release_notes": True
+    }
+def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
+    from pathlib import Path
+    runner = _SubprocessExecutor()
+    repo_root = Path(__file__).resolve().parents[1]
+
+    # Check for duplicate publish
+    try:
+        out = _run(runner, ["gh", "release", "view", version, "--repo", CANONICAL_REPO, "--json", "targetCommitish"])
+        view = json.loads(out)
+        if view.get("targetCommitish", "").lower() == sha.lower():
+            print(f"Release {version} for {sha} already exists. Skipping duplicate publish.")
+            return
+    except Exception:
+        pass
+
+    # Ensure local tag exists and binds to sha
+    git = ["git", "-C", str(repo_root)]
+    try:
+        bound = _run(runner, [*git, "rev-parse", f"{version}^{{commit}}"]).strip()
+        if bound.lower() != sha.lower():
+            raise StageDraftReleaseError(f"Local tag {version} already exists but points to {bound}, expected {sha}")
+    except Exception:
+        # Tag doesn't exist, create it locally
+        _run(runner, [*git, "tag", version, sha])
+        # Push tag to remote so it's immutable history before draft creation
+        _run(runner, [*git, "push", "origin", version])
+
+    # 1. Draft staging: creates draft, uploads assets, validates remote sizes
+    evidence = stage_draft_release(
+        staging_dir=Path(staging_dir),
+        tag=version,
+        target_commit=sha,
+        as_prerelease=False,
+        executor=runner
+    )
+    
+    if not evidence:
+        raise StageDraftReleaseError("Draft staging failed to return evidence")
+
+    # 2. Publish unified Stable/Latest release (promotion from draft)
+    _run(runner, ["gh", "release", "edit", version, "--draft=false", "--repo", CANONICAL_REPO])
+    print(f"Successfully published {version}")
