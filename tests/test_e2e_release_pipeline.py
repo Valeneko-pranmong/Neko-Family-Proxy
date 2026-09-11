@@ -45,7 +45,10 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "scripts.release_controller.get_github_releases",
-        lambda: [{"tag_name": "v5.1.6", "prerelease": False}],
+        lambda: [
+            {"tag_name": "v5.1.0", "prerelease": True},
+            {"tag_name": "v5.1.0", "prerelease": True}
+        ],
     )
     monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
 
@@ -243,8 +246,14 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     assert publish_calls == [("v5.1.0", sha)]
 
+    metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/base-metadata.json")
+    metadata_content = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata_content["release_sequence"] == 4
+    assert metadata_content["release_id"] == "stable-0004"
+    assert metadata_content["components"]["core"]["version"] == "5.1.0"
+
     init_path = list(
-        Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/v5.1.0/source/launcher/src/neko_launcher").rglob("__init__.py")
+        Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.0/source/launcher/src/neko_launcher").rglob("__init__.py")
     )
     if init_path:
         content = init_path[0].read_text(encoding="utf-8")
