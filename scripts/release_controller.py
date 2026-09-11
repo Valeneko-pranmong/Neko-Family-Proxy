@@ -1,23 +1,27 @@
 from typing import List
+import subprocess
 
 def get_pending_commits() -> List[str]:
     # Placeholder for reading Kanban queue
-    return []
+    from scripts.kanban_release_adapter import get_successful_main_commits
+    return get_successful_main_commits()
 
 def mark_done(sha: str):
     # Placeholder for completing Kanban task
     pass
 
+def get_changed_files(sha: str) -> List[str]:
+    cmd = ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha]
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+        return out.decode().splitlines()
+    except subprocess.CalledProcessError:
+        return []
+
 def process_accepted_commits():
     from scripts.derive_version import get_github_releases, get_next_patch
-    # The E2E mock uses verify_and_sign, which isn't exactly how build_release_v2 works,
-    # but let's see. build_release_v2 takes inputs. Let's define verify_and_sign if needed,
-    # or just use build_release_v2. Wait, the T7 plan says:
-    # mock_build = mocker.patch("scripts.build_software_release_v2.build_all")
-    # Actually, let's implement process_accepted_commits:
     from scripts.publish_atomic_release import execute_publish
-    
-    # We will use importlib so the tests can mock them easily
+    from scripts.ci_change_classifier import should_trigger
     import scripts.build_software_release_v2 as b
     import scripts.sign_software_release as s
     
@@ -27,6 +31,12 @@ def process_accepted_commits():
         if sha in seen:
             continue
         seen.add(sha)
+        
+        changed_files = get_changed_files(sha)
+        if not should_trigger(changed_files):
+            # Skip CI/docs only changes
+            mark_done(sha)
+            continue
         
         releases = get_github_releases()
         next_patch = get_next_patch(releases)
