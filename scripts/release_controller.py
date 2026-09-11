@@ -16,6 +16,7 @@ if str(project_root) not in sys.path:
 
 from scripts.kanban_release_adapter import get_successful_main_runs
 from scripts.derive_version import get_github_releases, get_next_patch, get_release_sequence, get_release_id
+from scripts.ci_change_classifier import should_trigger
 
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
@@ -29,6 +30,10 @@ def _get_sha256(path: Path) -> str:
 
 def verify_and_fetch_core() -> tuple[Path, str, int, str]:
     print("Fetching and verifying v5.1.2 Core authority...")
+    
+    from neko_launcher.updater.core_manifest_verifier import verify_canonical_core_bundle
+    from neko_launcher.updater.zip_extractor import extract_core_bundle
+    
     cmd = ["gh", "release", "view", "v5.1.2", "--json", "assets"]
     out = subprocess.check_output(cmd)
     assets = json.loads(out)["assets"]
@@ -60,9 +65,13 @@ def verify_and_fetch_core() -> tuple[Path, str, int, str]:
     if actual_size != expected_size or actual_hash != expected_hash:
         raise RuntimeError("Local Core zip does not match v5.1.2 signature.")
         
-    with zipfile.ZipFile(local_zip) as z:
-        core_json = json.loads(z.read("core-manifest.json").decode("utf-8"))
-        if core_json.get("installed_identity_sha256") != installed_identity:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        extract_core_bundle(local_zip, tmp_dir)
+        verification = verify_canonical_core_bundle(tmp_dir)
+        if not verification.valid:
+            raise RuntimeError(f"Core bundle verification failed: {verification.error}")
+        if verification.manifest_sha256 != installed_identity:
             raise RuntimeError("Core manifest installed identity mismatch inside zip.")
             
     print("v5.1.2 Core verified successfully.")
@@ -76,23 +85,50 @@ def process_accepted_commits(commit: str, run_id: int):
         if r["databaseId"] == run_id and r["headSha"] == commit:
             valid = True
             break
-            
     if not valid:
         print(f"Error: Run {run_id} for commit {commit} is not an accepted product-impacting main run.", file=sys.stderr)
         sys.exit(1)
         
+    repo_root = Path(__file__).resolve().parent.parent
+    
     # Verify reachable from origin/main
-    subprocess.run(["git", "merge-base", "--is-ancestor", commit, "origin/main"], check=True)
+    subprocess.run(["git", "-C", str(repo_root), "merge-base", "--is-ancestor", commit, "origin/main"], check=True)
     
-    # 2. Version allocation
-    releases = get_github_releases()
-    version_tag = get_next_patch(releases)
-    version = version_tag.lstrip("v")
-    sequence = get_release_sequence(version_tag)
-    release_id = get_release_id(sequence)
-    print(f"Allocated version: {version_tag} ({version}), sequence: {sequence}, release_id: {release_id}")
+    # Verify should_trigger using exact-SHA changed files
+    out = subprocess.check_output(["git", "-C", str(repo_root), "show", "--name-only", "--format=", commit], text=True)
+    changed_files = [f for f in out.splitlines() if f.strip()]
+    if not should_trigger(changed_files):
+        print(f"Error: Commit {commit} does not contain product-impacting changes.", file=sys.stderr)
+        sys.exit(1)
+
     
-    staging_base = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{commit}/{version}")
+    staging_base = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{commit}")
+    staging_base.mkdir(parents=True, exist_ok=True)
+    
+    idempotency_file = staging_base / "idempotency_record.json"
+    if idempotency_file.exists():
+        record = json.loads(idempotency_file.read_text(encoding="utf-8"))
+        version_tag = record["version_tag"]
+        version = version_tag.lstrip("v")
+        sequence = record["sequence"]
+        release_id = record["release_id"]
+        print(f"Resuming idempotent run: {version_tag}")
+    else:
+        # 2. Version allocation
+        releases = get_github_releases()
+        version_tag = get_next_patch(releases)
+        version = version_tag.lstrip("v")
+        sequence = get_release_sequence(version_tag)
+        release_id = get_release_id(sequence)
+        print(f"Allocated version: {version_tag} ({version}), sequence: {sequence}, release_id: {release_id}")
+        
+        idempotency_file.write_text(json.dumps({
+            "version_tag": version_tag,
+            "sequence": sequence,
+            "release_id": release_id
+        }))
+        
+    staging_base = staging_base / version
     staging_base.mkdir(parents=True, exist_ok=True)
     
     source_dir = staging_base / "source"
@@ -101,7 +137,7 @@ def process_accepted_commits(commit: str, run_id: int):
     if not source_dir.exists():
         source_dir.mkdir(parents=True)
         tar_path = staging_base / "source.tar"
-        subprocess.run(["git", "archive", "--format=tar", "-o", str(tar_path), commit], check=True)
+        subprocess.run(["git", "-C", str(repo_root), "archive", "--format=tar", "-o", str(tar_path), commit], check=True)
         subprocess.run(["tar", "-xf", str(tar_path), "-C", str(source_dir)], check=True)
         tar_path.unlink()
         
@@ -238,12 +274,27 @@ def process_accepted_commits(commit: str, run_id: int):
     subprocess.run(cmd, check=True)
     
     # 10. Atomic publish
-    subprocess.run(["git", "tag", "-a", version_tag, "-m", f"Release {version_tag}", commit], check=True)
-    subprocess.run(["git", "push", "origin", version_tag], check=True)
-    
     from scripts.publish_atomic_release import execute_publish
+    
+    build_record = {
+        "run_id": run_id,
+        "source_commit": commit,
+        "version": version_tag,
+        "sequence": sequence,
+        "release_id": release_id,
+        "assets": {
+            "launcher": launcher_hash,
+            "updater": updater_hash,
+            "core": core_hash,
+            "setup": _get_sha256(final_setup_exe),
+            "manifest": _get_sha256(release_json_out)
+        }
+    }
+    (staging_base / "build-record.json").write_text(json.dumps(build_record, indent=2))
+    
     print("Publishing release...")
     execute_publish(version_tag, commit, staging_dir=str(publish_dir))
+
 
 def main():
     parser = argparse.ArgumentParser(description="Main Auto Release Controller")
