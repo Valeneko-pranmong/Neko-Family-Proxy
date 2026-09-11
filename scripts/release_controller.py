@@ -29,12 +29,12 @@ def _get_sha256(path: Path) -> str:
     return h.hexdigest().lower()
 
 def verify_and_fetch_core() -> tuple[Path, str, int, str]:
-    print("Fetching and verifying v5.0.0 Core authority...")
+    print("Fetching and verifying v5.1.2 Core authority...")
 
     from neko_launcher.updater.core_manifest_verifier import verify_canonical_core_bundle
     from neko_launcher.updater.zip_extractor import extract_core_bundle
 
-    cmd = ["gh", "release", "view", "v5.0.0", "--json", "assets"]
+    cmd = ["gh", "release", "view", "v5.1.2", "--json", "assets"]
     out = subprocess.check_output(cmd)
     assets = json.loads(out)["assets"]
 
@@ -63,7 +63,7 @@ def verify_and_fetch_core() -> tuple[Path, str, int, str]:
     actual_hash = _get_sha256(local_zip)
 
     if actual_size != expected_size or actual_hash != expected_hash:
-        raise RuntimeError("Local Core zip does not match v5.0.0 signature.")
+        raise RuntimeError("Local Core zip does not match v5.1.2 signature.")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -74,7 +74,7 @@ def verify_and_fetch_core() -> tuple[Path, str, int, str]:
         if verification.manifest_sha256 != installed_identity:
             raise RuntimeError("Core manifest installed identity mismatch inside zip.")
 
-    print("v5.0.0 Core verified successfully.")
+    print("v5.1.2 Core verified successfully.")
     return local_zip, actual_hash, actual_size, installed_identity
 
 def process_accepted_commits(commit: str, run_id: int):
@@ -162,7 +162,7 @@ def process_accepted_commits(commit: str, run_id: int):
     subprocess.run(["uv", "run", "--extra", "release", "pyinstaller", "NekoLauncher.spec"], cwd=str(source_dir / "launcher"), check=True, env=env)
     subprocess.run(["uv", "run", "--extra", "release", "pyinstaller", "NekoUpdater.spec"], cwd=str(source_dir / "launcher"), check=True, env=env)
 
-    # 6. Core from v5.0.0 signed authority
+    # 6. Core from v5.1.2 signed authority
     core_zip, core_hash, core_size, installed_identity = verify_and_fetch_core()
 
     publish_dir = staging_base / "publish"
