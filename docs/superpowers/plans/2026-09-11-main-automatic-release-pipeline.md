@@ -181,10 +181,22 @@ git commit -m "feat: implement kanban adapter polling github ci for release task
 **Step 1: Write failing test**
 Create `tests/test_derive_version.py`:
 ```python
-def test_derive_patch():
+def test_derive_patch_stable_only():
     from scripts.derive_version import get_next_patch
-    # Mocking current highest release is v5.1.4
-    assert get_next_patch(["v5.1.3", "v5.1.4"]) == "v5.1.5"
+    releases = [
+        {"tag_name": "v5.1.2", "prerelease": False},
+        {"tag_name": "v5.1.4", "prerelease": False}
+    ]
+    assert get_next_patch(releases) == "v5.1.5"
+
+def test_derive_patch_filters_prerelease_and_suffix():
+    from scripts.derive_version import get_next_patch
+    releases = [
+        {"tag_name": "v5.1.2", "prerelease": False},
+        {"tag_name": "v5.1.3-beta.1", "prerelease": True},
+        {"tag_name": "v5.1.3", "prerelease": True}
+    ]
+    assert get_next_patch(releases) == "v5.1.3"
 ```
 
 **Step 2: Verify test failure**
@@ -193,11 +205,12 @@ Run: `pytest tests/test_derive_version.py -v`
 **Step 3: Implement derivation**
 Create `scripts/derive_version.py`:
 ```python
-def get_next_patch(existing_tags: list[str]) -> str:
-    # Filter for 5.1.x
+def get_next_patch(releases: list[dict]) -> str:
     patches = []
-    for t in existing_tags:
-        if t.startswith("v5.1."):
+    for r in releases:
+        t = r.get("tag_name", "")
+        # Distinguish stable from prerelease via GitHub metadata and tag shape
+        if r.get("prerelease") is False and t.startswith("v5.1.") and "-" not in t:
             try: patches.append(int(t.split(".")[2]))
             except ValueError: pass
     next_patch = max(patches) + 1 if patches else 0
@@ -306,11 +319,35 @@ git commit -m "feat: atomic github release publisher and Gate3 hook"
 
 **Step 1: Write E2E Test**
 ```python
-def test_e2e_pipeline_simulation():
-    # Push fake commit to queue
-    # Run process_accepted_commits()
-    # Assert version derived, assets mocked built, publish mocked called
-    assert True # Replace with actual integration test using pytest-mock
+def test_e2e_pipeline_simulation(mocker):
+    from scripts.release_controller import process_accepted_commits
+    
+    # 1. Fake Kanban DB queue: simulates ordered queued accepted commits and duplicates
+    mock_get_pending = mocker.patch("scripts.kanban_release_adapter.get_pending_commits", return_value=["sha_1", "sha_2", "sha_1"])
+    mock_mark_done = mocker.patch("scripts.kanban_release_adapter.mark_done")
+    
+    # 2. Fake GitHub releases for derivation
+    mocker.patch("scripts.derive_version.get_github_releases", return_value=[{"tag_name": "v5.1.4", "prerelease": False}])
+    
+    # 3. Fake build & sign verification
+    mock_build = mocker.patch("scripts.build_software_release_v2.build_all")
+    mock_sign = mocker.patch("scripts.sign_software_release.verify_and_sign")
+    
+    # 4. Fake atomic publish
+    mock_publish = mocker.patch("scripts.publish_atomic_release.execute_publish")
+    
+    process_accepted_commits()
+    
+    # Verify ordered execution and duplicate suppression (sha_1 runs once, then sha_2)
+    assert mock_build.call_args_list == [mocker.call("v5.1.5", "sha_1"), mocker.call("v5.1.6", "sha_2")]
+    
+    # Verify build and sign called before publish
+    assert mock_build.call_count == 2
+    assert mock_sign.call_count == 2
+    
+    # Verify publish payload correctly constructed and called
+    assert mock_publish.call_args_list == [mocker.call("v5.1.5", "sha_1"), mocker.call("v5.1.6", "sha_2")]
+    assert mock_mark_done.call_count == 2
 ```
 
 **Step 2: Run and verify integration**
