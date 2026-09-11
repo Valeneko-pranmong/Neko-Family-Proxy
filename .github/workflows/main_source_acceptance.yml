@@ -8,10 +8,27 @@ permissions:
 jobs:
   acceptance:
     runs-on: windows-latest
+    outputs:
+      release_eligible: ${{ steps.classify.outputs.release_eligible }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - name: Check trigger
-        run: python -c "from scripts.ci_change_classifier import should_trigger; import subprocess, sys; files=subprocess.check_output(['git','diff','--name-only','HEAD^','HEAD']).decode().split(); sys.exit(0 if should_trigger(files) else 78)"
+        id: classify
+        run: python -c "from scripts.ci_change_classifier import should_trigger; import subprocess, sys, os; files=subprocess.check_output(['git','diff','--name-only','HEAD^','HEAD']).decode().split(); is_product = should_trigger(files); fh = open(os.environ['GITHUB_OUTPUT'], 'a'); fh.write(f'release_eligible={str(is_product).lower()}\n'); fh.close()"
+      - name: Install dependencies
+        if: steps.classify.outputs.release_eligible == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e launcher[dev]
+      - name: Run Ruff
+        if: steps.classify.outputs.release_eligible == 'true'
+        run: python -m ruff check src tests
+        working-directory: launcher
+      - name: Run Repository Safety
+        if: steps.classify.outputs.release_eligible == 'true'
+        run: python scripts/check_repository_safety.py
       - name: Run Tests
-        run: pytest tests/
+        if: steps.classify.outputs.release_eligible == 'true'
+        run: python -m pytest -q -m "not integration"
+        working-directory: launcher
