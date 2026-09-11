@@ -131,6 +131,14 @@ def process_accepted_commits(commit: str, run_id: int):
     staging_base = staging_base / version
     staging_base.mkdir(parents=True, exist_ok=True)
 
+    build_record_file = staging_base / "build-record.json"
+    if build_record_file.exists():
+        print(f"Build already completed for {version_tag}. Resuming publish...")
+        publish_dir = staging_base / "publish"
+        from scripts.publish_atomic_release import execute_publish
+        execute_publish(version_tag, commit, staging_dir=str(publish_dir))
+        return
+
     source_dir = staging_base / "source"
 
     # 3. Build from isolated exact-SHA workspace
