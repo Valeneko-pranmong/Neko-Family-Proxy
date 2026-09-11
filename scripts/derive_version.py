@@ -5,9 +5,9 @@ def get_next_patch(releases: list[dict], extra_tags: list[str] = None) -> str:
     target_file = Path(__file__).resolve().parent.parent / "release_target.json"
     if target_file.exists():
         data = json.loads(target_file.read_text(encoding="utf-8"))
-        target = data.get("target", "v5.1.3")
+        target = data.get("target", "v5.1.0")
     else:
-        target = "v5.1.3"
+        target = "v5.1.0"
 
     for r in releases:
         if r.get("tag_name") == target and r.get("prerelease") is False:
@@ -20,7 +20,7 @@ def get_release_sequence(version: str) -> int:
     if target_file.exists():
         data = json.loads(target_file.read_text(encoding="utf-8"))
         if version == data.get("target"):
-            return data.get("seq", 7)
+            return data.get("seq", 4)
 
     import re
     if version.startswith("v5.1."):
