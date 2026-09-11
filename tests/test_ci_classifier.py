@@ -14,6 +14,7 @@ def test_classifier_skips_docs_and_ci_only():
     assert not should_trigger(["scripts/derive_version.py"])
     assert not should_trigger(["scripts/publish_atomic_release.py"])
     assert not should_trigger(["scripts/derive_version.py", "scripts/release_controller.py"])
+    assert not should_trigger(["release_target.json"])
 
 def test_classifier_mixed_changes_trigger():
     from scripts.ci_change_classifier import should_trigger
@@ -44,6 +45,20 @@ def test_classifier_a4867ad_regression():
     ]
     assert not should_trigger(changed_files)
 
+def test_classifier_current_diff_regression():
+    from scripts.ci_change_classifier import should_trigger
+    # Exact current diff files vs origin/main for release_target.json addition
+    changed_files = [
+        "docs/superpowers/plans/2026-09-11-main-automatic-release-pipeline.md",
+        "docs/superpowers/specs/2026-09-11-main-automatic-release-pipeline-design.md",
+        "release_target.json",
+        "scripts/derive_version.py",
+        "scripts/release_controller.py",
+        "tests/test_derive_version.py",
+        "tests/test_e2e_release_pipeline.py"
+    ]
+    assert not should_trigger(changed_files)
+
 def test_classifier_product_files():
     from scripts.ci_change_classifier import should_trigger
     # installer/runtime and Core/product code must remain release-eligible
@@ -53,3 +68,6 @@ def test_classifier_product_files():
     assert should_trigger(["launcher/src/main.rs"])
     # mixed tests
     assert should_trigger(["agent/tests/test_foo.py", "Core/product.cs"])
+    # release_target mixed with product code
+    assert should_trigger(["release_target.json", "launcher/src/main.rs"])
+    assert should_trigger(["release_target.json", "installer/build.iss"])
