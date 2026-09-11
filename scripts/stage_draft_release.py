@@ -25,7 +25,6 @@ REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
     "NekoProxyCore.zip",
     "release-v2.json",
 )
-_TAG = "v5.1.4"
 _COMPONENTS = {
     "launcher": ("NekoLauncher.exe", "raw-pe-v1"),
     "updater": ("NekoUpdater.exe", "raw-pe-v1"),
@@ -115,17 +114,25 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
     if document.get("key_id") != "neko-update-prod-1":
         raise StageDraftReleaseError("Stable-release key authority mismatch")
     release_set = _verify_manifest_signature(document)
+    _ensure_launcher_import_path()
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from scripts.derive_version import get_release_sequence, get_release_id
+    finally:
+        sys.path.pop(0)
+    expected_sequence = get_release_sequence(tag)
+    expected_release_id = get_release_id(expected_sequence)
+    
     if (
         release_set.channel != "stable"
-        or release_set.release_sequence != 8
+        or release_set.release_sequence != expected_sequence
         or release_set.minimum_supported_sequence != 1
-        or release_set.release_id != "stable-0008"
+        or release_set.release_id != expected_release_id
     ):
         raise StageDraftReleaseError("Stable-release authority mismatch")
     if (
         release_set.updater_protocol.minimum != 1
         or release_set.updater_protocol.maximum != 1
-        or tag != _TAG
     ):
         raise StageDraftReleaseError("Stable-release protocol or tag mismatch")
     if set(release_set.components) != set(_COMPONENTS):
@@ -135,7 +142,7 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
         file_data = assets[file_name].read_bytes()
         digest = hashlib.sha256(file_data).hexdigest()
         if (
-            descriptor.version != "5.1.4"
+            descriptor.version != tag.lstrip("v")
             or descriptor.artifact_id != file_name
             or descriptor.artifact_sha256 != digest
             or descriptor.artifact_size != len(file_data)

@@ -1,6 +1,5 @@
-import pytest
-from unittest.mock import patch, MagicMock
-from scripts.kanban_release_adapter import get_successful_main_commits, create_kanban_task, poll_github_and_create_tasks
+from unittest.mock import patch
+from scripts.kanban_release_adapter import get_successful_main_commits, poll_github_and_create_tasks
 
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
 def test_get_successful_main_commits(mock_gh_run_list):

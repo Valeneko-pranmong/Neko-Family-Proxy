@@ -16,12 +16,8 @@ from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
 EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
-STABLE_RELEASE_EXPECTED_TAG = "v5.1.4"
 STABLE_RELEASE_EXPECTED_CHANNEL = "stable"
-STABLE_RELEASE_EXPECTED_SEQUENCE = 8
 STABLE_RELEASE_EXPECTED_MIN_SEQUENCE = 1
-STABLE_RELEASE_EXPECTED_RELEASE_ID = "stable-0008"
-STABLE_RELEASE_EXPECTED_COMPONENT_VERSION = "5.1.4"
 STABLE_RELEASE_EXPECTED_PROTOCOL_MIN = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MAX = 1
 
@@ -235,14 +231,25 @@ def verify_github_release_assets(
         raise GitHubReleaseAssetsVerificationError("Envelope cryptographic verification failed") from err
 
     if enforce_first_release:
+        try:
+            import sys
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from scripts.derive_version import get_release_sequence, get_release_id
+        finally:
+            sys.path.pop(0)
+
+        expected_sequence = get_release_sequence(expected_tag)
+        expected_release_id = get_release_id(expected_sequence)
+        expected_component_version = expected_tag.lstrip("v")
+
         invariant_checks = (
             (release_set_v2.channel == STABLE_RELEASE_EXPECTED_CHANNEL, "channel"),
-            (release_set_v2.release_sequence == STABLE_RELEASE_EXPECTED_SEQUENCE, "release_sequence"),
+            (release_set_v2.release_sequence == expected_sequence, "release_sequence"),
             (
                 release_set_v2.minimum_supported_sequence == STABLE_RELEASE_EXPECTED_MIN_SEQUENCE,
                 "minimum_supported_sequence",
             ),
-            (release_set_v2.release_id == STABLE_RELEASE_EXPECTED_RELEASE_ID, "release_id"),
+            (release_set_v2.release_id == expected_release_id, "release_id"),
             (
                 release_set_v2.updater_protocol.minimum == STABLE_RELEASE_EXPECTED_PROTOCOL_MIN
                 and release_set_v2.updater_protocol.maximum == STABLE_RELEASE_EXPECTED_PROTOCOL_MAX,
@@ -256,12 +263,10 @@ def verify_github_release_assets(
                 )
         for component_name in ("launcher", "updater", "core"):
             component = release_set_v2.components.get(component_name)
-            if component is None or component.version != STABLE_RELEASE_EXPECTED_COMPONENT_VERSION:
+            if component is None or component.version != expected_component_version:
                 raise GitHubReleaseAssetsVerificationError(
                     f"Stable-release {component_name} version invariant mismatch"
                 )
-        if expected_tag != STABLE_RELEASE_EXPECTED_TAG:
-            raise GitHubReleaseAssetsVerificationError("Stable-release tag invariant mismatch")
     elif release_set_v2.channel != "stable":
         raise GitHubReleaseAssetsVerificationError(
             f"Release channel must be 'stable', got {release_set_v2.channel!r}"

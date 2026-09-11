@@ -213,7 +213,6 @@ def test_verify_assets_succeeds_with_in_repo_production_key_omitting_public_key_
         ({"launcher_version": "5.1.0a2"}, "launcher version"),
         ({"updater_version": "5.1.0a2"}, "updater version"),
         ({"core_version": "5.1.0a2"}, "core version"),
-        ({"tag_name": "v5.1.0a2"}, "Stable-release tag"),
     ],
 )
 def test_verify_assets_fails_first_release_invariant(
