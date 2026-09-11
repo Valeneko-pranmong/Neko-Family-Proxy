@@ -23,14 +23,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-import queue
 import select
 import socket
 import struct
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import urllib.error
 import urllib.request

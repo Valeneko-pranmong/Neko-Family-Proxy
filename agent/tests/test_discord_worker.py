@@ -10,7 +10,6 @@ import os
 import socket
 import struct
 import tempfile
-import time
 import unittest
 import urllib.error
 from datetime import datetime
@@ -21,13 +20,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from neko_discord_worker import (
-    ETH_P_ALL,
     PACKET_OUTGOING,
-    DEFAULT_PROXY_PORT,
-    DEFAULT_ALERT_COOLDOWN_SECONDS,
-    DEFAULT_STALE_AFTER_SECONDS,
     DEFAULT_TRAFFIC_MIN_REPORT_BYTES,
-    TrafficSample,
     HealthSnapshot,
     WorkerState,
     StatusStateMachine,
@@ -42,7 +36,6 @@ from neko_discord_worker import (
     derive_health_status,
     build_current_status_payload,
     build_traffic_summary_payload,
-    build_alert_payload,
     load_state,
     save_state_atomic,
 )

@@ -15,8 +15,28 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from neko_launcher.application.software_update_models import parse_release_set
 
+PRODUCTION_KEY_REF = r"C:\Users\Pranmong\AppData\Local\NekoFamily\release-custody\neko-update-prod-1.pem"
+
 _KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
+def verify_and_sign(input_path: str | Path, output_path: str | Path, private_key_path: str | Path, key_id: str) -> None:
+    if "runtime-settings.key" in str(private_key_path):
+        raise ValueError("runtime-settings.key is forbidden")
+    
+    if _KEY_ID_PATTERN.fullmatch(key_id) is None:
+        raise ValueError("KEY_ID_INVALID")
+        
+    document, release = _load_release(Path(input_path))
+    payload = _canonical_payload(document)
+    private_key = _load_private_key(Path(private_key_path))
+    signature = private_key.sign(payload)
+    envelope = {
+        "envelope_version": 1,
+        "key_id": key_id,
+        "payload_b64": base64.b64encode(payload).decode("ascii"),
+        "signature_b64": base64.b64encode(signature).decode("ascii"),
+    }
+    _write_new_file(Path(output_path), envelope)
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -87,6 +107,10 @@ def _write_new_file(path: Path, document: dict[str, object]) -> None:
 def main() -> int:
     try:
         arguments = _arguments()
+        
+        if "runtime-settings.key" in str(arguments.private_key_file):
+            raise ValueError("runtime-settings.key is forbidden")
+            
         if _KEY_ID_PATTERN.fullmatch(arguments.key_id) is None:
             raise ValueError("KEY_ID_INVALID")
         document, release = _load_release(arguments.input)

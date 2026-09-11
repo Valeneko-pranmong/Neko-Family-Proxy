@@ -22,6 +22,14 @@ from neko_launcher.updater.manifest_v2 import (
     verify_release_envelope_v2,
 )
 
+EXPECTED_ASSETS = [
+    "NekoFamilyProxy-Setup.exe",
+    "NekoLauncher.exe",
+    "NekoUpdater.exe",
+    "NekoProxyCore.zip",
+    "release-v2.json"
+]
+
 _KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 

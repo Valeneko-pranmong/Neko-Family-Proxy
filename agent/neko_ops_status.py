@@ -28,9 +28,8 @@ import socket
 import stat
 import subprocess
 import sys
-import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 DEFAULT_PROXY_PORT = 8388
 DEFAULT_STATE_PATH = "/var/lib/neko/discord-state.json"
