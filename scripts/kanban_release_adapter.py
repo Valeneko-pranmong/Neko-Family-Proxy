@@ -7,6 +7,11 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from scripts.ci_change_classifier import should_trigger
 
+def get_successful_main_commits() -> list[str]:
+    # Stub to prevent import errors in placeholder release_controller.py
+    # Will be removed in R2 when release_controller.py becomes a CLI.
+    return []
+
 def get_successful_main_runs() -> list[dict]:
     cmd = [
         "gh", "run", "list", 

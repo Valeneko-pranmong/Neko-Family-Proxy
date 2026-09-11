@@ -80,3 +80,13 @@ def test_no_mutation_for_empty(mock_check_output, mock_hermes_kanban):
     poll_github_and_create_tasks()
     
     mock_hermes_kanban.assert_not_called()
+
+def test_release_controller_import_no_error():
+    # Proves no ImportError when importing pending-commit path
+    try:
+        from scripts.release_controller import get_pending_commits
+        assert callable(get_pending_commits)
+    except ImportError as e:
+        import pytest
+        pytest.fail(f"ImportError in release_controller: {e}")
+

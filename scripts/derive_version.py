@@ -1,6 +1,8 @@
 def get_next_patch(releases: list[dict], extra_tags: list[str] = None) -> str:
+    if extra_tags is None:
+        extra_tags = get_remote_tags()
     stable_patches = []
-    occupied_tags = set(extra_tags or [])
+    occupied_tags = set(extra_tags)
     
     for r in releases:
         t = r.get("tag_name", "")
