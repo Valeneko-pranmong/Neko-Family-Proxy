@@ -5,9 +5,15 @@ def should_trigger(changed_files: list[str]) -> bool:
         'scripts/kanban_release_adapter.py',
         'scripts/release_controller.py',
         'scripts/derive_version.py',
-        'scripts/publish_atomic_release.py'
+        'scripts/publish_atomic_release.py',
+        'scripts/build_software_release_v2.py',
+        'scripts/ci_change_classifier.py'
     )
     for f in changed_files:
-        if not f.startswith(ignored_prefixes):
-            return True
+        if f.startswith(ignored_prefixes):
+            continue
+        # Also ignore nested test directories like agent/tests/
+        if '/tests/' in f:
+            continue
+        return True
     return False
