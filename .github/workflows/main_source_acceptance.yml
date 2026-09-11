@@ -1,0 +1,14 @@
+name: Main Source Acceptance
+on:
+  push:
+    branches: [ "main" ]
+jobs:
+  acceptance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Check trigger
+        run: python -c "from scripts.ci_change_classifier import should_trigger; import subprocess, sys; files=subprocess.check_output(['git','diff','--name-only','HEAD^','HEAD']).decode().split(); sys.exit(0 if should_trigger(files) else 78)"
+      - name: Run Tests
+        run: pytest tests/
