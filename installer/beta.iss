@@ -24,8 +24,12 @@
 ; ============================================================================
 
 #define MyAppName "NEKO FAMILY PROXY"
-#define MyAppVersion "1.0.0.1"
-#define MyAppDisplayVersion "1.0.0-beta.1"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0.1"
+#endif
+#ifndef MyAppDisplayVersion
+  #define MyAppDisplayVersion "1.0.0-beta.1"
+#endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both
 ; from the build orchestrator with:  ISCC /DPayloadDir=... /DBuildOutDir=...
@@ -60,7 +64,7 @@ Compression=lzma2
 SolidCompression=yes
 
 OutputDir={#BuildOutDir}
-OutputBaseFilename=NekoFamilyProxy-Beta-Setup
+OutputBaseFilename=NekoFamilyProxy-Setup
 
 SetupIconFile=..\icon_app.ico
 
@@ -76,6 +80,9 @@ RestartIfNeededByRun=no
 [Files]
 ; Approved Launcher EXE (fail-closed hash-gated by build_beta_installer.py).
 Source: "{#PayloadDir}\NekoLauncher.exe"; \
+    DestDir: "{app}"; \
+    Flags: ignoreversion
+Source: "{#PayloadDir}\NekoUpdater.exe"; \
     DestDir: "{app}"; \
     Flags: ignoreversion
 
@@ -162,9 +169,10 @@ end;
 
 function LaunchAllowed(): Boolean;
 begin
-  { The optional launch is suppressed unless the Core is verified AND the
-    .NET Desktop Runtime 6.x x64 prerequisite ended up present. }
-  Result := g_CoreVerifyOK and g_DotnetOK;
+  { The optional launch is suppressed unless the Core is verified, the
+    .NET Desktop Runtime 6.x x64 prerequisite ended up present, AND the
+    netfilter2 driver is ready. }
+  Result := g_CoreVerifyOK and g_DotnetOK and g_DriverOK;
 end;
 
 { Machine-wide x64 .NET runtime installs live under the NATIVE Program Files
@@ -305,11 +313,10 @@ begin
   if not g_DotnetOK then begin
     AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
     SuppressibleMsgBox(
-      'Setup could not prepare the Microsoft .NET Desktop Runtime 6.x (x64). '#13#10#13#10 +
-      'ต้องติดตั้ง Microsoft .NET Desktop Runtime 6.x (x64) ก่อนจึงจะเริ่มใช้งานได้'#13#10#13#10 +
-      'Installation files are in place, but NEKO FAMILY PROXY cannot start its ' +
-      'runtime without it. Please install the runtime and run setup again.'#13#10#13#10 +
-      'The launch shortcut is disabled until the runtime is present.',
+      'Setup could not complete readiness for the Microsoft .NET Desktop Runtime 6.x (x64).'#13#10#13#10 +
+      'Please run this same Setup again and allow the required Windows UAC prompt.'#13#10#13#10 +
+      'หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล'#13#10#13#10 +
+      'The launch shortcut is disabled until readiness is complete.',
       mbError, MB_OK, IDOK);
   end;
 

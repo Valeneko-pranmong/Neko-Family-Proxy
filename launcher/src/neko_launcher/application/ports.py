@@ -125,3 +125,8 @@ class InstallationIdentity(Protocol):
     @property
     def display_name(self) -> str:
         ...
+
+
+class UpdateManifestGateway(Protocol):
+    def fetch(self, channel: str = "beta") -> object | None:
+        ...

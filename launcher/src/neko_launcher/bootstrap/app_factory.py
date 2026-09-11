@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
+from neko_launcher import __version__
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreOrchestrator,
     LaunchAccessContext,
@@ -15,6 +17,8 @@ from neko_launcher.application.production_authorization import (
     create_production_proxy_gateway,
 )
 from neko_launcher.application.services import LauncherService
+from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_service import UpdateCheckService
 from neko_launcher.domain.models import AuthStatus, EntitlementStatus
 from neko_launcher.infrastructure.account_recovery_gateway import (
     HttpAccountRecoveryGateway,
@@ -26,9 +30,25 @@ from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCore
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
 from neko_launcher.infrastructure.core.core_telemetry_client import NamedPipeCoreTelemetryClient
 from neko_launcher.infrastructure.event_bus import EventBus
+from neko_launcher.infrastructure.github_asset_downloader import (
+    GitHubAssetDownloader,
+    GitHubManifestDownloader,
+)
+from neko_launcher.infrastructure.github_release import GitHubLatestReleaseGateway
+from neko_launcher.infrastructure.github_release_binding import (
+    AuthenticatedReleaseGateway,
+    GitHubReleaseResolver,
+)
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.proxy_status_client import PublicProxyStatusClient
+from neko_launcher.infrastructure.software_release_identity import (
+    load_local_release_identity,
+)
+from neko_launcher.infrastructure.software_update_apply import SoftwareUpdateApplyService
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
+from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
+from neko_launcher.updater.root_validator import get_expected_install_root
+from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
 from neko_launcher.ui.app_window import AppWindow
@@ -44,9 +64,111 @@ def application_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def compose_update_check_service(
+    config: LauncherConfig,
+    *,
+    key_registry: Mapping[str, bytes] | None = None,
+    resolver: AuthenticatedReleaseGateway | None = None,
+    root_dir: Path | None = None,
+) -> UpdateCheckService:
+    install_root = root_dir or get_expected_install_root()
+    if resolver is None:
+        release_resolver: AuthenticatedReleaseGateway = GitHubReleaseResolver(
+            release_gateway=GitHubLatestReleaseGateway(),
+            manifest_downloader=GitHubManifestDownloader(),
+            key_registry=(
+                PRODUCTION_RELEASE_PUBLIC_KEYS
+                if key_registry is None
+                else key_registry
+            ),
+            install_root=install_root,
+            updater_protocol=UPDATER_PROTOCOL_VERSION,
+        )
+    else:
+        release_resolver = resolver
+
+    launcher_executable = (
+        Path(sys.executable)
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve()
+    )
+    core_manifest = config.proxy_core_path.with_name("canonical-core-manifest.json")
+
+    def local_identity_provider() -> LocalReleaseIdentity:
+        return load_local_release_identity(
+            release_sequence=0,
+            release_id="dev-unpublished",
+            launcher_version=__version__,
+            launcher_executable=launcher_executable,
+            core_version="dev-unpublished",
+            core_manifest=core_manifest,
+        )
+
+    return UpdateCheckService(
+        release_resolver,
+        local_identity_provider,
+    )
+
+
+def compose_update_apply_service(
+    config: LauncherConfig,
+    *,
+    key_registry: Mapping[str, bytes] | None = None,
+    resolver: AuthenticatedReleaseGateway | None = None,
+    root_dir: Path | None = None,
+    asset_downloader: GitHubAssetDownloader | None = None,
+) -> SoftwareUpdateApplyService:
+    install_root = root_dir or get_expected_install_root()
+    if resolver is None:
+        release_resolver: AuthenticatedReleaseGateway = GitHubReleaseResolver(
+            release_gateway=GitHubLatestReleaseGateway(),
+            manifest_downloader=GitHubManifestDownloader(),
+            key_registry=(
+                PRODUCTION_RELEASE_PUBLIC_KEYS
+                if key_registry is None
+                else key_registry
+            ),
+            install_root=install_root,
+            updater_protocol=UPDATER_PROTOCOL_VERSION,
+        )
+    else:
+        release_resolver = resolver
+
+    downloader = (
+        asset_downloader
+        if asset_downloader is not None
+        else GitHubAssetDownloader()
+    )
+    return SoftwareUpdateApplyService(
+        root_dir=install_root,
+        release_gateway=release_resolver,
+        asset_downloader=downloader,
+    )
+
+
 def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
+    install_root = get_expected_install_root()
+    shared_resolver = GitHubReleaseResolver(
+        release_gateway=GitHubLatestReleaseGateway(),
+        manifest_downloader=GitHubManifestDownloader(),
+        key_registry=PRODUCTION_RELEASE_PUBLIC_KEYS,
+        install_root=install_root,
+        updater_protocol=UPDATER_PROTOCOL_VERSION,
+    )
+    shared_downloader = GitHubAssetDownloader()
+    update_check_service = compose_update_check_service(
+        config,
+        resolver=shared_resolver,
+        root_dir=install_root,
+    )
+    update_apply_service = compose_update_apply_service(
+        config,
+        resolver=shared_resolver,
+        root_dir=install_root,
+        asset_downloader=shared_downloader,
+    )
     event_bus = EventBus()
     game_manager = GameProcessManager()
     secure_store = KeyringSecureStore()
@@ -172,4 +294,6 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         debug_log_dir=config.debug_log_dir,
         telemetry_client=telemetry_client,
         proxy_status_client=proxy_status_client,
+        update_check_service=update_check_service,
+        update_apply_service=update_apply_service,
     )
