@@ -1,82 +1,151 @@
-def test_derive_patch_stable_only():
-    from scripts.derive_version import get_next_patch
-    releases = [
-        {"tag_name": "v5.1.2", "prerelease": False},
-        {"tag_name": "v5.1.4", "prerelease": False}
-    ]
-    assert get_next_patch(releases, []) == "v5.1.5"
+import pytest
+import json
+import scripts.derive_version
+from pathlib import Path
 
-def test_derive_patch_filters_prerelease_and_suffix_but_skips_occupied():
-    from scripts.derive_version import get_next_patch
-    releases = [
-        {"tag_name": "v5.1.2", "prerelease": False},
-        {"tag_name": "v5.1.3-beta.1", "prerelease": True},
-        {"tag_name": "v5.1.3", "prerelease": True}
-    ]
-    # Stable base is 5.1.2. Candidate 5.1.3 is occupied. So 5.1.4.
-    assert get_next_patch(releases, []) == "v5.1.4"
+@pytest.fixture
+def mock_target(monkeypatch, tmp_path):
+    # Instead of mocking Path, let's just patch the content of release_target.json where it lives,
+    # or monkeypatch a function. Wait, we can monkeypatch Path or just read_text?
+    # Let's mock a method in scripts.derive_version directly
+    pass
 
-def test_derive_patch_no_stable():
-    from scripts.derive_version import get_next_patch
-    releases = [
-        {"tag_name": "v5.1.0-alpha", "prerelease": True},
-    ]
-    assert get_next_patch(releases, []) == "v5.1.0"
+    # We can use monkeypatch.setattr on scripts.derive_version to override the hardcoded file reading?
+    # No, it's easier to mock the pathlib.Path
+    pass
 
-def test_derive_patch_jump_over_multiple_occupied():
-    from scripts.derive_version import get_next_patch
+def test_failed_attempts_keep_target(monkeypatch, tmp_path):
+    target_file = tmp_path / "release_target.json"
+    target_file.write_text(json.dumps({
+        "target": "v5.1.3",
+        "seq": 7
+    }), encoding="utf-8")
+
+    class MockPath:
+        def __init__(self, *args, **kwargs):
+            self._path = Path(*args, **kwargs)
+        def __truediv__(self, other):
+            if other == "release_target.json":
+                class DummyFile:
+                    def exists(self): return True
+                    def read_text(self, *a, **kw): return target_file.read_text(encoding="utf-8")
+                return DummyFile()
+            return MockPath(self._path / other)
+        def resolve(self):
+            return MockPath(self._path.resolve())
+        @property
+        def parent(self):
+            return MockPath(self._path.parent)
+
+    monkeypatch.setattr(scripts.derive_version, "Path", MockPath)
+
     releases = [
-        {"tag_name": "v5.1.2", "prerelease": False},
-        {"tag_name": "v5.1.3", "prerelease": True},
+        {"tag_name": "v5.1.3", "prerelease": True}, # failed attempt 1
+        {"tag_name": "v5.1.3", "prerelease": True}, # failed attempt 2
+    ]
+    assert scripts.derive_version.get_next_patch(releases) == "v5.1.3"
+    assert scripts.derive_version.get_release_sequence("v5.1.3") == 7
+
+def test_occupied_accidental_tags_do_not_change_target(monkeypatch, tmp_path):
+    target_file = tmp_path / "release_target.json"
+    target_file.write_text(json.dumps({"target": "v5.1.3", "seq": 7}), encoding="utf-8")
+
+    class MockPath:
+        def __init__(self, *args, **kwargs):
+            self._path = Path(*args, **kwargs)
+        def __truediv__(self, other):
+            if other == "release_target.json":
+                class DummyFile:
+                    def exists(self): return True
+                    def read_text(self, *a, **kw): return target_file.read_text(encoding="utf-8")
+                return DummyFile()
+            return MockPath(self._path / other)
+        def resolve(self): return MockPath(self._path.resolve())
+        @property
+        def parent(self): return MockPath(self._path.parent)
+    monkeypatch.setattr(scripts.derive_version, "Path", MockPath)
+
+    releases = [
         {"tag_name": "v5.1.4", "prerelease": True},
-        {"tag_name": "v5.1.5-beta", "prerelease": True},
-    ]
-    # Stable base is 5.1.2. Next stable is 5.1.3. But 5.1.3, 5.1.4 are occupied.
-    # Is 5.1.5 occupied? Wait, 5.1.5-beta is occupied, but is v5.1.5 occupied? No.
-    # The requirement: "skip any already-occupied version/tag/release identity".
-    # If the tag is exactly "v5.1.5", it's occupied. If the tag is "v5.1.5-beta", does it occupy "v5.1.5"?
-    # PM: "occupied superseded tag v5.1.3 => next available stable candidate v5.1.4".
-    # We should skip if the exact candidate tag "v5.1.X" is in the occupied tags list.
-    assert get_next_patch(releases, []) == "v5.1.5"
-
-def test_derive_patch_empty():
-    from scripts.derive_version import get_next_patch
-    assert get_next_patch([], []) == "v5.1.0"
-
-def test_derive_patch_current_state_fixture():
-    from scripts.derive_version import get_next_patch, get_release_sequence
-    # Prove current state yields next v5.1.7 and sequence 11
-    releases = [
+        {"tag_name": "v5.1.5", "prerelease": False},
         {"tag_name": "v5.1.6", "prerelease": True},
-        {"tag_name": "v5.1.2", "prerelease": False},
-        {"tag_name": "v5.1.1", "prerelease": False},
-        {"tag_name": "v5.1.0", "prerelease": False},
     ]
-    extra_tags = [
-        "v5.1.0", "v5.1.1", "v5.1.2",
-        "v5.1.3", "v5.1.4", "v5.1.5", "v5.1.6"
-    ]
+    # target is strictly v5.1.3, doesn't bump
+    assert scripts.derive_version.get_next_patch(releases) == "v5.1.3"
 
-    next_patch = get_next_patch(releases, extra_tags)
-    assert next_patch == "v5.1.7"
-    assert get_release_sequence(next_patch) == 11
+def test_controller_never_emits_517(monkeypatch, tmp_path):
+    target_file = tmp_path / "release_target.json"
+    target_file.write_text(json.dumps({"target": "v5.1.3", "seq": 7}), encoding="utf-8")
 
-def test_derive_patch_calls_get_remote_tags(monkeypatch):
-    from scripts import derive_version
-
-    # Mock get_remote_tags to return our occupied tags
-    def mock_get_remote_tags():
-        return ["v5.1.0", "v5.1.1", "v5.1.2", "v5.1.3", "v5.1.4", "v5.1.5", "v5.1.6"]
-
-    monkeypatch.setattr(derive_version, "get_remote_tags", mock_get_remote_tags)
+    class MockPath:
+        def __init__(self, *args, **kwargs):
+            self._path = Path(*args, **kwargs)
+        def __truediv__(self, other):
+            if other == "release_target.json":
+                class DummyFile:
+                    def exists(self): return True
+                    def read_text(self, *a, **kw): return target_file.read_text(encoding="utf-8")
+                return DummyFile()
+            return MockPath(self._path / other)
+        def resolve(self): return MockPath(self._path.resolve())
+        @property
+        def parent(self): return MockPath(self._path.parent)
+    monkeypatch.setattr(scripts.derive_version, "Path", MockPath)
 
     releases = [
         {"tag_name": "v5.1.6", "prerelease": True},
         {"tag_name": "v5.1.2", "prerelease": False},
         {"tag_name": "v5.1.1", "prerelease": False},
-        {"tag_name": "v5.1.0", "prerelease": False},
     ]
+    # target is strictly v5.1.3
+    assert scripts.derive_version.get_next_patch(releases) == "v5.1.3"
 
-    # Call without extra_tags
-    next_patch = derive_version.get_next_patch(releases)
-    assert next_patch == "v5.1.7"
+def test_after_mocked_accepted_stable_no_automatic_bump(monkeypatch, tmp_path):
+    target_file = tmp_path / "release_target.json"
+    target_file.write_text(json.dumps({"target": "v5.1.3", "seq": 7}), encoding="utf-8")
+
+    class MockPath:
+        def __init__(self, *args, **kwargs):
+            self._path = Path(*args, **kwargs)
+        def __truediv__(self, other):
+            if other == "release_target.json":
+                class DummyFile:
+                    def exists(self): return True
+                    def read_text(self, *a, **kw): return target_file.read_text(encoding="utf-8")
+                return DummyFile()
+            return MockPath(self._path / other)
+        def resolve(self): return MockPath(self._path.resolve())
+        @property
+        def parent(self): return MockPath(self._path.parent)
+    monkeypatch.setattr(scripts.derive_version, "Path", MockPath)
+
+    releases = [
+        {"tag_name": "v5.1.3", "prerelease": False}, # accepted stable
+    ]
+    with pytest.raises(ValueError, match="already accepted as Stable"):
+        scripts.derive_version.get_next_patch(releases)
+
+def test_explicit_user_bug_intent_permits_exact_bump(monkeypatch, tmp_path):
+    target_file = tmp_path / "release_target.json"
+    target_file.write_text(json.dumps({"target": "v5.1.4", "seq": 8}), encoding="utf-8")
+
+    class MockPath:
+        def __init__(self, *args, **kwargs):
+            self._path = Path(*args, **kwargs)
+        def __truediv__(self, other):
+            if other == "release_target.json":
+                class DummyFile:
+                    def exists(self): return True
+                    def read_text(self, *a, **kw): return target_file.read_text(encoding="utf-8")
+                return DummyFile()
+            return MockPath(self._path / other)
+        def resolve(self): return MockPath(self._path.resolve())
+        @property
+        def parent(self): return MockPath(self._path.parent)
+    monkeypatch.setattr(scripts.derive_version, "Path", MockPath)
+
+    releases = [
+        {"tag_name": "v5.1.3", "prerelease": False}, # previously accepted stable
+    ]
+    assert scripts.derive_version.get_next_patch(releases) == "v5.1.4"
+    assert scripts.derive_version.get_release_sequence("v5.1.4") == 8

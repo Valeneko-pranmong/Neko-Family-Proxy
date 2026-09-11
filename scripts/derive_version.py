@@ -1,33 +1,27 @@
+import json
+from pathlib import Path
+
 def get_next_patch(releases: list[dict], extra_tags: list[str] = None) -> str:
-    if extra_tags is None:
-        extra_tags = get_remote_tags()
-    stable_patches = []
-    occupied_tags = set(extra_tags)
-    
+    target_file = Path(__file__).resolve().parent.parent / "release_target.json"
+    if target_file.exists():
+        data = json.loads(target_file.read_text(encoding="utf-8"))
+        target = data.get("target", "v5.1.3")
+    else:
+        target = "v5.1.3"
+
     for r in releases:
-        t = r.get("tag_name", "")
-        if t:
-            occupied_tags.add(t)
-        # Distinguish stable from prerelease via GitHub metadata and tag shape
-        if r.get("prerelease") is False and t.startswith("v5.1.") and "-" not in t:
-            try:
-                stable_patches.append(int(t.split(".")[2]))
-            except ValueError:
-                pass
+        if r.get("tag_name") == target and r.get("prerelease") is False:
+            raise ValueError(f"Target {target} is already accepted as Stable. Require explicit PM intent to bump target.")
 
-    next_patch = max(stable_patches) + 1 if stable_patches else 0
-    
-    while f"v5.1.{next_patch}" in occupied_tags:
-        next_patch += 1
-
-    return f"v5.1.{next_patch}"
+    return target
 
 def get_release_sequence(version: str) -> int:
-    """
-    Derives the deterministic release_sequence without hardcoding constants.
-    v5.1.X maps to sequence X + 4.
-    e.g. v5.1.3 -> 7, v5.1.4 -> 8, v5.1.5 -> 9.
-    """
+    target_file = Path(__file__).resolve().parent.parent / "release_target.json"
+    if target_file.exists():
+        data = json.loads(target_file.read_text(encoding="utf-8"))
+        if version == data.get("target"):
+            return data.get("seq", 7)
+
     import re
     if version.startswith("v5.1."):
         patch_str = version.split(".")[2]

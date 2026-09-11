@@ -170,7 +170,7 @@ git commit -m "feat: implement kanban adapter polling github ci for release task
 
 ---
 
-### Task 4: Exact Patch/Version Derivation
+### Task 4: Exact Patch/Version Derivation (SUPERSEDED by Explicit Release Target authority)
 
 **Objective:** Allocate the exact next monotonic patch version at execution time based on repository state, ensuring legacy v5.1.x compatibility.
 
