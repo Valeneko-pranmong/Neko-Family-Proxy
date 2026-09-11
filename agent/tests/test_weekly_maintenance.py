@@ -12,11 +12,12 @@ import subprocess
 import tempfile
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Ensure agent directory is in sys.path
 AGENT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 import sys
+import urllib.request
 if AGENT_DIR not in sys.path:
     sys.path.insert(0, AGENT_DIR)
 
@@ -27,13 +28,11 @@ from neko_discord_worker import (
     derive_health_status,
     load_state,
     save_state_atomic,
-    StatusStateMachine,
     HealthSnapshot,
 )
 from neko_weekly_maintenance import (
     MaintenanceController,
     build_maintenance_payload,
-    load_webhook_from_env_file,
 )
 
 
@@ -249,7 +248,7 @@ class TestWorkerStopOrderAndRebootAbstraction(unittest.TestCase):
                 return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        def mock_request_fn(req: urllib.request.Request, *args: object, **kwargs: object) -> MockHTTPResponse:
+        def mock_request_fn(req: 'urllib.request.Request', *args: object, **kwargs: object) -> MockHTTPResponse:
             call_order.append("DISCORD_EDIT")
             return MockHTTPResponse(200, b"{}")
 

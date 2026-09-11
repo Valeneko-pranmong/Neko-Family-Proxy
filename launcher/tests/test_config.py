@@ -35,6 +35,19 @@ def test_packaged_runtime_defaults_to_local_app_data(
     assert config.supabase_publishable_key.startswith("sb_publishable_")
     assert config.account_recovery_api_url == "https://neko-control-room.vercel.app"
     assert config.proxy_status_api_url == "https://neko-control-room.vercel.app/api/proxy/status"
+    assert not hasattr(config, "software_update_api_url")
+
+
+def test_source_guards_no_software_update_api_url_in_config_or_defaults() -> None:
+    import inspect
+    import neko_launcher.infrastructure.config as config_mod
+    import neko_launcher.infrastructure.defaults as defaults_mod
+
+    assert not hasattr(defaults_mod, "SOFTWARE_UPDATE_API_URL")
+    for mod in (config_mod, defaults_mod):
+        source = inspect.getsource(mod)
+        assert "software_update_api_url" not in source
+        assert "SOFTWARE_UPDATE_API_URL" not in source
 
 
 def test_runtime_ignores_bundled_neko_proxy_core(
@@ -127,3 +140,17 @@ def test_program_preferences_preserve_peer_setting(tmp_path: Path) -> None:
     prefs.set_hide_to_tray(False)
     assert prefs.always_on_top is False
     assert prefs.hide_to_tray is False
+
+
+def test_software_update_api_url_is_not_overridden_by_environment(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_SOFTWARE_UPDATE_API_URL",
+        "https://example.invalid",
+    )
+
+    config = LauncherConfig.from_environment(tmp_path)
+
+    assert not hasattr(config, "software_update_api_url")

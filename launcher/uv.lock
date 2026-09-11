@@ -554,9 +554,10 @@ wheels = [
 
 [[package]]
 name = "neko-family-launcher"
-version = "5.0.0a43"
+version = "5.1.4"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "customtkinter" },
     { name = "keyring" },
     { name = "pillow" },
@@ -575,6 +576,7 @@ release = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = "==50.0.0" },
     { name = "customtkinter", specifier = "==5.2.2" },
     { name = "keyring", specifier = "==25.7.0" },
     { name = "pillow", specifier = "==12.2.0" },

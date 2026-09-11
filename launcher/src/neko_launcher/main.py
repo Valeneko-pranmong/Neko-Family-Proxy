@@ -11,9 +11,13 @@ from neko_launcher.bootstrap.single_instance import (
     release_instance_mutex,
     show_already_running_message,
 )
+from neko_launcher.updater.early_dispatch import maybe_dispatch_updater_entry
 
 
 def main() -> None:
+    if maybe_dispatch_updater_entry(sys.argv):
+        return
+
     mutex_handle = acquire_instance_mutex()
     if mutex_handle is None:
         show_already_running_message()
