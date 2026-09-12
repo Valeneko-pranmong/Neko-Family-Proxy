@@ -2,10 +2,13 @@ from unittest.mock import patch
 import pytest
 import os
 
+from scripts.ci_change_classifier import should_trigger
+
 from scripts.kanban_release_adapter import (
     get_successful_main_runs,
     poll_github_and_create_tasks,
     create_kanban_task,
+    get_changed_files_for_sha,
 )
 
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
@@ -190,3 +193,45 @@ def test_idempotent_task_creation_with_valid_runtime(mock_check_output, mock_her
     poll_github_and_create_tasks()
 
     mock_hermes_kanban.assert_called_once()
+
+@patch("scripts.kanban_release_adapter.subprocess.check_output")
+def test_get_changed_files_merge_dedup_local(mock_check_output):
+    def check_output_side_effect(cmd, **kwargs):
+        assert "diff-tree" in cmd
+        assert "--no-commit-id" in cmd
+        assert "--name-only" in cmd
+        assert "-r" in cmd
+        assert "-m" in cmd
+        assert "-C" in cmd
+        # verify repo root is absolute
+        c_idx = cmd.index("-C")
+        assert os.path.isabs(cmd[c_idx+1])
+        return b"fileA.py\nfileB.py\nfileA.py\n"
+
+    mock_check_output.side_effect = check_output_side_effect
+    files = get_changed_files_for_sha("merge_sha")
+    assert files == ["fileA.py", "fileB.py"]
+    assert mock_check_output.call_count == 1
+
+@patch("scripts.kanban_release_adapter.subprocess.check_output")
+def test_get_changed_files_merge_dedup_fallback(mock_check_output):
+    import subprocess
+    def check_output_side_effect(cmd, **kwargs):
+        if "diff-tree" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        elif "gh" in cmd:
+            return b"fileA.py\nfileC.py\nfileA.py\n"
+        return b""
+    mock_check_output.side_effect = check_output_side_effect
+
+    files = get_changed_files_for_sha("merge_sha")
+    assert files == ["fileA.py", "fileC.py"]
+    assert mock_check_output.call_count == 2
+
+def test_classifier_remains_release_eligible_on_merge():
+    # non-merge list unchanged behavior: single file that is product triggers
+    assert should_trigger(["src/main.py"]) is True
+    # duplicate paths across parents from merge
+    assert should_trigger(["src/main.py", "docs/README.md", "src/main.py"]) is True
+    # non product
+    assert should_trigger(["docs/README.md", "docs/README.md"]) is False

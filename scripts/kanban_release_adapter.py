@@ -47,13 +47,28 @@ def get_successful_main_runs() -> list[dict]:
 
 def get_changed_files_for_sha(sha: str) -> list[str]:
     # Use git locally or gh api if git is insufficient. Git diff-tree is highly authoritative locally.
+    runtime_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     try:
-        out = subprocess.check_output(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha])
-        return [line for line in out.decode().splitlines() if line]
+        out = subprocess.check_output(["git", "-C", runtime_root, "diff-tree", "--no-commit-id", "--name-only", "-r", "-m", sha])
+        lines = [line for line in out.decode().splitlines() if line]
+        seen = set()
+        deduped = []
+        for line in lines:
+            if line not in seen:
+                seen.add(line)
+                deduped.append(line)
+        return deduped
     except subprocess.CalledProcessError:
         # Fallback to GH API if local git doesn't have the sha
         out = subprocess.check_output(["gh", "api", f"repos/Valeneko-pranmong/Neko-Family-Proxy/commits/{sha}", "--jq", ".files[].filename"])
-        return [line for line in out.decode().splitlines() if line]
+        lines = [line for line in out.decode().splitlines() if line]
+        seen = set()
+        deduped = []
+        for line in lines:
+            if line not in seen:
+                seen.add(line)
+                deduped.append(line)
+        return deduped
 
 def create_kanban_task(run_id: int, sha: str):
     runtime_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
