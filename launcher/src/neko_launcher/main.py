@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 
 from neko_launcher.bootstrap.app_factory import build_window
+from neko_launcher.bootstrap.pending_update_bootstrap import (
+    PendingUpdateBootstrapResult,
+    run_pending_update_bootstrap,
+)
 from neko_launcher.bootstrap.single_instance import (
     acquire_instance_mutex,
     release_instance_mutex,
@@ -24,6 +28,9 @@ def main() -> None:
         return
     exit_code = 0
     try:
+        bootstrap_result = run_pending_update_bootstrap()
+        if bootstrap_result == PendingUpdateBootstrapResult.HANDOFF_STARTED:
+            return
         build_window().root.mainloop()
     except Exception as exc:
         exit_code = 1
