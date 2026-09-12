@@ -1083,7 +1083,14 @@ def test_closing_during_update_prepare_aborts_prepared_helper() -> None:
             call_order.append("prepared.release")
 
     prepared = FakePrepared()
-    apply_service = SimpleNamespace(prepare=lambda: prepared)
+    prepare_calls = 0
+
+    def fake_prepare() -> Any:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return prepared
+
+    apply_service = SimpleNamespace(prepare=fake_prepare)
     window, root, _update_executor = build_window(None, apply_service=apply_service)
     deferred_executor = DeferredExecutor()
     window._update_executor = deferred_executor  # type: ignore[assignment]
@@ -1093,27 +1100,27 @@ def test_closing_during_update_prepare_aborts_prepared_helper() -> None:
         state=SimpleNamespace(
             proxy_status="stopped",
             game_process_running=False,
+            game_status="stopped",
         )
     )
-    perform_close_calls = 0
-
-    def fake_perform_close() -> None:
-        nonlocal perform_close_calls
-        perform_close_calls += 1
-
-    window._perform_close = fake_perform_close  # type: ignore[method-assign]
 
     _trigger_update_action(window)
     assert len(deferred_executor.futures) == 1
+    assert window._update_apply_pending is True
 
-    window._closing = True
+    window._perform_close()
+
+    assert window._closing is True
+    assert prepare_calls == 0
+    assert prepared.release_calls == 0
+
     deferred_executor.futures[0].set_result(prepared)
     root.run_callback_generation()
 
     assert prepared.abort_calls >= 1
     assert prepared.release_calls == 0
     assert call_order == ["prepared.abort"]
-    assert perform_close_calls == 0
+
 
 
 def test_successful_prepared_update_calls_perform_close_before_release_without_close_loop() -> None:
@@ -1155,3 +1162,76 @@ def test_successful_prepared_update_calls_perform_close_before_release_without_c
 
     assert confirmation_invoked is False
     assert call_order == ["_perform_close", "prepared.release"]
+
+
+def test_close_during_background_apply_serializes_and_prevents_duplicate_helper_handoff() -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    prepare_calls: list[str] = []
+    prepare_started = threading.Event()
+    allow_prepare_finish = threading.Event()
+
+    class FakePrepared:
+        def __init__(self) -> None:
+            self.abort_calls = 0
+            self.release_calls = 0
+
+        def abort(self) -> None:
+            self.abort_calls += 1
+
+        def release(self) -> None:
+            self.release_calls += 1
+
+    prepared = FakePrepared()
+
+    def fake_prepare_pending(_pending: Any) -> Any:
+        current_thread_name = threading.current_thread().name
+        prepare_calls.append(current_thread_name)
+        if current_thread_name != "MainThread":
+            prepare_started.set()
+            allow_prepare_finish.wait(timeout=5.0)
+        return prepared
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    window, root, _ = build_window(None, apply_service=apply_service)
+    bg_executor = ThreadPoolExecutor(max_workers=1)
+    window._update_executor = bg_executor  # type: ignore[assignment]
+    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(pending=pending)
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+            game_status="stopped",
+        )
+    )
+
+    try:
+        _trigger_update_action(window)
+        assert prepare_started.wait(timeout=2.0), "Background apply did not start in time"
+        assert window._update_apply_pending is True
+
+        window._perform_close()
+
+        assert window._closing is True
+        assert len(prepare_calls) == 1, (
+            f"Expected exactly 1 prepare_pending call in flight, but got {len(prepare_calls)}: {prepare_calls}"
+        )
+        assert prepare_calls[0] != "MainThread", "prepare_pending was unexpectedly called synchronously on MainThread"
+        assert prepared.release_calls == 0
+
+        allow_prepare_finish.set()
+        assert window._update_apply_future is not None
+        window._update_apply_future.result(timeout=2.0)
+        root.run_callbacks()
+
+        assert len(prepare_calls) == 1
+        assert prepared.abort_calls == 1
+        assert prepared.release_calls == 0
+        assert window._get_verified_pending_update() is pending
+        assert window._update_apply_pending is False
+    finally:
+        allow_prepare_finish.set()
+        bg_executor.shutdown(wait=False, cancel_futures=True)

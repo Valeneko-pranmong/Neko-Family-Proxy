@@ -2230,8 +2230,10 @@ class AppWindow:
             != GameStatus.STOPPED.value
         )
         self._closing = True
+        update_apply_pending = getattr(self, "_update_apply_pending", False)
         update_apply_future = getattr(self, "_update_apply_future", None)
         if update_apply_future is not None:
+            update_apply_pending = True
             if update_apply_future.done():
                 self._abort_update_apply_future(update_apply_future)
             else:
@@ -2256,7 +2258,12 @@ class AppWindow:
             pass
 
         already_applied = getattr(self, "_applied_update_prepared", False)
-        if not already_applied and is_safe_close:
+        if (
+            not already_applied
+            and not update_apply_pending
+            and not getattr(self, "_update_apply_pending", False)
+            and is_safe_close
+        ):
             pending = self._get_verified_pending_update()
             apply_service = getattr(self, "_update_apply_service", None)
             if pending is not None and apply_service is not None:
