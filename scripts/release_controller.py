@@ -14,12 +14,12 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
-from scripts.derive_version import get_github_releases, get_next_patch, get_release_sequence, get_release_id  # noqa: E402
-from scripts.ci_change_classifier import should_trigger  # noqa: E402
-
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2  # noqa: E402
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: E402
+
+from scripts.ci_change_classifier import should_trigger  # noqa: E402
+from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
+
 
 def _get_sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -31,7 +31,9 @@ def _get_sha256(path: Path) -> str:
 def verify_and_fetch_core() -> tuple[Path, str, int, str]:
     print("Fetching and verifying v5.1.2 Core authority...")
 
-    from neko_launcher.updater.core_manifest_verifier import verify_canonical_core_bundle
+    from neko_launcher.updater.core_manifest_verifier import (
+        verify_canonical_core_bundle,
+    )
     from neko_launcher.updater.zip_extractor import extract_core_bundle
 
     cmd = ["gh", "release", "view", "v5.1.2", "--json", "assets"]
@@ -105,28 +107,51 @@ def process_accepted_commits(commit: str, run_id: int):
     staging_base = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{commit}")
     staging_base.mkdir(parents=True, exist_ok=True)
 
+    source_dir = staging_base / "source"
+
+    # 1.5. Extract exact-SHA workspace FIRST so we can read intent from it
+    if not source_dir.exists():
+        source_dir.mkdir(parents=True)
+        tar_path = staging_base / "source.tar"
+        subprocess.run(["git", "-C", str(repo_root), "archive", "--format=tar", "-o", str(tar_path), commit], check=True)
+        subprocess.run(["tar", "-xf", str(tar_path), "-C", str(source_dir)], check=True)
+        tar_path.unlink(missing_ok=True)
+
     idempotency_file = staging_base / "idempotency_record.json"
     if idempotency_file.exists():
         record = json.loads(idempotency_file.read_text(encoding="utf-8"))
         version_tag = record["version_tag"]
         version = version_tag.lstrip("v")
+        stable = record.get("stable", "v5.1.0")
+        stable_version = stable.lstrip("v")
         sequence = record["sequence"]
         release_id = record["release_id"]
         print(f"Resuming idempotent run: {version_tag}")
     else:
         # 2. Version allocation
-        releases = get_github_releases()
-        version_tag = get_next_patch(releases)
+        try:
+            from scripts.derive_version import get_armed_target_from_dir
+            stable, target, sequence, release_id = get_armed_target_from_dir(source_dir)
+        except ValueError as e:
+            print(f"Error: Could not derive target version from extracted source: {e}", file=sys.stderr)
+            sys.exit(1)
+        version_tag = target
         version = version_tag.lstrip("v")
-        sequence = get_release_sequence(version_tag)
-        release_id = get_release_id(sequence)
-        print(f"Allocated version: {version_tag} ({version}), sequence: {sequence}, release_id: {release_id}")
+        stable_version = stable.lstrip("v")
+        print(f"Allocated version: {version_tag} ({version}), base/stable: {stable_version}, sequence: {sequence}, release_id: {release_id}")
 
         idempotency_file.write_text(json.dumps({
             "version_tag": version_tag,
+            "stable": stable,
             "sequence": sequence,
             "release_id": release_id
         }))
+
+    from scripts.derive_version import get_github_releases
+    for r in get_github_releases():
+        if r["tag_name"] == version_tag and not r["prerelease"]:
+            print(f"Error: Target version {version_tag} already exists as a non-prerelease Stable on GitHub.", file=sys.stderr)
+            sys.exit(1)
 
     staging_base = staging_base / version
     staging_base.mkdir(parents=True, exist_ok=True)
@@ -139,25 +164,47 @@ def process_accepted_commits(commit: str, run_id: int):
         execute_publish(version_tag, commit, staging_dir=str(publish_dir))
         return
 
-    source_dir = staging_base / "source"
-
-    # 3. Build from isolated exact-SHA workspace
-    if not source_dir.exists():
-        source_dir.mkdir(parents=True)
-        tar_path = staging_base / "source.tar"
-        subprocess.run(["git", "-C", str(repo_root), "archive", "--format=tar", "-o", str(tar_path), commit], check=True)
-        subprocess.run(["tar", "-xf", str(tar_path), "-C", str(source_dir)], check=True)
-        tar_path.unlink()
-
-    # 4. Validate version
+    # 4. Inject version
     init_py_path = source_dir / "launcher" / "src" / "neko_launcher" / "__init__.py"
     if init_py_path.exists():
         content = init_py_path.read_text(encoding="utf-8")
         import re
-        m = re.search(r'__version__\s*=\s*"([^"]+)"', content)
-        if not m or m.group(1) != version:
-            print(f"Error: Committed version declarations do not equal release_target target. Expected {version}, found {m.group(1) if m else 'none'}", file=sys.stderr)
+        matches = list(re.finditer(r'__version__\s*=\s*"([^"]+)"', content))
+        if len(matches) != 1:
+            print(f"Error: Expected exactly one __version__ in __init__.py, found {len(matches)}", file=sys.stderr)
             sys.exit(1)
+        m = matches[0]
+        found_version = m.group(1)
+        if found_version != stable_version:
+            if found_version != version:
+                print(f"Error: Base version mismatch in __init__.py. Expected {stable_version}, found {found_version}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            content = content[:m.start(1)] + version + content[m.end(1):]
+            init_py_path.write_text(content, encoding="utf-8")
+    else:
+        print("Error: __init__.py not found", file=sys.stderr)
+        sys.exit(1)
+
+    pyproject_path = source_dir / "launcher" / "pyproject.toml"
+    if pyproject_path.exists():
+        content = pyproject_path.read_text(encoding="utf-8")
+        matches = list(re.finditer(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE))
+        if len(matches) != 1:
+            print(f"Error: Expected exactly one version in pyproject.toml, found {len(matches)}", file=sys.stderr)
+            sys.exit(1)
+        m = matches[0]
+        found_version = m.group(1)
+        if found_version != stable_version:
+            if found_version != version:
+                print(f"Error: Base version mismatch in pyproject.toml. Expected {stable_version}, found {found_version}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            content = content[:m.start(1)] + version + content[m.end(1):]
+            pyproject_path.write_text(content, encoding="utf-8")
+    else:
+        print("Error: pyproject.toml not found", file=sys.stderr)
+        sys.exit(1)
 
     # 5. Build Launcher/Updater
     env = os.environ.copy()
@@ -298,6 +345,9 @@ def process_accepted_commits(commit: str, run_id: int):
         "run_id": run_id,
         "source_commit": commit,
         "version": version_tag,
+        "stable_version": stable_version,
+        "target_version": version,
+        "injected_files": ["launcher/src/neko_launcher/__init__.py", "launcher/pyproject.toml"],
         "sequence": sequence,
         "release_id": release_id,
         "assets": {

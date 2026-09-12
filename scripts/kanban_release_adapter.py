@@ -1,11 +1,13 @@
-import subprocess
 import json
 import os
+import subprocess
 import sys
 
 # Ensure scripts module can be imported
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from scripts.ci_change_classifier import should_trigger
+from scripts.derive_version import get_armed_target_from_sha, get_github_releases
+
 
 def get_successful_main_commits() -> list[str]:
     # Stub to prevent import errors in placeholder release_controller.py
@@ -81,6 +83,18 @@ def poll_github_and_create_tasks():
         sha = run["headSha"]
         files = get_changed_files_for_sha(sha)
         if should_trigger(files):
+            try:
+                stable, target, seq, stable_id = get_armed_target_from_sha(sha)
+            except ValueError as e:
+                print(f"Skipping task creation for {sha}: {e}")
+                continue
+
+            # Duplicate guard
+            existing = get_github_releases()
+            if any(r["tag_name"] == target and not r["prerelease"] for r in existing):
+                print(f"Skipping task creation for {sha}: Target {target} is already accepted as Stable.")
+                continue
+
             create_kanban_task(run_id, sha)
 
 if __name__ == "__main__":
