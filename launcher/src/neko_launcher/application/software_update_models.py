@@ -1,6 +1,11 @@
 import re
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
+
+from neko_launcher.application.software_update_pending import (
+    UpdateLifecycleState as UpdateLifecycleState,
+    VerifiedPendingUpdate as VerifiedPendingUpdate,
+)
 
 class UpdateInvocationReason(str, Enum):
     STARTUP = "startup"
