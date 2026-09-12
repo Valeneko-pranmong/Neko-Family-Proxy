@@ -63,6 +63,10 @@ def test_composition_helper_apply_service_exists() -> None:
     assert hasattr(app_factory, "compose_update_apply_service")
 
 
+def test_composition_helper_coordinator_exists() -> None:
+    assert hasattr(app_factory, "compose_update_coordinator")
+
+
 def test_development_composition_uses_unpublished_sequence_zero_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -304,6 +308,14 @@ def test_build_window_shares_same_resolver_instance_between_check_and_apply(
 
     # Proves same resolver instance injected into check and apply!
     assert check_service._release_gateway is apply_service.release_gateway
+
+    assert "update_coordinator" in captured["window_kwargs"]
+    coordinator = captured["window_kwargs"]["update_coordinator"]
+    assert coordinator is not None
+    assert coordinator._pending_store is coordinator._stage_service._pending_store
+    assert coordinator._stage_service._asset_downloader is apply_service.asset_downloader
+    assert check_service._release_gateway is apply_service.release_gateway
+    assert coordinator._check_service is check_service
 
 
 def test_production_update_configuration_contains_no_private_key_material(

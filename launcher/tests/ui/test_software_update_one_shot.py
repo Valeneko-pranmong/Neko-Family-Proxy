@@ -3,16 +3,24 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from concurrent.futures import Future
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from neko_launcher.application.software_update_coordinator import (
+    UpdateLifecycleSnapshot,
+)
 from neko_launcher.application.software_update_models import (
     UpdateCheckResult,
     UpdateDiagnosticCode,
     UpdateInvocationReason,
     UpdateState,
+)
+from neko_launcher.application.software_update_pending import (
+    UpdateLifecycleState,
+    VerifiedPendingUpdate,
 )
 from neko_launcher.ui.app_window import AppWindow
 
@@ -26,6 +34,12 @@ class FakeRoot:
 
     def winfo_exists(self) -> bool:
         return True
+
+    def quit(self) -> None:
+        pass
+
+    def destroy(self) -> None:
+        pass
 
     def run_callbacks(self) -> None:
         while self.after_calls:
@@ -81,6 +95,9 @@ class ForbiddenExecutor:
     def submit(self, _work: Callable[[], Any]) -> Future[Any]:
         raise AssertionError("software update work used the main executor")
 
+    def shutdown(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
 
 class FakeVariable:
     def __init__(self, value: str) -> None:
@@ -131,22 +148,62 @@ def make_result(
     )
 
 
+def make_pending(
+    *,
+    release_id: str = "release-42",
+    release_sequence: int = 42,
+    changed_components: tuple[str, ...] = ("launcher", "core"),
+    generation_dir: Path | None = None,
+    launcher_artifact: Path | None = None,
+    core_artifact: Path | None = None,
+) -> VerifiedPendingUpdate:
+    return VerifiedPendingUpdate(
+        release_id=release_id,
+        release_sequence=release_sequence,
+        changed_components=changed_components,
+        envelope_bytes=b'{"mock": true}',
+        generation_dir=generation_dir or Path("mock/gen"),
+        launcher_artifact=launcher_artifact,
+        core_artifact=core_artifact,
+    )
+
+
+def make_snapshot(
+    *,
+    state: UpdateLifecycleState = UpdateLifecycleState.UPDATE_PENDING,
+    check_result: UpdateCheckResult | None = None,
+    pending: VerifiedPendingUpdate | None = None,
+    diagnostic_code: str | None = None,
+) -> UpdateLifecycleSnapshot:
+    return UpdateLifecycleSnapshot(
+        state=state,
+        check_result=check_result,
+        pending=pending,
+        diagnostic_code=diagnostic_code,
+    )
+
+
 def build_window(
     service: Any,
     apply_service: Any = None,
+    coordinator: Any = None,
 ) -> tuple[AppWindow, FakeRoot, ImmediateExecutor]:
     window = object.__new__(AppWindow)
     root = FakeRoot()
     update_executor = ImmediateExecutor()
     window.root = root  # type: ignore[assignment]
     window._closing = False
+    window._update_apply_pending = False
     window._update_check_service = service
     window._update_apply_service = apply_service
+    window._update_coordinator = coordinator
     window._update_executor = update_executor  # type: ignore[assignment]
     window._executor = ForbiddenExecutor()  # type: ignore[assignment]
     window._last_update_result = None
+    window._last_lifecycle_snapshot = None
     window._diagnostics = None
     window._last_debug_status = None
+    window._tray_manager = None
     return window, root, update_executor
 
 
@@ -490,44 +547,470 @@ def _trigger_update_action(window: AppWindow) -> None:
     )
 
 
-def test_update_action_enabled_only_when_update_available_and_proxy_and_game_idle() -> None:
-    apply_service = SimpleNamespace(prepare=lambda: None)
+def test_update_action_enabled_when_verified_pending_exists_even_with_active_sessions() -> None:
+    apply_service = SimpleNamespace(prepare_pending=lambda p: None, prepare=lambda: None)
     window, _root, _update_executor = build_window(None, apply_service=apply_service)
 
     controller = SimpleNamespace(
         state=SimpleNamespace(
             proxy_status="stopped",
             game_process_running=False,
+            game_status="stopped",
+        )
+    )
+    window._controller = controller
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+
+    # 1. Idle proxy and idle game -> Enabled
+    assert _is_update_action_enabled(window) is True
+
+    # 2. Running proxy -> Enabled (5.1.2 contract: enabled even with active proxy)
+    controller.state.proxy_status = "running"
+    assert _is_update_action_enabled(window) is True
+    controller.state.proxy_status = "stopped"
+
+    # 3. Running game -> Enabled (5.1.2 contract: enabled even with active game)
+    controller.state.game_process_running = True
+    assert _is_update_action_enabled(window) is True
+    controller.state.game_process_running = False
+
+    # 4. Both running -> Enabled
+    controller.state.proxy_status = "running"
+    controller.state.game_process_running = True
+    assert _is_update_action_enabled(window) is True
+
+
+def test_update_action_disabled_when_only_raw_availability_without_verified_pending() -> None:
+    apply_service = SimpleNamespace(prepare_pending=lambda p: None, prepare=lambda: None)
+    window, _root, _update_executor = build_window(None, apply_service=apply_service)
+
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+            game_status="stopped",
         )
     )
     window._controller = controller
 
-    # 1. AVAILABLE and idle -> Enabled
-    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
-    assert _is_update_action_enabled(window) is True
-
-    # 2. MANDATORY and idle -> Enabled
-    window._last_update_result = make_result(state=UpdateState.MANDATORY)
-    assert _is_update_action_enabled(window) is True
-
-    # 3. LATEST and idle -> Disabled
-    window._last_update_result = make_result(state=UpdateState.LATEST)
+    # 1. AVAILABLE raw result without pending -> Disabled
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.IDLE,
+        check_result=make_result(state=UpdateState.AVAILABLE),
+        pending=None,
+    )
     assert _is_update_action_enabled(window) is False
 
-    # 4. AVAILABLE and proxy running -> Disabled
-    window._last_update_result = make_result(state=UpdateState.AVAILABLE)
-    controller.state.proxy_status = "running"
+    # 2. MANDATORY raw result without pending -> Disabled
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.IDLE,
+        check_result=make_result(state=UpdateState.MANDATORY),
+        pending=None,
+    )
     assert _is_update_action_enabled(window) is False
-    controller.state.proxy_status = "stopped"
 
-    # 5. AVAILABLE and game running -> Disabled
-    controller.state.game_process_running = True
+    # 3. LATEST raw result without pending -> Disabled
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.IDLE,
+        check_result=make_result(state=UpdateState.LATEST),
+        pending=None,
+    )
     assert _is_update_action_enabled(window) is False
-    controller.state.game_process_running = False
 
-    # 6. None result -> Disabled
+    # 4. None result -> Disabled
+    window._last_lifecycle_snapshot = None
     window._last_update_result = None
     assert _is_update_action_enabled(window) is False
+
+
+def test_background_stage_completion_exposes_verified_pending_and_enables_button() -> None:
+    apply_service = SimpleNamespace(prepare_pending=lambda p: None)
+    pending = make_pending(release_sequence=45, changed_components=("launcher", "core"))
+    check_result = make_result(state=UpdateState.AVAILABLE, release_sequence=45)
+    snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        check_result=check_result,
+        pending=pending,
+    )
+
+    coordinator = SimpleNamespace(
+        startup=lambda: snapshot,
+        manual_check=lambda: snapshot,
+        current=lambda: snapshot,
+    )
+
+    window, root, _update_executor = build_window(
+        None,
+        apply_service=apply_service,
+        coordinator=coordinator,
+    )
+    diagnostics = capture_diagnostics(window)
+
+    window._check_software_update_startup()
+    root.run_callbacks()
+
+    assert window._last_lifecycle_snapshot is not None
+    assert window._last_lifecycle_snapshot.state == UpdateLifecycleState.UPDATE_PENDING
+    assert window._last_lifecycle_snapshot.pending is pending
+    assert _is_update_action_enabled(window) is True
+    assert any(
+        stage in {"SOFTWARE_UPDATE_LIFECYCLE", "SOFTWARE_UPDATE_CHECK"}
+        for stage, _ in diagnostics
+    )
+
+
+def test_click_update_while_game_active_preserves_game_and_pending_with_notice() -> None:
+    prepare_pending_calls = 0
+
+    def fake_prepare_pending(p: Any) -> Any:
+        nonlocal prepare_pending_calls
+        prepare_pending_calls += 1
+        return None
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+
+    stop_game_called = False
+
+    def fake_stop_game() -> None:
+        nonlocal stop_game_called
+        stop_game_called = True
+
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=True,
+            game_status="running",
+        ),
+        _stop_game=fake_stop_game,
+    )
+    window._controller = controller
+    notice = FakeVariable("")
+    error = FakeVariable("")
+    window._notice = notice  # type: ignore[assignment]
+    window._error = error  # type: ignore[assignment]
+
+    _trigger_update_action(window)
+    root.run_callbacks()
+
+    # Never kill game
+    assert stop_game_called is False
+    assert controller.state.game_process_running is True
+    # Never prepare update
+    assert prepare_pending_calls == 0
+    # Pending update preserved
+    assert window._get_verified_pending_update() is pending
+    # Explanatory notice set
+    assert "เกม" in notice.get()
+    # Window remains alive
+    assert window._closing is False
+
+
+def test_click_update_while_proxy_active_gracefully_stops_proxy_then_applies() -> None:
+    call_order: list[str] = []
+
+    class FakePrepared:
+        def release(self) -> None:
+            call_order.append("prepared.release")
+
+    prepared = FakePrepared()
+
+    def fake_stop_proxy() -> None:
+        call_order.append("service.stop_proxy")
+        controller.state.proxy_status = "stopped"
+
+    def fake_prepare_pending(p: Any) -> Any:
+        call_order.append("apply.prepare_pending")
+        return prepared
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    service = SimpleNamespace(
+        stop_proxy=fake_stop_proxy,
+        shutdown=lambda: call_order.append("service.shutdown"),
+    )
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._service = service
+
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="running",
+            game_process_running=False,
+            game_status="stopped",
+        ),
+        stop_proxy=fake_stop_proxy,
+    )
+    window._controller = controller
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+
+    def fake_perform_close() -> None:
+        call_order.append("_perform_close")
+        window._closing = True
+
+    window._perform_close = fake_perform_close  # type: ignore[method-assign]
+
+    _trigger_update_action(window)
+    root.run_callbacks()
+
+    assert "service.stop_proxy" in call_order
+    assert "apply.prepare_pending" in call_order
+    assert call_order == [
+        "service.stop_proxy",
+        "apply.prepare_pending",
+        "_perform_close",
+        "prepared.release",
+    ]
+
+
+def test_click_update_proxy_stop_failure_preserves_pending_and_shows_error() -> None:
+    call_order: list[str] = []
+
+    def failing_stop_proxy() -> None:
+        call_order.append("service.stop_proxy")
+        raise RuntimeError("proxy stop transport failure")
+
+    def fake_prepare_pending(p: Any) -> Any:
+        call_order.append("apply.prepare_pending")
+        return None
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    service = SimpleNamespace(stop_proxy=failing_stop_proxy)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._service = service
+
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="running",
+            game_process_running=False,
+            game_status="stopped",
+        ),
+        stop_proxy=failing_stop_proxy,
+    )
+    window._controller = controller
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+    error = FakeVariable("")
+    window._error = error  # type: ignore[assignment]
+
+    _trigger_update_action(window)
+    root.run_callbacks()
+
+    assert "service.stop_proxy" in call_order
+    assert "apply.prepare_pending" not in call_order
+    assert window._get_verified_pending_update() is pending
+    assert error.get() != ""
+    assert window._update_apply_pending is False
+    assert window._closing is False
+
+
+def test_click_update_proxy_stop_timeout_preserves_pending_and_shows_error() -> None:
+    call_order: list[str] = []
+
+    def timing_out_stop_proxy() -> None:
+        call_order.append("service.stop_proxy")
+        # proxy_status stays "running", simulating timeout or uncooperative stop
+        controller.state.proxy_status = "running"
+
+    def fake_prepare_pending(p: Any) -> Any:
+        call_order.append("apply.prepare_pending")
+        return None
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    service = SimpleNamespace(stop_proxy=timing_out_stop_proxy)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._service = service
+
+    controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="running",
+            game_process_running=False,
+            game_status="stopped",
+        ),
+        stop_proxy=timing_out_stop_proxy,
+    )
+    window._controller = controller
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+    error = FakeVariable("")
+    window._error = error  # type: ignore[assignment]
+
+    _trigger_update_action(window)
+    root.run_callbacks()
+
+    assert "service.stop_proxy" in call_order
+    assert "apply.prepare_pending" not in call_order
+    assert window._get_verified_pending_update() is pending
+    assert error.get() != ""
+    assert window._update_apply_pending is False
+    assert window._closing is False
+
+
+def test_safe_apply_calls_prepare_pending_then_closes_and_releases() -> None:
+    call_order: list[str] = []
+
+    class FakePrepared:
+        def release(self) -> None:
+            call_order.append("prepared.release")
+
+    prepared = FakePrepared()
+    pending = make_pending()
+
+    def fake_prepare_pending(p: Any) -> Any:
+        assert p is pending
+        call_order.append("apply.prepare_pending")
+        return prepared
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+            game_status="stopped",
+        )
+    )
+
+    def fake_perform_close() -> None:
+        call_order.append("_perform_close")
+        window._closing = True
+
+    window._perform_close = fake_perform_close  # type: ignore[method-assign]
+
+    _trigger_update_action(window)
+    root.run_callbacks()
+
+    assert call_order == [
+        "apply.prepare_pending",
+        "_perform_close",
+        "prepared.release",
+    ]
+
+
+def test_normal_safe_close_with_verified_pending_applies_after_service_shutdown() -> None:
+    call_order: list[str] = []
+
+    class FakePrepared:
+        def release(self) -> None:
+            call_order.append("prepared.release")
+
+    prepared = FakePrepared()
+    pending = make_pending()
+
+    def fake_prepare_pending(p: Any) -> Any:
+        assert p is pending
+        call_order.append("apply.prepare_pending")
+        return prepared
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    service = SimpleNamespace(shutdown=lambda: call_order.append("service.shutdown"))
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._service = service
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+            game_status="stopped",
+        )
+    )
+
+    window.close()
+
+    assert "service.shutdown" in call_order
+    assert "apply.prepare_pending" in call_order
+    assert "prepared.release" in call_order
+    assert call_order.index("service.shutdown") < call_order.index("apply.prepare_pending")
+    assert call_order.index("apply.prepare_pending") < call_order.index("prepared.release")
+
+
+def test_close_with_game_active_preserves_pending_without_applying() -> None:
+    prepare_pending_calls = 0
+
+    def fake_prepare_pending(p: Any) -> Any:
+        nonlocal prepare_pending_calls
+        prepare_pending_calls += 1
+        return None
+
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare_pending)
+    service = SimpleNamespace(shutdown=lambda: None)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._service = service
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=True,
+            game_status="running",
+        )
+    )
+
+    # User confirms closing Launcher despite active game
+    window._confirm_game_active_action = lambda _action: True  # type: ignore[method-assign]
+
+    window.close()
+
+    assert prepare_pending_calls == 0
+    assert window._get_verified_pending_update() is pending
+
+
+def test_internal_failure_diagnostics_do_not_clear_existing_pending() -> None:
+    apply_service = SimpleNamespace(prepare_pending=lambda p: None)
+    window, root, _update_executor = build_window(None, apply_service=apply_service)
+    window._controller = SimpleNamespace(
+        state=SimpleNamespace(
+            proxy_status="stopped",
+            game_process_running=False,
+            game_status="stopped",
+        )
+    )
+    pending = make_pending()
+    window._last_lifecycle_snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        pending=pending,
+    )
+    diagnostics = capture_diagnostics(window)
+
+    window._record_software_update_internal_failure()
+
+    # Diagnostic recorded
+    assert any(
+        stage == "SOFTWARE_UPDATE_CHECK"
+        and details.get("diagnostic_code")
+        == UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE.value
+        for stage, details in diagnostics
+    )
+    # Crucial 5.1.2 requirement: Pending is NOT cleared!
+    assert window._get_verified_pending_update() is pending
+    assert _is_update_action_enabled(window) is True
 
 
 def test_startup_check_never_calls_prepare_automatically() -> None:
@@ -565,6 +1048,7 @@ def test_manual_apply_click_submits_single_prepare_and_failed_prepare_keeps_laun
     apply_service = SimpleNamespace(prepare=failing_prepare)
     window, root, update_executor = build_window(None, apply_service=apply_service)
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    window._last_lifecycle_snapshot = make_snapshot(pending=make_pending())
     before = preserve_application_state(window, proxy_status="stopped")
     diagnostics = capture_diagnostics(window)
 
@@ -604,6 +1088,7 @@ def test_closing_during_update_prepare_aborts_prepared_helper() -> None:
     deferred_executor = DeferredExecutor()
     window._update_executor = deferred_executor  # type: ignore[assignment]
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    window._last_lifecycle_snapshot = make_snapshot(pending=make_pending())
     window._controller = SimpleNamespace(
         state=SimpleNamespace(
             proxy_status="stopped",
@@ -642,6 +1127,7 @@ def test_successful_prepared_update_calls_perform_close_before_release_without_c
     apply_service = SimpleNamespace(prepare=lambda: prepared)
     window, root, _update_executor = build_window(None, apply_service=apply_service)
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
+    window._last_lifecycle_snapshot = make_snapshot(pending=make_pending())
     window._controller = SimpleNamespace(
         state=SimpleNamespace(
             proxy_status="stopped",

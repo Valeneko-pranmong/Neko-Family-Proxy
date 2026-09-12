@@ -23,10 +23,21 @@ from neko_launcher.application.reconnect import (
     ReconnectCompletion,
 )
 from neko_launcher.application.services import LauncherService
+from neko_launcher.application.software_update_activity import (
+    UpdateApplyBlocker,
+    evaluate_update_apply_safety,
+)
+from neko_launcher.application.software_update_coordinator import (
+    UpdateLifecycleSnapshot,
+)
 from neko_launcher.application.software_update_models import (
     UpdateCheckResult,
     UpdateDiagnosticCode,
     UpdateState,
+)
+from neko_launcher.application.software_update_pending import (
+    UpdateLifecycleState,
+    VerifiedPendingUpdate,
 )
 from neko_launcher.domain.events import (
     GameProcessStateChanged,
@@ -99,6 +110,7 @@ class AppWindow:
         proxy_status_client: Any = None,
         update_check_service: Any = None,
         update_apply_service: Any = None,
+        update_coordinator: Any = None,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -108,9 +120,20 @@ class AppWindow:
         self._proxy_status_client = proxy_status_client
         self._update_check_service = update_check_service
         self._update_apply_service = update_apply_service
+        self._update_coordinator = update_coordinator
         self._update_apply_pending = False
         self._update_apply_future: Future[Any] | None = None
         self._last_update_result: UpdateCheckResult | None = None
+        self._last_lifecycle_snapshot: UpdateLifecycleSnapshot | None = None
+        self._applied_update_prepared = False
+        if self._update_coordinator is not None:
+            try:
+                initial_snapshot = self._update_coordinator.current()
+                if initial_snapshot is not None and initial_snapshot.pending is not None:
+                    self._last_lifecycle_snapshot = initial_snapshot
+                    self._last_update_result = initial_snapshot.check_result
+            except Exception:
+                pass
         self._proxy_status_refresh_pending = False
         self._public_server_host_status: str | None = None
         self._proxy_status_executor = ThreadPoolExecutor(
@@ -1259,39 +1282,54 @@ class AppWindow:
         self.root.after(100, finish)
 
     def _check_software_update_startup(self) -> None:
-        service = getattr(self, "_update_check_service", None)
-        if self._closing or service is None:
+        if self._closing:
             return
-        self._submit_software_update_check(service.check_startup)
+        coordinator = getattr(self, "_update_coordinator", None)
+        if coordinator is not None:
+            self._submit_software_update_check(coordinator.startup)
+            return
+        service = getattr(self, "_update_check_service", None)
+        if service is not None:
+            self._submit_software_update_check(service.check_startup)
 
     def _check_software_update_manual(self) -> None:
-        service = getattr(self, "_update_check_service", None)
-        if self._closing or service is None:
+        if self._closing:
             return
-        self._submit_software_update_check(service.check_manual)
+        coordinator = getattr(self, "_update_coordinator", None)
+        if coordinator is not None:
+            self._submit_software_update_check(coordinator.manual_check)
+            return
+        service = getattr(self, "_update_check_service", None)
+        if service is not None:
+            self._submit_software_update_check(service.check_manual)
 
     @staticmethod
     def _state_value(value: Any) -> Any:
         return getattr(value, "value", value)
 
+    def _get_verified_pending_update(self) -> VerifiedPendingUpdate | None:
+        snapshot = getattr(self, "_last_lifecycle_snapshot", None)
+        if snapshot is not None and getattr(snapshot, "pending", None) is not None:
+            return snapshot.pending
+        coordinator = getattr(self, "_update_coordinator", None)
+        if coordinator is not None and hasattr(coordinator, "current"):
+            try:
+                curr = coordinator.current()
+                if curr is not None and getattr(curr, "pending", None) is not None:
+                    self._last_lifecycle_snapshot = curr
+                    return curr.pending
+            except Exception:
+                pass
+        return None
+
     def _can_apply_software_update(self) -> bool:
-        result = getattr(self, "_last_update_result", None)
-        controller = getattr(self, "_controller", None)
-        state = getattr(controller, "state", None)
-        if result is None or state is None:
+        if getattr(self, "_closing", False):
             return False
-        update_state = self._state_value(getattr(result, "state", None))
-        proxy_state = self._state_value(getattr(state, "proxy_status", None))
-        game_state = self._state_value(getattr(state, "game_status", "stopped"))
-        return (
-            getattr(self, "_update_apply_service", None) is not None
-            and not getattr(self, "_closing", False)
-            and not getattr(self, "_update_apply_pending", False)
-            and update_state in {UpdateState.AVAILABLE.value, UpdateState.MANDATORY.value}
-            and proxy_state == ProxyStatus.STOPPED.value
-            and not bool(getattr(state, "game_process_running", False))
-            and game_state == GameStatus.STOPPED.value
-        )
+        if getattr(self, "_update_apply_pending", False):
+            return False
+        if getattr(self, "_update_apply_service", None) is None:
+            return False
+        return self._get_verified_pending_update() is not None
 
     def _refresh_software_update_apply_action(self) -> None:
         button = getattr(self, "_update_apply_button", None)
@@ -1311,19 +1349,69 @@ class AppWindow:
             prepared = future.result()
         except Exception:
             return
-        try:
-            prepared.abort()
-        except Exception:
-            pass
+        if prepared is not None and hasattr(prepared, "abort"):
+            try:
+                prepared.abort()
+            except Exception:
+                pass
 
     def _apply_software_update(self) -> None:
         if not self._can_apply_software_update():
             return
-        service = self._update_apply_service
+        pending = self._get_verified_pending_update()
+        if pending is None:
+            return
+
+        controller = getattr(self, "_controller", None)
+        state = getattr(controller, "state", AppState())
+
+        safety = evaluate_update_apply_safety(
+            state, update_busy=getattr(self, "_update_apply_pending", False)
+        )
+        if safety.blocker in {
+            UpdateApplyBlocker.GAME_ACTIVE,
+            UpdateApplyBlocker.GAME_TRANSITION,
+        }:
+            self._notice.set("ตรวจพบว่าเกมกำลังทำงานอยู่ กรุณาปิดเกมก่อนอัปเดต")
+            return
+
+        if safety.blocker == UpdateApplyBlocker.UPDATE_BUSY:
+            return
+
         self._update_apply_pending = True
         self._refresh_software_update_apply_action()
+
+        service = self._update_apply_service
+
+        def do_apply_workflow() -> Any:
+            curr_state = getattr(controller, "state", AppState())
+            curr_proxy = getattr(curr_state, "proxy_status", ProxyStatus.STOPPED)
+            if getattr(curr_proxy, "value", curr_proxy) != ProxyStatus.STOPPED.value:
+                launcher_svc = getattr(self, "_service", None)
+                if launcher_svc is not None and hasattr(launcher_svc, "stop_proxy"):
+                    launcher_svc.stop_proxy()
+                elif controller is not None and hasattr(controller, "stop_proxy"):
+                    controller.stop_proxy()
+
+                updated_state = getattr(controller, "state", AppState())
+                updated_proxy = getattr(updated_state, "proxy_status", ProxyStatus.STOPPED)
+                if getattr(updated_proxy, "value", updated_proxy) != ProxyStatus.STOPPED.value:
+                    raise RuntimeError("PROXY_STOP_FAILED")
+
+            updated_state = getattr(controller, "state", AppState())
+            check_safety = evaluate_update_apply_safety(updated_state)
+            if check_safety.blocker in {
+                UpdateApplyBlocker.GAME_ACTIVE,
+                UpdateApplyBlocker.GAME_TRANSITION,
+            }:
+                raise RuntimeError("GAME_ACTIVE")
+
+            if hasattr(service, "prepare_pending"):
+                return service.prepare_pending(pending)
+            return service.prepare()
+
         try:
-            future = self._update_executor.submit(service.prepare)
+            future = self._update_executor.submit(do_apply_workflow)
         except RuntimeError:
             self._update_apply_pending = False
             self._error.set("ไม่สามารถเตรียมการอัปเดตได้ กรุณาลองใหม่")
@@ -1341,39 +1429,121 @@ class AppWindow:
                 return
             try:
                 prepared = future.result()
-            except Exception:
+            except Exception as exc:
                 if getattr(self, "_update_apply_future", None) is future:
                     self._update_apply_future = None
                 self._update_apply_pending = False
-                self._error.set("ไม่สามารถเตรียมการอัปเดตได้ กรุณาลองใหม่")
+                err_msg = str(exc)
+                if "GAME_ACTIVE" in err_msg:
+                    self._notice.set("ตรวจพบว่าเกมกำลังทำงานอยู่ กรุณาปิดเกมก่อนอัปเดต")
+                elif "PROXY_STOP_FAILED" in err_msg:
+                    self._error.set("หยุดการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่")
+                else:
+                    self._error.set("ไม่สามารถเตรียมการอัปเดตได้ กรุณาลองใหม่")
                 self._refresh_software_update_apply_action()
                 return
 
             self._update_apply_future = None
             self._update_apply_pending = False
+            self._applied_update_prepared = True
             self._perform_close()
-            prepared.release()
+            if prepared is not None and hasattr(prepared, "release"):
+                prepared.release()
 
         self.root.after(100, finish)
 
     def _record_software_update_internal_failure(self) -> None:
-        self._last_update_result = None
+        has_pending = (
+            self._last_lifecycle_snapshot is not None
+            and self._last_lifecycle_snapshot.pending is not None
+        )
+        if has_pending:
+            pending = self._last_lifecycle_snapshot.pending
+            self._last_update_result = None
+            self._last_lifecycle_snapshot = UpdateLifecycleSnapshot(
+                state=UpdateLifecycleState.UPDATE_PENDING,
+                check_result=None,
+                pending=pending,
+                diagnostic_code=UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE.value,
+            )
+        else:
+            self._last_update_result = None
+            self._last_lifecycle_snapshot = None
+
         self._refresh_software_update_apply_action()
         if self._closing:
             return
+        release_seq = None
+        changed_comp = ""
+        if self._last_lifecycle_snapshot and self._last_lifecycle_snapshot.pending:
+            release_seq = self._last_lifecycle_snapshot.pending.release_sequence
+            changed_comp = ",".join(self._last_lifecycle_snapshot.pending.changed_components)
         self._record_debug_status(
             "SOFTWARE_UPDATE_CHECK",
             state=UpdateState.VERIFY_FAILED.value,
-            release_sequence=None,
-            changed_components="",
+            release_sequence=release_seq,
+            changed_components=changed_comp,
             diagnostic_code=(
                 UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE.value
             ),
         )
 
+    def _handle_software_update_result(self, result: Any) -> None:
+        if not isinstance(result, (UpdateLifecycleSnapshot, UpdateCheckResult)):
+            self._record_software_update_internal_failure()
+            return
+        if isinstance(result, UpdateLifecycleSnapshot):
+            self._last_lifecycle_snapshot = result
+            self._last_update_result = result.check_result
+            self._record_debug_status(
+                "SOFTWARE_UPDATE_LIFECYCLE",
+                state=result.state.value,
+                has_pending=result.pending is not None,
+                diagnostic_code=result.diagnostic_code,
+            )
+            if result.check_result is not None:
+                diagnostic_code = (
+                    result.check_result.diagnostic_code.value
+                    if result.check_result.diagnostic_code is not None
+                    else None
+                )
+                self._record_debug_status(
+                    "SOFTWARE_UPDATE_CHECK",
+                    state=result.check_result.state.value,
+                    release_sequence=result.check_result.release_sequence,
+                    changed_components=",".join(result.check_result.changed_components),
+                    diagnostic_code=diagnostic_code,
+                )
+            elif result.pending is not None:
+                self._record_debug_status(
+                    "SOFTWARE_UPDATE_CHECK",
+                    state=result.state.value,
+                    release_sequence=result.pending.release_sequence,
+                    changed_components=",".join(result.pending.changed_components),
+                    diagnostic_code=result.diagnostic_code,
+                )
+        elif isinstance(result, UpdateCheckResult):
+            self._last_update_result = result
+            state = result.state.value
+            release_sequence = result.release_sequence
+            changed_components = ",".join(result.changed_components)
+            diagnostic_code = (
+                result.diagnostic_code.value
+                if result.diagnostic_code is not None
+                else None
+            )
+            self._record_debug_status(
+                "SOFTWARE_UPDATE_CHECK",
+                state=state,
+                release_sequence=release_sequence,
+                changed_components=changed_components,
+                diagnostic_code=diagnostic_code,
+            )
+        self._refresh_software_update_apply_action()
+
     def _submit_software_update_check(
         self,
-        work: Callable[[], UpdateCheckResult],
+        work: Callable[[], Any],
     ) -> None:
         try:
             future = self._update_executor.submit(work)
@@ -1390,29 +1560,11 @@ class AppWindow:
                 return
             try:
                 result = future.result()
-                if not isinstance(result, UpdateCheckResult):
-                    raise TypeError("invalid update check result")
-                state = result.state.value
-                release_sequence = result.release_sequence
-                changed_components = ",".join(result.changed_components)
-                diagnostic_code = (
-                    result.diagnostic_code.value
-                    if result.diagnostic_code is not None
-                    else None
-                )
             except Exception:
                 self._record_software_update_internal_failure()
                 return
 
-            self._last_update_result = result
-            self._refresh_software_update_apply_action()
-            self._record_debug_status(
-                "SOFTWARE_UPDATE_CHECK",
-                state=state,
-                release_sequence=release_sequence,
-                changed_components=changed_components,
-                diagnostic_code=diagnostic_code,
-            )
+            self._handle_software_update_result(result)
 
         self.root.after(100, finish)
 
@@ -2068,6 +2220,15 @@ class AppWindow:
         self._perform_close()
 
     def _perform_close(self) -> None:
+        controller = getattr(self, "_controller", None)
+        pre_close_state = getattr(controller, "state", AppState())
+        is_safe_close = not (
+            bool(getattr(pre_close_state, "game_process_running", False))
+            or self._state_value(
+                getattr(pre_close_state, "game_status", GameStatus.STOPPED)
+            )
+            != GameStatus.STOPPED.value
+        )
         self._closing = True
         update_apply_future = getattr(self, "_update_apply_future", None)
         if update_apply_future is not None:
@@ -2093,6 +2254,22 @@ class AppWindow:
             self._service.shutdown()
         except Exception:
             pass
+
+        already_applied = getattr(self, "_applied_update_prepared", False)
+        if not already_applied and is_safe_close:
+            pending = self._get_verified_pending_update()
+            apply_service = getattr(self, "_update_apply_service", None)
+            if pending is not None and apply_service is not None:
+                try:
+                    if hasattr(apply_service, "prepare_pending"):
+                        prepared = apply_service.prepare_pending(pending)
+                    else:
+                        prepared = apply_service.prepare()
+                    if prepared is not None and hasattr(prepared, "release"):
+                        prepared.release()
+                except Exception:
+                    pass
+
         self._executor.shutdown(wait=False, cancel_futures=True)
         if getattr(self, "_update_executor", None) is not None:
             try:
@@ -2104,7 +2281,9 @@ class AppWindow:
                 self._proxy_status_executor.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 pass
-        if self._tray_manager is not None:
+        if getattr(self, "_tray_manager", None) is not None:
             self._tray_manager.stop()
-        self.root.quit()
-        self.root.destroy()
+        if hasattr(self.root, "quit"):
+            self.root.quit()
+        if hasattr(self.root, "destroy"):
+            self.root.destroy()

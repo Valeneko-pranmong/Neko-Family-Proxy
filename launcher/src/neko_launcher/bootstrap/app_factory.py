@@ -17,6 +17,9 @@ from neko_launcher.application.production_authorization import (
     create_production_proxy_gateway,
 )
 from neko_launcher.application.services import LauncherService
+from neko_launcher.application.software_update_coordinator import (
+    SoftwareUpdateCoordinator,
+)
 from neko_launcher.application.software_update_models import LocalReleaseIdentity
 from neko_launcher.application.software_update_service import UpdateCheckService
 from neko_launcher.domain.models import AuthStatus, EntitlementStatus
@@ -45,6 +48,12 @@ from neko_launcher.infrastructure.software_release_identity import (
     load_local_release_identity,
 )
 from neko_launcher.infrastructure.software_update_apply import SoftwareUpdateApplyService
+from neko_launcher.infrastructure.software_update_pending_store import (
+    PendingUpdateStore,
+)
+from neko_launcher.infrastructure.software_update_stage import (
+    SoftwareUpdateStageService,
+)
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
 from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
 from neko_launcher.updater.root_validator import get_expected_install_root
@@ -146,6 +155,62 @@ def compose_update_apply_service(
     )
 
 
+def compose_update_coordinator(
+    config: LauncherConfig,
+    *,
+    check_service: UpdateCheckService | None = None,
+    stage_service: SoftwareUpdateStageService | None = None,
+    pending_store: PendingUpdateStore | None = None,
+    key_registry: Mapping[str, bytes] | None = None,
+    resolver: AuthenticatedReleaseGateway | None = None,
+    root_dir: Path | None = None,
+    asset_downloader: GitHubAssetDownloader | None = None,
+) -> SoftwareUpdateCoordinator:
+    install_root = root_dir or get_expected_install_root()
+    shared_downloader = (
+        asset_downloader
+        if asset_downloader is not None
+        else GitHubAssetDownloader()
+    )
+    store = (
+        pending_store
+        if pending_store is not None
+        else PendingUpdateStore(
+            root_dir=install_root,
+            key_registry=(
+                PRODUCTION_RELEASE_PUBLIC_KEYS
+                if key_registry is None
+                else key_registry
+            ),
+            updater_protocol=UPDATER_PROTOCOL_VERSION,
+        )
+    )
+    staging = (
+        stage_service
+        if stage_service is not None
+        else SoftwareUpdateStageService(
+            pending_store=store,
+            asset_downloader=shared_downloader,
+        )
+    )
+    checking = (
+        check_service
+        if check_service is not None
+        else compose_update_check_service(
+            config,
+            key_registry=key_registry,
+            resolver=resolver,
+            root_dir=install_root,
+        )
+    )
+    return SoftwareUpdateCoordinator(
+        check_service=checking,
+        stage_service=staging,
+        pending_store=store,
+        local_identity_provider=checking._local_identity_provider,
+    )
+
+
 def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
@@ -158,10 +223,25 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         updater_protocol=UPDATER_PROTOCOL_VERSION,
     )
     shared_downloader = GitHubAssetDownloader()
+    pending_store = PendingUpdateStore(
+        root_dir=install_root,
+        key_registry=PRODUCTION_RELEASE_PUBLIC_KEYS,
+        updater_protocol=UPDATER_PROTOCOL_VERSION,
+    )
+    stage_service = SoftwareUpdateStageService(
+        pending_store=pending_store,
+        asset_downloader=shared_downloader,
+    )
     update_check_service = compose_update_check_service(
         config,
         resolver=shared_resolver,
         root_dir=install_root,
+    )
+    update_coordinator = SoftwareUpdateCoordinator(
+        check_service=update_check_service,
+        stage_service=stage_service,
+        pending_store=pending_store,
+        local_identity_provider=update_check_service._local_identity_provider,
     )
     update_apply_service = compose_update_apply_service(
         config,
@@ -296,4 +376,5 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         proxy_status_client=proxy_status_client,
         update_check_service=update_check_service,
         update_apply_service=update_apply_service,
+        update_coordinator=update_coordinator,
     )
