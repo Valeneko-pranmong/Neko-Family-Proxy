@@ -111,8 +111,8 @@ def test_application_root_resolves_to_repository_root_in_source_mode(
     root = application_root()
 
     assert (root / "launcher").is_dir()
-    assert (root / "image_11.png").is_file()
-    assert (root / "icon_app.ico").is_file()
+    assert (root / "Asset" / "image_11.png").is_file()
+    assert (root / "Asset" / "icon_app.ico").is_file()
 
 
 # A18_HIDE_TO_TRAY_PREFS
