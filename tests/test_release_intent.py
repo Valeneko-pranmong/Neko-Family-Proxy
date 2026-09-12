@@ -177,7 +177,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
 
     # Need to skip core verify
-    monkeypatch.setattr(release_controller, "verify_and_fetch_core", lambda *a, **k: (tmp_path/"core.zip", "hash", 100, "ident", {"auth":"yes"}))
+    monkeypatch.setattr(release_controller, "verify_and_fetch_core", lambda *a, **k: (tmp_path/"core.zip", "hash", 100, "ident", {"stable_tag": "v5.1.0", "release_id": 123}))
     tmp_core = tmp_path / "core.zip"
     tmp_core.write_text("dummy")
 
@@ -238,4 +238,6 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     assert "stable_version" in record
     assert "target_version" in record
     assert "injected_files" in record
+    assert "core_authority" in record
+    assert record["core_authority"]["stable_tag"] == "v5.1.0"
     assert len(record["injected_files"]) > 0

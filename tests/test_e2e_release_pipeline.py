@@ -376,3 +376,207 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
     import pytest
     with pytest.raises(SystemExit):
         process_accepted_commits(sha, run_id)
+
+
+
+def test_verify_and_fetch_core_draft_fails_closed(monkeypatch, tmp_path):
+    from scripts.release_controller import verify_and_fetch_core
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b'{"draft": true}')
+    import pytest
+    with pytest.raises(RuntimeError, match="draft or prerelease"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_missing_asset_fails_closed(monkeypatch, tmp_path):
+    from scripts.release_controller import verify_and_fetch_core
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b'{"draft": false, "id": 1, "assets": [{"name": "release-v2.json", "id": 1}]}')
+    import pytest
+    with pytest.raises(RuntimeError, match="Missing required assets"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_duplicate_asset_fails_closed(monkeypatch, tmp_path):
+    from scripts.release_controller import verify_and_fetch_core
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b'{"draft": false, "id": 1, "assets": [{"name": "release-v2.json", "id": 1}, {"name": "release-v2.json", "id": 2}]}')
+    import pytest
+    with pytest.raises(RuntimeError, match="Duplicate release-v2.json assets"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_signature_fails_closed(monkeypatch, tmp_path):
+    from scripts.release_controller import verify_and_fetch_core
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b'{"draft": false, "id": 1, "assets": [{"name": "release-v2.json", "id": 1}, {"name": "NekoProxyCore.zip", "id": 2}]}')
+    
+    import subprocess
+    def fake_run(args, **kwargs):
+        if "gh" in args and any("releases/assets/1" in a for a in args):
+            kwargs["stdout"].write(b'{"envelope_version": 1, "key_id": "neko-update-prod-1", "payload_b64": "YmFk", "signature_b64": "YmFk"}')
+            kwargs["stdout"].flush()
+        if "gh" in args and any("releases/assets/2" in a for a in args):
+            kwargs["stdout"].write(b"dummy")
+            kwargs["stdout"].flush()
+        return subprocess.CompletedProcess(args, 0)
+    
+    monkeypatch.setattr("subprocess.run", fake_run)
+    import pytest
+    with pytest.raises(Exception, match="Incorrect padding|signature|Invalid"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest=None, override_core_bytes=b"dummy"):
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b'{"draft": false, "id": 1, "assets": [{"name": "release-v2.json", "id": 1}, {"name": "NekoProxyCore.zip", "id": 2}]}')
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives import serialization
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+    pub_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw
+    )
+    monkeypatch.setattr("neko_launcher.updater.trust.PRODUCTION_RELEASE_PUBLIC_KEYS", {"neko-update-prod-1": pub_bytes})
+    monkeypatch.setattr("scripts.release_controller.PRODUCTION_RELEASE_PUBLIC_KEYS", {"neko-update-prod-1": pub_bytes})
+
+    import hashlib
+    core_hash = hashlib.sha256(override_core_bytes).hexdigest()
+    
+    metadata = {
+        "schema_version": 2,
+        "channel": "stable",
+        "release_sequence": 1,
+        "release_id": "r-1",
+        "mandatory": True,
+        "minimum_supported_sequence": 1,
+        "updater_protocol": {"minimum": 1, "maximum": 1},
+        "components": {
+            "launcher": {
+                "version": "1.0",
+                "artifact_id": "l",
+                "artifact_format": "raw-pe-v1",
+                "artifact_size": 3,
+                "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "updater": {
+                "version": "1.0",
+                "artifact_id": "u",
+                "artifact_format": "raw-pe-v1",
+                "artifact_size": 3,
+                "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "core": {
+                "version": "1.0",
+                "artifact_id": "NekoProxyCore.zip",
+                "artifact_format": "zip-core-v1",
+                "artifact_size": len(override_core_bytes),
+                "artifact_sha256": core_hash,
+                "installed_identity_sha256": core_hash
+            }
+        }
+    }
+    if override_manifest:
+        metadata.update(override_manifest)
+        if "components" in override_manifest:
+            metadata["components"] = override_manifest["components"]
+
+    import base64
+    from neko_launcher.updater.canonical_json import canonical_json_dumps
+    import json
+    payload = canonical_json_dumps(metadata)
+    signature = private_key.sign(payload)
+    signed_envelope = {
+        "envelope_version": 1,
+        "key_id": "neko-update-prod-1",
+        "payload_b64": base64.b64encode(payload).decode("ascii"),
+        "signature_b64": base64.b64encode(signature).decode("ascii"),
+    }
+    signed_json = json.dumps(signed_envelope)
+
+    import subprocess
+    def fake_run(args, **kwargs):
+        if "gh" in args and any("releases/assets/1" in a for a in args):
+            kwargs["stdout"].write(signed_json.encode())
+            kwargs["stdout"].flush()
+        if "gh" in args and any("releases/assets/2" in a for a in args):
+            kwargs["stdout"].write(override_core_bytes)
+            kwargs["stdout"].flush()
+        return subprocess.CompletedProcess(args, 0)
+    
+    monkeypatch.setattr("subprocess.run", fake_run)
+    
+    class MockVerifier:
+        valid = True
+        error = None
+        manifest_sha256 = core_hash
+    monkeypatch.setattr("neko_launcher.updater.zip_extractor.extract_core_bundle", lambda *a, **k: None)
+    monkeypatch.setattr("neko_launcher.updater.core_manifest_verifier.verify_canonical_core_bundle", lambda *a, **k: MockVerifier())
+
+    return MockVerifier
+
+def test_verify_and_fetch_core_channel_mismatch(monkeypatch, tmp_path):
+    setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest={"channel": "beta"})
+    from scripts.release_controller import verify_and_fetch_core
+    import pytest
+    with pytest.raises(Exception, match="channel"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_artifact_id_mismatch(monkeypatch, tmp_path):
+    comps = {
+        "launcher": {
+            "version": "1.0", "artifact_id": "l", "artifact_format": "raw-pe-v1", "artifact_size": 3,
+            "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "updater": {
+            "version": "1.0", "artifact_id": "u", "artifact_format": "raw-pe-v1", "artifact_size": 3,
+            "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "core": {
+            "version": "1.0", "artifact_id": "wrong", "artifact_format": "zip-core-v1", "artifact_size": 5,
+            "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    }
+    setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest={"components": comps})
+    from scripts.release_controller import verify_and_fetch_core
+    import pytest
+    with pytest.raises(RuntimeError, match="artifact_id mismatch"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_hash_mismatch(monkeypatch, tmp_path):
+    comps = {
+        "launcher": {
+            "version": "1.0", "artifact_id": "l", "artifact_format": "raw-pe-v1", "artifact_size": 3,
+            "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "updater": {
+            "version": "1.0", "artifact_id": "u", "artifact_format": "raw-pe-v1", "artifact_size": 3,
+            "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "core": {
+            "version": "1.0", "artifact_id": "NekoProxyCore.zip", "artifact_format": "zip-core-v1", "artifact_size": 5,
+            "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installed_identity_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+    }
+    setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest={"components": comps}, override_core_bytes=b"dummy")
+    from scripts.release_controller import verify_and_fetch_core
+    import pytest
+    with pytest.raises(RuntimeError, match="does not match .* signature"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_canonical_failure(monkeypatch, tmp_path):
+    MockVerifier = setup_mock_verify_and_fetch_core(monkeypatch, tmp_path)
+    MockVerifier.valid = False
+    MockVerifier.error = "bad bundle"
+    from scripts.release_controller import verify_and_fetch_core
+    import pytest
+    with pytest.raises(RuntimeError, match="Core bundle verification failed"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
+
+def test_verify_and_fetch_core_installed_identity_mismatch(monkeypatch, tmp_path):
+    MockVerifier = setup_mock_verify_and_fetch_core(monkeypatch, tmp_path)
+    MockVerifier.manifest_sha256 = "completely_different"
+    from scripts.release_controller import verify_and_fetch_core
+    import pytest
+    with pytest.raises(RuntimeError, match="installed identity mismatch"):
+        verify_and_fetch_core("v5.1.0", tmp_path)
