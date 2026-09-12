@@ -92,7 +92,7 @@ def test_create_kanban_task_dirty_runtime_blocks(mock_run, mock_check_output):
             return b"c0ffee\n"
         return b""
     mock_check_output.side_effect = check_output_side_effect
-    
+
     with pytest.raises(RuntimeError, match="runtime worktree is not clean"):
         create_kanban_task(100, "target_sha")
     mock_run.assert_not_called()
@@ -110,7 +110,7 @@ def test_create_kanban_task_not_ancestor_blocks(mock_run, mock_check_output):
             return b"not_c0ffee\n"
         return b""
     mock_check_output.side_effect = check_output_side_effect
-    
+
     with pytest.raises(RuntimeError, match="not an ancestor of origin/main"):
         create_kanban_task(100, "target_sha")
     mock_run.assert_not_called()
@@ -129,24 +129,26 @@ def test_create_kanban_task_success_binding(mock_run, mock_check_output):
             return b"c0ffee\n"
         return b""
     mock_check_output.side_effect = check_output_side_effect
-    
+
     create_kanban_task(100, "target_sha")
-    
+
     mock_run.assert_called_once()
     args = mock_run.call_args[0][0]
-    
+
     # Assert canonical string is absent from arguments
     for arg in args:
         assert "E:/Github/Neko-Family-Proxy" not in arg
-    
-    # Check workspace dynamic binding
+
+    # Check workspace dynamic binding and path serialization
     ws_idx = args.index("--workspace") + 1
     workspace = args[ws_idx]
     assert workspace.startswith("worktree:")
+    # Must use forward slashes for cross-platform Hermes syntax, even on Windows
+    assert "\\" not in workspace
     runtime_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    # standardize path slashes for cross-platform matching
-    assert os.path.normpath(workspace.replace("worktree:", "")) == os.path.normpath(runtime_root)
-    
+    normalized_root = runtime_root.replace('\\', '/')
+    assert workspace == f"worktree:{normalized_root}"
+
     # Check idempotency key preserved
     assert "--idempotency-key" in args
     idem_idx = args.index("--idempotency-key") + 1
@@ -158,6 +160,7 @@ def test_create_kanban_task_success_binding(mock_run, mock_check_output):
     assert "target_sha" in body
     assert "100" in body
     assert "c0ffee" in body # controller SHA
+    assert f"Runtime Workspace: {normalized_root}" in body
     assert "`git fetch origin main` ONLY" in body
     assert "Reassert HEAD==c0ffee after fetch" in body
     assert "NEVER checkout/reset/rebase/cherry-pick" in body

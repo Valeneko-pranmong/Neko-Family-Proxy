@@ -16,13 +16,13 @@ def get_successful_main_commits() -> list[str]:
 
 def get_successful_main_runs() -> list[dict]:
     cmd = [
-        "gh", "run", "list", 
-        "--workflow", "Main Source Acceptance", 
-        "--branch", "main", 
-        "--status", "success", 
+        "gh", "run", "list",
+        "--workflow", "Main Source Acceptance",
+        "--branch", "main",
+        "--status", "success",
         "--json", "databaseId,headSha,createdAt"
     ]
-    
+
     try:
         out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
@@ -30,10 +30,10 @@ def get_successful_main_runs() -> list[dict]:
         raise
 
     runs = json.loads(out)
-    
+
     # Sort by createdAt to ensure oldest first
     runs.sort(key=lambda x: x["createdAt"])
-    
+
     # Deduplicate while preserving order based on run identity
     seen = set()
     ordered_runs = []
@@ -42,7 +42,7 @@ def get_successful_main_runs() -> list[dict]:
         if identity not in seen:
             seen.add(identity)
             ordered_runs.append(run)
-            
+
     return ordered_runs
 
 def get_changed_files_for_sha(sha: str) -> list[str]:
@@ -57,7 +57,8 @@ def get_changed_files_for_sha(sha: str) -> list[str]:
 
 def create_kanban_task(run_id: int, sha: str):
     runtime_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    
+    normalized_runtime_root = runtime_root.replace('\\', '/')
+
     # 1. Fail closed if runtime worktree is not clean
     status = subprocess.check_output(["git", "-C", runtime_root, "status", "--porcelain"]).decode().strip()
     if status:
@@ -65,18 +66,18 @@ def create_kanban_task(run_id: int, sha: str):
 
     # 2. Get exact controller/runtime commit
     controller_sha = subprocess.check_output(["git", "-C", runtime_root, "rev-parse", "HEAD"]).decode().strip()
-    
+
     # 3. Verify controller_sha is an ancestor of origin/main
     # Fetch origin/main just in case? Or assume it's already there? The prompt says "ancestor of fetched/current origin/main".
     # Just checking merge base with origin/main.
     merge_base = subprocess.check_output(["git", "-C", runtime_root, "merge-base", controller_sha, "origin/main"]).decode().strip()
     if merge_base != controller_sha:
         raise RuntimeError(f"controller/runtime commit {controller_sha} is not an ancestor of origin/main")
-    
+
     title = f"Release pipeline for {sha[:7]}"
     body = (
         f"Automated release process for commit {sha} from run {run_id}.\n"
-        f"Runtime Workspace: {runtime_root}\n"
+        f"Runtime Workspace: {normalized_runtime_root}\n"
         f"Controller SHA: {controller_sha}\n"
         f"REQUIREMENTS for the release worker:\n"
         f"- Stay on the controller SHA ({controller_sha}).\n"
@@ -87,16 +88,16 @@ def create_kanban_task(run_id: int, sha: str):
         f"- Invoke exactly: `uv run python scripts/release_controller.py --commit {sha} --run-id {run_id}`\n"
         f"Never patch/improvise build/sign/publish."
     )
-    
+
     cmd = [
         "hermes", "kanban", "--board", "neko-family-5-1-stable", "create",
         title,
         "--body", body,
         "--assignee", "release",
-        "--workspace", f"worktree:{runtime_root}",
+        "--workspace", f"worktree:{normalized_runtime_root}",
         "--idempotency-key", f"release-{run_id}-{sha}"
     ]
-    
+
     env = os.environ.copy()
     env.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
     env.pop("HERMES_SUPERVISED_CHILD", None)
