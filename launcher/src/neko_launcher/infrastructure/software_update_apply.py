@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from neko_launcher.application.software_update_pending import (
+    VerifiedPendingUpdate,
+)
+from neko_launcher.updater.canonical_json import canonical_json_loads
 from neko_launcher.updater.ipc_channel import FramedIpcChannel
+from neko_launcher.updater.manifest_v2 import parse_release_v2
 
 if TYPE_CHECKING:
     from neko_launcher.infrastructure.github_asset_downloader import (
@@ -62,8 +69,8 @@ class SoftwareUpdateApplyService:
     def __init__(
         self,
         root_dir: Path,
-        release_gateway: AuthenticatedReleaseGateway,
-        asset_downloader: GitHubAssetDownloader,
+        release_gateway: AuthenticatedReleaseGateway | None = None,
+        asset_downloader: GitHubAssetDownloader | None = None,
         spawner: Callable[..., subprocess.Popen[bytes]] | None = None,
         channel_factory: Callable[..., FramedIpcChannel] | None = None,
     ) -> None:
@@ -73,28 +80,7 @@ class SoftwareUpdateApplyService:
         self.spawner = spawner
         self.channel_factory = channel_factory
 
-    def prepare(self) -> PreparedUpdate:
-        # Mandatory resolver refetch on apply; fails closed before helper starts
-        try:
-            resolved = self.release_gateway.resolve()
-        except SoftwareUpdateApplyError:
-            raise
-        except Exception as exc:
-            code = getattr(exc, "code", None)
-            if type(code) is str:
-                raise SoftwareUpdateApplyError(code) from None
-            raise SoftwareUpdateApplyError("MANIFEST_VERIFY_FAILED") from None
-
-        if resolved is None:
-            raise SoftwareUpdateApplyError("RELEASE_UNAVAILABLE")
-
-        # Forward exact downloaded canonical envelope bytes unchanged to BEGIN
-        try:
-            envelope_b64 = base64.b64encode(resolved.envelope_bytes).decode("ascii")
-        except Exception:
-            raise SoftwareUpdateApplyError("ENVELOPE_SERIALIZE_FAILED") from None
-
-        # Spawn helper
+    def _spawn_helper(self) -> tuple[PreparedUpdate, FramedIpcChannel]:
         exe_path = str(self.root_dir / "NekoUpdater.exe")
         cmd = [exe_path, "--session"]
 
@@ -119,9 +105,7 @@ class SoftwareUpdateApplyService:
             raise SoftwareUpdateApplyError("SPAWN_FAILED") from None
 
         prepared = PreparedUpdate(None, process)
-
         try:
-            # IPC Channel
             if self.channel_factory:
                 channel = self.channel_factory()
             else:
@@ -138,7 +122,39 @@ class SoftwareUpdateApplyService:
                     write_handle=write_handle,
                 )
             prepared._channel = channel
+            return prepared, channel
+        except Exception:
+            prepared.abort()
+            raise
 
+    def prepare(self) -> PreparedUpdate:
+        if self.release_gateway is None:
+            raise SoftwareUpdateApplyError("RELEASE_UNAVAILABLE")
+
+        # Mandatory resolver refetch on apply; fails closed before helper starts
+        try:
+            resolved = self.release_gateway.resolve()
+        except SoftwareUpdateApplyError:
+            raise
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if type(code) is str:
+                raise SoftwareUpdateApplyError(code) from None
+            raise SoftwareUpdateApplyError("MANIFEST_VERIFY_FAILED") from None
+
+        if resolved is None:
+            raise SoftwareUpdateApplyError("RELEASE_UNAVAILABLE")
+
+        # Forward exact downloaded canonical envelope bytes unchanged to BEGIN
+        try:
+            envelope_b64 = base64.b64encode(resolved.envelope_bytes).decode("ascii")
+        except Exception:
+            raise SoftwareUpdateApplyError("ENVELOPE_SERIALIZE_FAILED") from None
+
+        # Spawn helper
+        prepared, channel = self._spawn_helper()
+
+        try:
             # Send BEGIN
             msg_id = channel.send_message(
                 "BEGIN",
@@ -197,6 +213,8 @@ class SoftwareUpdateApplyService:
                 raise SoftwareUpdateApplyError("BEGIN_REJECTED")
 
             # Downloads for changed components (launcher and core only)
+            if self.asset_downloader is None:
+                raise SoftwareUpdateApplyError("DOWNLOAD_FAILED")
             incoming_dir = self.root_dir / "incoming" / req_id
             for comp_name in ("launcher", "core"):
                 if changed[comp_name]:
@@ -263,3 +281,176 @@ class SoftwareUpdateApplyService:
             if isinstance(e, SoftwareUpdateApplyError):
                 raise
             raise SoftwareUpdateApplyError("PREPARE_FAILED") from None
+
+    def prepare_pending(self, pending: VerifiedPendingUpdate) -> PreparedUpdate:
+        if pending is None or not isinstance(pending, VerifiedPendingUpdate):
+            raise SoftwareUpdateApplyError("INVALID_PENDING_UPDATE")
+
+        try:
+            envelope_b64 = base64.b64encode(pending.envelope_bytes).decode("ascii")
+            envelope_doc = canonical_json_loads(pending.envelope_bytes)
+            if not isinstance(envelope_doc, dict) or "payload_b64" not in envelope_doc:
+                raise SoftwareUpdateApplyError("INVALID_PENDING_ENVELOPE")
+            payload_bytes = base64.b64decode(envelope_doc["payload_b64"], validate=True)
+            payload = canonical_json_loads(payload_bytes)
+            if not isinstance(payload, dict):
+                raise SoftwareUpdateApplyError("INVALID_PENDING_ENVELOPE")
+            release_v2 = parse_release_v2(payload)
+        except SoftwareUpdateApplyError:
+            raise
+        except Exception:
+            raise SoftwareUpdateApplyError("INVALID_PENDING_ENVELOPE") from None
+
+        prepared, channel = self._spawn_helper()
+
+        try:
+            # Send BEGIN
+            msg_id = channel.send_message(
+                "BEGIN",
+                body={"envelope_b64": envelope_b64},
+            )
+
+            # Wait for REQUEST_READY
+            resp = channel.receive_message(timeout_s=5.0)
+            if resp.type != "REQUEST_READY":
+                raise SoftwareUpdateApplyError("UNEXPECTED_RESPONSE")
+            if resp.message_id != msg_id:
+                raise SoftwareUpdateApplyError("MESSAGE_ID_MISMATCH")
+
+            body = resp.body
+            if type(body) is not dict or set(body) != {
+                "accepted",
+                "request_id",
+                "transaction_id",
+                "changed",
+                "error",
+            }:
+                raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
+            accepted = body["accepted"]
+            req_id = body["request_id"]
+            tx_id = body["transaction_id"]
+            changed = body["changed"]
+            error = body["error"]
+            if type(accepted) is not bool or (
+                error is not None and type(error) is not str
+            ):
+                raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
+
+            if not accepted:
+                if (req_id is not None and type(req_id) is not str) or (
+                    tx_id is not None and type(tx_id) is not str
+                ):
+                    raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
+                if changed is not None and (
+                    type(changed) is not dict
+                    or set(changed) != {"launcher", "core"}
+                    or type(changed["launcher"]) is not bool
+                    or type(changed["core"]) is not bool
+                ):
+                    raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
+                raise SoftwareUpdateApplyError("BEGIN_REJECTED")
+
+            # Validate accepted response fields
+            if (
+                type(req_id) is not str
+                or not req_id
+                or Path(req_id).name != req_id
+                or "/" in req_id
+                or "\\" in req_id
+                or ".." in req_id
+            ):
+                raise SoftwareUpdateApplyError("INVALID_REQUEST_ID")
+            if type(tx_id) is not str or not tx_id:
+                raise SoftwareUpdateApplyError("INVALID_TRANSACTION_ID")
+            if (
+                type(changed) is not dict
+                or set(changed) != {"launcher", "core"}
+                or type(changed["launcher"]) is not bool
+                or type(changed["core"]) is not bool
+            ):
+                raise SoftwareUpdateApplyError("INVALID_CHANGED_DICT")
+
+            # Require helper changed map match staged changed components
+            helper_changed = {c for c in ("launcher", "core") if changed[c]}
+            staged_changed = set(pending.changed_components)
+            if helper_changed != staged_changed:
+                raise SoftwareUpdateApplyError("CHANGED_COMPONENTS_MISMATCH")
+
+            # Copy verified staged Launcher/Core bytes only into helper-created fixed incoming paths
+            incoming_dir = self.root_dir / "incoming" / req_id
+            incoming_dir.mkdir(parents=True, exist_ok=True)
+
+            if not isinstance(pending.generation_dir, Path) or not pending.generation_dir.is_dir():
+                raise SoftwareUpdateApplyError("ARTIFACT_MISSING")
+
+            for comp_name in ("launcher", "core"):
+                if changed[comp_name]:
+                    filename = (
+                        "launcher.artifact"
+                        if comp_name == "launcher"
+                        else "core.artifact.zip"
+                    )
+                    src = pending.generation_dir / filename
+                    dest = incoming_dir / filename
+
+                    if not src.is_file():
+                        raise SoftwareUpdateApplyError("ARTIFACT_MISSING")
+
+                    try:
+                        shutil.copyfile(src, dest)
+                    except Exception:
+                        raise SoftwareUpdateApplyError("ARTIFACT_COPY_FAILED") from None
+
+                    # Rehash/resize check after copy before APPLY
+                    comp_v2 = release_v2.components[comp_name]
+                    if dest.stat().st_size != comp_v2.artifact_size:
+                        raise SoftwareUpdateApplyError("HASH_MISMATCH")
+
+                    hasher = hashlib.sha256()
+                    with open(dest, "rb") as f:
+                        while chunk := f.read(65536):
+                            hasher.update(chunk)
+                    if hasher.hexdigest() != comp_v2.artifact_sha256:
+                        raise SoftwareUpdateApplyError("HASH_MISMATCH")
+
+            # Send APPLY
+            apply_msg_id = channel.send_message(
+                "APPLY",
+                body={"transaction_id": tx_id, "request_id": req_id},
+            )
+
+            apply_resp = channel.receive_message(timeout_s=5.0)
+            if apply_resp.type != "APPLY_RESULT":
+                raise SoftwareUpdateApplyError("UNEXPECTED_RESPONSE")
+            if apply_resp.message_id != apply_msg_id:
+                raise SoftwareUpdateApplyError("MESSAGE_ID_MISMATCH")
+
+            apply_body = apply_resp.body
+            if type(apply_body) is not dict or set(apply_body) != {
+                "accepted",
+                "transaction_id",
+                "error",
+            }:
+                raise SoftwareUpdateApplyError("INVALID_APPLY_RESULT")
+            apply_accepted = apply_body["accepted"]
+            apply_tx_id = apply_body["transaction_id"]
+            apply_error = apply_body["error"]
+            if (
+                type(apply_accepted) is not bool
+                or (apply_tx_id is not None and type(apply_tx_id) is not str)
+                or (apply_error is not None and type(apply_error) is not str)
+            ):
+                raise SoftwareUpdateApplyError("INVALID_APPLY_RESULT")
+            if not apply_accepted:
+                raise SoftwareUpdateApplyError("APPLY_REJECTED")
+            if apply_tx_id != tx_id:
+                raise SoftwareUpdateApplyError("INVALID_TRANSACTION_ID")
+
+            return prepared
+
+        except Exception as e:
+            prepared.abort()
+            if isinstance(e, SoftwareUpdateApplyError):
+                raise
+            raise SoftwareUpdateApplyError("PREPARE_FAILED") from None
+

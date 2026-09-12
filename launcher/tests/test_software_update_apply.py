@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from neko_launcher.application.software_update_pending import (
+    VerifiedPendingUpdate,
+)
 
 from neko_launcher.infrastructure.github_asset_downloader import (
     DownloadedArtifact,
@@ -941,3 +946,586 @@ def test_source_guards_no_grant_or_obsolete_apis_in_apply() -> None:
     )
     for term in forbidden:
         assert term not in source, f"Forbidden legacy update term found in apply: {term}"
+
+
+def make_verified_pending(
+    base_dir: Path,
+    sequence: int = 50,
+    *,
+    changed_components: tuple[str, ...] = ("launcher", "core"),
+    launcher_bytes: bytes = b"MZ-test-launcher-binary-bytes",
+    core_bytes: bytes = b"PK-test-core-zip-binary-bytes",
+) -> tuple[VerifiedPendingUpdate, ResolvedGitHubRelease]:
+    launcher_sha = hashlib.sha256(launcher_bytes).hexdigest()
+    core_sha = hashlib.sha256(core_bytes).hexdigest()
+    resolved = make_resolved_release(
+        sequence=sequence,
+        launcher_size=len(launcher_bytes),
+        launcher_sha=launcher_sha,
+        core_size=len(core_bytes),
+        core_sha=core_sha,
+    )
+    gen_dir = (
+        base_dir
+        / "update-pending"
+        / "generations"
+        / f"gen_{sequence}_{resolved.authenticated_release.release_id}"
+    )
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    launcher_artifact = None
+    core_artifact = None
+    if "launcher" in changed_components:
+        launcher_artifact = gen_dir / "launcher.artifact"
+        launcher_artifact.write_bytes(launcher_bytes)
+    if "core" in changed_components:
+        core_artifact = gen_dir / "core.artifact.zip"
+        core_artifact.write_bytes(core_bytes)
+
+    pending = VerifiedPendingUpdate(
+        release_id=resolved.authenticated_release.release_id,
+        release_sequence=sequence,
+        changed_components=changed_components,
+        envelope_bytes=resolved.envelope_bytes,
+        generation_dir=gen_dir,
+        launcher_artifact=launcher_artifact,
+        core_artifact=core_artifact,
+    )
+    return pending, resolved
+
+
+def test_prepare_pending_success_both_components(tmp_path: Path) -> None:
+    service_cls, prepared_cls, _ = _get_apply_api()
+    pending, resolved = make_verified_pending(tmp_path, 50, changed_components=("launcher", "core"))
+    spawner = FakeSpawner()
+    request_id = "req-pending-101"
+    transaction_id = "tx-pending-202"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": transaction_id,
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    prepared = service.prepare_pending(pending)
+
+    assert isinstance(prepared, prepared_cls)
+    assert len(spawner.calls) == 1
+    assert spawner.calls[0]["command"] == [
+        str(tmp_path / "NekoUpdater.exe"),
+        "--session",
+    ]
+
+    # Verify BEGIN message sent exact stored envelope bytes unchanged
+    assert len(channel.sent) == 2
+    begin_msg = channel.sent[0]
+    assert begin_msg["type"] == "BEGIN"
+    raw_env_bytes = base64.b64decode(begin_msg["body"]["envelope_b64"])
+    assert raw_env_bytes == pending.envelope_bytes
+
+    # Verify copied files exist in incoming_dir and match staged bytes
+    incoming_dir = tmp_path / "incoming" / request_id
+    launcher_dest = incoming_dir / "launcher.artifact"
+    core_dest = incoming_dir / "core.artifact.zip"
+    assert launcher_dest.is_file()
+    assert core_dest.is_file()
+    assert launcher_dest.read_bytes() == (pending.generation_dir / "launcher.artifact").read_bytes()
+    assert core_dest.read_bytes() == (pending.generation_dir / "core.artifact.zip").read_bytes()
+
+    # Verify APPLY message sent
+    apply_msg = channel.sent[1]
+    assert apply_msg["type"] == "APPLY"
+    assert apply_msg["body"] == {
+        "transaction_id": transaction_id,
+        "request_id": request_id,
+    }
+
+    # Verify prepared.release() closes channel without terminating helper
+    prepared.release()
+    assert channel.closed
+    assert not spawner.process.terminated
+    assert not spawner.process.killed
+
+
+def test_prepare_pending_offline_with_raising_gateway_and_downloader(tmp_path: Path) -> None:
+    service_cls, prepared_cls, _ = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    gateway = FakeReleaseGateway(error=RuntimeError("NETWORK_FORBIDDEN"))
+    downloader = FakeAssetDownloader(fail=True)
+    spawner = FakeSpawner()
+    request_id = "req-offline-1"
+    transaction_id = "tx-offline-1"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": transaction_id,
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        release_gateway=gateway,
+        asset_downloader=downloader,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    prepared = service.prepare_pending(pending)
+    assert isinstance(prepared, prepared_cls)
+    assert gateway.calls == 0
+    assert len(downloader.calls) == 0
+
+
+def test_prepare_pending_launcher_only(tmp_path: Path) -> None:
+    service_cls, prepared_cls, _ = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50, changed_components=("launcher",))
+    spawner = FakeSpawner()
+    request_id = "req-launcher-only"
+    transaction_id = "tx-launcher-only"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": False},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": transaction_id,
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    prepared = service.prepare_pending(pending)
+    assert isinstance(prepared, prepared_cls)
+
+    incoming_dir = tmp_path / "incoming" / request_id
+    assert (incoming_dir / "launcher.artifact").is_file()
+    assert not (incoming_dir / "core.artifact.zip").exists()
+
+
+def test_prepare_pending_core_only(tmp_path: Path) -> None:
+    service_cls, prepared_cls, _ = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50, changed_components=("core",))
+    spawner = FakeSpawner()
+    request_id = "req-core-only"
+    transaction_id = "tx-core-only"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": False, "core": True},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": True,
+                    "transaction_id": transaction_id,
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    prepared = service.prepare_pending(pending)
+    assert isinstance(prepared, prepared_cls)
+
+    incoming_dir = tmp_path / "incoming" / request_id
+    assert not (incoming_dir / "launcher.artifact").exists()
+    assert (incoming_dir / "core.artifact.zip").is_file()
+
+
+@pytest.mark.parametrize(
+    ("staged_comps", "helper_changed"),
+    [
+        (("launcher", "core"), {"launcher": True, "core": False}),
+        (("launcher", "core"), {"launcher": False, "core": True}),
+        (("launcher",), {"launcher": True, "core": True}),
+        (("launcher",), {"launcher": False, "core": False}),
+        (("core",), {"launcher": True, "core": True}),
+        (("core",), {"launcher": True, "core": False}),
+    ],
+    ids=[
+        "helper-dropped-core",
+        "helper-dropped-launcher",
+        "helper-added-core",
+        "helper-says-none-changed",
+        "helper-added-launcher",
+        "helper-inverted-core-to-launcher",
+    ],
+)
+def test_prepare_pending_aborts_on_changed_components_mismatch(
+    tmp_path: Path,
+    staged_comps: tuple[str, ...],
+    helper_changed: dict[str, bool],
+) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50, changed_components=staged_comps)
+    spawner = FakeSpawner()
+    request_id = "req-mismatch"
+    transaction_id = "tx-mismatch"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": helper_changed,
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "CHANGED_COMPONENTS_MISMATCH"
+    assert spawner.process.terminated or spawner.process.killed
+    assert "APPLY" not in [m["type"] for m in channel.sent]
+    incoming_dir = tmp_path / "incoming" / request_id
+    assert not (incoming_dir / "launcher.artifact").exists()
+    assert not (incoming_dir / "core.artifact.zip").exists()
+
+
+def test_prepare_pending_aborts_on_begin_rejected(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    spawner = FakeSpawner()
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": False,
+                    "request_id": None,
+                    "transaction_id": None,
+                    "changed": None,
+                    "error": "DOWNGRADE_REJECTED",
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "BEGIN_REJECTED"
+    assert spawner.process.terminated or spawner.process.killed
+    assert "APPLY" not in [m["type"] for m in channel.sent]
+
+
+def test_prepare_pending_rehashes_and_rechecks_size_after_copy_hash_mismatch(
+    tmp_path: Path,
+) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    # Tamper staged launcher artifact with different bytes of same length
+    launcher_file = pending.generation_dir / "launcher.artifact"
+    tampered_bytes = b"X" * launcher_file.stat().st_size
+    launcher_file.write_bytes(tampered_bytes)
+
+    spawner = FakeSpawner()
+    request_id = "req-tampered"
+    transaction_id = "tx-tampered"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "HASH_MISMATCH"
+    assert spawner.process.terminated or spawner.process.killed
+    assert "APPLY" not in [m["type"] for m in channel.sent]
+
+
+def test_prepare_pending_rehashes_and_rechecks_size_after_copy_size_mismatch(
+    tmp_path: Path,
+) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    # Truncate staged core artifact
+    core_file = pending.generation_dir / "core.artifact.zip"
+    core_file.write_bytes(b"truncated")
+
+    spawner = FakeSpawner()
+    request_id = "req-truncated"
+    transaction_id = "tx-truncated"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "HASH_MISMATCH"
+    assert spawner.process.terminated or spawner.process.killed
+    assert "APPLY" not in [m["type"] for m in channel.sent]
+
+
+def test_prepare_pending_aborts_on_missing_staged_artifact(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    (pending.generation_dir / "launcher.artifact").unlink()
+
+    spawner = FakeSpawner()
+    request_id = "req-missing-art"
+    transaction_id = "tx-missing-art"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "ARTIFACT_MISSING"
+    assert spawner.process.terminated or spawner.process.killed
+    assert "APPLY" not in [m["type"] for m in channel.sent]
+
+
+def test_prepare_pending_aborts_on_apply_rejected(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    spawner = FakeSpawner()
+    request_id = "req-apply-rej"
+    transaction_id = "tx-apply-rej"
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": request_id,
+                    "transaction_id": transaction_id,
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+            {
+                "type": "APPLY_RESULT",
+                "message_id": "msg-1",
+                "body": {
+                    "accepted": False,
+                    "transaction_id": transaction_id,
+                    "error": "VERIFICATION_FAILED",
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "APPLY_REJECTED"
+    assert spawner.process.terminated or spawner.process.killed
+
+
+def test_prepare_pending_rejects_path_traversal_request_id(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    spawner = FakeSpawner()
+    channel = FakeChannel(
+        responses=[
+            {
+                "type": "REQUEST_READY",
+                "message_id": "msg-0",
+                "body": {
+                    "accepted": True,
+                    "request_id": "../../escaped_req",
+                    "transaction_id": "tx-safe",
+                    "changed": {"launcher": True, "core": True},
+                    "error": None,
+                },
+            },
+        ]
+    )
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: channel,
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "INVALID_REQUEST_ID"
+    assert spawner.process.terminated or spawner.process.killed
+    assert not (tmp_path.parent / "escaped_req").exists()
+
+
+def test_prepare_pending_invalid_envelope_fails_closed(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50)
+    corrupted_pending = VerifiedPendingUpdate(
+        release_id=pending.release_id,
+        release_sequence=pending.release_sequence,
+        changed_components=pending.changed_components,
+        envelope_bytes=b"not-canonical-json-garbage",
+        generation_dir=pending.generation_dir,
+        launcher_artifact=pending.launcher_artifact,
+        core_artifact=pending.core_artifact,
+    )
+
+    spawner = FakeSpawner()
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: FakeChannel([]),
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(corrupted_pending)
+
+    assert exc_info.value.code == "INVALID_PENDING_ENVELOPE"
+
