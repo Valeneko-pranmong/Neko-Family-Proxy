@@ -107,7 +107,7 @@ def test_b_duplicate_guard_controller(monkeypatch, tmp_path):
     source_dir.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(FakeSystemExit):
-        release_controller.process_accepted_commits("sha1", 1)
+        release_controller.process_accepted_commits("sha1", 1, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
 def test_d_version_injection_hardening(monkeypatch, tmp_path):
     # D) 0/multiple versions fail closed, exact 1 succeeds
@@ -149,7 +149,7 @@ def test_d_version_injection_hardening(monkeypatch, tmp_path):
     pyproject_path.write_text('version = "5.1.0"')
 
     with pytest.raises(FakeSystemExit):
-        release_controller.process_accepted_commits("sha1", 1)
+        release_controller.process_accepted_commits("sha1", 1, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
 def test_e_build_record_provenance(monkeypatch, tmp_path):
     # E) Build-record provenance must actually contain source_commit, stable/base version, target version, and exact injected files
@@ -169,9 +169,8 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
             out_idx = args[0].index("--output") + 1
             Path(args[0][out_idx]).write_text("fake_release_json")
         if "build_beta_installer.py" in str(args[0]):
-            # we already mocked shutil.copy for it, wait, setup_exe stat fails? No, NekoFamilyProxy-Setup.exe
-            # Oh wait, setup_exe is copied to final_setup_exe
-            setup_out = staging_base / "out"
+            candidate_dir = Path(args[0][args[0].index("--candidate-dir") + 1])
+            setup_out = candidate_dir / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
             (setup_out / "NekoFamilyProxy-Setup.exe").write_text("fake_setup")
         return subprocess.CompletedProcess(args[0], 0, stdout=b"", stderr=b"")
@@ -199,8 +198,6 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr(zipfile, "ZipFile", MockZipFile)
 
     monkeypatch.setattr("shutil.copy", lambda src, dst: None)
-
-    staging_base = tmp_path / "artifacts"
 
     # Patch Path inside release_controller
     orig_path = release_controller.Path
@@ -232,13 +229,14 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.copy", fake_copy)
 
     monkeypatch.setattr("scripts.publish_atomic_release.execute_publish", lambda *a, **k: None)
+    monkeypatch.setattr("scripts.release_controller.publish_split_release", lambda *a, **k: None)
 
     # Also bypass the _get_sha256 on dotnet
     def fake_sha256(path):
         return "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
     monkeypatch.setattr(release_controller, "_get_sha256", fake_sha256)
 
-    release_controller.process_accepted_commits("sha1", 1)
+    release_controller.process_accepted_commits("sha1", 1, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
     build_record_path = tmp_path / "main-auto-release" / "1-sha1" / "5.1.1" / "evidence" / "build-record.json"
     record = json.loads(build_record_path.read_text())

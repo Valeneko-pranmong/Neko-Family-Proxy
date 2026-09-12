@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Mapping
 import zipfile
 
@@ -22,8 +23,48 @@ from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: 
 
 from scripts.ci_change_classifier import should_trigger  # noqa: E402
 from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
+from scripts.publish_atomic_release import (  # noqa: E402
+    CANONICAL_REPO,
+    CommandExecutor,
+    StageDraftReleaseError,
+    StagedDraftEvidence,
+    _SubprocessExecutor,
+    _run,
+    build_machine_release_notes,
+    stage_draft_release,
+    validate_staging_preconditions,
+)
+from scripts.publish_installer_release import (  # noqa: E402
+    CANONICAL_MACHINE_REPO,
+    REQUIRED_INSTALLER_ASSET,
+    InstallerPublishError,
+    StagedInstallerDraftEvidence,
+    _contains_machine_repo,
+    stage_installer_draft_release,
+    validate_installer_staging_preconditions,
+)
+from scripts.verify_github_release_assets import verify_github_release_assets  # noqa: E402
+from scripts.verify_installer_release_assets import (  # noqa: E402
+    InstallerReleaseVerificationError,
+    verify_installer_release_assets,
+)
 
 BOOTSTRAP_STABLE_TAG = "v5.1.0"
+
+
+def validate_installer_repo_configuration(repo: str | None) -> str:
+    if not repo or not str(repo).strip():
+        raise ValueError(
+            "Explicit installer repository identity is mandatory with no silent fallback"
+        )
+    cleaned = str(repo).strip()
+    normalized = re.sub(r"\.git$", "", cleaned, flags=re.IGNORECASE)
+    if _contains_machine_repo(cleaned) or _contains_machine_repo(normalized):
+        raise ValueError(
+            f"Installer repository cannot be the canonical machine repository ({CANONICAL_MACHINE_REPO})"
+        )
+    return cleaned
+
 
 
 def _parse_semver(tag: str) -> tuple[int, int, int]:
@@ -308,12 +349,332 @@ def verify_and_fetch_core(
     )
 
 
+def _hosted_verify_machine_channel(
+    evidence: StagedDraftEvidence,
+    staging_dir: Path,
+    expected_tag: str,
+    expected_target: str,
+    runner: CommandExecutor,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="neko-hosted-verify-machine-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        for name, asset_id in evidence.assets.items():
+            out_path = tmp_path / name
+            url = f"https://api.github.com/repos/{CANONICAL_REPO}/releases/assets/{asset_id}"
+            curl = [
+                "curl",
+                "-sSL",
+                "-H",
+                "Authorization: Bearer ***",
+                "-H",
+                "Accept: application/octet-stream",
+                "-o",
+                str(out_path),
+                url,
+            ]
+            _run(runner, curl)
+
+            local_path = staging_dir / name
+            if out_path.stat().st_size != local_path.stat().st_size:
+                raise StageDraftReleaseError(f"Downloaded asset {name} size mismatch")
+
+            hosted_digest = hashlib.sha256(out_path.read_bytes()).hexdigest().lower()
+            local_digest = hashlib.sha256(local_path.read_bytes()).hexdigest().lower()
+            if hosted_digest != local_digest:
+                raise StageDraftReleaseError(f"Downloaded asset {name} digest mismatch")
+
+        release_json_raw = _run(
+            runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"]
+        )
+        release_json_path = tmp_path / "release.json"
+        release_json_path.write_text(release_json_raw, encoding="utf-8")
+
+        try:
+            verify_github_release_assets(
+                release_json_path=release_json_path,
+                download_dir=tmp_path,
+                expected_tag=expected_tag,
+                expected_target=expected_target,
+                require_draft=True,
+            )
+        except Exception as e:
+            raise StageDraftReleaseError(f"Hosted machine release verification failed: {e}") from e
+
+        pre_promote_raw = _run(
+            runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"]
+        )
+        pre_promote = json.loads(pre_promote_raw)
+
+        if (
+            pre_promote.get("tag_name") != expected_tag
+            or pre_promote.get("target_commitish", "").lower() != expected_target.lower()
+            or pre_promote.get("draft") is not True
+        ):
+            raise StageDraftReleaseError("Machine draft state mutated before promotion")
+
+        current_assets = {
+            a.get("name"): {"id": a.get("id"), "size": a.get("size")}
+            for a in pre_promote.get("assets", [])
+            if isinstance(a, dict)
+        }
+        if set(current_assets.keys()) != set(evidence.assets.keys()):
+            raise StageDraftReleaseError(
+                f"Machine draft assets mutated before promotion (unexpected: {set(current_assets.keys()) - set(evidence.assets.keys())})"
+            )
+        for name, asset_id in evidence.assets.items():
+            if name not in current_assets:
+                raise StageDraftReleaseError(f"Machine asset {name} missing before promotion")
+            if current_assets[name]["id"] != asset_id:
+                raise StageDraftReleaseError(f"Machine asset {name} ID mutated before promotion")
+            if current_assets[name]["size"] != (staging_dir / name).stat().st_size:
+                raise StageDraftReleaseError(f"Machine asset {name} size mutated before promotion")
+
+
+def _hosted_verify_installer_channel(
+    evidence: StagedInstallerDraftEvidence,
+    staging_dir: Path,
+    expected_tag: str,
+    expected_target: str,
+    repo: str,
+    runner: CommandExecutor,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="neko-installer-hosted-verify-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        out_path = tmp_path / REQUIRED_INSTALLER_ASSET
+        url = f"https://api.github.com/repos/{repo}/releases/assets/{evidence.installer_asset_id}"
+        curl = [
+            "curl",
+            "-sSL",
+            "-H",
+            "Authorization: Bearer ***",
+            "-H",
+            "Accept: application/octet-stream",
+            "-o",
+            str(out_path),
+            url,
+        ]
+        _run(runner, curl)
+
+        local_file = (
+            staging_dir / REQUIRED_INSTALLER_ASSET
+            if staging_dir.is_dir()
+            else staging_dir
+        )
+        if out_path.stat().st_size != local_file.stat().st_size:
+            raise InstallerPublishError("Downloaded installer asset size mismatch")
+
+        hosted_digest = hashlib.sha256(out_path.read_bytes()).hexdigest().lower()
+        local_digest = hashlib.sha256(local_file.read_bytes()).hexdigest().lower()
+        if hosted_digest != local_digest:
+            raise InstallerPublishError("Downloaded installer asset digest mismatch")
+
+        release_json_raw = _run(
+            runner, ["gh", "api", f"repos/{repo}/releases/{evidence.release_id}"]
+        )
+        release_json_path = tmp_path / "installer_release.json"
+        release_json_path.write_text(release_json_raw, encoding="utf-8")
+
+        try:
+            verify_installer_release_assets(
+                release_json_path=release_json_path,
+                installer_path=out_path,
+                expected_tag=expected_tag,
+                expected_target=expected_target,
+                require_draft=True,
+                expected_repo=repo,
+            )
+        except InstallerReleaseVerificationError as e:
+            raise InstallerPublishError(f"Hosted installer verification failed: {e}") from e
+
+        pre_promote_raw = _run(
+            runner, ["gh", "api", f"repos/{repo}/releases/{evidence.release_id}"]
+        )
+        pre_promote = json.loads(pre_promote_raw)
+
+        if (
+            pre_promote.get("tag_name") != expected_tag
+            or pre_promote.get("target_commitish", "").lower() != expected_target.lower()
+            or pre_promote.get("draft") is not True
+        ):
+            raise InstallerPublishError("Installer draft state mutated before promotion")
+
+        current_assets = [
+            a for a in pre_promote.get("assets", []) if isinstance(a, dict)
+        ]
+        if len(current_assets) != 1:
+            raise InstallerPublishError(
+                f"Installer draft must contain exactly one asset before promotion, found {len(current_assets)}"
+            )
+        asset_obj = current_assets[0]
+        if asset_obj.get("name") != REQUIRED_INSTALLER_ASSET:
+            raise InstallerPublishError(
+                f"Installer asset name mutated before promotion: {asset_obj.get('name')}"
+            )
+        if asset_obj.get("id") != evidence.installer_asset_id:
+            raise InstallerPublishError("Installer asset ID mutated before promotion")
+        if asset_obj.get("size") != local_file.stat().st_size:
+            raise InstallerPublishError("Installer asset size mutated before promotion")
+
+
+def publish_split_release(
+    *,
+    tag: str,
+    commit: str,
+    machine_staging_dir: Path | str,
+    installer_staging_dir: Path | str,
+    installer_repo: str,
+    executor: CommandExecutor | None = None,
+) -> None:
+    repo = validate_installer_repo_configuration(installer_repo)
+    runner = executor or _SubprocessExecutor()
+
+    m_dir = Path(machine_staging_dir)
+    i_dir = Path(installer_staging_dir)
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # 1. Validate machine staging directory preconditions
+    validate_staging_preconditions(
+        staging_dir=m_dir,
+        tag=tag,
+        target_commit=commit,
+        repo_root=repo_root,
+        executor=runner,
+    )
+
+    # 2. Validate installer staging directory preconditions
+    validate_installer_staging_preconditions(
+        staging_dir=i_dir,
+        tag=tag,
+        target_commit=commit,
+        installer_repo=repo,
+        repo_root=repo_root,
+        executor=runner,
+    )
+
+    # 3. Stage machine draft
+    machine_notes = build_machine_release_notes(tag, installer_repo=repo)
+    machine_evidence = stage_draft_release(
+        staging_dir=m_dir,
+        tag=tag,
+        target_commit=commit,
+        notes=machine_notes,
+        as_prerelease=False,
+        executor=runner,
+    )
+    if not machine_evidence:
+        raise StageDraftReleaseError("Machine draft staging failed to return evidence")
+
+    # 4. Stage installer draft
+    installer_evidence = stage_installer_draft_release(
+        staging_dir=i_dir,
+        tag=tag,
+        target_commit=commit,
+        installer_repo=repo,
+        as_prerelease=False,
+        executor=runner,
+    )
+    if not installer_evidence:
+        raise InstallerPublishError("Installer draft staging failed to return evidence")
+
+    # 5. Hosted-verify machine draft byte-for-byte
+    _hosted_verify_machine_channel(
+        machine_evidence,
+        staging_dir=m_dir,
+        expected_tag=tag,
+        expected_target=commit,
+        runner=runner,
+    )
+
+    # 6. Hosted-verify installer draft byte-for-byte
+    _hosted_verify_installer_channel(
+        installer_evidence,
+        staging_dir=i_dir,
+        expected_tag=tag,
+        expected_target=commit,
+        repo=repo,
+        runner=runner,
+    )
+
+    # 7. Promote installer surface FIRST
+    _run(runner, ["gh", "release", "edit", tag, "--draft=false", "--repo", repo])
+    post_promote_installer = json.loads(
+        _run(runner, ["gh", "api", f"repos/{repo}/releases/{installer_evidence.release_id}"])
+    )
+    if post_promote_installer.get("draft") is not False:
+        raise InstallerPublishError("Installer release promotion failed: still draft")
+
+    # 8. Promote machine channel SECOND
+    _run(runner, ["gh", "release", "edit", tag, "--draft=false", "--repo", CANONICAL_REPO])
+    post_promote_machine = json.loads(
+        _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{machine_evidence.release_id}"])
+    )
+    if post_promote_machine.get("draft") is not False:
+        raise StageDraftReleaseError("Machine release promotion failed: still draft")
+
+    # 9. Gate 3 verification of machine latest release
+    timeout = time.time() + 300
+    success = False
+    latest_error = None
+    while time.time() < timeout:
+        try:
+            latest_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/latest"])
+            latest = json.loads(latest_raw)
+            if latest.get("id") == machine_evidence.release_id and latest.get("tag_name") == tag:
+                latest_assets = {
+                    a.get("name"): {"id": a.get("id"), "size": a.get("size")}
+                    for a in latest.get("assets", [])
+                    if isinstance(a, dict)
+                }
+                if set(latest_assets.keys()) != set(machine_evidence.assets.keys()):
+                    raise ValueError(
+                        f"Gate3: Asset set mismatch in latest release (unexpected: {set(latest_assets.keys()) - set(machine_evidence.assets.keys())})"
+                    )
+                for name, asset_id in machine_evidence.assets.items():
+                    if (
+                        name not in latest_assets
+                        or latest_assets[name]["id"] != asset_id
+                        or latest_assets[name]["size"] != (m_dir / name).stat().st_size
+                    ):
+                        raise ValueError(f"Gate3: Asset {name} mismatch in latest release")
+                success = True
+                break
+            else:
+                latest_error = (
+                    f"Latest release id={latest.get('id')} tag={latest.get('tag_name')} "
+                    f"does not match target id={machine_evidence.release_id} tag={tag}"
+                )
+        except Exception as e:
+            latest_error = str(e)
+        time.sleep(2)
+
+    if not success:
+        raise StageDraftReleaseError(
+            f"Gate 3 failed: /releases/latest did not resolve to {tag}: {latest_error}"
+        )
+
+
 def process_accepted_commits(
     commit: str,
     run_id: int,
     *,
+    installer_repo: str | None = None,
     bootstrap_authority_dir: Path | None = None,
 ):
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # If installer_repo not explicitly passed as parameter, check if configured in repo's release_target.json
+    if installer_repo is None:
+        target_file = repo_root / "release_target.json"
+        if target_file.is_file():
+            try:
+                target_data = json.loads(target_file.read_text(encoding="utf-8"))
+                installer_repo = target_data.get("installer_repo")
+            except Exception:
+                pass
+
+    # Explicit installer repository identity is mandatory with no silent fallback to canonical machine repo
+    installer_repo = validate_installer_repo_configuration(installer_repo)
+
     # 1. Verify run-id and commit
     runs = get_successful_main_runs()
     valid = False
@@ -324,8 +685,6 @@ def process_accepted_commits(
     if not valid:
         print(f"Error: Run {run_id} for commit {commit} is not an accepted product-impacting main run.", file=sys.stderr)
         sys.exit(1)
-
-    repo_root = Path(__file__).resolve().parent.parent
 
     # Verify reachable from origin/main
     subprocess.run(["git", "-C", str(repo_root), "merge-base", "--is-ancestor", commit, "origin/main"], check=True)
@@ -392,10 +751,16 @@ def process_accepted_commits(
 
     build_record_file = staging_base / "evidence" / "build-record.json"
     if build_record_file.exists():
-        print(f"Build already completed for {version_tag}. Resuming publish...")
+        print(f"Build already completed for {version_tag}. Resuming split publish...")
         publish_dir = staging_base / "publish"
-        from scripts.publish_atomic_release import execute_publish
-        execute_publish(version_tag, commit, staging_dir=str(publish_dir))
+        installer_dir = staging_base / "installer"
+        publish_split_release(
+            tag=version_tag,
+            commit=commit,
+            machine_staging_dir=publish_dir,
+            installer_staging_dir=installer_dir,
+            installer_repo=installer_repo,
+        )
         return
 
     # 4. Inject version
@@ -504,8 +869,18 @@ def process_accepted_commits(
     ], check=True)
 
     setup_exe = setup_out / "NekoFamilyProxy-Setup.exe"
-    final_setup_exe = publish_dir / "NekoFamilyProxy-Setup.exe"
-    shutil.copy(setup_exe, final_setup_exe)
+    if not setup_exe.is_file():
+        raise RuntimeError("Setup binary was not produced by installer compiler")
+
+    installer_dir = staging_base / "installer"
+    installer_dir.mkdir(exist_ok=True)
+    final_installer_exe = installer_dir / "NekoFamilyProxy-Installer.exe"
+    shutil.copy2(setup_exe, final_installer_exe)
+
+    installer_hash = _get_sha256(final_installer_exe)
+    setup_hash = _get_sha256(setup_exe)
+    if installer_hash != setup_hash or final_installer_exe.stat().st_size != setup_exe.stat().st_size:
+        raise RuntimeError("Installer binary byte copy verification mismatch")
 
     # 8. Generate release-v2.json base metadata
     metadata = {
@@ -576,12 +951,12 @@ def process_accepted_commits(
     ]
     subprocess.run(cmd, check=True)
 
-    # 10. Atomic publish
-    from scripts.publish_atomic_release import execute_publish
-
+    # 10. Split publish
+    manifest_hash = _get_sha256(release_json_out)
     build_record = {
         "run_id": run_id,
         "source_commit": commit,
+        "source_sha": commit,
         "version": version_tag,
         "stable_version": stable_version,
         "target_version": version,
@@ -589,24 +964,50 @@ def process_accepted_commits(
         "sequence": sequence,
         "release_id": release_id,
         "core_authority": core_provenance,
+        "machine_assets": {
+            "launcher": {"name": "NekoLauncher.exe", "sha256": launcher_hash, "size": final_launcher_exe.stat().st_size},
+            "updater": {"name": "NekoUpdater.exe", "sha256": updater_hash, "size": final_updater_exe.stat().st_size},
+            "core": {"name": "NekoProxyCore.zip", "sha256": core_hash, "size": final_core_zip.stat().st_size},
+            "manifest": {"name": "release-v2.json", "sha256": manifest_hash, "size": release_json_out.stat().st_size},
+        },
+        "installer_asset": {
+            "name": "NekoFamilyProxy-Installer.exe",
+            "sha256": installer_hash,
+            "size": final_installer_exe.stat().st_size,
+        },
+        "destination_repositories": {
+            "machine": CANONICAL_REPO,
+            "installer": installer_repo,
+        },
         "assets": {
             "launcher": {"sha256": launcher_hash, "size": final_launcher_exe.stat().st_size},
             "updater": {"sha256": updater_hash, "size": final_updater_exe.stat().st_size},
             "core": {"sha256": core_hash, "size": final_core_zip.stat().st_size},
-            "setup": {"sha256": _get_sha256(final_setup_exe), "size": final_setup_exe.stat().st_size},
-            "manifest": {"sha256": _get_sha256(release_json_out), "size": release_json_out.stat().st_size}
-        }
+            "installer": {"sha256": installer_hash, "size": final_installer_exe.stat().st_size},
+            "manifest": {"sha256": manifest_hash, "size": release_json_out.stat().st_size},
+        },
     }
     (evidence_dir / "build-record.json").write_text(json.dumps(build_record, indent=2))
 
-    print("Publishing release...")
-    execute_publish(version_tag, commit, staging_dir=str(publish_dir))
+    print("Publishing split release...")
+    publish_split_release(
+        tag=version_tag,
+        commit=commit,
+        machine_staging_dir=publish_dir,
+        installer_staging_dir=installer_dir,
+        installer_repo=installer_repo,
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Main Auto Release Controller")
     parser.add_argument("--commit", required=True)
     parser.add_argument("--run-id", required=True, type=int)
+    parser.add_argument(
+        "--installer-repo",
+        default=None,
+        help="Explicit target repository for human installer releases (mandatory, no silent fallback to canonical repo)",
+    )
     parser.add_argument(
         "--bootstrap-authority-dir",
         type=Path,
@@ -618,6 +1019,7 @@ def main():
     process_accepted_commits(
         args.commit,
         args.run_id,
+        installer_repo=args.installer_repo,
         bootstrap_authority_dir=args.bootstrap_authority_dir,
     )
 

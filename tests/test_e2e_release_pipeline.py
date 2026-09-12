@@ -89,7 +89,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         "updater_protocol": {"minimum": 1, "maximum": 1},
         "components": {
             "launcher": {
-                "version": "1.0",
+                "version": "5.1.0",
                 "artifact_id": "NekoLauncher.exe",
                 "artifact_format": "raw-pe-v1",
                 "artifact_size": 3,
@@ -97,7 +97,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
                 "installed_identity_sha256": hashlib.sha256(b"exe").hexdigest()
             },
             "updater": {
-                "version": "1.0",
+                "version": "5.1.0",
                 "artifact_id": "NekoUpdater.exe",
                 "artifact_format": "raw-pe-v1",
                 "artifact_size": 3,
@@ -105,7 +105,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
                 "installed_identity_sha256": hashlib.sha256(b"exe").hexdigest()
             },
             "core": {
-                "version": "1.0",
+                "version": "5.1.0",
                 "artifact_id": "NekoProxyCore.zip",
                 "artifact_format": "zip-core-v1",
                 "artifact_size": fake_core_path.stat().st_size,
@@ -200,8 +200,8 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     publish_calls = []
     monkeypatch.setattr(
-        "scripts.publish_atomic_release.execute_publish",
-        lambda *args, **kwargs: publish_calls.append(args),
+        "scripts.release_controller.publish_split_release",
+        lambda **kwargs: publish_calls.append(kwargs),
     )
 
     from pathlib import Path
@@ -259,9 +259,12 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.release_controller.shutil.copy", fake_copy)
 
     # Run 1
-    process_accepted_commits(sha, run_id)
+    process_accepted_commits(sha, run_id, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
-    assert publish_calls == [("v5.1.1", sha)]
+    assert len(publish_calls) == 1
+    assert publish_calls[0]["tag"] == "v5.1.1"
+    assert publish_calls[0]["commit"] == sha
+    assert publish_calls[0]["installer_repo"] == "Valeneko-pranmong/Neko-Family-Proxy-Installer"
 
     metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.1/evidence/base-metadata.json")
     metadata_content = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -277,14 +280,14 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         assert "5.1.1" in content
 
     # Run 2 for idempotency test
-    process_accepted_commits(sha, run_id)
-    assert publish_calls == [("v5.1.1", sha), ("v5.1.1", sha)]
+    process_accepted_commits(sha, run_id, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
+    assert len(publish_calls) == 2
 
 
 def test_release_controller_unaccepted_commit(monkeypatch):
     monkeypatch.setattr("scripts.release_controller.get_successful_main_runs", list)
     with pytest.raises(SystemExit):
-        process_accepted_commits("111", 12345)
+        process_accepted_commits("111", 12345, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
 
 def test_release_controller_ignored_paths(monkeypatch):
@@ -304,7 +307,7 @@ def test_release_controller_ignored_paths(monkeypatch):
     monkeypatch.setattr("scripts.release_controller.subprocess.run", lambda *a, **kw: None)
 
     with pytest.raises(SystemExit):
-        process_accepted_commits(sha, run_id)
+        process_accepted_commits(sha, run_id, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
 
 def test_security_boundary_no_private_key_read():
@@ -375,7 +378,7 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
 
     import pytest
     with pytest.raises(SystemExit):
-        process_accepted_commits(sha, run_id)
+        process_accepted_commits(sha, run_id, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
 
 
@@ -445,7 +448,7 @@ def setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest=No
         "updater_protocol": {"minimum": 1, "maximum": 1},
         "components": {
             "launcher": {
-                "version": "1.0",
+                "version": "5.1.0",
                 "artifact_id": "l",
                 "artifact_format": "raw-pe-v1",
                 "artifact_size": 3,
@@ -453,7 +456,7 @@ def setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest=No
                 "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "updater": {
-                "version": "1.0",
+                "version": "5.1.0",
                 "artifact_id": "u",
                 "artifact_format": "raw-pe-v1",
                 "artifact_size": 3,
@@ -461,7 +464,7 @@ def setup_mock_verify_and_fetch_core(monkeypatch, tmp_path, override_manifest=No
                 "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "core": {
-                "version": "1.0",
+                "version": "5.1.0",
                 "artifact_id": "NekoProxyCore.zip",
                 "artifact_format": "zip-core-v1",
                 "artifact_size": len(override_core_bytes),
@@ -553,7 +556,7 @@ def test_verify_and_fetch_core_hash_mismatch(monkeypatch, tmp_path):
             "installed_identity_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "core": {
-            "version": "1.0", "artifact_id": "NekoProxyCore.zip", "artifact_format": "zip-core-v1", "artifact_size": 5,
+            "version": "5.1.0", "artifact_id": "NekoProxyCore.zip", "artifact_format": "zip-core-v1", "artifact_size": 5,
             "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "installed_identity_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
