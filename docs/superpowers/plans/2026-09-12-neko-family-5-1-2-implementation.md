@@ -1,6 +1,6 @@
 # Neko Family 5.1.2 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use Superpowers-style task isolation and TDD. Hermes is the execution controller for this project. Every implementation task uses `ag/gemini-3.8-flash-high`; every independent architecture/security/regression/source-acceptance review uses `ag/gemini-pro-agent`. Implementers never review their own work.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use Superpowers-style task isolation and TDD. Hermes is the execution controller for this project. Normal implementation tasks use `ag/gemini-3.8-flash-high`; normal independent architecture/security/regression/source-acceptance reviews use `ag/gemini-pro-agent`. `cx/gpt-5.6-sol` with reasoning effort `high` is a quota-limited escalation tier reserved for genuinely difficult, high-complexity work under controller routing. Implementers never review their own work.
 
 **Goal:** Restore secure automatic update for dormant and current Neko Family clients, add background verified staging plus durable `UPDATE_PENDING`, preserve active sessions, consume pending updates on safe explicit action/exit/next launch, and recover release authority without mutating public v5.1.0.
 
@@ -599,8 +599,13 @@ Tasks that do not share mutable files may run in parallel. T8 may run beside ear
 
 ## Hermes Model Routing
 
-- Implementation/source/test/config/doc remediation: `ag/gemini-3.8-flash-high`.
-- Architecture/security/regression/release/source-acceptance review: `ag/gemini-pro-agent`.
+- Normal implementation/source/test/config/doc remediation: `ag/gemini-3.8-flash-high`.
+- Normal architecture/security/regression/release/source-acceptance review: `ag/gemini-pro-agent`.
+- Quota-limited escalation tier: `cx/gpt-5.6-sol` with reasoning effort `high`.
+- The escalation tier is NOT a default worker or reviewer. The controller may assign it only when the task is genuinely difficult and cross-cutting (for example concurrency/state-machine correctness, security/trust-boundary reasoning, crash/recovery interactions, release-authority logic, or a stubborn Critical/Important finding that cheaper routes have not resolved), or when the controller judges the cost of a reasoning mistake materially higher than the scarce quota cost.
+- Do not spend `cx/gpt-5.6-sol high` on routine implementation, ordinary tests, lint/style cleanup, straightforward documentation, mechanical fixes, or normal first-pass reviews.
+- Use at most one Sol escalation task/attempt at a time. Before use, record task ID, reason for escalation, and expected decision/deliverable in the controller ledger. After use, record the result and return subsequent work to the normal routing unless another independently justified escalation is required.
+- Do not smoke-test or probe Sol merely to confirm availability; preserve the limited quota until a real qualifying task exists.
 - Reviewer profile must be distinct from implementer attempt.
 - A task does not become done merely because tests pass; it requires its specified independent review gate where one is listed.
 - Any review verdict with Critical > 0 or Important > 0 returns the implementation task for remediation and re-review.
