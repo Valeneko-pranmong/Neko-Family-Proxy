@@ -133,6 +133,7 @@ def is_software_update_production_code(relative: Path) -> bool:
         return True
     if relative.as_posix() in {
         "scripts/verify_github_release_assets.py",
+        "scripts/release_controller.py",
         ".github/workflows/release.yml",
     }:
         return True

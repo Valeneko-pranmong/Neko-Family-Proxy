@@ -136,3 +136,12 @@ def test_safety_guard_rejects_untrusted_software_update_sources(tmp_path: Path) 
             if pattern.search(test_file.read_text(encoding="utf-8"))
         ]
         assert errors, f"Expected guard to reject token: {token}"
+
+
+def test_release_controller_is_software_update_production_code() -> None:
+    safety = load_safety_module()
+    rel_path = Path("scripts/release_controller.py")
+    assert safety.is_software_update_production_code(rel_path), (
+        "scripts/release_controller.py must be guarded as software update production code"
+    )
+
