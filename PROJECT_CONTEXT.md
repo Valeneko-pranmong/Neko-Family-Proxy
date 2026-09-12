@@ -8,9 +8,9 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 ## Canonical repository state
 - Repository: `Valeneko-pranmong/Neko-Family-Proxy`
 - Canonical branch: `main`
-- Current canonical SHA at cleanup: `7b4558b0503b5fd948739153dc5a6d5b22133323`
 - Active release-runtime worktree: `E:\Github\worktrees\Neko-Family-Proxy-release-runtime`
-- Runtime worktree is detached/pinned to the reviewed controller SHA above.
+- Reviewed release-controller/runtime SHA: `7b4558b0503b5fd948739153dc5a6d5b22133323`.
+- Runtime worktree is detached/pinned to that reviewed controller SHA; canonical `main` may advance with docs/maintenance commits and must be verified live before work.
 
 ## Current production release
 - Stable/Latest: `v5.1.0`

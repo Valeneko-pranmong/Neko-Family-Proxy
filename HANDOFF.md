@@ -4,7 +4,7 @@ Updated: 2026-09-12
 
 ## Current state
 - Canonical branch: `main`
-- Canonical reviewed/controller SHA: `7b4558b0503b5fd948739153dc5a6d5b22133323`
+- Reviewed controller/runtime SHA: `7b4558b0503b5fd948739153dc5a6d5b22133323` (canonical `main` may advance with docs/maintenance commits; verify live before work)
 - Public Stable/Latest: `v5.1.0` (release ID `387113854`)
 - Public custom asset: `NekoFamilyProxy-Installer.exe`
 - Public release is installer-only by owner decision.
