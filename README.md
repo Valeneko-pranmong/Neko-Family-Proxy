@@ -23,7 +23,7 @@
 
 ## Overview
 
-**Neko Family Proxy** (`v5.0.0` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
+**Neko Family Proxy** (`v5.1.0` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
 
 ### Key Capabilities
 
@@ -115,10 +115,12 @@ Starting in `v5.0.0`, the proxy ecosystem utilizes **Runtime Config v1**:
 
 ### Packaged Stable Release (Recommended)
 
-1. Download the `v5.0.0` release package from the [v5.0.0 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/tag/v5.0.0).
-2. Run `NekoLauncher.exe`.
-3. Sign in with your account credentials.
+1. Download `NekoFamilyProxy-Installer.exe` from the [v5.1.0 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/tag/v5.1.0).
+2. Run the Installer and complete installation.
+3. Open Neko Family Proxy and sign in with your account credentials.
 4. Start PSO2 through the normal launcher flow.
+
+> **Update note (2026-09-12):** the public v5.1.0 release is intentionally installer-only. Automatic in-app update is temporarily unavailable while update payload distribution is being moved to a separate signed backend/storage channel.
 
 *Note: Users do not need to enter or manage proxy credentials. Configuration and routing are handled automatically during session authorization.*
 
@@ -177,13 +179,11 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
 
 ## Roadmap
 
-- **v5.0.0 (Current Stable)**:
-  - Baseline stable release.
-  - Runtime Config v1 implementation.
-  - Single active session control and bound launch permits.
-  - Automated test coverage (878 passed, 3 skipped).
-- **v5.1**:
-  - Software Update Phase 2 (planned on the 5.1 development line).
+- **v5.1.0 (Current Stable)**:
+  - Public installer-only Stable/Latest release.
+  - Runtime Config v1, single-active-session control, bound launch permits, updater/release-controller hardening, and one-click installer packaging.
+- **Next maintenance objective**:
+  - Restore secure automatic updates through separate signed update backend/storage while keeping the public GitHub Release installer-only.
 
 ---
 
