@@ -31,7 +31,15 @@ def test_a_exact_sha_intent_binding_adapter(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.kanban_release_adapter.get_armed_target_from_sha", mock_get_armed_target_from_sha)
 
     # Mock other things so we don't actually run anything
-    monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: b"launcher/src/main.py\n")
+    def mock_check_output(cmd, **kwargs):
+        if "status" in cmd and "--porcelain" in cmd:
+            return b""
+        elif "rev-parse" in cmd:
+            return b"c0ffee\n"
+        elif "merge-base" in cmd:
+            return b"c0ffee\n"
+        return b"launcher/src/main.py\n"
+    monkeypatch.setattr("subprocess.check_output", mock_check_output)
     monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
     monkeypatch.setattr("scripts.kanban_release_adapter.get_github_releases", list)
 
