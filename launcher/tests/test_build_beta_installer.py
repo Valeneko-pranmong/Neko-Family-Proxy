@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -226,10 +228,216 @@ def test_static_beta_iss_inspection() -> None:
     assert "OutputBaseFilename=NekoFamilyProxy-Setup" in iss_text, "Output exactly NekoFamilyProxy-Setup.exe"
     assert "#ifndef MyAppVersion" in iss_text, "MyAppVersion must be overrideable"
     assert "#ifndef MyAppDisplayVersion" in iss_text, "MyAppDisplayVersion must be overrideable"
+    assert "#ifndef CoreAuthority" in iss_text, "CoreAuthority must be overrideable"
+    assert '#define CoreAuthority ""' in iss_text, "CoreAuthority must default to empty"
+    assert 'RunPSFile(VerifyScript, \' -CoreDir "\' + CoreDir + \'" -ExpectedCommit "{#CoreAuthority}"\', RC)' in iss_text or \
+           'RunPSFile(VerifyScript, \' -CoreDir "\' + CoreDir + \'" -CoreAuthority "{#CoreAuthority}"\', RC)' in iss_text, \
+           "Post-install verifier must receive candidate-specific CoreAuthority"
     assert "Please install the runtime" not in iss_text, "must not instruct manual install"
     assert "ต้องติดตั้ง Microsoft .NET Desktop Runtime" not in iss_text, "must not instruct manual install"
     assert "Please run this same Setup again and allow the required Windows UAC prompt" in iss_text, "must instruct rerunning setup"
     assert "หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล" in iss_text, "must instruct contacting operator on failure"
+
+
+def test_verify_core_install_no_stale_fixed_authority_in_script() -> None:
+    ps1_path = REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1"
+    ps1_text = ps1_path.read_text(encoding="utf-8")
+
+    stale_commit = "33f97ae0110075089f39b1e123890f931417d907"
+    assert stale_commit not in ps1_text, (
+        "verify-core-install.ps1 must not hardcode stale authority " f"{stale_commit}"
+    )
+    assert "$ExpectedCommit" in ps1_text or "$CoreAuthority" in ps1_text, (
+        "verify-core-install.ps1 must accept candidate authority as an explicit parameter"
+    )
+    assert "param(" in ps1_text and "ExpectedCommit" in ps1_text, (
+        "verify-core-install.ps1 param block must include ExpectedCommit"
+    )
+
+
+def _find_approved_v2ray() -> Path | None:
+    candidates = [
+        Path(r"E:\Github\NekoProxyCore\Storage\v2ray-sn.exe"),
+        Path(r"E:\Github\archive\release-history\candidate-5.1.0-stable\core\bin\v2ray-sn.exe"),
+        Path(r"E:\Github\artifacts\v5.1.0-clean-candidate\attempt-1\payload\CoreBundle\bin\v2ray-sn.exe"),
+    ]
+    for c in candidates:
+        if c.is_file():
+            h = hashlib.sha256()
+            with open(c, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            if h.hexdigest() == "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff":
+                return c
+    return None
+
+
+def _setup_verified_core_dir(core_dir: Path, source_commit: str, approved_v2ray: Path) -> None:
+    bin_dir = core_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    v2ray_target = bin_dir / "v2ray-sn.exe"
+    shutil.copyfile(approved_v2ray, v2ray_target)
+    v2ray_hash = "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
+
+    (core_dir / "runtime-settings.nkps").write_bytes(b"nkps-content")
+
+    manifest = {
+        "source_commit": source_commit,
+        "v2ray_sn_exe_hash": v2ray_hash,
+        "files": {
+            "bin/v2ray-sn.exe": v2ray_hash
+        }
+    }
+    (core_dir / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _run_verify_ps1(core_dir: Path, authority: str | None = None, param_flag: str = "-ExpectedCommit") -> tuple[int, str]:
+    script_path = str(REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1")
+    cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        script_path,
+        "-CoreDir",
+        str(core_dir),
+    ]
+    if authority is not None:
+        cmd.extend([param_flag, authority])
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+
+def test_post_install_verifier_accepts_matching_candidate_authority_and_rejects_mismatch(tmp_path: Path) -> None:
+    approved_v2ray = _find_approved_v2ray()
+    assert approved_v2ray is not None, "approved v2ray-sn.exe must exist on test machine"
+
+    core_dir = tmp_path / "ProxyCore"
+    candidate_commit = "6ab94bb"
+    _setup_verified_core_dir(core_dir, candidate_commit, approved_v2ray)
+
+    # 1. Matching candidate authority via -ExpectedCommit passes
+    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-ExpectedCommit")
+    assert rc == 0, f"Expected 0 on matching authority, got {rc}: {out}"
+    assert "PASS: core manifest verified" in out
+
+    # 2. Matching candidate authority via -CoreAuthority alias passes
+    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-CoreAuthority")
+    assert rc == 0, f"Expected 0 on matching alias authority, got {rc}: {out}"
+    assert "PASS: core manifest verified" in out
+
+    # 3. Old stale fixed authority (33f97ae...) fails closed with exit code 4
+    stale_commit = "33f97ae0110075089f39b1e123890f931417d907"
+    rc, out = _run_verify_ps1(core_dir, stale_commit, "-ExpectedCommit")
+    assert rc == 4, f"Expected 4 on stale authority mismatch, got {rc}: {out}"
+    assert "FAIL: source_commit mismatch" in out
+
+    # 4. Arbitrary different authority fails closed with exit code 4
+    rc, out = _run_verify_ps1(core_dir, "0000000000000000000000000000000000000000", "-ExpectedCommit")
+    assert rc == 4, f"Expected 4 on authority mismatch, got {rc}: {out}"
+    assert "FAIL: source_commit mismatch" in out
+
+    # 5. Missing / omitted authority fails closed with exit code 4
+    rc, out = _run_verify_ps1(core_dir, None)
+    assert rc == 4, f"Expected 4 on omitted authority, got {rc}: {out}"
+    assert "FAIL: source_commit mismatch" in out
+
+    # 6. Whitespace authority fails closed with exit code 4
+    rc, out = _run_verify_ps1(core_dir, "   ", "-ExpectedCommit")
+    assert rc == 4, f"Expected 4 on whitespace authority, got {rc}: {out}"
+    assert "FAIL: source_commit mismatch" in out
+
+
+def test_candidate_build_record_and_post_install_verification_agree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    approved_v2ray = _find_approved_v2ray()
+    assert approved_v2ray is not None, "approved v2ray-sn.exe must exist on test machine"
+
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+
+    candidate_authority = "6ab94bb"
+    stage = tmp_path / "candidate"
+    payload = stage / "payload"
+    core = payload / "CoreBundle"
+    prereqs = payload / "Prereqs"
+    (core / "bin").mkdir(parents=True)
+    prereqs.mkdir()
+    (payload / "NekoLauncher.exe").write_bytes(b"launcher")
+    (payload / "NekoUpdater.exe").write_bytes(b"updater")
+    (core / "runtime-settings.nkps").write_bytes(b"sealed")
+    (prereqs / "windowsdesktop-runtime-6.0.36-win-x64.exe").write_bytes(b"dotnet")
+
+    shutil.copyfile(approved_v2ray, core / "bin" / "v2ray-sn.exe")
+    v2ray_hash = "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
+
+    manifest = {
+        "source_commit": candidate_authority,
+        "v2ray_sn_exe_hash": v2ray_hash,
+        "files": {
+            "bin/v2ray-sn.exe": v2ray_hash
+        }
+    }
+    (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    real_subprocess_run = subprocess.run
+    iscc_invoked_args = []
+    def mock_find_iscc() -> str:
+        return "mock_iscc.exe"
+
+    def mock_subprocess_run(args, **kwargs) -> Any:
+        if args and args[0] == "mock_iscc.exe":
+            iscc_invoked_args.extend(args)
+            out_dir = stage / "out"
+            out_dir.mkdir(exist_ok=True)
+            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        if args and str(args[0]).endswith("NekoUpdater.exe"):
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return real_subprocess_run(args, **kwargs)
+
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", v2ray_hash)
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", mock_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
+
+    argv = [
+        "--candidate-dir",
+        str(stage),
+        "--launcher-sha256",
+        _digest(b"launcher"),
+        "--updater-sha256",
+        _digest(b"updater"),
+        "--core-authority",
+        candidate_authority,
+        "--release-version",
+        "5.1.3",
+    ]
+
+    # Build candidate accepts the candidate authority
+    ret = build_candidate(parse_args(argv))
+    assert ret == 0
+
+    # Build record records the exact core_authority
+    record_path = stage / "out" / "build-record.json"
+    assert record_path.exists()
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["core_authority"] == candidate_authority
+
+    # ISCC received the exact core_authority define
+    assert f"/DCoreAuthority={candidate_authority}" in iscc_invoked_args
+
+    # Verification of the staged CoreBundle using the build record's core_authority passes
+    rc, out = _run_verify_ps1(core, record["core_authority"])
+    assert rc == 0, f"Expected 0 with record authority, got {rc}: {out}"
+    assert "PASS: core manifest verified" in out
+
+    # Verification with mismatched authority fails closed with exit code 4
+    rc, out = _run_verify_ps1(core, "different_authority")
+    assert rc == 4, f"Expected 4 with mismatched authority, got {rc}: {out}"
+    assert "FAIL: source_commit mismatch" in out
+
 
 def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_builder()
@@ -243,6 +451,7 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
         if args and args[0] == "mock_iscc.exe":
             assert "/DMyAppVersion=5.1.3" in args
             assert "/DMyAppDisplayVersion=5.1.3" in args
+            assert f"/DCoreAuthority={CORE_AUTHORITY}" in args
             assert not any(a.startswith("/DAppVersion=") for a in args)
             out_dir = stage / "out"
             out_dir.mkdir(exist_ok=True)

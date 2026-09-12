@@ -3,18 +3,22 @@
 # ----------------------------------------------------------------------------
 #  Verifies the installed external ProxyCore runtime against its
 #  core-manifest.json. Exits 0 only when ALL of the following hold:
-#    * manifest source_commit == pinned Closed Beta Core authority
+#    * manifest source_commit == candidate Core authority (-ExpectedCommit / -CoreAuthority)
 #    * every declared file is present with the declared SHA-256
 #    * v2ray-sn.exe present, hash correct (pinned approved value)
 #    * runtime-settings.nkps present
 #    * no runtime-settings.key and no plaintext production settings file
 #
-#  Usage: powershell -File verify-core-install.ps1 -CoreDir <path>
+#  Usage: powershell -File verify-core-install.ps1 -CoreDir <path> -ExpectedCommit <authority>
 # ============================================================================
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$CoreDir
+    [string]$CoreDir,
+
+    [Parameter(Mandatory = $false)]
+    [Alias('CoreAuthority')]
+    [string]$ExpectedCommit = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,9 +40,8 @@ try {
     Fail 3 "FAIL: core-manifest.json unreadable: $($_.Exception.Message)"
 }
 
-$expectedCommit = '33f97ae0110075089f39b1e123890f931417d907'
-if ($manifest.source_commit -ne $expectedCommit) {
-    Fail 4 ("FAIL: source_commit mismatch: expected $expectedCommit, got " +
+if ([string]::IsNullOrWhiteSpace($ExpectedCommit) -or ($manifest.source_commit -ne $ExpectedCommit)) {
+    Fail 4 ("FAIL: source_commit mismatch: expected $ExpectedCommit, got " +
         "$($manifest.source_commit)")
 }
 

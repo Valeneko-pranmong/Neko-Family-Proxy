@@ -11,7 +11,7 @@
 ;    * Launcher -> external ProxyCore resolution is preserved. ProxyCore is
 ;      NEVER embedded in NekoLauncher.exe and no _MEI resolution is added.
 ;    * Post-install verification of the external Core against
-;      core-manifest.json (authority source_commit pinned below) runs before
+;      core-manifest.json (candidate-specific authority source_commit passed from build gate) runs before
 ;      the finish step; a clear failure message is shown and the optional
 ;      launch action is suppressed when verification fails.
 ;    * netfilter2 policy: already-valid/running -> verify only, no UAC.
@@ -38,6 +38,12 @@
 #endif
 #ifndef BuildOutDir
   #define BuildOutDir "D:\Build\NekoBetaInstaller\out"
+#endif
+
+; Candidate-specific external Core authority pinned at build time.
+; Override from the build orchestrator with:  ISCC /DCoreAuthority=...
+#ifndef CoreAuthority
+  #define CoreAuthority ""
 #endif
 
 [Setup]
@@ -275,7 +281,7 @@ begin
   if not FileExists(VerifyScript) then begin
     AddDetail('internal error: verify-core-install.ps1 missing');
   end else begin
-    Ok := RunPSFile(VerifyScript, ' -CoreDir "' + CoreDir + '"', RC);
+    Ok := RunPSFile(VerifyScript, ' -CoreDir "' + CoreDir + '" -ExpectedCommit "{#CoreAuthority}"', RC);
     g_CoreVerifyOK := Ok and (RC = 0);
     Log('core manifest verification exit code: ' + IntToStr(RC));
     if not g_CoreVerifyOK then begin

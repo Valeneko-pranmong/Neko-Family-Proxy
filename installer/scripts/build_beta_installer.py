@@ -255,6 +255,7 @@ def build_candidate(args: argparse.Namespace) -> int:
             f"/DBuildOutDir={out_dir}",
             f"/DMyAppVersion={args.release_version}",
             f"/DMyAppDisplayVersion={args.release_version}",
+            f"/DCoreAuthority={args.core_authority}",
             "/Qp",
             ISS_PATH,
         ],
