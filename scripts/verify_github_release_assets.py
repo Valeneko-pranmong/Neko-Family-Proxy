@@ -163,6 +163,12 @@ def verify_github_release_assets(
         if required_name not in assets_by_name:
             raise GitHubReleaseAssetsVerificationError(f"Missing required release asset: {required_name!r}")
 
+    extra_assets = set(assets_by_name.keys()) - set(REQUIRED_UPDATE_ASSETS)
+    if extra_assets:
+        raise GitHubReleaseAssetsVerificationError(
+            f"Release contains unexpected extra assets: {sorted(extra_assets)}"
+        )
+
     dir_path = Path(download_dir)
     if not dir_path.is_dir():
         raise GitHubReleaseAssetsVerificationError(f"Download directory does not exist: {dir_path}")

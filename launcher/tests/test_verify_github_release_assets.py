@@ -326,20 +326,54 @@ def test_verify_assets_success_with_required_four_assets(tmp_path: Path) -> None
     )
 
 
-def test_verify_assets_permits_and_ignores_human_facing_extras(tmp_path: Path) -> None:
+def test_verify_assets_rejects_extra_asset_setup_exe(tmp_path: Path) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(tmp_path, include_extra_asset=True)
 
-    verifier.verify_github_release_assets(
-        release_json_path=bundle["release_json_file"],
-        download_dir=bundle["download_dir"],
-        public_key_file=bundle["public_key_file"],
-        expected_tag=bundle["expected_tag"],
-        expected_target=bundle["expected_target"],
-        require_draft=True,
-        expected_key_id=TEST_KEY_ID,
-        trusted_public_keys=get_test_key_registry(),
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="Release contains unexpected extra assets: .*NekoFamilyProxy-Setup.exe",
+    ):
+        verifier.verify_github_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            public_key_file=bundle["public_key_file"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_verify_assets_rejects_extra_asset_installer_exe(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    release_doc = bundle["release_doc"]
+    release_doc["assets"].append(
+        {
+            "id": 105,
+            "name": "NekoFamilyProxy-Installer.exe",
+            "size": 12345,
+            "browser_download_url": "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v5.1.4/NekoFamilyProxy-Installer.exe",
+        }
     )
+    bundle["release_json_file"].write_text(json.dumps(release_doc), encoding="utf-8")
+
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="Release contains unexpected extra assets: .*NekoFamilyProxy-Installer.exe",
+    ):
+        verifier.verify_github_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            public_key_file=bundle["public_key_file"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
 
 
 def test_verify_assets_fails_when_missing_required_asset(tmp_path: Path) -> None:
