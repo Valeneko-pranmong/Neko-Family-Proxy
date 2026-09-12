@@ -655,3 +655,92 @@ def test_exception_in_startup_does_not_strand_waiters(tmp_path: Path) -> None:
     for r in results:
         assert r.state == UpdateLifecycleState.IDLE
         assert r.diagnostic_code == "UPDATE_CHECK_INTERNAL_FAILURE"
+
+
+def test_startup_callback_after_completion_invokes_outside_lock_without_deadlock(
+    tmp_path: Path,
+) -> None:
+    resolved, payloads = _make_resolved_release(sequence=2)
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    initial_snap = coordinator.startup()
+    assert initial_snap is not None
+
+    callback_called = False
+    current_inside_cb: UpdateLifecycleSnapshot | None = None
+    call_result: list[UpdateLifecycleSnapshot] = []
+
+    def reentrant_callback(snap: UpdateLifecycleSnapshot) -> None:
+        nonlocal callback_called, current_inside_cb
+        callback_called = True
+        # Must be able to call current() without deadlocking on coordinator._lock
+        current_inside_cb = coordinator.current()
+
+    def runner() -> None:
+        call_result.append(coordinator.startup(reentrant_callback))
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive(), "startup(reentrant_callback) deadlocked when calling current()"
+    assert callback_called is True
+    assert len(call_result) == 1
+    assert call_result[0] is initial_snap
+    assert current_inside_cb is initial_snap
+
+
+def test_post_startup_callbacks_not_retained_and_do_not_grow_state(
+    tmp_path: Path,
+) -> None:
+    resolved, payloads = _make_resolved_release(sequence=2)
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    coordinator.startup()
+    assert len(coordinator._startup_callbacks) == 0
+
+    def dummy_cb(snap: UpdateLifecycleSnapshot) -> None:
+        pass
+
+    for _ in range(10):
+        coordinator.startup(dummy_cb)
+
+    assert len(coordinator._startup_callbacks) == 0
+
+
+def test_concurrent_startup_callbacks_invoked_exactly_once_with_current_access(
+    tmp_path: Path,
+) -> None:
+    resolved, payloads = _make_resolved_release(sequence=2)
+    gateway = TrackingGateway(resolved=resolved, blocking=True)
+    downloader = FakeAssetDownloader(payloads)
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    call_counts: dict[int, int] = {}
+    current_results: dict[int, UpdateLifecycleSnapshot] = {}
+    lock = threading.Lock()
+
+    def make_cb(idx: int):
+        def cb(snap: UpdateLifecycleSnapshot) -> None:
+            with lock:
+                call_counts[idx] = call_counts.get(idx, 0) + 1
+                current_results[idx] = coordinator.current()
+        return cb
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [executor.submit(coordinator.startup, make_cb(i)) for i in range(6)]
+        assert gateway.entered.wait(timeout=2)
+        gateway.release_event.set()
+        for f in futures:
+            f.result(timeout=5)
+
+    assert gateway.calls == 1
+    assert len(call_counts) == 6
+    for i in range(6):
+        assert call_counts[i] == 1
+        assert current_results[i] is not None
+    assert len(coordinator._startup_callbacks) == 0

@@ -106,21 +106,30 @@ class SoftwareUpdateCoordinator:
         self,
         callback: Callable[[UpdateLifecycleSnapshot], None] | None = None,
     ) -> UpdateLifecycleSnapshot:
+        post_completion_cb: Callable[[UpdateLifecycleSnapshot], None] | None = None
         with self._lock:
-            if callback is not None:
-                self._startup_callbacks.append(callback)
             if self._startup_done:
                 snapshot = self._startup_snapshot
                 assert snapshot is not None
+                post_completion_cb = callback
+                completed = True
+            elif self._startup_checking:
                 if callback is not None:
-                    self._invoke_callback_safe(callback, snapshot)
-                return snapshot
-            if self._startup_checking:
+                    self._startup_callbacks.append(callback)
                 while self._startup_checking:
                     self._startup_condition.wait()
                 assert self._startup_snapshot is not None
                 return self._startup_snapshot
-            self._startup_checking = True
+            else:
+                if callback is not None:
+                    self._startup_callbacks.append(callback)
+                self._startup_checking = True
+                completed = False
+
+        if completed:
+            if post_completion_cb is not None:
+                self._invoke_callback_safe(post_completion_cb, snapshot)
+            return snapshot
 
         snapshot: UpdateLifecycleSnapshot | None = None
         try:
