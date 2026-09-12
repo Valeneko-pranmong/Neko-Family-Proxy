@@ -20,6 +20,23 @@ def get_test_key_registry() -> dict[str, bytes]:
     return {TEST_KEY_ID: TEST_PUBLIC_KEY}
 
 
+def generate_ephemeral_authority(
+    *,
+    key_id: str = "ephemeral-test-authority",
+    seed: bytes | None = None,
+) -> tuple[dict[str, bytes], Ed25519PrivateKey]:
+    priv = (
+        Ed25519PrivateKey.from_private_bytes(seed)
+        if seed is not None
+        else Ed25519PrivateKey.generate()
+    )
+    pub_bytes = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return {key_id: pub_bytes}, priv
+
+
 def valid_release_document() -> dict[str, object]:
     return {
         "schema_version": 1,
