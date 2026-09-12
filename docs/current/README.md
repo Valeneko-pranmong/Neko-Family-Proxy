@@ -1,217 +1,98 @@
-# NEKO FAMILY PROXY — Launcher Component Status & Start Here
+# NEKO FAMILY PROXY — Current Component Status & 5.1.2 Architecture
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         COMPLETED (UI_LAYOUT_FIX_APPLIED)
-PRODUCT_BASELINE:               CLOSED BETA CANDIDATE (5.0.0a31)
-CURRENT_WORKSTREAM:             DASHBOARD METRICS RELOCATION (PROXY STATUS & PING)
-ACTIVE_DEV_BRANCH:              main
-FEATURE_BRANCH_STATUS:          MERGED_TO_MAIN
-FINAL_VERSION:                  5.0.0a31
-FINAL_COMMIT:                   PENDING_COMMIT
-CANDIDATE_LAUNCHER_EXE_FILE:    NekoLauncher.exe
-CANDIDATE_LAUNCHER_EXE_SIZE:    36822089 bytes
-CANDIDATE_LAUNCHER_EXE_SHA256:  106b9533494b82dd7ed77d88142e8eab0ecbe3fffe64c0cce784cfb9257db2fb
-MAIN_HEAD:                      091a0db (origin/main)
-BETA_HEAD:                      c9ab125 (origin/beta; previous Closed Beta baseline)
-CORE_AUTHORITY_BRANCH:          feature/neko-auth-lite-v1-core
-CORE_HEAD:                      ec2af36f04ce945f3c1bf3f7528e14e1a0678c2e
-CLEAN_INSTALL:                  PASS
-FIRST_RUN:                      PASS
-AUTH_FLOW:                      PASS
-PROXY_FLOW:                     PASS
-CLOSE_GAME_INVARIANT:           PASS
-REOPEN_GAME_INVARIANT:          PASS
-LONG_RUN_TEST:                  PASS
-SECURITY_SCAN:                  PASS (0 secrets, fail-closed auth)
-P0_BLOCKERS:                    0
-P1_ISSUES:                      0
-MERGE_TARGET:                   main
-MERGE_READY:                    YES
-CONFLICT_RISK:                  LOW
-NEXT_DEVELOPMENT_STREAM:        feature/live-update
-LAST_VERIFIED:                  2026-08-31 +07:00 (Asia/Bangkok)
+STATUS:                         FEATURE BRANCH ACCEPTANCE (5.1.2) / PENDING R10 & RELEASE GATES
+PRODUCT_BASELINE:               5.1.2 DEFERRED UPDATE ARCHITECTURE (BRANCH SCOPE)
+ACTIVE_DEV_BRANCH:              feature/neko-family-5.1.2
+BASE_COMMIT:                    ed82b885138015e194bbf45db61a7d6899640156 (origin/main)
+DISTRIBUTION_ARCHITECTURE:      TWO-REPO ROLE INVERSION (PLANNED / BRANCH IMPLEMENTATION)
+UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
+AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
+PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
+SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
+NEXT_LAUNCH_APPLY:              PASS (Offline verified bootstrap before window creation)
+BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; first-release only)
+LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
+INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
+REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py)
+RUFF_LINT:                      PASS (0 errors, clean)
+TEST_COVERAGE:                  1928 passed, 3 skipped, 7 deselected, 1 pre-existing baseline
+LAST_VERIFIED:                  2026-09-12 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** verify Git branch, HEAD, status, and this directory before assigning work. The active feature branch is newer development state than older production/Closed-Beta status blocks. Frozen release evidence remains historical authority for the exact accepted artifacts only.
+> **Current-state rule:** The active feature branch `feature/neko-family-5.1.2` contains the complete implementation and test coverage of the 5.1.2 Deferred Update Architecture. Public production remains v5.1.0 installer-only; the architecture is implemented and verified on this branch and awaits R10 review, Main Source Acceptance, merge to main, and subsequent release engineering gates before production availability. No production backend or release mutation has occurred. Frozen historical release evidence remains historical authority for the exact accepted artifacts only.
 
 ---
 
-## 1. What is the Launcher doing now?
+## 1. What is the 5.1.2 Architecture doing?
 
-The Launcher has **completed the dashboard-redesign stream** on:
+The Neko Family 5.1.2 feature branch implements the **Deferred Update Lifecycle** and **Two-Repo Role Inversion**, designed to restore automated in-app updates upon post-merge release:
 
-```text
-feature/dashboard-redesign @ 32b1b68
-```
+### 1.1 Two-Repository Role Inversion
+- **Machine-Update Channel**: The original repository `Valeneko-pranmong/Neko-Family-Proxy` is planned as the permanent machine-update channel. This ensures dormant and installed legacy clients (which discover updates via `Valeneko-pranmong/Neko-Family-Proxy/releases/latest`) continue to find valid signed releases.
+- **Machine Assets**: Every machine release publishes four canonical signed assets:
+  1. `release-v2.json` (canonical Ed25519-signed manifest)
+  2. `NekoLauncher.exe`
+  3. `NekoUpdater.exe`
+  4. `NekoProxyCore.zip`
+- **Human-Facing Installer Surface**: Planned to be separated into a dedicated installer repository (e.g. `Valeneko-pranmong/Neko-Family-Proxy-Installer`). It is a distribution surface for user setup executables, not a machine trust root. (Neither the separate repository nor machine update endpoints exist publicly yet; public release remains v5.1.0 installer-only.)
 
-All 6 implementation phases and UI polish gates from [`dashboard-redesign-plan.md`](dashboard-redesign-plan.md) and [`dashboard-redesign-completion.md`](dashboard-redesign-completion.md) are **PASS**.
-
-The branch is closed and prepared for merge into `main`. The next stream (`feature/live-update`) will branch from `main` following merge completion.
-
----
-
-## 2. Evidence-aligned dashboard semantics
-
-The four-node visual flow from the mockup is preserved, but it is a **service/status path**, not a fabricated physical traceroute:
-
-```text
-เครื่องของคุณ
-  -> NEKO Proxy Engine (local Core/Redirector/SOCKS/V2Ray stack)
-  -> Tokyo Proxy (remote selected/canonical proxy role)
-  -> PSO2 JP (semantic game network destination)
-```
-
-Important corrections from the earlier draft:
-
-- There is no verified separate **Bangkok remote proxy** hop in the proven data path.
-- Raw local/proxy/game IP fields are not part of the redesign display contract.
-- Current headless telemetry does not provide ping/RTT or per-hop latency.
-- Legacy Netch contains `Server.PingAsync()` for selected proxy RTT, but this is a dormant capability, not current production telemetry authority.
-- Numeric latency must remain `—` until a separately reviewed and tested local measurement path exists.
+### 1.2 Bounded Bootstrap Authority Override
+- Public `v5.1.0` was released installer-only and lacks public machine assets (`release-v2.json`, `NekoProxyCore.zip`, etc.).
+- To establish the first new machine release, `scripts/release_controller.py` implements a strictly bounded bootstrap authority override:
+  - Scoped exclusively to bootstrap Stable `v5.1.0`.
+  - Consumes the byte-for-byte archived Attempt-3 signed manifest and Core bundle.
+  - Verifies production Ed25519 signature, channel, Core hash, size, canonical manifest, and installed identity.
+  - Automatically refused for newer versions or arbitrary local files.
+  - Disabled once a newer accepted machine release exists on GitHub.
 
 ---
 
-## 3. Non-regression contracts
+## 2. Deferred Update Lifecycle
 
-The redesign may change presentation, but it must preserve these product/security contracts:
+The 5.1.2 client architecture guarantees that update operations never disrupt active user gameplay or proxy sessions:
 
-- External Core topology is intentional; do not embed ProxyCore back into the Launcher one-file EXE.
-- One active Launcher session per user; latest claim wins.
-- Auth/session/entitlement failures remain fail-closed.
-- Deep client telemetry remains local-only; do not upload PID/process lists/DNS/flow details/raw Core logs/proxy credentials.
-- Close, logout, reconnect, and reopen recovery must never kill `pso2.exe`.
-- Customer-visible telemetry must be truthful. Unknown measurements use `—` / unavailable, never fake `0 ms` or mockup values.
-- Raw proxy/server hostname, IP, port, credentials, and destination history are not customer-dashboard fields.
-- Source changes that produce a new Launcher build must follow the current versioning/release rule and must be tested using the new artifact.
-- Artifact SHA-256 mismatch is a hard stop.
-- Authority-vault updates remain a separate Owner-gated release operation after exact-artifact evidence and required smoke.
-
----
-
-## 4. Phase 1 engineering status (2026-08-29)
-
-Phase 1 is **ENGINEERING PASS (uncommitted) / PHASE 2 NEXT**. Source/test/version changes exist on `feature/dashboard-redesign @ 0fc836d` and have NOT been committed. This is not a release/artifact pass — no build, no live proof, no authority update. Plan version remains v1.2; the Phase 1 contract is unchanged.
-
-Allowed Phase 1 source scope (unchanged from locked plan):
-
-```text
-launcher/src/neko_launcher/domain/models.py
-launcher/src/neko_launcher/ui/theme.py
-launcher/tests/test_network_hop_model.py
-launcher/tests/ui/test_palette_tokens.py
-```
-
-Explicitly out of scope for Phase 1 (unchanged):
-
-```text
-launcher/src/neko_launcher/domain/telemetry.py
-NekoProxyCore/*
-installer/*
-Admin/*
-authority/*
-```
-
-### 4.1 Implemented Phase 1 contract (matches plan §4.2 / §4.4)
-
-- `NetworkHopRole` (str + Enum): `LOCAL_DEVICE`, `LOCAL_PROXY_ENGINE`, `REMOTE_PROXY`, `GAME_NETWORK`.
-- `HopConnectionState` (str + Enum): `SUCCESS`, `CONNECTING`, `UNAVAILABLE`.
-- `NetworkHop` and `NetworkPath` are frozen/immutable dataclasses.
-- `NetworkPath.proxy_rtt_ms` accepts `None`, `0`, and positive integers; rejects negative with `ValueError`.
-- No `ip` / `hostname` / `port` / `bangkok` / `per_hop_latency_ms` field in either dataclass.
-- 8 semantic `PinkPalette` node tokens: `node_local`, `node_local_surface`, `node_engine`, `node_engine_surface`, `node_remote`, `node_remote_surface`, `node_game`, `node_game_surface` (strict `#RRGGBB`, semantic role names).
-
-### 4.2 TDD evidence (corrective pass)
-
-- First RED attempt was REJECTED because pytest stopped during collection with an `ImportError` (collection / test-framework error, not a valid failing-test signal).
-- Test import shape repaired: tests now import only the stable module and resolve Phase 1 symbols via `getattr` + `pytest.fail(...)` so a missing symbol becomes an assertion failure, not a collection error. All plan §1.3 behavioural coverage preserved.
-- VALID RED after temporary baseline restoration: 47 failed, 8 passed, 0 collection errors.
-- GREEN after reapplying minimal production implementation: 55 passed.
-
-### 4.3 Phase 2 first action (next gate)
-
-Phase 2 owns reusable presentation components. Before any Phase 2 implementation, perform a **read-only audit** of existing UI / component conventions and exact file paths, then create RED tests first. Phase 2 remains pure presentation with no network IO and no telemetry probing.
-
-Before changing source, re-verify current version. After the Phase 1 bump the current Launcher source version is `5.0.0a11`; the next source-build target under the existing versioning rule would be `5.0.0a12` once Phase 2 source changes are ready.
+1. **Every-Open Discovery**: Launcher automatically schedules a background check on startup; manual checks remain independent.
+2. **Background Staging (`SoftwareUpdateStageService`)**:
+   - Downloads changed components (`Launcher`, `Core`) into private staging directories while the session continues.
+   - Preserves exact signed `release-v2.json` envelope and verifies byte counts and SHA-256 hashes against the signature.
+3. **Durable Pending Store (`PendingUpdateStore`)**:
+   - Atomically promotes fully staged candidates to `%LOCALAPPDATA%\NEKO FAMILY\update-pending\`.
+   - On load, reconstructs trust offline: re-verifies signature, envelope, and staged files before marking state `UPDATE_PENDING`.
+   - Rejects anti-downgrade and same-sequence conflicts; cleans incomplete crash leftovers.
+4. **Session Activity Guard (`SessionActivityGuard`)**:
+   - Evaluates whether immediate update apply is safe.
+   - If game process (`pso2.exe`) or proxy transition is active, immediate apply is blocked.
+   - **Critical Invariant**: Updates NEVER forcibly terminate the game or active session.
+5. **Safe Apply Execution Paths**:
+   - **Explicit Update Action**: User-initiated update. If game is running, notifies user without killing game; if safe, initiates graceful shutdown and handoff.
+   - **Normal Exit**: During Launcher shutdown, if a verified pending update exists and session is stopped, transitions to `NekoUpdater.exe`.
+   - **Next-Launch Apply (`try_apply_pending_on_launch`)**: Early in startup (after acquiring singleton mutex, before creating UI window), evaluates verified pending updates and runs offline helper handoff.
+6. **Updater Handoff Preservation**:
+   - Reuses existing `NekoUpdater.exe` transactional engine, generation builder, probation runner, and rollback controller.
+   - Handoff sends exact stored envelope to `BEGIN`, copies verified staged files to incoming paths, verifies hashes, and issues `APPLY`.
 
 ---
 
-## 5. Phase 1 engineering evidence (2026-08-29)
+## 3. Non-Regression Contracts
 
-```text
-Python                       = 3.11.15
-Launcher source version      = 5.0.0a11 (5.0.0a10 -> 5.0.0a11, uncommitted)
-Branch                       = feature/dashboard-redesign
-HEAD                         = 0fc836d
-P1 suites                    = 55 passed
-Focused baseline             = 13 passed, 1 skipped (display-dependent dashboard test)
-RUFF                         = All checks passed
-COMPILEALL                   = clean
-Canonical non-integration    = 674 passed, 1 skipped, 5 deselected, 0 failed
-git diff --check             = PASS (benign LF/CRLF note on uv.lock only)
-```
+The 5.1.2 branch preserves all fundamental security and product invariants:
 
-**Canonical non-integration test-run method on this host:** run with `env -u TCL_LIBRARY -u TK_LIBRARY .venv/Scripts/python.exe -m pytest -q -m "not integration"` (process-local env removal only). The host's persistent user/system environment is not modified. The contamination source is an external `Khai-Hub/_internal/_tcl_data` toolchain install that pins Tcl 8.6.15 against the system's Tcl 8.6.12, polluting the Tk init path. **Product source was NOT changed to work around this.** This run method must be carried forward into Phase 2-6 runs on the same machine.
-
-**Phase 1 TDD order followed:**
-
-1. Read existing patterns in `models.py` and `theme.py` (no edits).
-2. Created the two new test files first; tests failed at collection because Phase 1 symbols were missing — that RED was REJECTED as a collection error.
-3. Repaired test import shape (module import + missing-symbol `pytest.fail`).
-4. Temporarily restored production/version files to baseline (no git reset/checkout/stash/clean) to capture valid RED: 47 failed, 8 passed, 0 collection errors.
-5. Reapplied the minimal Phase 1 production contract exactly as plan §4.2 / §4.4 defines.
-6. Reapplied the version bump `5.0.0a10 -> 5.0.0a11` across all three metadata files.
-7. Re-ran P1 suites → 55 passed (GREEN).
-
-Build/live proof/authority = NOT performed in this pass; Phase 6 owns packaged integration smoke. `COMMIT = NOT_CREATED`, `PUSH = NOT_REQUESTED`.
+- **Fail-Closed Authorization**: External Core startup requires authenticating, single active session ownership, valid entitlement, and fresh launch permit verification.
+- **External Core Topology**: NekoProxyCore remains external under `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe`.
+- **Game Invariant**: Launcher close, update staging, and update deferral never kill `pso2.exe`.
+- **Single-Instance Mutex**: `Local\NekoFamilyProxyLauncher` remains the cross-process single-instance boundary; no competing locks added.
+- **Credential Isolation**: Client contains only publishable credentials (Supabase URL / anon key); no service keys or private signing keys.
+- **Canonical Version Display**: Launcher window title bar is bound directly to `neko_launcher.__version__` (`NEKO FAMILY PROXY v<version>`).
+- **Installer Core Authority**: Post-install verification parameters match build-approved authority dynamically.
 
 ---
 
-## 6. Active Launcher documentation (`docs/current/`)
+## 4. Verification Evidence Summary
 
-| Document | Role / Content | Authority level |
-| :--- | :--- | :--- |
-| **[`README.md`](README.md)** | Current Launcher component status and start-here orientation | `CURRENT_STATUS` |
-| **[`dashboard-redesign-completion.md`](dashboard-redesign-completion.md)** | Dashboard redesign completion, validation evidence, and merge readiness | `FEATURE_COMPLETION_RECORD` |
-| **[`dashboard-redesign-plan.md`](dashboard-redesign-plan.md)** | Evidence-aligned six-phase dashboard redesign plan v1.2 | `HISTORICAL_PLAN / COMPLETED` |
-| **[`t10-commercial-ui-ux-design-freeze.md`](t10-commercial-ui-ux-design-freeze.md)** | Previous commercial UI/UX architecture and non-regression constraints | `CURRENT_CONTRACT / HISTORICAL_FREEZE` |
-| **[`launcher-architecture.md`](launcher-architecture.md)** | Desktop application layered architecture, IPC, and controllers | `CURRENT_CONTRACT` |
-| **[`neko-auth-lite.md`](neko-auth-lite.md)** | NEKO-AUTH-LITE authentication, challenge-response, and permit flow | `CURRENT_CONTRACT` |
-| **[`final-windows-e2e-harness.md`](final-windows-e2e-harness.md)** | Windows E2E integration harness and binary admission gates | `CURRENT_CONTRACT` |
-| **[`phase-2-5-distinct-auth-session-future-permit-proof.md`](phase-2-5-distinct-auth-session-future-permit-proof.md)** | Closed security proof/evidence | `CURRENT_RELEASE_EVIDENCE` |
-| **[`build-windows-executable.md`](build-windows-executable.md)** | PyInstaller packaging and secret-hygiene build instructions | `CURRENT_OPERATIONAL` |
-| **[`debug-console.md`](debug-console.md)** | Windows debug console, runtime logging, and IPC troubleshooting | `CURRENT_OPERATIONAL` |
-| **[`repository-layout.md`](repository-layout.md)** | File organization and component dependency layout | `CURRENT_OPERATIONAL` |
-| **[`runtime-distribution.md`](runtime-distribution.md)** | External Core runtime distribution policy | `CURRENT_OPERATIONAL` |
-| **[`closed-beta-runbook.md`](closed-beta-runbook.md)** | Closed-Beta distribution and accepted artifact evidence | `CURRENT_OPERATIONAL / RELEASE_HISTORY` |
-
----
-
-## 7. Cross-repository orientation
-
-Discover repository folders by name, then verify `.git`, branch, HEAD, remote, and expected project markers. Do not hard-code workstation drive letters into permanent instructions.
-
-| Component | Folder name | Current verified branch / HEAD |
-|---|---|---|
-| Launcher | `Neko-Family-Proxy` | `feature/dashboard-redesign` @ `0fc836d`; `main` @ `bde8389` |
-| Core | `NekoProxyCore` | `feature/neko-auth-lite-v1-core` @ `33f97ae` |
-| Admin | `Neko-Family-Proxy-admin-tool` | `main` @ `f240d44` |
-| Project manager | `Project manager` | read `CURRENT_STATUS.md` first |
-
----
-
-## 8. Closed-Beta / production history that remains valid
-
-Infrastructure/security work through Phase 2.5 was closed and verified before this redesign stream. T1-T9 production operations, NEKO-AUTH-LITE, telemetry privacy, Core lifecycle, Closed-Beta installer work, reconnect/reopen proof, and accepted Beta artifact records remain preserved in detailed runbooks/history.
-
-```text
-accepted beta artifact/history != current development branch
-```
-
-New distribution authority can only be created after source -> tests -> build -> exact-artifact smoke/live proof -> authority sequence.
-
----
-
-## 9. Historical archive
-
-Historical proposals, superseded prompts, completed milestone evidence, blocked investigations, and scratch notes are preserved under `docs/archive/`. Do not rewrite historical failures into PASS and do not use archived artifact identifiers as current authority without re-verification.
+- **Complete Launcher Suite**: 1,928 passed, 3 skipped, 7 deselected in `launcher/`.
+  - *Note*: One pre-existing failure (`tests/test_config.py::test_application_root_resolves_to_repository_root_in_source_mode`) is proven pre-existing on canonical `main` due to repository file reorganization (`image_11.png` relocated to `Asset/`). It is retained as baseline evidence and not masked.
+- **Ruff Code Inspection**: 0 errors / 0 warnings across all source and test modules.
+- **Repository Safety**: `python scripts/check_repository_safety.py` PASSED with zero findings.
+- **Git Diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.

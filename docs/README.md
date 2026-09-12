@@ -28,10 +28,11 @@
 ### Key Capabilities
 
 - **Fail-Closed Authorization**: External proxy core startup requires passing authentication, active entitlement validation, single launcher-session arbitration, target identity matching, and fresh cryptographically bound permit verification.
+- **Deferred Automatic Updates (5.1.2 Architecture)**: Designed and implemented on the 5.1.2 feature branch with non-disruptive background staging, durable `UPDATE_PENDING` storage, session activity guard preventing game or proxy termination, and verified offline apply on explicit action, normal exit, or next launch (pending post-merge release gates).
 - **Runtime Config v1**: Real-time proxy configuration managed server-side and issued during authorization, allowing backend routing updates without desktop binary reinstalls.
 - **Single-Active-Session Arbitration**: Prevents permit replay and concurrent conflicting client sessions across installations.
 - **Credential Separation**: The client launcher uses strictly publishable credentials (Supabase URL and Supabase publishable client key). Elevated service keys and administrative authorities remain strictly backend-isolated.
-- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (**878 passed, 3 skipped**) and automated repository safety verification.
+- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (>1,900 tests) and automated repository safety verification.
 
 ---
 
@@ -89,9 +90,10 @@ flowchart TD
 
 Neko Family Proxy operates as part of a coordinated multi-repository architecture:
 
-- **[Neko Family Proxy (This Repository)](https://github.com/Valeneko-pranmong/Neko-Family-Proxy)**: The Windows desktop launcher application, local session manager, client telemetry display, and database migration suite.
+- **[Neko Family Proxy (This Repository)](https://github.com/Valeneko-pranmong/Neko-Family-Proxy)**: The Windows desktop launcher application, local session manager, client telemetry display, database migration suite, and the planned permanent machine-update channel under the 5.1.2 Two-Repo Role Inversion.
 - **[NekoProxyCore](https://github.com/Valeneko-pranmong/NekoProxyCore)**: The external, pinned low-level network proxy runtime. It executes fail-closed external traffic translation and is installed separately under `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore`.
 - **[Control Room](https://github.com/Valeneko-pranmong/Neko-Family-Proxy-admin-tool)**: The administrative management web portal utilized by operators to monitor proxy health, audit sessions, issue entitlements, and publish live Runtime Config v1 updates.
+*(Note: Standalone customer setup executables are planned to be distributed via a dedicated installer repository under the 5.1.2 architecture; the public release remains v5.1.0 installer-only.)*
 
 ---
 
@@ -120,7 +122,7 @@ Starting in `v5.0.0`, the proxy ecosystem utilizes **Runtime Config v1**:
 3. Open Neko Family Proxy and sign in with your account credentials.
 4. Start PSO2 through the normal launcher flow.
 
-> **Update note (2026-09-12):** the public v5.1.0 release is intentionally installer-only. Automatic in-app update is temporarily unavailable while update payload distribution is being moved to a separate signed backend/storage channel.
+> **Update Note (v5.1.0 public / 5.1.2 branch):** Public release v5.1.0 remains intentionally installer-only. In-app automatic updates are not yet active in production. The deferred update lifecycle (background staging, durable `UPDATE_PENDING` storage, non-disruptive session guard, and safe offline apply) and Two-Repo Role Inversion are implemented and verified on the `feature/neko-family-5.1.2` development branch, pending R10 review, Main Source Acceptance, merge to `main`, and subsequent release engineering gates. No production release or backend mutation has occurred.
 
 *Note: Users do not need to enter or manage proxy credentials. Configuration and routing are handled automatically during session authorization.*
 
@@ -154,7 +156,7 @@ python scripts/check_repository_safety.py
 Set-Location launcher
 python -m ruff check src tests
 
-# 3. Execute test suite (878 passed, 3 skipped)
+# 3. Execute test suite (>1,900 tests)
 python -m pytest -q -m "not integration"
 ```
 
@@ -179,11 +181,15 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
 
 ## Roadmap
 
-- **v5.1.0 (Current Stable)**:
-  - Public installer-only Stable/Latest release.
-  - Runtime Config v1, single-active-session control, bound launch permits, updater/release-controller hardening, and one-click installer packaging.
-- **Next maintenance objective**:
-  - Restore secure automatic updates through separate signed update backend/storage while keeping the public GitHub Release installer-only.
+- **v5.1.0 (Historical Stable Baseline)**:
+  - Runtime Config v1, single-active-session control, bound launch permits, updater/release-controller hardening, and one-click installer packaging. Public release remains installer-only.
+- **v5.1.2 (Current Development / Accepted Architecture)**:
+  - Two-Repo Role Inversion: `Valeneko-pranmong/Neko-Family-Proxy` as the planned permanent machine-update channel; dedicated installer repository for customer-facing Setup.
+  - Deferred Update Lifecycle: Background staging (`SoftwareUpdateStageService`), durable pending store (`PendingUpdateStore`), non-disruptive session guard (`SessionActivityGuard`), and offline apply on explicit update, normal exit, or next launch.
+  - Bounded bootstrap authority override in `release_controller.py` for initial `v5.1.0` recovery.
+  - Canonical Launcher title bar version binding.
+  - Installer Core authority dynamic propagation.
+  - Status: Implemented and tested on `feature/neko-family-5.1.2`; pending R10 review, Main Source Acceptance, merge to `main`, and subsequent release engineering gates.
 
 ---
 
