@@ -555,3 +555,42 @@ def test_exception_code_accessor_failure_cannot_strand_startup_waiters() -> None
     )
     assert_safe_empty_metadata(first)
     assert_secret_absent(first, "sentinel-code-property")
+
+
+def test_check_startup_with_resolved_returns_result_and_resolved() -> None:
+    resolved = make_resolved_release(2)
+    gateway = CountingReleaseGateway(resolved)
+    provider = LocalProvider(local_release(1))
+    service = make_service(gateway, provider)
+
+    result, res = service.check_startup_with_resolved()
+    assert result.state is UpdateState.AVAILABLE
+    assert res is resolved
+
+    # Cached on subsequent call
+    result2, res2 = service.check_startup_with_resolved()
+    assert gateway.calls == 1
+    assert result2 is result
+    assert res2 is res
+
+
+def test_check_manual_with_resolved_returns_result_and_resolved() -> None:
+    resolved = make_resolved_release(2)
+    gateway = CountingReleaseGateway(resolved)
+    provider = LocalProvider(local_release(1))
+    service = make_service(gateway, provider)
+
+    result, res = service.check_manual_with_resolved()
+    assert result.state is UpdateState.AVAILABLE
+    assert res is resolved
+    assert gateway.calls == 1
+
+
+def test_check_with_resolved_error_returns_none_for_resolved() -> None:
+    gateway = CountingReleaseGateway(error=CodedError("MANIFEST_UNAVAILABLE", "offline"))
+    provider = LocalProvider(local_release(1))
+    service = make_service(gateway, provider)
+
+    result, res = service.check_startup_with_resolved()
+    assert result.state is UpdateState.UNAVAILABLE
+    assert res is None

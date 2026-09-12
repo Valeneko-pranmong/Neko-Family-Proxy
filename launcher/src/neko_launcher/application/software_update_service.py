@@ -56,53 +56,75 @@ class UpdateCheckService:
         self._startup_condition = Condition()
         self._startup_checking = False
         self._startup_result: UpdateCheckResult | None = None
+        self._startup_resolved: ResolvedGitHubRelease | None = None
 
     def check_startup(self) -> UpdateCheckResult:
+        return self.check_startup_with_resolved()[0]
+
+    def check_manual(self) -> UpdateCheckResult:
+        return self.check_manual_with_resolved()[0]
+
+    def check_startup_with_resolved(
+        self,
+    ) -> tuple[UpdateCheckResult, ResolvedGitHubRelease | None]:
         with self._startup_condition:
             while self._startup_checking:
                 self._startup_condition.wait()
             if self._startup_result is not None:
-                return self._startup_result
+                return self._startup_result, self._startup_resolved
             self._startup_checking = True
 
         result = self._internal_failure_result(
             UpdateInvocationReason.STARTUP,
         )
+        resolved: ResolvedGitHubRelease | None = None
         try:
-            result = self._check(UpdateInvocationReason.STARTUP)
+            result, resolved = self._check_with_resolved(UpdateInvocationReason.STARTUP)
         finally:
             with self._startup_condition:
                 self._startup_result = result
+                self._startup_resolved = resolved
                 self._startup_checking = False
                 self._startup_condition.notify_all()
 
-        return result
+        return result, resolved
 
-    def check_manual(self) -> UpdateCheckResult:
-        return self._check(UpdateInvocationReason.MANUAL)
+    def check_manual_with_resolved(
+        self,
+    ) -> tuple[UpdateCheckResult, ResolvedGitHubRelease | None]:
+        return self._check_with_resolved(UpdateInvocationReason.MANUAL)
 
     def _check(
         self,
         reason: UpdateInvocationReason,
     ) -> UpdateCheckResult:
+        return self._check_with_resolved(reason)[0]
+
+    def _check_with_resolved(
+        self,
+        reason: UpdateInvocationReason,
+    ) -> tuple[UpdateCheckResult, ResolvedGitHubRelease | None]:
         try:
             resolved = self._release_gateway.resolve()
         except Exception as error:
-            return self._gateway_exception_result(reason, error)
+            return self._gateway_exception_result(reason, error), None
 
         if resolved is None:
-            return self._empty_result(
-                reason,
-                UpdateState.UNAVAILABLE,
+            return (
+                self._empty_result(
+                    reason,
+                    UpdateState.UNAVAILABLE,
+                    None,
+                ),
                 None,
             )
 
         try:
             remote = resolved.authenticated_release
             local = self._local_identity_provider()
-            return evaluate_release(local, remote, reason)
+            return evaluate_release(local, remote, reason), resolved
         except Exception:
-            return self._internal_failure_result(reason)
+            return self._internal_failure_result(reason), None
 
     @classmethod
     def _gateway_exception_result(
