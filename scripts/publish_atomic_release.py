@@ -19,12 +19,33 @@ _SHA = re.compile(r"[0-9a-fA-F]{40}")
 
 
 REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
-    "NekoFamilyProxy-Setup.exe",
+    "release-v2.json",
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",
-    "release-v2.json",
 )
+REQUIRED_MACHINE_ASSETS: tuple[str, ...] = REQUIRED_STAGE_ASSETS
+DEFAULT_INSTALLER_REPO = "Valeneko-pranmong/Neko-Family-Proxy-Installer"
+
+
+def build_machine_release_notes(
+    version: str,
+    *,
+    installer_repo: str = DEFAULT_INSTALLER_REPO,
+    details: str | None = None,
+) -> str:
+    lines = [
+        f"## Neko Family Proxy {version}",
+        "",
+        "This release is the machine-update channel for existing installations.",
+        "For new installations or manual setup, download the installer from the dedicated installer repository:",
+        f"https://github.com/{installer_repo}/releases",
+    ]
+    if details:
+        lines.extend(["", details])
+    return "\n".join(lines)
+
+
 _COMPONENTS = {
     "launcher": ("NekoLauncher.exe", "raw-pe-v1"),
     "updater": ("NekoUpdater.exe", "raw-pe-v1"),
@@ -198,7 +219,19 @@ def validate_staging_preconditions(
     names = {item.name for item in staging_dir.iterdir()}
     required = set(REQUIRED_STAGE_ASSETS)
     if names != required:
-        raise StageDraftReleaseError("Staging directory must contain exactly the five required files")
+        missing = required - names
+        extra = names - required
+        if missing and extra:
+            raise StageDraftReleaseError(
+                f"Staging directory must contain exactly the four required machine assets (missing: {sorted(missing)}, extra: {sorted(extra)})"
+            )
+        if missing:
+            raise StageDraftReleaseError(
+                f"Staging directory missing required machine assets: {sorted(missing)}"
+            )
+        raise StageDraftReleaseError(
+            f"Staging directory contains extra or forbidden assets: {sorted(extra)}"
+        )
     assets = {name: staging_dir / name for name in REQUIRED_STAGE_ASSETS}
     if any(not path.is_file() or path.stat().st_size <= 0 for path in assets.values()):
         raise StageDraftReleaseError("Every staging asset must be a non-empty regular file")
@@ -354,17 +387,21 @@ def stage_draft_release(
     if not isinstance(raw_assets, list):
         raise StageDraftReleaseError("Draft readback assets missing")
     for asset in raw_assets:
-        if isinstance(asset, dict) and asset.get("name") in REQUIRED_STAGE_ASSETS:
-            name, asset_id, asset_size = asset["name"], asset.get("id"), asset.get("size")
-            if name in bindings or type(asset_id) is not int or asset_id <= 0:
-                raise StageDraftReleaseError("Duplicate or invalid required asset binding")
-            if (
-                type(asset_size) is not int
-                or asset_size <= 0
-                or asset_size != assets[name].stat().st_size
-            ):
-                raise StageDraftReleaseError("Invalid or mismatched required asset size")
-            bindings[name] = asset_id
+        if not isinstance(asset, dict):
+            raise StageDraftReleaseError("Draft readback asset entry must be an object")
+        name = asset.get("name")
+        if name not in REQUIRED_STAGE_ASSETS:
+            raise StageDraftReleaseError(f"Draft readback contains unexpected extra asset: {name}")
+        asset_id, asset_size = asset.get("id"), asset.get("size")
+        if name in bindings or type(asset_id) is not int or asset_id <= 0:
+            raise StageDraftReleaseError("Duplicate or invalid required asset binding")
+        if (
+            type(asset_size) is not int
+            or asset_size <= 0
+            or asset_size != assets[name].stat().st_size
+        ):
+            raise StageDraftReleaseError("Invalid or mismatched required asset size")
+        bindings[name] = asset_id
     if set(bindings) != set(REQUIRED_STAGE_ASSETS):
         raise StageDraftReleaseError("Draft readback does not contain each required asset exactly once")
     dispatch = (
@@ -384,6 +421,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-commit", required=True)
     parser.add_argument("--title")
     parser.add_argument("--notes")
+    parser.add_argument("--installer-repo", default=DEFAULT_INSTALLER_REPO)
     parser.add_argument("--as-prerelease", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -402,18 +440,40 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-def build_release_payload(version: str, sha: str) -> dict:
+
+
+def build_release_payload(
+    version: str,
+    sha: str,
+    *,
+    installer_repo: str = DEFAULT_INSTALLER_REPO,
+    notes: str | None = None,
+) -> dict:
+    body = (
+        notes
+        if notes is not None
+        else build_machine_release_notes(version, installer_repo=installer_repo)
+    )
     return {
         "tag_name": version,
         "target_commitish": sha,
         "name": version,
+        "body": body,
         "draft": False,
         "prerelease": False,
-        "generate_release_notes": True
+        "generate_release_notes": False if body else True,
     }
 
 
-def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
+def execute_publish(
+    version: str,
+    sha: str,
+    staging_dir: str = ".",
+    *,
+    notes: str | None = None,
+    title: str | None = None,
+    installer_repo: str = DEFAULT_INSTALLER_REPO,
+) -> None:
     from pathlib import Path
     import tempfile
     import json
@@ -442,12 +502,20 @@ def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
         _run(runner, [*git, "tag", version, sha])
         _run(runner, [*git, "push", "origin", version])
 
+    machine_notes = (
+        notes
+        if notes is not None
+        else build_machine_release_notes(version, installer_repo=installer_repo)
+    )
+
     evidence = stage_draft_release(
         staging_dir=Path(staging_dir),
         tag=version,
         target_commit=sha,
+        title=title,
+        notes=machine_notes,
         as_prerelease=False,
-        executor=runner
+        executor=runner,
     )
 
     if not evidence:
@@ -498,6 +566,10 @@ def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
             raise StageDraftReleaseError("Draft state mutated before promotion")
 
         current_assets = {a.get("name"): {"id": a.get("id"), "size": a.get("size")} for a in pre_promote.get("assets", []) if isinstance(a, dict)}
+        if set(current_assets.keys()) != set(evidence.assets.keys()):
+            raise StageDraftReleaseError(
+                f"Draft assets mutated before promotion: asset set mismatch (unexpected: {set(current_assets.keys()) - set(evidence.assets.keys())})"
+            )
         for name, asset_id in evidence.assets.items():
             if name not in current_assets:
                 raise StageDraftReleaseError(f"Asset {name} missing before promotion")
@@ -517,6 +589,10 @@ def execute_publish(version: str, sha: str, staging_dir: str = ".") -> None:
             latest = json.loads(latest_raw)
             if latest.get("id") == evidence.release_id and latest.get("tag_name") == version:
                 latest_assets = {a.get("name"): {"id": a.get("id"), "size": a.get("size")} for a in latest.get("assets", []) if isinstance(a, dict)}
+                if set(latest_assets.keys()) != set(evidence.assets.keys()):
+                    raise ValueError(
+                        f"Gate3: Asset set mismatch in latest release (unexpected: {set(latest_assets.keys()) - set(evidence.assets.keys())})"
+                    )
                 for name, asset_id in evidence.assets.items():
                     if name not in latest_assets or latest_assets[name]["id"] != asset_id or latest_assets[name]["size"] != Path(staging_dir, name).stat().st_size:
                         raise ValueError(f"Gate3: Asset {name} mismatch in latest release")

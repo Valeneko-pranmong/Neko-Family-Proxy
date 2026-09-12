@@ -51,11 +51,15 @@ class FakeExecutor:
         releases: list[dict[str, Any]] | None = None,
         mismatched_asset_size: str | None = None,
         prerelease: bool = False,
+        extra_readback_assets: list[dict[str, Any]] | None = None,
+        readback_assets: list[dict[str, Any]] | None = None,
     ) -> None:
         self.calls: list[list[str]] = []
         self.dirty = dirty
         self.wrong_tag = wrong_tag
         self.prerelease = prerelease
+        self.extra_readback_assets = extra_readback_assets
+        self.readback_assets = readback_assets
         self.remote_ref = (
             {"object": {"type": "commit", "sha": TARGET}}
             if remote_ref == "default"
@@ -103,6 +107,24 @@ class FakeExecutor:
             elif args[2].endswith(f"/releases/tags/{TAG}"):
                 return subprocess.CompletedProcess(args, 1, stdout="", stderr="HTTP 404")
             elif args[2].endswith("/releases/901"):
+                assets_list = (
+                    self.readback_assets
+                    if self.readback_assets is not None
+                    else [
+                        {
+                            "id": i + 10,
+                            "name": name,
+                            "size": (
+                                self.uploaded_sizes[name] + 1
+                                if name == self.mismatched_asset_size
+                                else self.uploaded_sizes[name]
+                            ),
+                        }
+                        for i, name in enumerate(
+                            ("release-v2.json", "NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip")
+                        )
+                    ] + (self.extra_readback_assets or [])
+                )
                 out = json.dumps(
                     {
                         "id": 901,
@@ -110,20 +132,7 @@ class FakeExecutor:
                         "target_commitish": TARGET,
                         "draft": True,
                         "prerelease": self.prerelease,
-                        "assets": [
-                            {
-                                "id": i + 10,
-                                "name": name,
-                                "size": (
-                                    self.uploaded_sizes[name] + 1
-                                    if name == self.mismatched_asset_size
-                                    else self.uploaded_sizes[name]
-                                ),
-                            }
-                            for i, name in enumerate(
-                                ("NekoFamilyProxy-Setup.exe", "NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip", "release-v2.json")
-                            )
-                        ] + [{"id": 99, "name": "SHA256SUMS.txt"}],
+                        "assets": assets_list,
                     }
                 )
             else:
@@ -179,7 +188,7 @@ def make_stage(
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
-        "NekoFamilyProxy-Setup.exe": b"setup", "NekoLauncher.exe": b"launcher",
+        "NekoLauncher.exe": b"launcher",
         "NekoUpdater.exe": b"updater",
         "NekoProxyCore.zip": core_bytes,
     }
@@ -332,7 +341,7 @@ def test_validation_fails_closed(tmp_path: Path, case: str) -> None:
 def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     module = load_module()
     stage = make_stage(tmp_path)
-    payloads = {"NekoFamilyProxy-Setup.exe": b"setup", "NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
+    payloads = {"NekoLauncher.exe": b"launcher", "NekoUpdater.exe": b"updater", "NekoProxyCore.zip": b"core"}
     payload = {
         "schema_version": 2, "channel": "stable", "release_sequence": 8,
         "minimum_supported_sequence": 1, "release_id": "stable-0008", "mandatory": False,
@@ -506,7 +515,12 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
         staging_dir=make_stage(tmp_path), tag=TAG, target_commit=TARGET, executor=executor
     )
     assert evidence.release_id == 901
-    assert evidence.assets == {"NekoFamilyProxy-Setup.exe": 10, "NekoLauncher.exe": 11, "NekoUpdater.exe": 12, "NekoProxyCore.zip": 13, "release-v2.json": 14}
+    assert evidence.assets == {
+        "release-v2.json": 10,
+        "NekoLauncher.exe": 11,
+        "NekoUpdater.exe": 12,
+        "NekoProxyCore.zip": 13,
+    }
     assert evidence.dispatch_command == (
         f"gh workflow run release.yml --ref {TAG} -f publish_release=true -f release_id=901 "
         f"-f release_tag={TAG} -f expected_target={TARGET}"
@@ -588,3 +602,187 @@ def test_draft_discovery_requires_exactly_one_matching_draft(
             executor=executor,
         )
     assert not any(call[2].endswith("/releases/901") for call in executor.calls if call[:2] == ["gh", "api"])
+
+
+def test_machine_publishing_required_assets_is_exact_four() -> None:
+    module = load_module()
+    assert set(module.REQUIRED_STAGE_ASSETS) == {
+        "release-v2.json",
+        "NekoLauncher.exe",
+        "NekoUpdater.exe",
+        "NekoProxyCore.zip",
+    }
+    assert len(module.REQUIRED_STAGE_ASSETS) == 4
+    assert "NekoFamilyProxy-Setup.exe" not in module.REQUIRED_STAGE_ASSETS
+    assert "NekoFamilyProxy-Installer.exe" not in module.REQUIRED_STAGE_ASSETS
+
+
+def test_staging_rejects_missing_required_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    (stage / "NekoLauncher.exe").unlink()
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError, match="missing"):
+        module.validate_staging_preconditions(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
+        )
+
+
+def test_staging_rejects_installer_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    (stage / "NekoFamilyProxy-Installer.exe").write_bytes(b"installer")
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError):
+        module.validate_staging_preconditions(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
+        )
+
+
+def test_staging_rejects_setup_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    (stage / "NekoFamilyProxy-Setup.exe").write_bytes(b"setup")
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError):
+        module.validate_staging_preconditions(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
+        )
+
+
+def test_staging_rejects_extra_custom_assets(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    (stage / "untrusted_extra.exe").write_bytes(b"bad")
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError, match="extra|forbidden"):
+        module.validate_staging_preconditions(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
+        )
+
+
+def test_staging_rejects_zero_size_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    (stage / "NekoUpdater.exe").write_bytes(b"")
+    executor = FakeExecutor()
+    with pytest.raises(module.StageDraftReleaseError, match="non-empty regular file"):
+        module.validate_staging_preconditions(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
+        )
+
+
+def test_draft_readback_rejects_extra_custom_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    extra = [{"id": 99, "name": "SHA256SUMS.txt", "size": 123}]
+    executor = FakeExecutor(extra_readback_assets=extra)
+    with pytest.raises(module.StageDraftReleaseError, match="unexpected extra asset"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_draft_readback_rejects_setup_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    extra = [{"id": 99, "name": "NekoFamilyProxy-Setup.exe", "size": 500}]
+    executor = FakeExecutor(extra_readback_assets=extra)
+    with pytest.raises(module.StageDraftReleaseError, match="unexpected extra asset"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_draft_readback_rejects_installer_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    extra = [{"id": 99, "name": "NekoFamilyProxy-Installer.exe", "size": 500}]
+    executor = FakeExecutor(extra_readback_assets=extra)
+    with pytest.raises(module.StageDraftReleaseError, match="unexpected extra asset"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_draft_readback_rejects_missing_required_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    # Only 3 assets returned in readback
+    three_assets = [
+        {"id": 10, "name": "release-v2.json", "size": (stage / "release-v2.json").stat().st_size},
+        {"id": 11, "name": "NekoLauncher.exe", "size": (stage / "NekoLauncher.exe").stat().st_size},
+        {"id": 12, "name": "NekoUpdater.exe", "size": (stage / "NekoUpdater.exe").stat().st_size},
+    ]
+    executor = FakeExecutor(readback_assets=three_assets)
+    with pytest.raises(module.StageDraftReleaseError, match="does not contain each required asset exactly once"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_draft_readback_rejects_duplicate_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    dup_assets = [
+        {"id": 10, "name": "release-v2.json", "size": (stage / "release-v2.json").stat().st_size},
+        {"id": 11, "name": "NekoLauncher.exe", "size": (stage / "NekoLauncher.exe").stat().st_size},
+        {"id": 12, "name": "NekoUpdater.exe", "size": (stage / "NekoUpdater.exe").stat().st_size},
+        {"id": 13, "name": "NekoProxyCore.zip", "size": (stage / "NekoProxyCore.zip").stat().st_size},
+        {"id": 14, "name": "NekoLauncher.exe", "size": (stage / "NekoLauncher.exe").stat().st_size},
+    ]
+    executor = FakeExecutor(readback_assets=dup_assets)
+    with pytest.raises(module.StageDraftReleaseError, match="Duplicate or invalid required asset binding"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_draft_readback_rejects_zero_size_asset(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    zero_assets = [
+        {"id": 10, "name": "release-v2.json", "size": (stage / "release-v2.json").stat().st_size},
+        {"id": 11, "name": "NekoLauncher.exe", "size": 0},
+        {"id": 12, "name": "NekoUpdater.exe", "size": (stage / "NekoUpdater.exe").stat().st_size},
+        {"id": 13, "name": "NekoProxyCore.zip", "size": (stage / "NekoProxyCore.zip").stat().st_size},
+    ]
+    executor = FakeExecutor(readback_assets=zero_assets)
+    with pytest.raises(module.StageDraftReleaseError, match="Invalid or mismatched required asset size"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_draft_readback_rejects_invalid_asset_id(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(tmp_path)
+    bad_id_assets = [
+        {"id": 10, "name": "release-v2.json", "size": (stage / "release-v2.json").stat().st_size},
+        {"id": "not_an_int", "name": "NekoLauncher.exe", "size": (stage / "NekoLauncher.exe").stat().st_size},
+        {"id": 12, "name": "NekoUpdater.exe", "size": (stage / "NekoUpdater.exe").stat().st_size},
+        {"id": 13, "name": "NekoProxyCore.zip", "size": (stage / "NekoProxyCore.zip").stat().st_size},
+    ]
+    executor = FakeExecutor(readback_assets=bad_id_assets)
+    with pytest.raises(module.StageDraftReleaseError, match="Duplicate or invalid required asset binding"):
+        module.stage_draft_release(
+            staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
+        )
+
+
+def test_machine_release_notes_point_to_installer_repository() -> None:
+    module = load_module()
+    notes = module.build_machine_release_notes("v5.1.2")
+    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in notes
+    assert "v5.1.2" in notes
+    assert "machine-update channel" in notes
+
+
+def test_build_release_payload_has_machine_notes() -> None:
+    module = load_module()
+    payload = module.build_release_payload("v5.1.2", "sha_123")
+    assert payload["tag_name"] == "v5.1.2"
+    assert payload["target_commitish"] == "sha_123"
+    assert not payload["draft"]
+    assert "body" in payload
+    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in payload["body"]

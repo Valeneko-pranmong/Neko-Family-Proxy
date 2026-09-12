@@ -204,3 +204,94 @@ def test_execute_publish_token_failure_before_promotion(monkeypatch):
             pytest.fail("Should not execute curl if token fetch fails")
         if args[0:3] == ["gh", "release", "edit"]:
             pytest.fail("Should not promote if token fetch fails")
+
+
+def test_execute_publish_passes_machine_release_notes(monkeypatch):
+    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence
+
+    stage_kwargs = {}
+
+    def mock_run(runner, args):
+        if args[0:3] == ["gh", "release", "view"]:
+            raise Exception("Not found")
+        if args[0] == "gh" and args[1] == "api":
+            return '{"id": 123, "tag_name": "v5.1.5", "target_commitish": "sha_123", "draft": true, "assets": []}'
+        return "sha_123"
+
+    monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
+    monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
+
+    def mock_stage(*args, **kwargs):
+        nonlocal stage_kwargs
+        stage_kwargs = kwargs
+        return StagedDraftEvidence(
+            release_id=123, tag_name="v5.1.5", target_commit="sha_123", assets={}, dispatch_command=""
+        )
+    monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
+
+    execute_publish("v5.1.5", "sha_123")
+    assert "notes" in stage_kwargs
+    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in stage_kwargs["notes"]
+    assert "v5.1.5" in stage_kwargs["notes"]
+
+
+def test_execute_publish_rejects_extra_asset_before_promotion(monkeypatch):
+    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence, StageDraftReleaseError
+    import pytest
+
+    def mock_run(runner, args):
+        if args[0:3] == ["gh", "release", "view"]:
+            raise Exception("Not found")
+        if args[0] == "gh" and args[1] == "api":
+            # pre_promote returns an extra asset not in evidence.assets
+            return '{"id": 123, "tag_name": "v5.1.5", "target_commitish": "sha_123", "draft": true, "assets": [{"name": "allowed.zip", "id": 99, "size": 100}, {"name": "extra.exe", "id": 100, "size": 200}]}'
+        return "sha_123"
+
+    monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
+    monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
+
+    def mock_stage(*args, **kwargs):
+        return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"allowed.zip": 99}, "")
+    monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
+
+    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake")
+
+    with pytest.raises(StageDraftReleaseError, match="mismatch|extra|unexpected"):
+        execute_publish("v5.1.5", "sha_123")
+
+
+def test_execute_publish_gate3_rejects_extra_asset(monkeypatch):
+    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence, StageDraftReleaseError
+    import pytest
+
+    def mock_run(runner, args):
+        if args[0:3] == ["gh", "release", "view"]:
+            raise Exception("Not found")
+        if args[0] == "gh" and args[1] == "api":
+            if "latest" in args[2]:
+                # Latest release contains extra asset
+                return '{"id": 123, "tag_name": "v5.1.5", "assets": [{"name": "allowed.zip", "id": 99, "size": 100}, {"name": "Setup.exe", "id": 101, "size": 500}]}'
+            return '{"id": 123, "tag_name": "v5.1.5", "target_commitish": "sha_123", "draft": true, "assets": [{"name": "allowed.zip", "id": 99, "size": 100}]}'
+        return "sha_123"
+
+    monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
+    monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
+
+    t = 0
+    def fake_time():
+        nonlocal t
+        t += 301
+        return t
+    monkeypatch.setattr("time.time", fake_time)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    def mock_stage(*args, **kwargs):
+        return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"allowed.zip": 99}, "")
+    monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
+
+    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake")
+
+    with pytest.raises(StageDraftReleaseError, match="Gate3 failed"):
+        execute_publish("v5.1.5", "sha_123")
