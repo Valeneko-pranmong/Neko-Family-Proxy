@@ -1629,7 +1629,7 @@ def test_a18_native_minimize_respects_hide_to_tray_preference() -> None:
 def test_a18_window_contract_uses_compact_dashboard_and_exact_title() -> None:
     from pathlib import Path
     source = Path(__file__).parents[2].joinpath("src", "neko_launcher", "ui", "app_window.py").read_text(encoding="utf-8")
-    assert 'self.root.title("NEKO FAMILY PROXY")' in source
+    assert 'self.root.title(get_main_window_title())' in source
     assert 'self.root.minsize(480, 580)' in source
     assert 'self.root.geometry("500x640")' in source
     assert 'controls.pack(side="right", anchor="ne")' in source
@@ -2087,3 +2087,92 @@ def test_bound_target_observation_failure_preserves_state(
     window._on_game_detected(True)
     assert window._controller.state.game_process_running is True
     assert getattr(window, "_bound_target", None) == target
+
+
+# ======================================================================
+# U1_CANONICAL_WINDOW_TITLE
+# ======================================================================
+
+def test_u1_get_main_window_title_formats_product_identity_and_canonical_version() -> None:
+    from neko_launcher import __version__
+    from neko_launcher.ui.app_window import get_main_window_title
+
+    title = get_main_window_title()
+    assert title.startswith("NEKO FAMILY PROXY")
+    assert f"v{__version__}" in title
+    assert title == f"NEKO FAMILY PROXY v{__version__}"
+
+
+def test_u1_get_main_window_title_propagates_version_changes_without_ui_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import neko_launcher
+    from neko_launcher.ui.app_window import get_main_window_title
+
+    monkeypatch.setattr(neko_launcher, "__version__", "5.1.3")
+    assert get_main_window_title() == "NEKO FAMILY PROXY v5.1.3"
+
+    monkeypatch.setattr(neko_launcher, "__version__", "6.0.0a1")
+    assert get_main_window_title() == "NEKO FAMILY PROXY v6.0.0a1"
+
+
+def test_u1_app_window_source_uses_canonical_version_authority_not_hardcoded_string() -> None:
+    from pathlib import Path
+    import re
+
+    source = (
+        Path(__file__)
+        .parents[2]
+        .joinpath("src", "neko_launcher", "ui", "app_window.py")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "self.root.title(get_main_window_title())" in source
+
+    title_calls = re.findall(r"self\.root\.title\((.*?)\)", source)
+    assert title_calls, "self.root.title(...) call not found in app_window.py"
+    for call in title_calls:
+        assert not re.search(r'["\']\s*NEKO FAMILY PROXY\s+v?\d+\.\d+.*["\']', call), (
+            f"Hardcoded version string found in title call: {call}"
+        )
+
+
+def test_u1_app_window_initialization_sets_canonical_window_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import Mock
+    import customtkinter as ctk
+    import neko_launcher
+    from neko_launcher.ui.app_window import AppWindow
+
+    real_root = ctk.CTk()
+    real_root.withdraw()
+    try:
+        title_calls: list[str] = []
+        original_title = real_root.title
+
+        def record_title(t=None):
+            if t is not None:
+                title_calls.append(t)
+            return original_title(t)
+
+        monkeypatch.setattr(real_root, "title", record_title)
+        monkeypatch.setattr("customtkinter.CTk", lambda: real_root)
+        monkeypatch.setattr(AppWindow, "_build_layout", lambda self, *args, **kwargs: None)
+        monkeypatch.setattr(AppWindow, "_submit", lambda self, *args, **kwargs: None)
+
+        mock_controller = Mock()
+        mock_controller.state = Mock()
+        mock_service = Mock()
+        mock_bus = Mock()
+
+        _ = AppWindow(
+            controller=mock_controller,
+            service=mock_service,
+            event_bus=mock_bus,
+        )
+
+        expected_title = f"NEKO FAMILY PROXY v{neko_launcher.__version__}"
+        assert title_calls == [expected_title]
+    finally:
+        real_root.destroy()

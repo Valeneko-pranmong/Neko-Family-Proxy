@@ -83,6 +83,18 @@ from .views.recovery_view import RecoveryView
 HEARTBEAT_INTERVAL_MS = 30_000
 RECONNECT_BACKOFF_SECONDS = (1.0, 3.0, 8.0)
 PUBLIC_PROXY_STATUS_DEADLINE_SECONDS = 5.0
+MAIN_WINDOW_TITLE_PREFIX = "NEKO FAMILY PROXY"
+
+
+def get_main_window_title(version: str | None = None) -> str:
+    """Return the canonical window title containing product identity and application version."""
+    if version is None:
+        import neko_launcher
+
+        version = neko_launcher.__version__
+    ver = version if version.startswith("v") else f"v{version}"
+    return f"{MAIN_WINDOW_TITLE_PREFIX} {ver}"
+
 
 
 def observe_exact_pso2() -> TargetProcess | None:
@@ -194,7 +206,7 @@ class AppWindow:
 
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.root.title("NEKO FAMILY PROXY")
+        self.root.title(get_main_window_title())
         self.root.resizable(True, True)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
