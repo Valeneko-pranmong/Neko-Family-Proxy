@@ -177,7 +177,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
 
     # Need to skip core verify
-    monkeypatch.setattr(release_controller, "verify_and_fetch_core", lambda: (tmp_path/"core.zip", "hash", 100, "ident"))
+    monkeypatch.setattr(release_controller, "verify_and_fetch_core", lambda *a, **k: (tmp_path/"core.zip", "hash", 100, "ident", {"auth":"yes"}))
     tmp_core = tmp_path / "core.zip"
     tmp_core.write_text("dummy")
 

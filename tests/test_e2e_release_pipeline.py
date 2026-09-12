@@ -145,7 +145,12 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         if args[0:3] == ["gh", "release", "view"]:
             return subprocess.CompletedProcess(args, 0, stdout='{"targetCommitish": "fake"}', stderr="")
         if args[0:2] == ["gh", "api"]:
-            return subprocess.CompletedProcess(args, 0, stdout='{"id": 123, "tag_name": "v5.1.0", "target_commitish": "1111111111111111111111111111111111111111", "draft": true, "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Setup.exe", "id": 5, "size": 9}]}', stderr="")
+            if kwargs.get("stdout"):
+                if args[2].endswith("2"): # manifest id
+                    kwargs["stdout"].write(signed_json.encode())
+                elif args[2].endswith("1"): # core id
+                    kwargs["stdout"].write(fake_core_path.read_bytes())
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if args[0] == "curl":
             Path(args[3]).write_text(signed_json)
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
@@ -174,6 +179,12 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     def fake_check_output(args, **kwargs):
         executed_commands.append(args)
+        if args[0:2] == ["gh", "api"] and "releases/tags" in args[2]:
+            ret = json.dumps({
+                "id": 123, "tag_name": "v5.1.0", "target_commitish": "1111111111111111111111111111111111111111", "draft": False,
+                "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Setup.exe", "id": 5, "size": 9}]
+            })
+            return ret if kwargs.get("text") else ret.encode()
         if args[0:3] == ["gh", "release", "view"]:
             ret = json.dumps(
                 {"assets": [{"name": "release-v2.json", "url": "http://fake"}]}

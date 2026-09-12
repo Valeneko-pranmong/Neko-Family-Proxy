@@ -28,56 +28,112 @@ def _get_sha256(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest().lower()
 
-def verify_and_fetch_core() -> tuple[Path, str, int, str]:
-    print("Fetching and verifying v5.1.2 Core authority...")
+def verify_and_fetch_core(stable_tag: str, staging_dir: Path) -> tuple[Path, str, int, str, dict]:
+    print(f"Fetching and verifying {stable_tag} Core authority...")
 
     from neko_launcher.updater.core_manifest_verifier import (
         verify_canonical_core_bundle,
     )
     from neko_launcher.updater.zip_extractor import extract_core_bundle
 
-    cmd = ["gh", "release", "view", "v5.1.2", "--json", "assets"]
-    out = subprocess.check_output(cmd)
-    assets = json.loads(out)["assets"]
+    # 1. Query GitHub release by exact stable tag
+    cmd = ["gh", "api", f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/tags/{stable_tag}"]
+    try:
+        out = subprocess.check_output(cmd)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to fetch release {stable_tag}: {e}")
 
-    release_json_url = next(a["url"] for a in assets if a["name"] == "release-v2.json")
+    release_data = json.loads(out)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
-        release_json_path = tmp_dir / "release-v2.json"
-        subprocess.run(["curl", "-sSL", "-o", str(release_json_path), release_json_url], check=True)
+    # 2. Require exactly one matching non-draft non-prerelease accepted release
+    if release_data.get("draft") or release_data.get("prerelease"):
+        raise RuntimeError(f"Release {stable_tag} is draft or prerelease.")
 
-        manifest_doc = json.loads(release_json_path.read_text(encoding="utf-8"))
+    release_id = release_data["id"]
 
-        pub_keys = {"neko-update-prod-1": PRODUCTION_RELEASE_PUBLIC_KEYS["neko-update-prod-1"]}
-        release_set, _ = verify_release_envelope_v2(manifest_doc, pub_keys)
+    # 3. Require unique release-v2.json + NekoProxyCore.zip assets with numeric asset IDs
+    release_json_asset = None
+    core_zip_asset = None
 
-        core_comp = release_set.components["core"]
-        expected_hash = core_comp.artifact_sha256.lower()
-        expected_size = core_comp.artifact_size
-        installed_identity = core_comp.installed_identity_sha256.lower()
+    for asset in release_data.get("assets", []):
+        if asset["name"] == "release-v2.json":
+            if release_json_asset is not None:
+                raise RuntimeError("Duplicate release-v2.json assets found.")
+            release_json_asset = asset
+        elif asset["name"] == "NekoProxyCore.zip":
+            if core_zip_asset is not None:
+                raise RuntimeError("Duplicate NekoProxyCore.zip assets found.")
+            core_zip_asset = asset
 
-    local_zip = Path("E:/Github/artifacts/v5.1.0-one-click-installer/NekoProxyCore.zip")
-    if not local_zip.exists():
-        raise RuntimeError("Local Core zip missing.")
+    if not release_json_asset or not core_zip_asset:
+        raise RuntimeError("Missing required assets in release.")
 
-    actual_size = local_zip.stat().st_size
-    actual_hash = _get_sha256(local_zip)
+    manifest_asset_id = release_json_asset["id"]
+    core_asset_id = core_zip_asset["id"]
+
+    # 4. Download BOTH by immutable asset ID into staging
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    release_json_path = staging_dir / "release-v2.json"
+    core_zip_path = staging_dir / "NekoProxyCore.zip"
+
+    subprocess.run([
+        "gh", "api",
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{manifest_asset_id}",
+        "-H", "Accept: application/octet-stream"
+    ], stdout=release_json_path.open('wb'), check=True)
+
+    subprocess.run([
+        "gh", "api",
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{core_asset_id}",
+        "-H", "Accept: application/octet-stream"
+    ], stdout=core_zip_path.open('wb'), check=True)
+
+    manifest_doc = json.loads(release_json_path.read_text(encoding="utf-8"))
+    pub_keys = {"neko-update-prod-1": PRODUCTION_RELEASE_PUBLIC_KEYS["neko-update-prod-1"]}
+    release_set, _ = verify_release_envelope_v2(manifest_doc, pub_keys)
+
+    # 6. Require channel stable and that Core component artifact_id is NekoProxyCore.zip
+    if release_set.channel != "stable":
+        raise RuntimeError("Release manifest channel is not stable.")
+
+    if "core" not in release_set.components:
+        raise RuntimeError("Core component missing from release manifest.")
+
+    core_comp = release_set.components["core"]
+    if core_comp.artifact_id != "NekoProxyCore.zip":
+        raise RuntimeError(f"Core artifact_id mismatch: {core_comp.artifact_id}")
+
+    expected_hash = core_comp.artifact_sha256.lower()
+    expected_size = core_comp.artifact_size
+    installed_identity = core_comp.installed_identity_sha256.lower()
+
+    # 7. Compare downloaded Core SHA256+size to signed component
+    actual_size = core_zip_path.stat().st_size
+    actual_hash = _get_sha256(core_zip_path)
 
     if actual_size != expected_size or actual_hash != expected_hash:
-        raise RuntimeError("Local Core zip does not match v5.1.2 signature.")
+        raise RuntimeError(f"Downloaded Core zip does not match {stable_tag} signature.")
 
+    # 8. Run canonical Core bundle verifier + installed identity check
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        extract_core_bundle(local_zip, tmp_dir)
+        extract_core_bundle(core_zip_path, tmp_dir)
         verification = verify_canonical_core_bundle(tmp_dir)
         if not verification.valid:
             raise RuntimeError(f"Core bundle verification failed: {verification.error}")
         if verification.manifest_sha256 != installed_identity:
             raise RuntimeError("Core manifest installed identity mismatch inside zip.")
 
-    print("v5.1.2 Core verified successfully.")
-    return local_zip, actual_hash, actual_size, installed_identity
+    print(f"{stable_tag} Core verified successfully.")
+
+    provenance = {
+        "stable_tag": stable_tag,
+        "release_id": release_id,
+        "manifest_asset_id": manifest_asset_id,
+        "core_asset_id": core_asset_id
+    }
+
+    return core_zip_path, actual_hash, actual_size, installed_identity, provenance
 
 def process_accepted_commits(commit: str, run_id: int):
     # 1. Verify run-id and commit
@@ -211,8 +267,8 @@ def process_accepted_commits(commit: str, run_id: int):
     subprocess.run(["uv", "run", "--extra", "release", "pyinstaller", "NekoLauncher.spec"], cwd=str(source_dir / "launcher"), check=True, env=env)
     subprocess.run(["uv", "run", "--extra", "release", "pyinstaller", "NekoUpdater.spec"], cwd=str(source_dir / "launcher"), check=True, env=env)
 
-    # 6. Core from v5.1.2 signed authority
-    core_zip, core_hash, core_size, installed_identity = verify_and_fetch_core()
+    # 6. Core from signed authority
+    core_zip, core_hash, core_size, installed_identity, core_provenance = verify_and_fetch_core(stable, staging_base / "evidence" / "core_authority")
 
     publish_dir = staging_base / "publish"
     publish_dir.mkdir(exist_ok=True)
@@ -350,6 +406,7 @@ def process_accepted_commits(commit: str, run_id: int):
         "injected_files": ["launcher/src/neko_launcher/__init__.py", "launcher/pyproject.toml"],
         "sequence": sequence,
         "release_id": release_id,
+        "core_authority": core_provenance,
         "assets": {
             "launcher": {"sha256": launcher_hash, "size": final_launcher_exe.stat().st_size},
             "updater": {"sha256": updater_hash, "size": final_updater_exe.stat().st_size},
