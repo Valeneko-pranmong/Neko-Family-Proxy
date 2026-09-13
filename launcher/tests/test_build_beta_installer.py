@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -255,29 +254,16 @@ def test_verify_core_install_no_stale_fixed_authority_in_script() -> None:
     )
 
 
-def _find_approved_v2ray() -> Path | None:
-    candidates = [
-        Path(r"E:\Github\NekoProxyCore\Storage\v2ray-sn.exe"),
-        Path(r"E:\Github\archive\release-history\candidate-5.1.0-stable\core\bin\v2ray-sn.exe"),
-        Path(r"E:\Github\artifacts\v5.1.0-clean-candidate\attempt-1\payload\CoreBundle\bin\v2ray-sn.exe"),
-    ]
-    for c in candidates:
-        if c.is_file():
-            h = hashlib.sha256()
-            with open(c, "rb") as f:
-                for chunk in iter(lambda: f.read(1 << 20), b""):
-                    h.update(chunk)
-            if h.hexdigest() == "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff":
-                return c
-    return None
-
-
-def _setup_verified_core_dir(core_dir: Path, source_commit: str, approved_v2ray: Path) -> None:
+def _setup_verified_core_dir(
+    core_dir: Path,
+    source_commit: str,
+    v2ray_bytes: bytes,
+    v2ray_hash: str,
+) -> None:
     bin_dir = core_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     v2ray_target = bin_dir / "v2ray-sn.exe"
-    shutil.copyfile(approved_v2ray, v2ray_target)
-    v2ray_hash = "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
+    v2ray_target.write_bytes(v2ray_bytes)
 
     (core_dir / "runtime-settings.nkps").write_bytes(b"nkps-content")
 
@@ -285,14 +271,33 @@ def _setup_verified_core_dir(core_dir: Path, source_commit: str, approved_v2ray:
         "source_commit": source_commit,
         "v2ray_sn_exe_hash": v2ray_hash,
         "files": {
-            "bin/v2ray-sn.exe": v2ray_hash
-        }
+            "bin/v2ray-sn.exe": v2ray_hash,
+        },
     }
     (core_dir / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
-def _run_verify_ps1(core_dir: Path, authority: str | None = None, param_flag: str = "-ExpectedCommit") -> tuple[int, str]:
-    script_path = str(REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1")
+def _run_verify_ps1(
+    core_dir: Path,
+    authority: str | None = None,
+    param_flag: str = "-ExpectedCommit",
+    expected_v2ray_hash: str | None = None,
+) -> tuple[int, str]:
+    production_script = REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1"
+    if expected_v2ray_hash is not None:
+        script_text = production_script.read_text(encoding="utf-8")
+        test_script = core_dir.parent / "verify-core-install.test.ps1"
+        test_script.write_text(
+            script_text.replace(
+                "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff",
+                expected_v2ray_hash,
+            ),
+            encoding="utf-8",
+        )
+        script_path = str(test_script)
+    else:
+        script_path = str(production_script)
+
     cmd = [
         "powershell.exe",
         "-NoProfile",
@@ -310,50 +315,67 @@ def _run_verify_ps1(core_dir: Path, authority: str | None = None, param_flag: st
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 
-def test_post_install_verifier_accepts_matching_candidate_authority_and_rejects_mismatch(tmp_path: Path) -> None:
-    approved_v2ray = _find_approved_v2ray()
-    assert approved_v2ray is not None, "approved v2ray-sn.exe must exist on test machine"
+def test_production_approved_v2ray_sha256_pins_remain_intact() -> None:
+    expected_pin = "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
+    module = _load_builder()
+    assert module.APPROVED_V2RAY_SHA256 == expected_pin, (
+        "Production APPROVED_V2RAY_SHA256 in build_beta_installer.py must remain unchanged"
+    )
+    ps1_text = (REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert f"$v2rayExpected = '{expected_pin}'" in ps1_text, (
+        "verify-core-install.ps1 must hardcode approved production v2ray hash"
+    )
 
+
+def test_post_install_verifier_accepts_matching_candidate_authority_and_rejects_mismatch(tmp_path: Path) -> None:
     core_dir = tmp_path / "ProxyCore"
     candidate_commit = "6ab94bb"
-    _setup_verified_core_dir(core_dir, candidate_commit, approved_v2ray)
+    v2ray_bytes = b"synthetic-v2ray-sn-fixture-bytes-for-authority-check"
+    v2ray_hash = _digest(v2ray_bytes)
+    _setup_verified_core_dir(core_dir, candidate_commit, v2ray_bytes, v2ray_hash)
 
     # 1. Matching candidate authority via -ExpectedCommit passes
-    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-ExpectedCommit")
+    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-ExpectedCommit", expected_v2ray_hash=v2ray_hash)
     assert rc == 0, f"Expected 0 on matching authority, got {rc}: {out}"
     assert "PASS: core manifest verified" in out
 
     # 2. Matching candidate authority via -CoreAuthority alias passes
-    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-CoreAuthority")
+    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-CoreAuthority", expected_v2ray_hash=v2ray_hash)
     assert rc == 0, f"Expected 0 on matching alias authority, got {rc}: {out}"
     assert "PASS: core manifest verified" in out
 
     # 3. Old stale fixed authority (33f97ae...) fails closed with exit code 4
     stale_commit = "33f97ae0110075089f39b1e123890f931417d907"
-    rc, out = _run_verify_ps1(core_dir, stale_commit, "-ExpectedCommit")
+    rc, out = _run_verify_ps1(core_dir, stale_commit, "-ExpectedCommit", expected_v2ray_hash=v2ray_hash)
     assert rc == 4, f"Expected 4 on stale authority mismatch, got {rc}: {out}"
     assert "FAIL: source_commit mismatch" in out
 
     # 4. Arbitrary different authority fails closed with exit code 4
-    rc, out = _run_verify_ps1(core_dir, "0000000000000000000000000000000000000000", "-ExpectedCommit")
+    rc, out = _run_verify_ps1(core_dir, "0000000000000000000000000000000000000000", "-ExpectedCommit", expected_v2ray_hash=v2ray_hash)
     assert rc == 4, f"Expected 4 on authority mismatch, got {rc}: {out}"
     assert "FAIL: source_commit mismatch" in out
 
     # 5. Missing / omitted authority fails closed with exit code 4
-    rc, out = _run_verify_ps1(core_dir, None)
+    rc, out = _run_verify_ps1(core_dir, None, expected_v2ray_hash=v2ray_hash)
     assert rc == 4, f"Expected 4 on omitted authority, got {rc}: {out}"
     assert "FAIL: source_commit mismatch" in out
 
     # 6. Whitespace authority fails closed with exit code 4
-    rc, out = _run_verify_ps1(core_dir, "   ", "-ExpectedCommit")
+    rc, out = _run_verify_ps1(core_dir, "   ", "-ExpectedCommit", expected_v2ray_hash=v2ray_hash)
     assert rc == 4, f"Expected 4 on whitespace authority, got {rc}: {out}"
     assert "FAIL: source_commit mismatch" in out
 
+    # 7. Hash mismatch fails closed with exit code 7
+    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-ExpectedCommit", expected_v2ray_hash="0" * 64)
+    assert rc == 7, f"Expected 7 on v2ray hash mismatch, got {rc}: {out}"
+    assert "FAIL: v2ray-sn.exe hash mismatch" in out
 
-def test_candidate_build_record_and_post_install_verification_agree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    approved_v2ray = _find_approved_v2ray()
-    assert approved_v2ray is not None, "approved v2ray-sn.exe must exist on test machine"
 
+def test_candidate_build_record_and_post_install_verification_agree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     module = _load_builder()
     parse_args, build_candidate = _candidate_api(module)
 
@@ -369,20 +391,22 @@ def test_candidate_build_record_and_post_install_verification_agree(tmp_path: Pa
     (core / "runtime-settings.nkps").write_bytes(b"sealed")
     (prereqs / "windowsdesktop-runtime-6.0.36-win-x64.exe").write_bytes(b"dotnet")
 
-    shutil.copyfile(approved_v2ray, core / "bin" / "v2ray-sn.exe")
-    v2ray_hash = "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
+    v2ray_bytes = b"synthetic-v2ray-sn-for-build-record-agreement"
+    v2ray_hash = _digest(v2ray_bytes)
+    (core / "bin" / "v2ray-sn.exe").write_bytes(v2ray_bytes)
 
     manifest = {
         "source_commit": candidate_authority,
         "v2ray_sn_exe_hash": v2ray_hash,
         "files": {
-            "bin/v2ray-sn.exe": v2ray_hash
-        }
+            "bin/v2ray-sn.exe": v2ray_hash,
+        },
     }
     (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     real_subprocess_run = subprocess.run
     iscc_invoked_args = []
+
     def mock_find_iscc() -> str:
         return "mock_iscc.exe"
 
@@ -429,14 +453,19 @@ def test_candidate_build_record_and_post_install_verification_agree(tmp_path: Pa
     assert f"/DCoreAuthority={candidate_authority}" in iscc_invoked_args
 
     # Verification of the staged CoreBundle using the build record's core_authority passes
-    rc, out = _run_verify_ps1(core, record["core_authority"])
+    rc, out = _run_verify_ps1(core, record["core_authority"], expected_v2ray_hash=v2ray_hash)
     assert rc == 0, f"Expected 0 with record authority, got {rc}: {out}"
     assert "PASS: core manifest verified" in out
 
     # Verification with mismatched authority fails closed with exit code 4
-    rc, out = _run_verify_ps1(core, "different_authority")
+    rc, out = _run_verify_ps1(core, "different_authority", expected_v2ray_hash=v2ray_hash)
     assert rc == 4, f"Expected 4 with mismatched authority, got {rc}: {out}"
     assert "FAIL: source_commit mismatch" in out
+
+    # Verification with mismatched v2ray hash fails closed with exit code 7
+    rc, out = _run_verify_ps1(core, record["core_authority"], expected_v2ray_hash="0" * 64)
+    assert rc == 7, f"Expected 7 with mismatched v2ray hash, got {rc}: {out}"
+    assert "FAIL: v2ray-sn.exe hash mismatch" in out
 
 
 def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
