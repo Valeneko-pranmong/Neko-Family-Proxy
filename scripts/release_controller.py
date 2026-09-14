@@ -28,18 +28,19 @@ from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: 
 from scripts.ci_change_classifier import should_trigger  # noqa: E402
 from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
 from scripts.publish_atomic_release import (  # noqa: E402
+    CANONICAL_MACHINE_REPO,
     CANONICAL_REPO,
     CommandExecutor,
     StageDraftReleaseError,
-    StagedDraftEvidence,
     _SubprocessExecutor,
+    _hosted_verify_machine_channel,
     _run,
     build_machine_release_notes,
+    download_github_release_asset,
     stage_draft_release,
     validate_staging_preconditions,
 )
 from scripts.publish_installer_release import (  # noqa: E402
-    CANONICAL_MACHINE_REPO,
     REQUIRED_INSTALLER_ASSET,
     InstallerPublishError,
     StagedInstallerDraftEvidence,
@@ -47,7 +48,6 @@ from scripts.publish_installer_release import (  # noqa: E402
     stage_installer_draft_release,
     validate_installer_staging_preconditions,
 )
-from scripts.verify_github_release_assets import verify_github_release_assets  # noqa: E402
 from scripts.verify_installer_release_assets import (  # noqa: E402
     InstallerReleaseVerificationError,
     verify_installer_release_assets,
@@ -364,7 +364,12 @@ def validate_installer_repo_configuration(repo: str | None) -> str:
         )
     cleaned = str(repo).strip()
     normalized = re.sub(r"\.git$", "", cleaned, flags=re.IGNORECASE)
-    if _contains_machine_repo(cleaned) or _contains_machine_repo(normalized):
+    if (
+        _contains_machine_repo(cleaned)
+        or _contains_machine_repo(normalized)
+        or cleaned.lower() in (CANONICAL_REPO.lower(), CANONICAL_MACHINE_REPO.lower())
+        or normalized.lower() in (CANONICAL_REPO.lower(), CANONICAL_MACHINE_REPO.lower())
+    ):
         raise ValueError(
             f"Installer repository cannot be the canonical machine repository ({CANONICAL_MACHINE_REPO})"
         )
@@ -709,87 +714,6 @@ def verify_and_fetch_core(
     )
 
 
-def _hosted_verify_machine_channel(
-    evidence: StagedDraftEvidence,
-    staging_dir: Path,
-    expected_tag: str,
-    expected_target: str,
-    runner: CommandExecutor,
-) -> None:
-    with tempfile.TemporaryDirectory(prefix="neko-hosted-verify-machine-") as tmpdir:
-        tmp_path = Path(tmpdir)
-        for name, asset_id in evidence.assets.items():
-            out_path = tmp_path / name
-            url = f"https://api.github.com/repos/{CANONICAL_REPO}/releases/assets/{asset_id}"
-            curl = [
-                "curl",
-                "-sSL",
-                "-H",
-                "Authorization: Bearer ***",
-                "-H",
-                "Accept: application/octet-stream",
-                "-o",
-                str(out_path),
-                url,
-            ]
-            _run(runner, curl)
-
-            local_path = staging_dir / name
-            if out_path.stat().st_size != local_path.stat().st_size:
-                raise StageDraftReleaseError(f"Downloaded asset {name} size mismatch")
-
-            hosted_digest = hashlib.sha256(out_path.read_bytes()).hexdigest().lower()
-            local_digest = hashlib.sha256(local_path.read_bytes()).hexdigest().lower()
-            if hosted_digest != local_digest:
-                raise StageDraftReleaseError(f"Downloaded asset {name} digest mismatch")
-
-        release_json_raw = _run(
-            runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"]
-        )
-        release_json_path = tmp_path / "release.json"
-        release_json_path.write_text(release_json_raw, encoding="utf-8")
-
-        try:
-            verify_github_release_assets(
-                release_json_path=release_json_path,
-                download_dir=tmp_path,
-                expected_tag=expected_tag,
-                expected_target=expected_target,
-                require_draft=True,
-            )
-        except Exception as e:
-            raise StageDraftReleaseError(f"Hosted machine release verification failed: {e}") from e
-
-        pre_promote_raw = _run(
-            runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"]
-        )
-        pre_promote = json.loads(pre_promote_raw)
-
-        if (
-            pre_promote.get("tag_name") != expected_tag
-            or pre_promote.get("target_commitish", "").lower() != expected_target.lower()
-            or pre_promote.get("draft") is not True
-        ):
-            raise StageDraftReleaseError("Machine draft state mutated before promotion")
-
-        current_assets = {
-            a.get("name"): {"id": a.get("id"), "size": a.get("size")}
-            for a in pre_promote.get("assets", [])
-            if isinstance(a, dict)
-        }
-        if set(current_assets.keys()) != set(evidence.assets.keys()):
-            raise StageDraftReleaseError(
-                f"Machine draft assets mutated before promotion (unexpected: {set(current_assets.keys()) - set(evidence.assets.keys())})"
-            )
-        for name, asset_id in evidence.assets.items():
-            if name not in current_assets:
-                raise StageDraftReleaseError(f"Machine asset {name} missing before promotion")
-            if current_assets[name]["id"] != asset_id:
-                raise StageDraftReleaseError(f"Machine asset {name} ID mutated before promotion")
-            if current_assets[name]["size"] != (staging_dir / name).stat().st_size:
-                raise StageDraftReleaseError(f"Machine asset {name} size mutated before promotion")
-
-
 def _hosted_verify_installer_channel(
     evidence: StagedInstallerDraftEvidence,
     staging_dir: Path,
@@ -801,19 +725,12 @@ def _hosted_verify_installer_channel(
     with tempfile.TemporaryDirectory(prefix="neko-installer-hosted-verify-") as tmpdir:
         tmp_path = Path(tmpdir)
         out_path = tmp_path / REQUIRED_INSTALLER_ASSET
-        url = f"https://api.github.com/repos/{repo}/releases/assets/{evidence.installer_asset_id}"
-        curl = [
-            "curl",
-            "-sSL",
-            "-H",
-            "Authorization: Bearer ***",
-            "-H",
-            "Accept: application/octet-stream",
-            "-o",
-            str(out_path),
-            url,
-        ]
-        _run(runner, curl)
+        download_github_release_asset(
+            runner,
+            repo=repo,
+            asset_id=evidence.installer_asset_id,
+            destination_file=out_path,
+        )
 
         local_file = (
             staging_dir / REQUIRED_INSTALLER_ASSET

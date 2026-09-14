@@ -20,6 +20,9 @@ except ImportError:
 
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "publish_atomic_release.py"
+SCRIPTS_DIR = str(SCRIPT.parent)
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
 TARGET = "b4dab9e9571cbe6d05c6fdb17617137b302856d2"
 TAG = "v5.1.4"
 
@@ -188,6 +191,7 @@ def make_stage(
     sequence: int = 8,
     minimum_supported_sequence: int = 1,
     release_id: str = "stable-0008",
+    version: str = "5.1.4",
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
@@ -205,7 +209,7 @@ def make_stage(
     ):
         data = payloads[name]
         components[component] = {
-            "version": "5.1.4",
+            "version": version,
             "artifact_id": name,
             "artifact_sha256": hashlib.sha256(data).hexdigest(),
             "artifact_size": len(data),
@@ -492,7 +496,7 @@ def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFi
     assert "gh release create" in output and "--draft" in output and "--clobber=false" in output
     assert "--verify-tag" in output
     assert [call[2] for call in executor.calls if call[:2] == ["gh", "api"]] == [
-        f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}"
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/git/ref/tags/{TAG}"
     ]
     assert not any(call[:2] == ["gh", "release"] for call in executor.calls)
 
@@ -533,7 +537,7 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
     create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])
     upload = next(call for call in executor.calls if call[:3] == ["gh", "release", "upload"])
-    canonical_repo = "Valeneko-pranmong/Neko-Family-Proxy"
+    canonical_repo = "Valeneko-pranmong/Neko-Family-Proxy-Updates"
     assert module.CANONICAL_REPO == canonical_repo
     assert create[create.index("--repo") + 1] == canonical_repo
     assert upload[upload.index("--repo") + 1] == canonical_repo
@@ -548,9 +552,9 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert "--clobber=false" in upload
     api_calls = [call for call in executor.calls if call[:2] == ["gh", "api"]]
     assert [call[2] for call in api_calls] == [
-        f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}",
-        "repos/Valeneko-pranmong/Neko-Family-Proxy/releases?per_page=100",
-        "repos/Valeneko-pranmong/Neko-Family-Proxy/releases/901",
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/git/ref/tags/{TAG}",
+        "repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases?per_page=100",
+        "repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases/901",
     ]
     collection_call = api_calls[1]
     assert collection_call[3:] == ["--paginate", "--slurp"]
@@ -791,3 +795,448 @@ def test_build_release_payload_has_machine_notes() -> None:
     assert not payload["draft"]
     assert "body" in payload
     assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in payload["body"]
+
+
+def test_machine_publisher_targets_only_updates_repository() -> None:
+    module = load_module()
+    assert module.CANONICAL_MACHINE_REPO == "Valeneko-pranmong/Neko-Family-Proxy-Updates"
+    assert module.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy-Updates"
+
+
+def _setup_machine_publish_test_env(
+    tmp_path: Path,
+    *,
+    tag: str = "v5.1.2",
+    version: str = "5.1.2",
+    seq: int = 8,
+    rel_id: str = "stable-0008",
+    target: str = TARGET,
+):
+    import base64
+    from authenticated_production_history import (
+        AuthenticatedHistorySnapshot,
+        bootstrap_sequence_ledger,
+    )
+    from production_sequence_ledger import (
+        AuthenticatedProductionBinding,
+        SequenceLedgerEvent,
+        open_authority_session,
+    )
+    from scripts.release_controller import SignedBaselineEvidence
+
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    make_stage(staging_dir, sequence=seq, release_id=rel_id, version=version)
+
+    manifest_bytes = (staging_dir / "release-v2.json").read_bytes()
+    manifest_doc = json.loads(manifest_bytes.decode("utf-8"))
+    payload_bytes = base64.b64decode(manifest_doc["payload_b64"])
+    payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+    env_sha = hashlib.sha256(manifest_bytes).hexdigest()
+
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    binding7 = AuthenticatedProductionBinding(
+        sequence=7,
+        release_id="stable-0007",
+        payload_sha256="7" * 64,
+        envelope_sha256="7" * 64,
+        key_id="neko-update-prod-1",
+    )
+    binding8 = AuthenticatedProductionBinding(
+        sequence=seq,
+        release_id=rel_id,
+        payload_sha256=payload_sha,
+        envelope_sha256=env_sha,
+        key_id="neko-update-prod-1",
+    )
+
+    floor_snapshot = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7},
+        provenance_source_commit_by_sequence={7: "c" * 40},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=7,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _InitProvider:
+        def load(self) -> AuthenticatedHistorySnapshot:
+            return floor_snapshot
+
+    bootstrap_sequence_ledger(
+        ledger_path=ledger_path,
+        history_provider=_InitProvider(),
+        expected_floor=binding7,
+        expected_floor_provenance_source_commit="c" * 40,
+    )
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        reserved_event = SequenceLedgerEvent(
+            record_type="EVENT",
+            sequence=seq,
+            release_id=rel_id,
+            status="RESERVED",
+            version=version,
+            channel="stable",
+            source_commit=target,
+            component_set_sha256="comp" * 16,
+            payload_sha256=None,
+            envelope_sha256=None,
+            key_id=None,
+            timestamp="2026-09-14T00:00:00Z",
+            previous_entry_sha256=verified.latest_entry_sha256,
+        )
+        prev_sha = session.append(reserved_event, expected_previous_sha256=verified.latest_entry_sha256)
+        signed_event = SequenceLedgerEvent(
+            record_type="EVENT",
+            sequence=seq,
+            release_id=rel_id,
+            status="SIGNED",
+            version=version,
+            channel="stable",
+            source_commit=target,
+            component_set_sha256="comp" * 16,
+            payload_sha256=payload_sha,
+            envelope_sha256=env_sha,
+            key_id="neko-update-prod-1",
+            timestamp="2026-09-14T00:01:00Z",
+            previous_entry_sha256=prev_sha,
+        )
+        session.append(signed_event, expected_previous_sha256=prev_sha)
+
+    signed = SignedBaselineEvidence(
+        sequence=seq,
+        release_id=rel_id,
+        component_set_sha256="comp" * 16,
+        payload_sha256=payload_sha,
+        envelope_sha256=env_sha,
+        key_id="neko-update-prod-1",
+        envelope_path=staging_dir / "release-v2.json",
+    )
+
+    return staging_dir, ledger_path, signed, binding7, binding8
+
+
+class _FakeMachinePublishExecutor:
+    def __init__(
+        self,
+        staging_dir: Path,
+        release_id: int = 901,
+        tag: str = "v5.1.2",
+        target: str = TARGET,
+        live_draft: bool = False,
+    ) -> None:
+        self.staging_dir = staging_dir
+        self.release_id = release_id
+        self.tag = tag
+        self.target = target
+        self.live_draft = live_draft
+        self.calls: list[list[str]] = []
+        self.commands: list[list[str]] = self.calls
+        self.assets = {
+            "release-v2.json": 10,
+            "NekoLauncher.exe": 11,
+            "NekoUpdater.exe": 12,
+            "NekoProxyCore.zip": 13,
+        }
+
+    def run(
+        self, args: list[str], *, capture_output: bool = True, stdout: Any = None
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append(args)
+        cmd = args[0]
+        if cmd == "git" and "status" in args:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if cmd == "git" and "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=f"{self.target}\n", stderr="")
+        if cmd == "gh" and len(args) > 2 and args[1] == "release":
+            sub = args[2]
+            if sub in ("create", "upload", "edit"):
+                if sub == "edit" and "--draft=false" in args:
+                    self.live_draft = False
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if cmd == "gh" and len(args) > 2 and args[1] == "api":
+            endpoint = args[2]
+            if "/git/ref/tags/" in endpoint:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout=json.dumps({"object": {"type": "commit", "sha": self.target}}), stderr=""
+                )
+            if "releases/assets/" in endpoint:
+                aid = int(endpoint.split("releases/assets/")[1])
+                for name, a_id in self.assets.items():
+                    if a_id == aid:
+                        data = (self.staging_dir / name).read_bytes()
+                        if stdout is not None:
+                            stdout.write(data)
+                            stdout.flush()
+                        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if endpoint.endswith("/releases?per_page=100"):
+                rel = {
+                    "id": self.release_id,
+                    "tag_name": self.tag,
+                    "target_commitish": self.target,
+                    "draft": True,
+                    "prerelease": False,
+                }
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps([[rel]]), stderr="")
+            if endpoint.endswith(f"/releases/{self.release_id}"):
+                rel = {
+                    "id": self.release_id,
+                    "tag_name": self.tag,
+                    "target_commitish": self.target,
+                    "draft": self.live_draft,
+                    "prerelease": False,
+                    "assets": [
+                        {"id": aid, "name": name, "size": (self.staging_dir / name).stat().st_size}
+                        for name, aid in self.assets.items()
+                        if (self.staging_dir / name).is_file()
+                    ],
+                }
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(rel), stderr="")
+            if endpoint.endswith(f"/releases/tags/{self.tag}"):
+                rel = {
+                    "id": self.release_id,
+                    "tag_name": self.tag,
+                    "target_commitish": self.target,
+                    "draft": False,
+                    "prerelease": False,
+                    "assets": [
+                        {"id": aid, "name": name, "size": (self.staging_dir / name).stat().st_size}
+                        for name, aid in self.assets.items()
+                        if (self.staging_dir / name).is_file()
+                    ],
+                }
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(rel), stderr="")
+            if endpoint.endswith("/releases/latest"):
+                rel = {
+                    "id": self.release_id,
+                    "tag_name": self.tag,
+                    "target_commitish": self.target,
+                    "draft": False,
+                    "prerelease": False,
+                    "assets": [
+                        {"id": aid, "name": name, "size": (self.staging_dir / name).stat().st_size}
+                        for name, aid in self.assets.items()
+                        if (self.staging_dir / name).is_file()
+                    ],
+                }
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(rel), stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+
+def test_publish_machine_release_rejects_missing_required_asset(tmp_path: Path) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
+    (staging_dir / "NekoUpdater.exe").unlink()
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+
+    snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: TARGET},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=8,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def load(self):
+            return snap
+
+    executor = _FakeMachinePublishExecutor(staging_dir)
+    with pytest.raises((module.StageDraftReleaseError, ValueError)):
+        module.publish_machine_release(
+            ledger_path=ledger_path,
+            history_provider=_Prov(),
+            signed=signed,
+            target_commit=TARGET,
+            staging_dir=staging_dir,
+            executor=executor,
+        )
+    assert not any(call[:3] == ["gh", "release", "create"] for call in executor.calls)
+
+
+def test_publish_machine_release_rejects_extra_asset(tmp_path: Path) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
+    (staging_dir / "forbidden.exe").write_bytes(b"bad")
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+
+    snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: TARGET},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=8,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def load(self):
+            return snap
+
+    executor = _FakeMachinePublishExecutor(staging_dir)
+    with pytest.raises((module.StageDraftReleaseError, ValueError)):
+        module.publish_machine_release(
+            ledger_path=ledger_path,
+            history_provider=_Prov(),
+            signed=signed,
+            target_commit=TARGET,
+            staging_dir=staging_dir,
+            executor=executor,
+        )
+    assert not any(call[:3] == ["gh", "release", "create"] for call in executor.calls)
+
+
+def test_publish_machine_release_conflicting_authority_hard_stops_with_zero_mutation(tmp_path: Path) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+    from production_sequence_ledger import (
+        AuthenticatedProductionBinding,
+        ReleaseAuthorityReconciliationRequired,
+    )
+
+    binding9 = AuthenticatedProductionBinding(
+        sequence=9,
+        release_id="stable-0009",
+        payload_sha256="9" * 64,
+        envelope_sha256="9" * 64,
+        key_id="neko-update-prod-1",
+    )
+    conflicting_snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8, 9: binding9},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: TARGET, 9: "9" * 40},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=9,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def load(self):
+            return conflicting_snap
+
+    executor = _FakeMachinePublishExecutor(staging_dir)
+    with pytest.raises(ReleaseAuthorityReconciliationRequired):
+        module.publish_machine_release(
+            ledger_path=ledger_path,
+            history_provider=_Prov(),
+            signed=signed,
+            target_commit=TARGET,
+            staging_dir=staging_dir,
+            executor=executor,
+        )
+    # Zero mutation commands
+    assert not any(call[:3] in (["gh", "release", "create"], ["gh", "release", "upload"], ["gh", "release", "edit"]) for call in executor.calls)
+
+
+def test_publish_machine_release_crash_recovery_performs_readonly_verification_and_zero_mutations(tmp_path: Path) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+    from production_sequence_ledger import open_authority_session
+
+    recovery_snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: TARGET},
+        live_updates_sequences=frozenset({8}),
+        highest_authenticated_sequence=8,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def load(self):
+            return recovery_snap
+
+    executor = _FakeMachinePublishExecutor(staging_dir, live_draft=False)
+    result = module.publish_machine_release(
+        ledger_path=ledger_path,
+        history_provider=_Prov(),
+        signed=signed,
+        target_commit=TARGET,
+        staging_dir=staging_dir,
+        executor=executor,
+    )
+    assert result.status == "PUBLISHED_APPEND_REQUIRED"
+    assert result.sequence == 8
+    assert result.release_id == "stable-0008"
+    assert result.tag == "v5.1.2"
+    assert result.target_commit == TARGET
+    # ZERO create / upload / edit commands
+    assert not any(call[:3] in (["gh", "release", "create"], ["gh", "release", "upload"], ["gh", "release", "edit"]) for call in executor.calls)
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        last_event = verified.events[-1]
+        assert last_event.sequence == 8
+        assert last_event.status == "PUBLISHED"
+        assert verified.latest_entry_sha256 == result.entry_sha256
+
+
+def test_publish_machine_release_happy_path_promotes_once_and_appends_published(tmp_path: Path) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+    from production_sequence_ledger import open_authority_session
+
+    pre_snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: TARGET},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=8,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+    post_snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: TARGET},
+        live_updates_sequences=frozenset({8}),
+        highest_authenticated_sequence=8,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def __init__(self):
+            self.calls = 0
+
+        def load(self):
+            self.calls += 1
+            if self.calls == 1:
+                return pre_snap
+            return post_snap
+
+    prov = _Prov()
+    executor = _FakeMachinePublishExecutor(staging_dir, live_draft=True)
+    result = module.publish_machine_release(
+        ledger_path=ledger_path,
+        history_provider=prov,
+        signed=signed,
+        target_commit=TARGET,
+        staging_dir=staging_dir,
+        executor=executor,
+    )
+    assert result.status == "PUBLISHED"
+    assert result.sequence == 8
+    assert result.release_id == "stable-0008"
+    assert result.tag == "v5.1.2"
+    assert result.target_commit == TARGET
+    assert any(call[:3] == ["gh", "release", "create"] for call in executor.calls)
+    assert any(call[:3] == ["gh", "release", "upload"] for call in executor.calls)
+    assert any(call[:3] == ["gh", "release", "edit"] and "--draft=false" in call for call in executor.calls)
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        last_event = verified.events[-1]
+        assert last_event.sequence == 8
+        assert last_event.status == "PUBLISHED"
+        assert verified.latest_entry_sha256 == result.entry_sha256

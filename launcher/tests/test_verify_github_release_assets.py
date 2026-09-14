@@ -861,3 +861,209 @@ def test_cli_runs_from_unrelated_cwd_with_only_installed_launcher_runtime(tmp_pa
     )
     assert result.returncode == 1
     assert "verification failed" in result.stderr.lower()
+
+
+class _FakeHostedVerifierExecutor:
+    def __init__(
+        self,
+        staging_dir: Path,
+        release_id: int = 901,
+        tag: str = "v5.1.2",
+        target: str = "a" * 40,
+    ) -> None:
+        self.staging_dir = staging_dir
+        self.release_id = release_id
+        self.tag = tag
+        self.target = target
+        self.assets = {
+            "release-v2.json": 10,
+            "NekoLauncher.exe": 11,
+            "NekoUpdater.exe": 12,
+            "NekoProxyCore.zip": 13,
+        }
+        self.calls: list[list[str]] = []
+        self.commands: list[list[str]] = self.calls
+
+    def run(
+        self, args: list[str], *, capture_output: bool = True, stdout: Any = None
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append(args)
+        cmd = args[0]
+        if cmd == "gh" and len(args) > 2 and args[1] == "auth" and args[2] == "token":
+            return subprocess.CompletedProcess(args, 0, stdout="fake-token-secret\n", stderr="")
+        if cmd == "curl":
+            if "-o" in args:
+                out_file = Path(args[args.index("-o") + 1])
+                url = args[-1]
+                aid = int(url.rstrip("/").split("/")[-1])
+                for name, a_id in self.assets.items():
+                    if a_id == aid:
+                        out_file.write_bytes((self.staging_dir / name).read_bytes())
+                        break
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if cmd == "gh" and len(args) > 2 and args[1] == "api":
+            endpoint = args[2]
+            if "releases/assets/" in endpoint:
+                aid = int(endpoint.split("releases/assets/")[1])
+                for name, a_id in self.assets.items():
+                    if a_id == aid:
+                        data = (self.staging_dir / name).read_bytes()
+                        if stdout is not None:
+                            stdout.write(data)
+                            stdout.flush()
+                        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if endpoint.endswith(f"/releases/{self.release_id}"):
+                rel = {
+                    "id": self.release_id,
+                    "tag_name": self.tag,
+                    "target_commitish": self.target,
+                    "draft": True,
+                    "prerelease": False,
+                    "assets": [
+                        {
+                            "id": aid,
+                            "name": name,
+                            "size": (self.staging_dir / name).stat().st_size,
+                        }
+                        for name, aid in self.assets.items()
+                    ],
+                }
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(rel), stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+
+@pytest.fixture
+def machine_staging_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+
+    monkeypatch.setitem(
+        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
+    )
+    bundle = create_test_release_bundle(
+        tmp_path / "staging",
+        tag_name="v5.1.2",
+        target_commit="a" * 40,
+        launcher_version="5.1.2",
+        updater_version="5.1.2",
+        core_version="5.1.2",
+        sequence=8,
+        release_id="stable-0008",
+        key_id="neko-update-prod-1",
+    )
+    return bundle["download_dir"]
+
+
+@pytest.fixture
+def machine_draft_evidence(machine_staging_dir: Path) -> Any:
+    from scripts.publish_atomic_release import StagedDraftEvidence
+
+    assets = {
+        "release-v2.json": 10,
+        "NekoLauncher.exe": 11,
+        "NekoUpdater.exe": 12,
+        "NekoProxyCore.zip": 13,
+    }
+    return StagedDraftEvidence(
+        release_id=901,
+        tag_name="v5.1.2",
+        target_commit="a" * 40,
+        assets=assets,
+        dispatch_command="gh workflow run release.yml ...",
+    )
+
+
+@pytest.fixture
+def fake_exec(machine_staging_dir: Path) -> _FakeHostedVerifierExecutor:
+    return _FakeHostedVerifierExecutor(machine_staging_dir)
+
+
+def test_hosted_verification_never_exposes_token_in_argv(
+    fake_exec: _FakeHostedVerifierExecutor,
+    machine_draft_evidence: Any,
+    machine_staging_dir: Path,
+) -> None:
+    from scripts.release_controller import _hosted_verify_machine_channel
+
+    _hosted_verify_machine_channel(
+        machine_draft_evidence,
+        staging_dir=machine_staging_dir,
+        expected_tag="v5.1.2",
+        expected_target="a" * 40,
+        runner=fake_exec,
+    )
+    flat = "\n".join(" ".join(cmd) for cmd in fake_exec.commands)
+    assert "gh auth token" not in flat
+    assert "Authorization: ***" not in flat
+    assert "Authorization" not in flat
+    assert "curl" not in flat
+    # Step 6: Exact command capture shape and machine updates repository
+    for aid in machine_draft_evidence.assets.values():
+        expected_cmd = [
+            "gh",
+            "api",
+            f"repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases/assets/{aid}",
+            "-H",
+            "Accept: application/octet-stream",
+        ]
+        assert expected_cmd in fake_exec.commands
+
+
+def test_hosted_verification_tampered_asset_bytes_rehash_failure(
+    fake_exec: _FakeHostedVerifierExecutor,
+    machine_draft_evidence: Any,
+    machine_staging_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_controller import _hosted_verify_machine_channel
+
+    orig_run = fake_exec.run
+    local_launcher_size = (machine_staging_dir / "NekoLauncher.exe").stat().st_size
+
+    def tampered_run(args, *a, stdout=None, **kw):
+        if len(args) > 2 and "releases/assets/11" in args[2]:
+            data = b"X" * local_launcher_size
+            if stdout is not None:
+                stdout.write(data)
+                stdout.flush()
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return orig_run(args, *a, stdout=stdout, **kw)
+
+    monkeypatch.setattr(fake_exec, "run", tampered_run)
+    with pytest.raises(Exception, match="digest mismatch"):
+        _hosted_verify_machine_channel(
+            machine_draft_evidence,
+            staging_dir=machine_staging_dir,
+            expected_tag="v5.1.2",
+            expected_target="a" * 40,
+            runner=fake_exec,
+        )
+
+
+def test_hosted_verification_size_mismatch_failure(
+    fake_exec: _FakeHostedVerifierExecutor,
+    machine_draft_evidence: Any,
+    machine_staging_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_controller import _hosted_verify_machine_channel
+
+    orig_run = fake_exec.run
+
+    def size_mismatch_run(args, *a, stdout=None, **kw):
+        if len(args) > 2 and "releases/assets/11" in args[2]:
+            data = b"short"
+            if stdout is not None:
+                stdout.write(data)
+                stdout.flush()
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return orig_run(args, *a, stdout=stdout, **kw)
+
+    monkeypatch.setattr(fake_exec, "run", size_mismatch_run)
+    with pytest.raises(Exception, match="size mismatch"):
+        _hosted_verify_machine_channel(
+            machine_draft_evidence,
+            staging_dir=machine_staging_dir,
+            expected_tag="v5.1.2",
+            expected_target="a" * 40,
+            runner=fake_exec,
+        )

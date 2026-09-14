@@ -4,27 +4,29 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
-from typing import Any, Protocol, Sequence
+from datetime import datetime, timezone
+from typing import Any, Literal, Protocol, Sequence
 from urllib.parse import quote
 
-
-CANONICAL_REPO = "Valeneko-pranmong/Neko-Family-Proxy"
+CANONICAL_MACHINE_REPO = "Valeneko-pranmong/Neko-Family-Proxy-Updates"
+CANONICAL_REPO = CANONICAL_MACHINE_REPO
 _REMOTE_TAG_MAX_DEPTH = 4
 _SHA = re.compile(r"[0-9a-fA-F]{40}")
 
 
-REQUIRED_STAGE_ASSETS: tuple[str, ...] = (
+REQUIRED_MACHINE_ASSETS: tuple[str, ...] = (
     "release-v2.json",
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",
 )
-REQUIRED_MACHINE_ASSETS: tuple[str, ...] = REQUIRED_STAGE_ASSETS
+REQUIRED_STAGE_ASSETS: tuple[str, ...] = REQUIRED_MACHINE_ASSETS
 DEFAULT_INSTALLER_REPO = "Valeneko-pranmong/Neko-Family-Proxy-Installer"
 
 
@@ -68,22 +70,176 @@ class StagedDraftEvidence:
 
 class CommandExecutor(Protocol):
     def run(
-        self, args: list[str], *, capture_output: bool = True
-    ) -> subprocess.CompletedProcess[str]: ...
+        self,
+        args: list[str],
+        *,
+        capture_output: bool = True,
+        stdout: Any = None,
+    ) -> subprocess.CompletedProcess[Any]: ...
 
 
 class _SubprocessExecutor:
     def run(
-        self, args: list[str], *, capture_output: bool = True
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, capture_output=capture_output, text=True, check=False)
+        self,
+        args: list[str],
+        *,
+        capture_output: bool = True,
+        stdout: Any = None,
+    ) -> subprocess.CompletedProcess[Any]:
+        if stdout is not None:
+            return subprocess.run(
+                args, stdout=stdout, capture_output=False, check=False
+            )
+        return subprocess.run(
+            args, capture_output=capture_output, text=True, check=False
+        )
 
 
-def _run(executor: CommandExecutor, args: list[str]) -> str:
-    result = executor.run(args, capture_output=True)
+def _run(executor: CommandExecutor, args: list[str], *, stdout: Any = None) -> str:
+    if stdout is not None:
+        try:
+            result = executor.run(args, capture_output=False, stdout=stdout)
+        except TypeError:
+            result = executor.run(args, capture_output=True)
+            if result.stdout:
+                if isinstance(result.stdout, str):
+                    stdout.write(result.stdout.encode("utf-8"))
+                else:
+                    stdout.write(result.stdout)
+    else:
+        result = executor.run(args, capture_output=True)
     if result.returncode != 0:
         raise StageDraftReleaseError(f"Command failed: {args[0]} {args[1] if len(args) > 1 else ''}")
-    return result.stdout
+    return result.stdout or ""
+
+
+def download_github_release_asset(
+    executor: CommandExecutor,
+    *,
+    repo: str,
+    asset_id: int,
+    destination_file: Path,
+) -> None:
+    cmd = [
+        "gh",
+        "api",
+        f"repos/{repo}/releases/assets/{asset_id}",
+        "-H",
+        "Accept: application/octet-stream",
+    ]
+    destination_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(destination_file, "wb") as f:
+        try:
+            res = executor.run(cmd, capture_output=False, stdout=f)
+        except TypeError:
+            res = executor.run(cmd, capture_output=True)
+            if res.stdout:
+                if isinstance(res.stdout, str):
+                    f.write(res.stdout.encode("utf-8"))
+                else:
+                    f.write(res.stdout)
+        f.flush()
+        os.fsync(f.fileno())
+
+    if res.returncode != 0:
+        raise StageDraftReleaseError(
+            f"Asset download failed for {asset_id} from {repo}: exit code {res.returncode}"
+        )
+
+
+def _hosted_verify_machine_channel(
+    evidence: StagedDraftEvidence,
+    staging_dir: Path,
+    expected_tag: str,
+    expected_target: str,
+    runner: CommandExecutor,
+) -> None:
+    from scripts.verify_github_release_assets import verify_github_release_assets
+
+    with tempfile.TemporaryDirectory(prefix="neko-hosted-verify-machine-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        for name, asset_id in evidence.assets.items():
+            out_path = tmp_path / name
+            download_github_release_asset(
+                runner,
+                repo=CANONICAL_MACHINE_REPO,
+                asset_id=asset_id,
+                destination_file=out_path,
+            )
+
+            local_path = staging_dir / name
+            if out_path.stat().st_size != local_path.stat().st_size:
+                raise StageDraftReleaseError(f"Downloaded asset {name} size mismatch")
+
+            hosted_digest = hashlib.sha256(out_path.read_bytes()).hexdigest().lower()
+            local_digest = hashlib.sha256(local_path.read_bytes()).hexdigest().lower()
+            if hosted_digest != local_digest:
+                raise StageDraftReleaseError(f"Downloaded asset {name} digest mismatch")
+
+        release_json_raw = _run(
+            runner,
+            [
+                "gh",
+                "api",
+                f"repos/{CANONICAL_MACHINE_REPO}/releases/{evidence.release_id}",
+            ],
+        )
+        release_json_path = tmp_path / "release.json"
+        release_json_path.write_text(release_json_raw, encoding="utf-8")
+
+        try:
+            verify_github_release_assets(
+                release_json_path=release_json_path,
+                download_dir=tmp_path,
+                expected_tag=expected_tag,
+                expected_target=expected_target,
+                require_draft=True,
+            )
+        except Exception as e:
+            raise StageDraftReleaseError(
+                f"Hosted machine release verification failed: {e}"
+            ) from e
+
+        pre_promote_raw = _run(
+            runner,
+            [
+                "gh",
+                "api",
+                f"repos/{CANONICAL_MACHINE_REPO}/releases/{evidence.release_id}",
+            ],
+        )
+        pre_promote = json.loads(pre_promote_raw)
+
+        if (
+            pre_promote.get("tag_name") != expected_tag
+            or pre_promote.get("target_commitish", "").lower()
+            != expected_target.lower()
+            or pre_promote.get("draft") is not True
+        ):
+            raise StageDraftReleaseError("Machine draft state mutated before promotion")
+
+        current_assets = {
+            a.get("name"): {"id": a.get("id"), "size": a.get("size")}
+            for a in pre_promote.get("assets", [])
+            if isinstance(a, dict)
+        }
+        if set(current_assets.keys()) != set(evidence.assets.keys()):
+            raise StageDraftReleaseError(
+                f"Machine draft assets mutated before promotion (unexpected: {set(current_assets.keys()) - set(evidence.assets.keys())})"
+            )
+        for name, asset_id in evidence.assets.items():
+            if name not in current_assets:
+                raise StageDraftReleaseError(
+                    f"Machine asset {name} missing before promotion"
+                )
+            if current_assets[name]["id"] != asset_id:
+                raise StageDraftReleaseError(
+                    f"Machine asset {name} ID mutated before promotion"
+                )
+            if current_assets[name]["size"] != (staging_dir / name).stat().st_size:
+                raise StageDraftReleaseError(
+                    f"Machine asset {name} size mutated before promotion"
+                )
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -503,12 +659,9 @@ def execute_publish(
     title: str | None = None,
     installer_repo: str = DEFAULT_INSTALLER_REPO,
 ) -> None:
-    from pathlib import Path
-    import tempfile
     import json
     import time
-    import hashlib
-    from scripts.verify_github_release_assets import verify_github_release_assets
+    from pathlib import Path
 
     runner = _SubprocessExecutor()
     repo_root = Path(__file__).resolve().parents[1]
@@ -550,62 +703,13 @@ def execute_publish(
     if not evidence:
         raise StageDraftReleaseError("Draft staging failed to return evidence")
 
-    with tempfile.TemporaryDirectory(prefix="neko-hosted-verify-") as tmpdir:
-        tmp_path = Path(tmpdir)
-        token = _run(runner, ["gh", "auth", "token"]).strip()
-
-        for name, asset_id in evidence.assets.items():
-            out_path = tmp_path / name
-            url = f"https://api.github.com/repos/{CANONICAL_REPO}/releases/assets/{asset_id}"
-            curl = ["curl", "-sSL", "-H", f"Authorization: Bearer {token}", "-H", "Accept: application/octet-stream", "-o", str(out_path), url]
-            _run(runner, curl)
-
-            local_path = Path(staging_dir, name)
-            if out_path.stat().st_size != local_path.stat().st_size:
-                raise StageDraftReleaseError(f"Downloaded asset {name} size mismatch")
-
-            hosted_digest = hashlib.sha256(out_path.read_bytes()).hexdigest()
-            local_digest = hashlib.sha256(local_path.read_bytes()).hexdigest()
-            if hosted_digest != local_digest:
-                raise StageDraftReleaseError(f"Downloaded asset {name} digest mismatch")
-
-        release_json_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"])
-        release_json_path = tmp_path / "release.json"
-        release_json_path.write_text(release_json_raw, encoding="utf-8")
-
-        try:
-            verify_github_release_assets(
-                release_json_path=release_json_path,
-                download_dir=tmp_path,
-                expected_tag=version,
-                expected_target=sha,
-                require_draft=True
-            )
-        except Exception as e:
-            raise StageDraftReleaseError(f"Hosted verification failed: {e}") from e
-
-        pre_promote_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{evidence.release_id}"])
-        pre_promote = json.loads(pre_promote_raw)
-
-        if (
-            pre_promote.get("tag_name") != version
-            or pre_promote.get("target_commitish", "").lower() != sha.lower()
-            or pre_promote.get("draft") is not True
-        ):
-            raise StageDraftReleaseError("Draft state mutated before promotion")
-
-        current_assets = {a.get("name"): {"id": a.get("id"), "size": a.get("size")} for a in pre_promote.get("assets", []) if isinstance(a, dict)}
-        if set(current_assets.keys()) != set(evidence.assets.keys()):
-            raise StageDraftReleaseError(
-                f"Draft assets mutated before promotion: asset set mismatch (unexpected: {set(current_assets.keys()) - set(evidence.assets.keys())})"
-            )
-        for name, asset_id in evidence.assets.items():
-            if name not in current_assets:
-                raise StageDraftReleaseError(f"Asset {name} missing before promotion")
-            if current_assets[name]["id"] != asset_id:
-                raise StageDraftReleaseError(f"Asset {name} ID mutated before promotion")
-            if current_assets[name]["size"] != Path(staging_dir, name).stat().st_size:
-                raise StageDraftReleaseError(f"Asset {name} size mutated before promotion")
+    _hosted_verify_machine_channel(
+        evidence,
+        staging_dir=Path(staging_dir),
+        expected_tag=version,
+        expected_target=sha,
+        runner=runner,
+    )
 
     _run(runner, ["gh", "release", "edit", version, "--draft=false", "--repo", CANONICAL_REPO])
 
@@ -635,3 +739,330 @@ def execute_publish(
         raise StageDraftReleaseError(f"Gate3 failed: Latest release did not resolve to {version} correctly: {latest_error}")
 
     print(f"Successfully published {version}")
+
+
+@dataclass(frozen=True)
+class MachinePublishResult:
+    status: Literal["PUBLISHED", "PUBLISHED_APPEND_REQUIRED"]
+    sequence: int
+    release_id: str
+    tag: str
+    target_commit: str
+    published_release_id: int
+    entry_sha256: str
+    assets: dict[str, int]
+
+    @property
+    def tag_name(self) -> str:
+        return self.tag
+
+    @property
+    def release_number(self) -> int:
+        return self.published_release_id
+
+
+def publish_machine_release(
+    *,
+    ledger_path: Path,
+    history_provider: Any,
+    signed: Any,
+    target_commit: str,
+    staging_dir: Path,
+    executor: CommandExecutor,
+) -> MachinePublishResult:
+    try:
+        from production_sequence_ledger import (
+            ReleaseAuthorityReconciliationRequired,
+            SequenceAuthorityError,
+            SequenceLedgerEvent,
+            latest_sequence_state,
+            open_authority_session,
+            reconcile_ledger_with_authenticated_history,
+        )
+    except ImportError:
+        from scripts.production_sequence_ledger import (
+            ReleaseAuthorityReconciliationRequired,
+            SequenceAuthorityError,
+            SequenceLedgerEvent,
+            latest_sequence_state,
+            open_authority_session,
+            reconcile_ledger_with_authenticated_history,
+        )
+
+    staging_dir = Path(staging_dir)
+    ledger_path = Path(ledger_path)
+    target_commit = str(target_commit).strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", target_commit) is None:
+        raise StageDraftReleaseError("Target commit must be a 40-character hexadecimal SHA")
+
+    if not staging_dir.is_dir():
+        raise StageDraftReleaseError("Staging directory does not exist")
+
+    names = {item.name for item in staging_dir.iterdir()}
+    required = set(REQUIRED_MACHINE_ASSETS)
+    if names != required:
+        missing = required - names
+        extra = names - required
+        raise StageDraftReleaseError(
+            f"Staging directory must contain exactly the four required machine assets (missing: {sorted(missing)}, extra: {sorted(extra)})"
+        )
+    for name in REQUIRED_MACHINE_ASSETS:
+        p = staging_dir / name
+        if not p.is_file() or p.stat().st_size <= 0:
+            raise StageDraftReleaseError(f"Staging asset {name} must be a non-empty regular file")
+
+    manifest_bytes = (staging_dir / "release-v2.json").read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != signed.envelope_sha256:
+        raise StageDraftReleaseError("release-v2.json does not match signed baseline envelope SHA-256")
+
+    manifest_doc = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicates)
+    release_set = _verify_manifest_signature(manifest_doc)
+    if release_set.release_sequence != signed.sequence:
+        raise StageDraftReleaseError(
+            f"Manifest sequence {release_set.release_sequence} != signed sequence {signed.sequence}"
+        )
+    if release_set.release_id != signed.release_id:
+        raise StageDraftReleaseError(
+            f"Manifest release_id {release_set.release_id} != signed release_id {signed.release_id}"
+        )
+
+    tag = f"v{release_set.components['launcher'].version}"
+
+    with open_authority_session(ledger_path) as session:
+        if not session.path.is_file() or session.path.stat().st_size == 0:
+            raise SequenceAuthorityError("Sequence ledger has not been initialized with genesis")
+
+        verified = session.read_verified()
+        snapshot = history_provider.load()
+        authority = reconcile_ledger_with_authenticated_history(
+            ledger=verified,
+            authenticated_history=snapshot,
+        )
+
+        state = latest_sequence_state(verified.events, signed.sequence)
+        if state is None:
+            raise SequenceAuthorityError(f"Sequence {signed.sequence} has no ledger allocation")
+        if state.status != "SIGNED":
+            raise SequenceAuthorityError(
+                f"Sequence {signed.sequence} status must be SIGNED, got {state.status}"
+            )
+
+        if state.release_id != signed.release_id:
+            raise SequenceAuthorityError(f"Sequence {signed.sequence} release_id mismatch")
+        if state.payload_sha256 != signed.payload_sha256:
+            raise SequenceAuthorityError(f"Sequence {signed.sequence} payload_sha256 mismatch")
+        if state.envelope_sha256 != signed.envelope_sha256:
+            raise SequenceAuthorityError(f"Sequence {signed.sequence} envelope_sha256 mismatch")
+        if state.key_id != signed.key_id:
+            raise SequenceAuthorityError(f"Sequence {signed.sequence} key_id mismatch")
+        if state.component_set_sha256 != signed.component_set_sha256:
+            raise SequenceAuthorityError(
+                f"Sequence {signed.sequence} component_set_sha256 mismatch"
+            )
+
+        if authority.highest_authenticated_sequence > signed.sequence:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Higher authenticated sequence {authority.highest_authenticated_sequence} conflicts with {signed.sequence}"
+            )
+        if authority.highest_consumed_sequence > signed.sequence:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Higher consumed sequence {authority.highest_consumed_sequence} conflicts with {signed.sequence}"
+            )
+
+        is_recovery = signed.sequence in snapshot.live_updates_sequences
+        if is_recovery:
+            if (
+                authority.recovery_action != "PUBLISHED_APPEND_REQUIRED"
+                or authority.recovery_sequence != signed.sequence
+            ):
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Conflicting recovery state: {authority.recovery_action} on sequence {authority.recovery_sequence}"
+                )
+        elif authority.recovery_action is not None:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Conflicting recovery state: {authority.recovery_action} on sequence {authority.recovery_sequence}"
+            )
+
+        if is_recovery:
+            auth_binding = snapshot.bindings_by_sequence.get(signed.sequence)
+            if (
+                auth_binding is None
+                or auth_binding.release_id != signed.release_id
+                or auth_binding.payload_sha256 != signed.payload_sha256
+                or auth_binding.envelope_sha256 != signed.envelope_sha256
+                or auth_binding.key_id != signed.key_id
+            ):
+                raise ReleaseAuthorityReconciliationRequired(
+                    "Live updates binding mismatch against signed baseline"
+                )
+
+            release_raw = _run(
+                executor, ["gh", "api", f"repos/{CANONICAL_MACHINE_REPO}/releases/tags/{tag}"]
+            )
+            release_doc = json.loads(release_raw)
+            if (
+                release_doc.get("tag_name") != tag
+                or release_doc.get("target_commitish", "").lower() != target_commit.lower()
+                or release_doc.get("draft") is not False
+                or release_doc.get("prerelease") is not False
+            ):
+                raise StageDraftReleaseError("Public release readback mismatch")
+
+            raw_assets = release_doc.get("assets", [])
+            asset_map: dict[str, int] = {}
+            for a in raw_assets:
+                if isinstance(a, dict) and "name" in a and "id" in a:
+                    asset_map[a["name"]] = a["id"]
+            if set(asset_map.keys()) != set(REQUIRED_MACHINE_ASSETS):
+                raise StageDraftReleaseError(
+                    f"Public release assets mismatch (unexpected: {set(asset_map.keys()) ^ set(REQUIRED_MACHINE_ASSETS)})"
+                )
+
+            with tempfile.TemporaryDirectory(prefix="neko-recovery-verify-") as tmpdir:
+                tmp_path = Path(tmpdir)
+                for name, aid in asset_map.items():
+                    out_path = tmp_path / name
+                    download_github_release_asset(
+                        executor,
+                        repo=CANONICAL_MACHINE_REPO,
+                        asset_id=aid,
+                        destination_file=out_path,
+                    )
+                    local_path = staging_dir / name
+                    if out_path.stat().st_size != local_path.stat().st_size:
+                        raise StageDraftReleaseError(f"Downloaded asset {name} size mismatch")
+                    if (
+                        hashlib.sha256(out_path.read_bytes()).hexdigest().lower()
+                        != hashlib.sha256(local_path.read_bytes()).hexdigest().lower()
+                    ):
+                        raise StageDraftReleaseError(f"Downloaded asset {name} digest mismatch")
+
+                from scripts.verify_github_release_assets import verify_github_release_assets
+
+                release_json_path = tmp_path / "release.json"
+                release_json_path.write_text(release_raw, encoding="utf-8")
+                verify_github_release_assets(
+                    release_json_path=release_json_path,
+                    download_dir=tmp_path,
+                    expected_tag=tag,
+                    expected_target=target_commit,
+                    require_draft=False,
+                    require_prerelease=False,
+                    expected_signed=signed,
+                )
+
+            pub_event = SequenceLedgerEvent(
+                record_type="EVENT",
+                sequence=signed.sequence,
+                release_id=signed.release_id,
+                status="PUBLISHED",
+                version=state.version,
+                channel=state.channel,
+                source_commit=state.source_commit,
+                component_set_sha256=state.component_set_sha256,
+                payload_sha256=signed.payload_sha256,
+                envelope_sha256=signed.envelope_sha256,
+                key_id=signed.key_id,
+                timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                previous_entry_sha256=verified.latest_entry_sha256,
+            )
+            entry_sha = session.append(
+                pub_event, expected_previous_sha256=verified.latest_entry_sha256
+            )
+            re_verified = session.read_verified()
+            if re_verified.latest_entry_sha256 != entry_sha:
+                raise SequenceAuthorityError("Append readback verification failed")
+
+            return MachinePublishResult(
+                status="PUBLISHED_APPEND_REQUIRED",
+                sequence=signed.sequence,
+                release_id=signed.release_id,
+                tag=tag,
+                target_commit=target_commit,
+                published_release_id=release_doc["id"],
+                entry_sha256=entry_sha,
+                assets=asset_map,
+            )
+
+        machine_notes = build_machine_release_notes(tag)
+        evidence = stage_draft_release(
+            staging_dir=staging_dir,
+            tag=tag,
+            target_commit=target_commit,
+            notes=machine_notes,
+            as_prerelease=False,
+            executor=executor,
+            expected_allocation=signed,
+        )
+        if not evidence:
+            raise StageDraftReleaseError("Draft staging returned no evidence")
+
+        _hosted_verify_machine_channel(
+            evidence,
+            staging_dir=staging_dir,
+            expected_tag=tag,
+            expected_target=target_commit,
+            runner=executor,
+        )
+
+        _run(
+            executor,
+            ["gh", "release", "edit", tag, "--draft=false", "--repo", CANONICAL_MACHINE_REPO],
+        )
+        promoted_raw = _run(
+            executor,
+            ["gh", "api", f"repos/{CANONICAL_MACHINE_REPO}/releases/{evidence.release_id}"],
+        )
+        promoted_obj = json.loads(promoted_raw)
+        if promoted_obj.get("draft") is not False:
+            raise StageDraftReleaseError("Promotion failed: release remains draft")
+
+        refreshed_snap = history_provider.load()
+        if signed.sequence not in refreshed_snap.live_updates_sequences:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Sequence {signed.sequence} missing from live_updates_sequences after promotion (custody-only presence is insufficient)"
+            )
+        auth_binding = refreshed_snap.bindings_by_sequence.get(signed.sequence)
+        if (
+            auth_binding is None
+            or auth_binding.release_id != signed.release_id
+            or auth_binding.payload_sha256 != signed.payload_sha256
+            or auth_binding.envelope_sha256 != signed.envelope_sha256
+            or auth_binding.key_id != signed.key_id
+        ):
+            raise ReleaseAuthorityReconciliationRequired(
+                "Authenticated binding mismatch in refreshed history"
+            )
+
+        pub_event = SequenceLedgerEvent(
+            record_type="EVENT",
+            sequence=signed.sequence,
+            release_id=signed.release_id,
+            status="PUBLISHED",
+            version=state.version,
+            channel=state.channel,
+            source_commit=state.source_commit,
+            component_set_sha256=state.component_set_sha256,
+            payload_sha256=signed.payload_sha256,
+            envelope_sha256=signed.envelope_sha256,
+            key_id=signed.key_id,
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            previous_entry_sha256=verified.latest_entry_sha256,
+        )
+        entry_sha = session.append(
+            pub_event, expected_previous_sha256=verified.latest_entry_sha256
+        )
+        re_verified = session.read_verified()
+        if re_verified.latest_entry_sha256 != entry_sha:
+            raise SequenceAuthorityError("Append readback verification failed")
+
+        return MachinePublishResult(
+            status="PUBLISHED",
+            sequence=signed.sequence,
+            release_id=signed.release_id,
+            tag=tag,
+            target_commit=target_commit,
+            published_release_id=evidence.release_id,
+            entry_sha256=entry_sha,
+            assets=evidence.assets,
+        )

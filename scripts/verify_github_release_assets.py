@@ -89,6 +89,7 @@ def verify_github_release_assets(
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
     expected_binding: Any | None = None,
+    expected_signed: Any | None = None,
 ) -> None:
     release_path = Path(release_json_path)
     if not release_path.is_file():
@@ -240,7 +241,11 @@ def verify_github_release_assets(
     except Exception as err:
         raise GitHubReleaseAssetsVerificationError("Envelope cryptographic verification failed") from err
 
-    if expected_allocation is not None:
+    if expected_signed is not None:
+        expected_sequence = expected_signed.sequence
+        expected_release_id = expected_signed.release_id
+        expected_key_id = expected_signed.key_id
+    elif expected_allocation is not None:
         expected_sequence = expected_allocation.sequence
         expected_release_id = expected_allocation.release_id
     elif expected_binding is not None:
