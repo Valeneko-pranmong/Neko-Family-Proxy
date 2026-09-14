@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import hashlib
-import re
 from pathlib import Path
+import re
 from typing import Any
 
 import pytest
 
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import DevelopmentReleaseIdentity
 
 _READ_SIZE = 1024 * 1024
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -17,22 +19,18 @@ def execute_sha256_file(path: Path) -> str:
     return sha256_file(path)
 
 
-def execute_load_local_release_identity(
+def execute_load_development_release_identity(
     *,
-    release_sequence: int,
-    release_id: str,
     launcher_version: str,
     launcher_executable: Path,
     core_version: str,
     core_manifest: Path,
-) -> LocalReleaseIdentity:
+) -> DevelopmentReleaseIdentity:
     from neko_launcher.infrastructure.software_release_identity import (
-        load_local_release_identity,
+        load_development_release_identity,
     )
 
-    return load_local_release_identity(
-        release_sequence=release_sequence,
-        release_id=release_id,
+    return load_development_release_identity(
         launcher_version=launcher_version,
         launcher_executable=launcher_executable,
         core_version=core_version,
@@ -81,7 +79,7 @@ def test_sha256_file_streams_using_one_mibibyte_reads(
             requested_read_sizes.append(size)
             return self._wrapped.read(size)
 
-        def __enter__(self) -> "RecordingFile":
+        def __enter__(self) -> RecordingFile:
             self._wrapped.__enter__()
             return self
 
@@ -120,7 +118,7 @@ def test_sha256_file_raises_oserror_for_directory(tmp_path: Path) -> None:
         execute_sha256_file(directory)
 
 
-def test_loader_returns_identity_with_independent_exact_hashes(
+def test_loader_returns_development_identity_with_independent_exact_hashes(
     tmp_path: Path,
 ) -> None:
     launcher_bytes = b"launcher executable identity\x00\xff"
@@ -130,23 +128,21 @@ def test_loader_returns_identity_with_independent_exact_hashes(
     launcher.write_bytes(launcher_bytes)
     core_manifest.write_bytes(core_manifest_bytes)
 
-    result = execute_load_local_release_identity(
-        release_sequence=42,
-        release_id="release-42",
-        launcher_version="5.1.0",
+    result = execute_load_development_release_identity(
+        launcher_version="5.1.0-dev",
         launcher_executable=launcher,
-        core_version="8.4.2",
+        core_version="8.4.2-dev",
         core_manifest=core_manifest,
     )
 
     launcher_digest = hashlib.sha256(launcher_bytes).hexdigest()
     core_digest = hashlib.sha256(core_manifest_bytes).hexdigest()
-    assert isinstance(result, LocalReleaseIdentity)
-    assert result.release_sequence == 42
-    assert result.release_id == "release-42"
-    assert result.launcher_version == "5.1.0"
+    assert isinstance(result, DevelopmentReleaseIdentity)
+    assert result.release_sequence == 0
+    assert result.release_id == "dev-unpublished"
+    assert result.launcher_version == "5.1.0-dev"
     assert result.launcher_installed_identity_sha256 == launcher_digest
-    assert result.core_version == "8.4.2"
+    assert result.core_version == "8.4.2-dev"
     assert result.core_installed_identity_sha256 == core_digest
     assert result.launcher_installed_identity_sha256 != core_digest
     assert result.core_installed_identity_sha256 != launcher_digest
@@ -186,86 +182,12 @@ def test_loader_raises_oserror_for_missing_or_non_file_inputs(
         core_manifest.mkdir()
 
     with pytest.raises(OSError):
-        execute_load_local_release_identity(
-            release_sequence=1,
-            release_id="release-1",
-            launcher_version="5.1.0",
-            launcher_executable=launcher,
-            core_version="1.0.0",
-            core_manifest=core_manifest,
-        )
-
-
-def test_loader_accepts_unpublished_development_identity(
-    tmp_path: Path,
-) -> None:
-    launcher_bytes = b"development launcher"
-    manifest_bytes = b"development core manifest"
-    launcher = tmp_path / "launcher.exe"
-    core_manifest = tmp_path / "core-manifest.json"
-    launcher.write_bytes(launcher_bytes)
-    core_manifest.write_bytes(manifest_bytes)
-
-    result = execute_load_local_release_identity(
-        release_sequence=0,
-        release_id="dev-unpublished",
-        launcher_version="5.1.0-dev",
-        launcher_executable=launcher,
-        core_version="1.0.0-dev",
-        core_manifest=core_manifest,
-    )
-
-    assert result.release_sequence == 0
-    assert result.release_id == "dev-unpublished"
-    assert result.launcher_installed_identity_sha256 == hashlib.sha256(
-        launcher_bytes
-    ).hexdigest()
-    assert result.core_installed_identity_sha256 == hashlib.sha256(
-        manifest_bytes
-    ).hexdigest()
-
-
-@pytest.mark.parametrize(
-    "release_id",
-    ["release-0", "dev", "", "DEV-UNPUBLISHED"],
-)
-def test_loader_rejects_non_development_id_for_sequence_zero(
-    tmp_path: Path,
-    release_id: str,
-) -> None:
-    launcher = tmp_path / "launcher.exe"
-    core_manifest = tmp_path / "core-manifest.json"
-    launcher.write_bytes(b"launcher")
-    core_manifest.write_bytes(b"manifest")
-
-    with pytest.raises(ValueError):
-        execute_load_local_release_identity(
-            release_sequence=0,
-            release_id=release_id,
+        execute_load_development_release_identity(
             launcher_version="5.1.0-dev",
             launcher_executable=launcher,
             core_version="1.0.0-dev",
             core_manifest=core_manifest,
         )
-
-
-def test_loader_preserves_published_release_identity(tmp_path: Path) -> None:
-    launcher = tmp_path / "launcher.exe"
-    core_manifest = tmp_path / "core-manifest.json"
-    launcher.write_bytes(b"published launcher")
-    core_manifest.write_bytes(b"published manifest")
-
-    result = execute_load_local_release_identity(
-        release_sequence=1,
-        release_id="beta-1",
-        launcher_version="5.1.0-beta.1",
-        launcher_executable=launcher,
-        core_version="1.0.0-beta.1",
-        core_manifest=core_manifest,
-    )
-
-    assert result.release_sequence == 1
-    assert result.release_id == "beta-1"
 
 
 def test_loader_does_not_mutate_inputs_or_create_files(tmp_path: Path) -> None:
@@ -280,12 +202,10 @@ def test_loader_does_not_mutate_inputs_or_create_files(tmp_path: Path) -> None:
     manifest_size_before = core_manifest.stat().st_size
     files_before = sorted(path.name for path in tmp_path.iterdir())
 
-    execute_load_local_release_identity(
-        release_sequence=7,
-        release_id="release-7",
-        launcher_version="5.1.0",
+    execute_load_development_release_identity(
+        launcher_version="5.1.0-dev",
         launcher_executable=launcher,
-        core_version="7.0.0",
+        core_version="7.0.0-dev",
         core_manifest=core_manifest,
     )
 
@@ -311,21 +231,17 @@ def test_loader_uses_core_manifest_file_as_exact_core_identity(
     core_manifest.write_bytes(manifest_bytes)
     unrelated_file.write_bytes(unrelated_bytes)
 
-    first_result = execute_load_local_release_identity(
-        release_sequence=9,
-        release_id="release-9",
-        launcher_version="5.1.0",
+    first_result = execute_load_development_release_identity(
+        launcher_version="5.1.0-dev",
         launcher_executable=launcher,
-        core_version="9.0.0",
+        core_version="9.0.0-dev",
         core_manifest=core_manifest,
     )
     unrelated_file.write_bytes(b"changed unrelated directory content")
-    second_result = execute_load_local_release_identity(
-        release_sequence=9,
-        release_id="release-9",
-        launcher_version="5.1.0",
+    second_result = execute_load_development_release_identity(
+        launcher_version="5.1.0-dev",
         launcher_executable=launcher,
-        core_version="9.0.0",
+        core_version="9.0.0-dev",
         core_manifest=core_manifest,
     )
 

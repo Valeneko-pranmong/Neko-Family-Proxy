@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 from neko_launcher.application.software_update_pending import (
     UpdateLifecycleState as UpdateLifecycleState,
@@ -50,17 +51,108 @@ class ReleaseSet:
     components: tuple[ComponentRelease, ...]
 
 @dataclass(frozen=True)
-class LocalReleaseIdentity:
+class AuthenticatedReleaseBinding:
     release_sequence: int
     release_id: str
+    payload_sha256: str
+
+    def __post_init__(self) -> None:
+        if type(self.release_sequence) is not int or isinstance(self.release_sequence, bool):
+            raise ValueError("release_sequence must be an int")
+        if self.release_sequence <= 0:
+            raise ValueError("release_sequence must be positive")
+        if type(self.release_id) is not str or not self.release_id.strip():
+            raise ValueError("release_id must be a non-empty string")
+        if type(self.payload_sha256) is not str or not re.fullmatch(r"[0-9a-f]{64}", self.payload_sha256):
+            raise ValueError("payload_sha256 must be lowercase 64-hex")
+
+
+@dataclass(frozen=True)
+class LocalReleaseIdentity:
+    committed: AuthenticatedReleaseBinding
+    high_water: AuthenticatedReleaseBinding
+    observed: AuthenticatedReleaseBinding
+    failed: AuthenticatedReleaseBinding | None
+    launcher_version: str
+    launcher_installed_identity_sha256: str
+    updater_version: str
+    updater_installed_identity_sha256: str
+    core_version: str
+    core_installed_identity_sha256: str
+
+    @property
+    def release_sequence(self) -> int:
+        return self.committed.release_sequence
+
+    @property
+    def release_id(self) -> str:
+        return self.committed.release_id
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.committed, AuthenticatedReleaseBinding):
+            raise ValueError("committed must be an AuthenticatedReleaseBinding")
+        if not isinstance(self.high_water, AuthenticatedReleaseBinding):
+            raise ValueError("high_water must be an AuthenticatedReleaseBinding")
+        if not isinstance(self.observed, AuthenticatedReleaseBinding):
+            raise ValueError("observed must be an AuthenticatedReleaseBinding")
+        if self.failed is not None and not isinstance(self.failed, AuthenticatedReleaseBinding):
+            raise ValueError("failed must be None or an AuthenticatedReleaseBinding")
+
+        if self.committed.release_sequence > self.high_water.release_sequence:
+            raise ValueError("committed release_sequence cannot exceed high_water release_sequence")
+
+        if self.observed != self.high_water:
+            raise ValueError("observed binding must equal high_water binding")
+
+        if self.failed is not None and self.failed.release_sequence > self.high_water.release_sequence:
+            raise ValueError("failed release_sequence cannot exceed high_water release_sequence")
+
+        bindings: list[AuthenticatedReleaseBinding] = [
+            self.committed,
+            self.high_water,
+            self.observed,
+        ]
+        if self.failed is not None:
+            bindings.append(self.failed)
+
+        for i in range(len(bindings)):
+            for j in range(i + 1, len(bindings)):
+                b1 = bindings[i]
+                b2 = bindings[j]
+                if b1.release_sequence == b2.release_sequence and b1 != b2:
+                    raise ValueError(
+                        f"Pairwise binding conflict: same sequence with different binding: {b1} != {b2}"
+                    )
+
+        for field_name, val in [
+            ("launcher_installed_identity_sha256", self.launcher_installed_identity_sha256),
+            ("updater_installed_identity_sha256", self.updater_installed_identity_sha256),
+            ("core_installed_identity_sha256", self.core_installed_identity_sha256),
+        ]:
+            if type(val) is not str or not re.fullmatch(r"[0-9a-f]{64}", val):
+                raise ValueError(f"{field_name} must be lowercase 64-hex")
+
+
+@dataclass(frozen=True)
+class DevelopmentReleaseIdentity:
+    release_sequence: Literal[0]
+    release_id: Literal["dev-unpublished"]
     launcher_version: str
     launcher_installed_identity_sha256: str
     core_version: str
     core_installed_identity_sha256: str
 
-    def __post_init__(self):
-        if self.release_sequence == 0 and self.release_id != "dev-unpublished":
-            raise ValueError("Sequence 0 is only valid for dev-unpublished")
+    def __post_init__(self) -> None:
+        if self.release_sequence != 0:
+            raise ValueError("release_sequence must be 0")
+        if self.release_id != "dev-unpublished":
+            raise ValueError("release_id must be 'dev-unpublished'")
+        for field_name, val in [
+            ("launcher_installed_identity_sha256", self.launcher_installed_identity_sha256),
+            ("core_installed_identity_sha256", self.core_installed_identity_sha256),
+        ]:
+            if type(val) is not str or not re.fullmatch(r"[0-9a-f]{64}", val):
+                raise ValueError(f"{field_name} must be lowercase 64-hex")
 
 @dataclass(frozen=True)
 class UpdateCheckResult:

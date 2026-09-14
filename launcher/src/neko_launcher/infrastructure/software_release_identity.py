@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import (
+    DevelopmentReleaseIdentity,
+)
 
 _READ_SIZE = 1024 * 1024
 
@@ -16,18 +18,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_local_release_identity(
+def load_development_release_identity(
     *,
-    release_sequence: int,
-    release_id: str,
     launcher_version: str,
     launcher_executable: Path,
     core_version: str,
     core_manifest: Path,
-) -> LocalReleaseIdentity:
-    return LocalReleaseIdentity(
-        release_sequence=release_sequence,
-        release_id=release_id,
+) -> DevelopmentReleaseIdentity:
+    return DevelopmentReleaseIdentity(
+        release_sequence=0,
+        release_id="dev-unpublished",
         launcher_version=launcher_version,
         launcher_installed_identity_sha256=sha256_file(launcher_executable),
         core_version=core_version,

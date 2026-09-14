@@ -5,7 +5,9 @@ from dataclasses import replace
 import pytest
 
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     ComponentRelease,
+    DevelopmentReleaseIdentity,
     LocalReleaseIdentity,
     ReleaseSet,
     UpdateCheckResult,
@@ -102,19 +104,40 @@ def local_identity(
     release_id: str | None = None,
     launcher_identity: str = H_A,
     core_identity: str = H_B,
+    updater_identity: str = H_C,
     launcher_version: str = "5.0.0",
     core_version: str = "1.1.0",
+    updater_version: str = "5.0.0",
+    committed: AuthenticatedReleaseBinding | None = None,
+    high_water: AuthenticatedReleaseBinding | None = None,
+    observed: AuthenticatedReleaseBinding | None = None,
+    failed: AuthenticatedReleaseBinding | None = None,
 ) -> LocalReleaseIdentity:
-    if sequence == 0:
-        effective_release_id = "dev-unpublished"
-    else:
+    if sequence == 0 and committed is None:
+        raise ValueError("Authenticated LocalReleaseIdentity rejects sequence 0")
+
+    if committed is None:
         effective_release_id = release_id or f"beta-{sequence}"
+        payload_sha = f"{sequence:04x}".ljust(64, "0")
+        committed = AuthenticatedReleaseBinding(
+            release_sequence=sequence,
+            release_id=effective_release_id,
+            payload_sha256=payload_sha,
+        )
+    if high_water is None:
+        high_water = committed
+    if observed is None:
+        observed = high_water
 
     return LocalReleaseIdentity(
-        release_sequence=sequence,
-        release_id=effective_release_id,
+        committed=committed,
+        high_water=high_water,
+        observed=observed,
+        failed=failed,
         launcher_version=launcher_version,
         launcher_installed_identity_sha256=launcher_identity,
+        updater_version=updater_version,
+        updater_installed_identity_sha256=updater_identity,
         core_version=core_version,
         core_installed_identity_sha256=core_identity,
     )
@@ -125,6 +148,10 @@ def execute(
     remote: ReleaseSet,
     reason: UpdateInvocationReason = UpdateInvocationReason.STARTUP,
 ) -> UpdateCheckResult:
+    if not isinstance(local, LocalReleaseIdentity):
+        raise TypeError(
+            f"Production policy requires LocalReleaseIdentity, got {type(local).__name__}"
+        )
     from neko_launcher.application.software_update_policy import evaluate_release
 
     return evaluate_release(local, remote, reason)
@@ -387,13 +414,22 @@ def test_result_uses_remote_release_and_version_metadata_on_every_state(
     assert isinstance(result.changed_components, tuple)
 
 
-def test_dev_unpublished_bootstrap_is_mandatory_and_computes_changes() -> None:
-    local = local_identity(
-        0,
-        launcher_identity=H_A,
-        core_identity=H_B,
+def test_dev_unpublished_bootstrap_rejected_by_production_policy() -> None:
+    with pytest.raises(ValueError):
+        local_identity(
+            0,
+            launcher_identity=H_A,
+            core_identity=H_B,
+            launcher_version="0.0.0-dev",
+            core_version="0.0.0-dev",
+        )
+    dev = DevelopmentReleaseIdentity(
+        release_sequence=0,
+        release_id="dev-unpublished",
         launcher_version="0.0.0-dev",
+        launcher_installed_identity_sha256=H_A,
         core_version="0.0.0-dev",
+        core_installed_identity_sha256=H_B,
     )
     remote = release_set(
         1,
@@ -402,13 +438,8 @@ def test_dev_unpublished_bootstrap_is_mandatory_and_computes_changes() -> None:
         launcher_identity=H_A,
         core_identity=H_C,
     )
-
-    result = execute(local, remote)
-
-    assert result.state is UpdateState.MANDATORY
-    assert result.mandatory is True
-    assert result.changed_components == ("core",)
-    assert result.diagnostic_code is None
+    with pytest.raises(TypeError, match="LocalReleaseIdentity"):
+        execute(dev, remote)  # type: ignore[arg-type]
 
 
 def test_core_first_remote_still_returns_launcher_core_changed_order() -> None:
@@ -516,4 +547,22 @@ def test_can_apply_update_enforces_idle_session() -> None:
     can_apply, reason = can_apply_update(is_proxy_active=False)
     assert can_apply is True
     assert reason is None
+
+
+def test_production_policy_fixture_rejects_sequence_zero() -> None:
+    with pytest.raises(ValueError):
+        local_identity(0)
+
+
+def test_production_policy_fixture_rejects_development_identity() -> None:
+    dev = DevelopmentReleaseIdentity(
+        release_sequence=0,
+        release_id="dev-unpublished",
+        launcher_version="5.0.0",
+        launcher_installed_identity_sha256=H_A,
+        core_version="1.1.0",
+        core_installed_identity_sha256=H_B,
+    )
+    with pytest.raises(TypeError, match="LocalReleaseIdentity"):
+        execute(dev, release_set(11))  # type: ignore[arg-type]
 
