@@ -67,6 +67,11 @@ OLD_INSTALLER_DEPENDENCY_PATTERNS = {
         r"\bValeneko-pranmong/Neko-Family-Proxy-Installer\b"
     ),
 }
+SUPERSEDED_MARKER_PATTERN = re.compile(
+    r"\b(superseded|historical|deprecated|archive[d]?|retire[d]?|retirement|deleted?)\b",
+    re.IGNORECASE,
+)
+
 
 
 
@@ -118,10 +123,40 @@ def validate_content(path: Path) -> list[str]:
     ]
 
 
-def is_allowlisted_history_doc(relative: Path) -> bool:
+def is_allowlisted_history_doc(
+    relative: Path,
+    content: str | None = None,
+    *,
+    path: Path | None = None,
+) -> bool:
     parts = relative.parts
-    if len(parts) >= 2 and parts[0] == "docs" and parts[1] in {"archive", "superpowers"}:
+    if "docs" not in parts:
+        return False
+    idx = parts.index("docs")
+    if len(parts) <= idx + 1:
+        return False
+    sub = parts[idx + 1]
+    if sub == "archive":
         return True
+    if sub == "superpowers":
+        if content is None:
+            target = (
+                path
+                if path is not None
+                else (
+                    relative
+                    if relative.is_absolute()
+                    else REPOSITORY_ROOT / relative
+                )
+            )
+            if target.is_file():
+                try:
+                    content = target.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError):
+                    return False
+            else:
+                return False
+        return bool(SUPERSEDED_MARKER_PATTERN.search(content))
     return False
 
 
@@ -151,8 +186,9 @@ def is_software_update_production_code(relative: Path) -> bool:
 
 def validate_software_update_authority(path: Path) -> list[str]:
     relative = path.relative_to(REPOSITORY_ROOT)
+    parts = relative.parts
     if (
-        is_allowlisted_history_doc(relative)
+        (len(parts) >= 2 and parts[0] == "docs" and parts[1] in {"archive", "superpowers"})
         or is_test_path(relative)
         or relative.as_posix() == "scripts/check_repository_safety.py"
     ):
@@ -202,9 +238,11 @@ def validate_old_installer_dependencies(path: Path) -> list[str]:
     except ValueError:
         relative = path
     if (
-        is_allowlisted_history_doc(relative)
-        or is_test_path(relative)
-        or relative.as_posix() == "scripts/check_repository_safety.py"
+        is_test_path(relative)
+        or relative.as_posix() in {
+            "scripts/check_repository_safety.py",
+            "scripts/release_dependency_audit.py",
+        }
     ):
         return []
     if path.suffix.lower() in {".ico", ".png", ".ttf"}:
@@ -212,6 +250,8 @@ def validate_old_installer_dependencies(path: Path) -> list[str]:
     try:
         content = path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError):
+        return []
+    if is_allowlisted_history_doc(relative, content, path=path):
         return []
 
     errors: list[str] = []
@@ -283,6 +323,7 @@ def main() -> int:
         errors.extend(validate_content(path))
         errors.extend(validate_software_update_authority(path))
         errors.extend(validate_software_update_untrusted_sources(path))
+        errors.extend(validate_old_installer_dependencies(path))
     errors.extend(validate_repository_contracts())
     if errors:
         print("Repository safety check failed:")

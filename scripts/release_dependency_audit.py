@@ -294,6 +294,13 @@ def _classify_finding_target(rel_path: str, content: str) -> str:
     if any(part in {"tests", "test"} for part in parts):
         return "historical_allowed"
 
+    # Audit and repository safety tooling definitions are non-operational verification tooling
+    if p.as_posix() in {
+        "scripts/release_dependency_audit.py",
+        "scripts/check_repository_safety.py",
+    }:
+        return "historical_allowed"
+
     # All other surfaces (src, launcher, scripts, installer, .github, docs/current, README, external) are operational
     return "operational"
 

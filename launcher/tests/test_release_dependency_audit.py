@@ -147,6 +147,56 @@ def test_historical_only_superseded_doc_is_classified_as_historical_allowed(
     assert "docs/archive/legacy_notes.md" in historical_paths
 
 
+def test_non_superseded_superpowers_doc_fails_audit_as_operational_blocker(
+    tmp_path: Path,
+) -> None:
+    repo = fake_repo(
+        tmp_path,
+        {
+            "docs/superpowers/specs/active_spec.md": (
+                "# Active Specification\n"
+                "Release pipeline targets Valeneko-pranmong/Neko-Family-Proxy-Installer for binary distribution.\n"
+            ),
+        },
+    )
+    evidence = audit_old_installer_dependency(
+        repo, build_dependency_snapshot(repo, external_inputs={})
+    )
+    assert evidence.operational_matches, (
+        "Non-superseded superpowers document must fail audit as operational blocker"
+    )
+    assert not evidence.historical_allowed_matches
+    op_paths = {m.path for m in evidence.operational_matches}
+    assert "docs/superpowers/specs/active_spec.md" in op_paths
+
+
+def test_audit_does_not_self_match_audit_or_safety_tools_as_operational(
+    tmp_path: Path,
+) -> None:
+    repo = fake_repo(
+        tmp_path,
+        {
+            "scripts/release_dependency_audit.py": (
+                'import re\n'
+                '_DIRECT_REPO_PATTERN = re.compile(r"\\bNeko-Family-Proxy-Installer\\b")\n'
+                '_FULL_REPO_PATTERN = re.compile(r"\\bValeneko-pranmong/Neko-Family-Proxy-Installer\\b")\n'
+            ),
+            "scripts/check_repository_safety.py": (
+                'OLD_INSTALLER = "Valeneko-pranmong/Neko-Family-Proxy-Installer"\n'
+            ),
+        },
+    )
+    evidence = audit_old_installer_dependency(
+        repo, build_dependency_snapshot(repo, external_inputs={})
+    )
+    assert not evidence.operational_matches, (
+        f"Audit tooling must not self-match as operational blockers: {evidence.operational_matches}"
+    )
+    assert len(evidence.historical_allowed_matches) >= 2
+
+
+
+
 def test_snapshot_freshness_fails_on_single_byte_change(tmp_path: Path) -> None:
     repo = fake_repo(
         tmp_path,

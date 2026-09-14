@@ -172,3 +172,45 @@ def test_safety_guard_allows_historical_superpowers_docs() -> None:
     errors = safety.validate_old_installer_dependencies(history_plan)
     assert not errors, f"Expected historical superpowers docs to be permitted: {errors}"
 
+
+def test_safety_guard_rejects_non_superseded_superpowers_doc(tmp_path: Path) -> None:
+    safety = load_safety_module()
+    doc_path = tmp_path / "docs" / "superpowers" / "plans" / "active_plan.md"
+    doc_path.parent.mkdir(parents=True, exist_ok=True)
+    doc_path.write_text(
+        "# Active Architecture Plan\n"
+        "Deployment targets repository Valeneko-pranmong/Neko-Family-Proxy-Installer for releases.\n",
+        encoding="utf-8",
+    )
+    rel_path = Path("docs/superpowers/plans/active_plan.md")
+    assert not safety.is_allowlisted_history_doc(rel_path, path=doc_path), (
+        "Non-superseded superpowers document must not be allowlisted as historical"
+    )
+    errors = safety.validate_old_installer_dependencies(doc_path)
+    assert errors, "Expected safety guard to reject non-superseded superpowers doc"
+
+
+def test_safety_guard_allows_audit_tooling() -> None:
+    safety = load_safety_module()
+    audit_script = REPOSITORY_ROOT / "scripts" / "release_dependency_audit.py"
+    errors = safety.validate_old_installer_dependencies(audit_script)
+    assert not errors, (
+        f"Audit tooling must not be rejected by old installer safety guard: {errors}"
+    )
+
+
+def test_safety_main_enforces_old_installer_dependencies(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    safety = load_safety_module()
+    monkeypatch.setattr(safety, "REPOSITORY_ROOT", tmp_path)
+    fake_file = tmp_path / "deploy.py"
+    fake_file.write_text('REPO = "Neko-Family-Proxy-Installer"\n', encoding="utf-8")
+    monkeypatch.setattr(safety, "repository_files", lambda: [fake_file])
+    monkeypatch.setattr(safety, "validate_repository_contracts", lambda: [])
+    exit_code = safety.main()
+    captured = capsys.readouterr()
+    assert exit_code == 1, (
+        "main() must return 1 when old installer dependency is detected"
+    )
+    assert "operational old installer repository dependency" in captured.out
