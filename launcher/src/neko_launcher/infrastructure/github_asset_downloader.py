@@ -7,7 +7,10 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
 
 from neko_launcher.infrastructure.github_release import (
     GITHUB_RELEASE_OWNER,
@@ -63,7 +66,7 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _validate_initial_asset_url(url: str) -> bool:
+def _validate_initial_asset_url(url: str, asset_path_prefix: str = _ASSET_PATH_PREFIX) -> bool:
     if not isinstance(url, str):
         return False
     try:
@@ -79,8 +82,8 @@ def _validate_initial_asset_url(url: str) -> bool:
         and parsed.username is None
         and parsed.password is None
         and not parsed.fragment
-        and parsed.path.startswith(_ASSET_PATH_PREFIX)
-        and len(parsed.path) > len(_ASSET_PATH_PREFIX)
+        and parsed.path.startswith(asset_path_prefix)
+        and len(parsed.path) > len(asset_path_prefix)
     )
 
 
@@ -140,8 +143,9 @@ def _open_asset_stream(
     connect_timeout: float,
     maximum_redirects: int,
     opener: Any | None = None,
+    asset_path_prefix: str = _ASSET_PATH_PREFIX,
 ) -> Any:
-    if not _validate_initial_asset_url(initial_url):
+    if not _validate_initial_asset_url(initial_url, asset_path_prefix=asset_path_prefix):
         raise GitHubAssetDownloadError("DOWNLOAD_REDIRECT_INVALID") from None
 
     active_opener = (
@@ -210,22 +214,34 @@ class GitHubManifestDownloader:
         connect_timeout: float = 5.0,
         read_timeout: float = 15.0,
         maximum_redirects: int = 5,
+        channel_profile: UpdateChannelProfile | None = None,
         _opener: Any | None = None,
     ) -> None:
         self._connect_timeout = connect_timeout
         self._read_timeout = read_timeout
         self._maximum_redirects = maximum_redirects
+        self._channel_profile = channel_profile
         self._opener = _opener
+
+    @property
+    def channel_profile(self) -> UpdateChannelProfile | None:
+        return self._channel_profile
 
     def download(self, asset: GitHubReleaseAsset) -> DownloadedManifest:
         if asset.name != "release-v2.json":
             raise GitHubAssetDownloadError("MANIFEST_RESPONSE_INVALID") from None
 
+        prefix = (
+            self._channel_profile.browser_download_prefix
+            if self._channel_profile is not None
+            else _ASSET_PATH_PREFIX
+        )
         response = _open_asset_stream(
             asset.browser_download_url,
             connect_timeout=self._connect_timeout,
             maximum_redirects=self._maximum_redirects,
             opener=self._opener,
+            asset_path_prefix=prefix,
         )
 
         try:
@@ -273,12 +289,18 @@ class GitHubAssetDownloader:
         connect_timeout: float = 5.0,
         read_timeout: float = 15.0,
         maximum_redirects: int = 5,
+        channel_profile: UpdateChannelProfile | None = None,
         _opener: Any | None = None,
     ) -> None:
         self._connect_timeout = connect_timeout
         self._read_timeout = read_timeout
         self._maximum_redirects = maximum_redirects
+        self._channel_profile = channel_profile
         self._opener = _opener
+
+    @property
+    def channel_profile(self) -> UpdateChannelProfile | None:
+        return self._channel_profile
 
     def download(
         self,
@@ -292,11 +314,17 @@ class GitHubAssetDownloader:
         if not dest_path.parent.is_dir():
             raise GitHubAssetDownloadError("DOWNLOAD_WRITE_FAILED") from None
 
+        prefix = (
+            self._channel_profile.browser_download_prefix
+            if self._channel_profile is not None
+            else _ASSET_PATH_PREFIX
+        )
         response = _open_asset_stream(
             initial_url,
             connect_timeout=self._connect_timeout,
             maximum_redirects=self._maximum_redirects,
             opener=self._opener,
+            asset_path_prefix=prefix,
         )
 
         try:

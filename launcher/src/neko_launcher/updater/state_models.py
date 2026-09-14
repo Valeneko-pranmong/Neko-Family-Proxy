@@ -314,6 +314,8 @@ class EnrollmentMarker:
     keyset_sha256: str
     bootstrap_payload_sha256: str
     enrollment_status: Literal["PREPARED"]
+    profile_id: str = "production"
+    profile_envelope_sha256: str = "0" * 64
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -324,6 +326,9 @@ class EnrollmentMarker:
         _assert_hex(self.helper_sha256, 64, "helper_sha256")
         if self.helper_protocol != 1:
             raise ValueError(f"Unsupported helper protocol: {self.helper_protocol}")
+        if not isinstance(self.profile_id, str) or not _RELEASE_ID_RE.fullmatch(self.profile_id):
+            raise ValueError(f"Invalid profile_id: {self.profile_id!r}")
+        _assert_hex(self.profile_envelope_sha256, 64, "profile_envelope_sha256")
         _assert_hex(self.keyset_sha256, 64, "keyset_sha256")
         _assert_hex(self.bootstrap_payload_sha256, 64, "bootstrap_payload_sha256")
         if self.enrollment_status != "PREPARED":
@@ -374,6 +379,8 @@ MARKER_ALLOWED_KEYS = {
     "root",
     "helper_sha256",
     "helper_protocol",
+    "profile_id",
+    "profile_envelope_sha256",
     "keyset_sha256",
     "bootstrap_payload_sha256",
     "enrollment_status",
@@ -518,6 +525,8 @@ def deserialize_marker(raw: bytes | str) -> EnrollmentMarker:
         root=root,
         helper_sha256=data["helper_sha256"],
         helper_protocol=data["helper_protocol"],
+        profile_id=data["profile_id"],
+        profile_envelope_sha256=data["profile_envelope_sha256"],
         keyset_sha256=data["keyset_sha256"],
         bootstrap_payload_sha256=data["bootstrap_payload_sha256"],
         enrollment_status=data["enrollment_status"],

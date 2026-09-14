@@ -353,3 +353,44 @@ def test_parse_retains_four_update_assets_and_unique_setup() -> None:
         "NekoFamilyProxy-Setup.exe",
     }
 
+
+def test_gateway_routes_to_verified_channel_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"k": b"\x01" * 32},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    profile = UpdateChannelProfile.from_verified(verified)
+
+    proof_download_prefix = "/Valeneko-pranmong/Neko-Family-Proxy-Updates-Proof/releases/download/"
+    doc = _valid_document()
+    doc["assets"] = [
+        {
+            "id": 101,
+            "name": "release-v2.json",
+            "size": 100,
+            "browser_download_url": "https://github.com" + proof_download_prefix + "release-v2.json",
+        }
+    ]
+
+    body = json.dumps(doc).encode("utf-8")
+    response = FakeResponse(body)
+    module = _module()
+    opener = FakeOpener(response)
+    monkeypatch.setattr(module.urllib.request, "build_opener", lambda *_: opener)
+
+    gateway = module.GitHubLatestReleaseGateway(channel_profile=profile)
+    rel = gateway.fetch()
+
+    assert rel is not None
+    assert opener.requests[0][0].full_url == profile.latest_release_api
+

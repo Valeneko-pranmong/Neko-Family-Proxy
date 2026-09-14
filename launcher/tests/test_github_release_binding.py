@@ -445,3 +445,36 @@ def test_resolver_error_sanitization_does_not_leak_urls_or_secrets(tmp_path: Pat
     assert str(err) == "GITHUB_RELEASE_UNAVAILABLE"
     assert "https://" not in str(err)
     assert "api.github.com" not in str(err)
+
+
+def test_resolver_accepts_channel_profile(tmp_path: Path) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    binding_mod = _get_binding_module()
+    env_data = _setup_resolver_environment(tmp_path)
+
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    profile = UpdateChannelProfile.from_verified(verified)
+
+    resolver = binding_mod.GitHubReleaseResolver(
+        release_gateway=env_data["gateway"],
+        manifest_downloader=env_data["downloader"],
+        channel_profile=profile,
+        install_root=env_data["install_root"],
+        updater_protocol=1,
+    )
+
+    resolved = resolver.resolve()
+    assert resolved is not None
+    assert resolved.authenticated_release.channel == "stable"

@@ -3,7 +3,7 @@ import binascii
 import ctypes
 import ctypes.wintypes
 import pathlib
-from typing import Mapping
+from typing import Any, Mapping
 
 from neko_launcher.updater.binary_frame import (
     MARKER_FRAME_SIZE,
@@ -535,6 +535,60 @@ def load_enrollment(
     finally:
         if store is not None:
             store.close()
+        if marker_handle is not None:
+            _close_handle(marker_handle)
+        if guard_handle is not None:
+            _close_handle(guard_handle)
+
+
+def validate_enrollment_trust_binding(
+    install_root: pathlib.Path,
+    profile: Any,
+    *,
+    expected_root: RootIdentity | None = None,
+    expected_helper_sha256: str | None = None,
+) -> EnrollmentMarker:
+    state_dir = install_root if install_root.name == "state" else install_root / "state"
+    marker_path = state_dir / "enrollment.bin"
+
+    guard_handle = None
+    marker_handle = None
+    try:
+        try:
+            guard_handle = _open_state_dir_guard(state_dir)
+            marker_handle = _open_existing_readonly(marker_path)
+            _validate_trusted_leaf(marker_handle, guard_handle)
+            if _get_file_size(marker_handle) != MARKER_FRAME_SIZE:
+                raise EnrollmentError("STATE_CORRUPT")
+            marker_raw = _read_exact_at_zero(marker_handle, MARKER_FRAME_SIZE)
+        except FileNotFoundError:
+            raise EnrollmentError("REPAIR_REQUIRED")
+        except OSError:
+            raise EnrollmentError("IO_FAILED")
+
+        try:
+            marker_frame = unpack_marker_frame(marker_raw)
+            marker = deserialize_marker(marker_frame.body_bytes)
+        except ValueError:
+            raise EnrollmentError("STATE_CORRUPT")
+
+        if expected_root is not None and marker.root != expected_root:
+            raise EnrollmentError("ROOT_UNSUPPORTED")
+        if expected_helper_sha256 is not None and marker.helper_sha256 != expected_helper_sha256:
+            raise EnrollmentError("PROTOCOL_UNSUPPORTED")
+        if marker.helper_protocol != 1:
+            raise EnrollmentError("PROTOCOL_UNSUPPORTED")
+
+        # Profile pins
+        if marker.profile_id != profile.profile_id:
+            raise EnrollmentError("PROTOCOL_INVALID")
+        if marker.profile_envelope_sha256 != profile.profile_envelope_sha256:
+            raise EnrollmentError("PROTOCOL_INVALID")
+        if marker.keyset_sha256 != profile.keyset_sha256:
+            raise EnrollmentError("UNKNOWN_KEY")
+
+        return marker
+    finally:
         if marker_handle is not None:
             _close_handle(marker_handle)
         if guard_handle is not None:

@@ -6,6 +6,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
 
 GITHUB_RELEASE_OWNER = "Valeneko-pranmong"
 GITHUB_RELEASE_REPOSITORY = "Neko-Family-Proxy"
@@ -72,7 +76,7 @@ def _positive_integer(value: object, maximum: int | None = None) -> bool:
     )
 
 
-def _valid_asset_url(value: object) -> bool:
+def _valid_asset_url(value: object, asset_path_prefix: str = _ASSET_PATH_PREFIX) -> bool:
     if not isinstance(value, str):
         return False
     try:
@@ -87,12 +91,16 @@ def _valid_asset_url(value: object) -> bool:
         and parsed.username is None
         and parsed.password is None
         and not parsed.fragment
-        and parsed.path.startswith(_ASSET_PATH_PREFIX)
-        and len(parsed.path) > len(_ASSET_PATH_PREFIX)
+        and parsed.path.startswith(asset_path_prefix)
+        and len(parsed.path) > len(asset_path_prefix)
     )
 
 
-def parse_github_release(document: object, allow_prerelease: bool = False) -> GitHubRelease:
+def parse_github_release(
+    document: object,
+    allow_prerelease: bool = False,
+    asset_path_prefix: str = _ASSET_PATH_PREFIX,
+) -> GitHubRelease:
     if not isinstance(document, dict):
         raise _invalid()
 
@@ -130,7 +138,7 @@ def parse_github_release(document: object, allow_prerelease: bool = False) -> Gi
             raise _invalid()
         if not _positive_integer(size, _ASSET_MAX_BYTES):
             raise _invalid()
-        if not _valid_asset_url(download_url):
+        if not _valid_asset_url(download_url, asset_path_prefix=asset_path_prefix):
             raise _invalid()
         folded_name = name.casefold()
         if asset_id in asset_ids or name in asset_names or folded_name in folded_names:
@@ -166,9 +174,19 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
 
 
 class GitHubLatestReleaseGateway:
-    def __init__(self, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        timeout: float = 5.0,
+        *,
+        channel_profile: UpdateChannelProfile | None = None,
+    ) -> None:
         self._timeout = timeout
+        self._channel_profile = channel_profile
         self._opener = urllib.request.build_opener(_NoRedirectHandler())
+
+    @property
+    def channel_profile(self) -> UpdateChannelProfile | None:
+        return self._channel_profile
 
     def _execute_request(self, url: str, allow_prerelease: bool) -> GitHubRelease | None:
         request = urllib.request.Request(
@@ -201,14 +219,35 @@ class GitHubLatestReleaseGateway:
             )
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
             raise _invalid() from None
-        return parse_github_release(document, allow_prerelease=allow_prerelease)
+
+        prefix = (
+            self._channel_profile.browser_download_prefix
+            if self._channel_profile is not None
+            else _ASSET_PATH_PREFIX
+        )
+        return parse_github_release(
+            document,
+            allow_prerelease=allow_prerelease,
+            asset_path_prefix=prefix,
+        )
 
     def fetch(self) -> GitHubRelease | None:
-        return self._execute_request(GITHUB_RELEASE_API_URL, allow_prerelease=False)
+        url = (
+            self._channel_profile.latest_release_api
+            if self._channel_profile is not None
+            else GITHUB_RELEASE_API_URL
+        )
+        return self._execute_request(url, allow_prerelease=False)
 
     def fetch_by_id(self, release_id: int) -> GitHubRelease | None:
-        url = (
-            f"https://api.github.com/repos/{GITHUB_RELEASE_OWNER}/"
-            f"{GITHUB_RELEASE_REPOSITORY}/releases/{release_id}"
-        )
+        if self._channel_profile is not None:
+            url = (
+                f"https://api.github.com/repos/{self._channel_profile.owner}/"
+                f"{self._channel_profile.repository}/releases/{release_id}"
+            )
+        else:
+            url = (
+                f"https://api.github.com/repos/{GITHUB_RELEASE_OWNER}/"
+                f"{GITHUB_RELEASE_REPOSITORY}/releases/{release_id}"
+            )
         return self._execute_request(url, allow_prerelease=True)

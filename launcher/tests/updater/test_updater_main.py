@@ -410,10 +410,18 @@ def test_cli_contract(monkeypatch, tmp_path):
     assert updater_main.main(["--root", str(tmp_path)]) != 0
 
     original_stdout = sys.stdout
+    class FakeVerifiedProfile:
+        release_public_keys = {"prod": b"\x02" * 32}
+
     monkeypatch.setattr(
         updater_main,
-        "PRODUCTION_RELEASE_PUBLIC_KEYS",
-        {"prod": b"\x02" * 32},
+        "load_installed_update_trust_profile",
+        lambda root: FakeVerifiedProfile(),
+    )
+    monkeypatch.setattr(
+        updater_main,
+        "validate_enrollment_trust_binding",
+        lambda root, prof: None,
     )
     monkeypatch.setattr(
         updater_main,
@@ -441,3 +449,52 @@ def test_cli_contract(monkeypatch, tmp_path):
         assert run_session_called == 1
     finally:
         sys.stdout = original_stdout
+
+
+def test_packaged_helper_does_not_embed_production_release_keys():
+    updater_main = get_updater_main()
+    assert not hasattr(updater_main, "PRODUCTION_RELEASE_PUBLIC_KEYS"), (
+        "Packaged helper main must not import or embed PRODUCTION_RELEASE_PUBLIC_KEYS"
+    )
+
+
+def test_packaged_session_resolves_keys_from_fixed_verified_profile_and_pin(monkeypatch, tmp_path):
+    updater_main = get_updater_main()
+    root_dir = tmp_path / "install"
+    monkeypatch.setattr(updater_main, "get_expected_install_root", lambda: root_dir)
+    monkeypatch.setattr(updater_main, "validate_install_root", lambda r: SimpleNamespace(valid=True))
+
+    profile_loaded = False
+    binding_validated = False
+
+    class FakeVerifiedProfile:
+        release_public_keys = {"verified-key": b"\x05" * 32}
+
+    def fake_load_profile(root):
+        nonlocal profile_loaded
+        assert root == root_dir
+        profile_loaded = True
+        return FakeVerifiedProfile()
+
+    def fake_validate_binding(root, profile):
+        nonlocal binding_validated
+        assert root == root_dir
+        assert profile.release_public_keys == {"verified-key": b"\x05" * 32}
+        binding_validated = True
+
+    passed_keys = None
+
+    def fake_run_session(root, keys):
+        nonlocal passed_keys
+        passed_keys = keys
+        return 0
+
+    monkeypatch.setattr(updater_main, "load_installed_update_trust_profile", fake_load_profile, raising=False)
+    monkeypatch.setattr(updater_main, "validate_enrollment_trust_binding", fake_validate_binding, raising=False)
+    monkeypatch.setattr(updater_main, "run_session", fake_run_session)
+
+    res = updater_main.main(["--session"])
+    assert res == 0
+    assert profile_loaded is True
+    assert binding_validated is True
+    assert passed_keys == {"verified-key": b"\x05" * 32}

@@ -29,6 +29,7 @@ from neko_launcher.updater.manifest_v2 import (
 if TYPE_CHECKING:
     from neko_launcher.infrastructure.github_asset_downloader import GitHubManifestDownloader
     from neko_launcher.infrastructure.github_release import GitHubLatestReleaseGateway
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
 
 RELEASE_MANIFEST_ASSET_NAME = "release-v2.json"
 LAUNCHER_ASSET_NAME = "NekoLauncher.exe"
@@ -77,13 +78,20 @@ class GitHubReleaseResolver:
         *,
         release_gateway: GitHubLatestReleaseGateway,
         manifest_downloader: GitHubManifestDownloader,
-        key_registry: Mapping[str, bytes],
+        key_registry: Mapping[str, bytes] | None = None,
+        channel_profile: UpdateChannelProfile | None = None,
         install_root: Path,
         updater_protocol: int = UPDATER_PROTOCOL_VERSION,
     ) -> None:
         self._release_gateway = release_gateway
         self._manifest_downloader = manifest_downloader
-        self._key_registry = dict(key_registry)
+        if channel_profile is not None and key_registry is None:
+            self._key_registry = dict(channel_profile.release_public_keys)
+        elif key_registry is not None:
+            self._key_registry = dict(key_registry)
+        else:
+            raise ValueError("Either channel_profile or key_registry must be provided")
+        self._channel_profile = channel_profile
         self._install_root = Path(install_root)
         self._updater_protocol = updater_protocol
 

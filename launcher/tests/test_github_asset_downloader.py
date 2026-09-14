@@ -951,3 +951,39 @@ def test_product_downloader_ignores_http_content_length_etag_digest(tmp_path: Pa
     )
     assert artifact.size == expected_size
     assert artifact.sha256 == expected_sha256
+
+
+def test_manifest_downloader_routes_to_channel_profile() -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    module = _module()
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"k": b"\x01" * 32},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    profile = UpdateChannelProfile.from_verified(verified)
+
+    proof_url = (
+        "https://github.com/Valeneko-pranmong/Neko-Family-Proxy-Updates-Proof/"
+        "releases/download/v1.0/release-v2.json"
+    )
+    exact = b'{"channel":"stable","release_sequence":1}'
+    opener = FakeOpener({proof_url: FakeResponse(body=exact, status=200)})
+
+    downloader = module.GitHubManifestDownloader(channel_profile=profile, _opener=opener)
+    asset = GitHubReleaseAsset(
+        id=10,
+        name="release-v2.json",
+        size=len(exact),
+        browser_download_url=proof_url,
+    )
+    manifest = downloader.download(asset)
+    assert manifest.exact_bytes == exact

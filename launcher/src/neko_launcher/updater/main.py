@@ -4,11 +4,11 @@ from pathlib import Path
 
 from neko_launcher.updater.activation import activate_verified_generation
 from neko_launcher.updater.broker import BrokerCoordinator
+from neko_launcher.updater.enrollment import validate_enrollment_trust_binding
 from neko_launcher.updater.ipc_channel import FramedIpcChannel, IpcProtocolError
 from neko_launcher.updater.root_validator import get_expected_install_root, validate_install_root
 from neko_launcher.updater.slot_store import SlotStore
-
-from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+from neko_launcher.updater.trust_profile import load_installed_update_trust_profile
 
 
 def serve_session(channel, coordinator) -> bool:
@@ -139,18 +139,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if argv == ["--session"]:
-        if not PRODUCTION_RELEASE_PUBLIC_KEYS:
-            return 2
-
         try:
             root_dir = get_expected_install_root()
             val_res = validate_install_root(root_dir)
             if not val_res.valid:
                 return 1
+            profile = load_installed_update_trust_profile(root_dir)
+            validate_enrollment_trust_binding(root_dir, profile)
         except Exception:
             return 1
 
-        return run_session(root_dir, PRODUCTION_RELEASE_PUBLIC_KEYS)
+        return run_session(root_dir, profile.release_public_keys)
 
     return 2
 

@@ -58,6 +58,8 @@ def _ready_states() -> tuple[EnrollmentMarker, State, State]:
         root=RootIdentity(volume_serial="1" * 16, file_id="2" * 32),
         helper_sha256="3" * 64,
         helper_protocol=1,
+        profile_id="proof-v512",
+        profile_envelope_sha256="5" * 64,
         keyset_sha256="4" * 64,
         bootstrap_payload_sha256=payload_sha,
         enrollment_status="PREPARED",
@@ -102,6 +104,8 @@ def marker_and_initial_state():
         root=RootIdentity(volume_serial="1" * 16, file_id="2" * 32),
         helper_sha256="3" * 64,
         helper_protocol=1,
+        profile_id="proof-v512",
+        profile_envelope_sha256="5" * 64,
         keyset_sha256="4" * 64,
         bootstrap_payload_sha256=payload_sha,
         enrollment_status="PREPARED",
@@ -737,6 +741,8 @@ def test_load_enrollment_accepts_later_committed_state_without_bootstrap_evidenc
         root=RootIdentity(volume_serial="1" * 16, file_id="2" * 32),
         helper_sha256="3" * 64,
         helper_protocol=1,
+        profile_id="proof-v512",
+        profile_envelope_sha256="5" * 64,
         keyset_sha256="4" * 64,
         bootstrap_payload_sha256=payload_sha1,
         enrollment_status="PREPARED",
@@ -1152,15 +1158,191 @@ def test_enrollment_rejects_symlink_marker(tmp_path, keys, marker_and_initial_st
     state_dir = tmp_path / "state"
     state_dir.mkdir()
 
-    real_marker = tmp_path / "real_marker.bin"
-    real_marker.write_bytes(_pack_marker(marker))
-
-    marker_symlink = state_dir / "enrollment.bin"
-    try:
-        marker_symlink.symlink_to(real_marker)
-    except OSError as e:
-        pytest.skip(f"Symlinks unsupported: {e}")
-
     with pytest.raises(enr.EnrollmentError) as exc:
         enr.enroll_state_directory(state_dir, marker, initial_state, keys)
     assert exc.value.code in ("REPAIR_REQUIRED", "STATE_CORRUPT", "IO_FAILED")
+
+
+def test_validate_enrollment_trust_binding_success(tmp_path):
+    import neko_launcher.updater.enrollment as enr
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    profile = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"key1": b"\x01" * 32},
+        keyset_sha256="4" * 64,
+        profile_envelope_sha256="5" * 64,
+        profile_authority_key_id="auth-key-1",
+        profile_authority_public_key_sha256="6" * 64,
+    )
+
+    marker = EnrollmentMarker(
+        schema_version=1,
+        installation_id="0" * 32,
+        root=RootIdentity(volume_serial="1" * 16, file_id="2" * 32),
+        helper_sha256="3" * 64,
+        helper_protocol=1,
+        profile_id="proof-v512",
+        profile_envelope_sha256="5" * 64,
+        keyset_sha256="4" * 64,
+        bootstrap_payload_sha256="7" * 64,
+        enrollment_status="PREPARED",
+    )
+
+    (state_dir / "enrollment.bin").write_bytes(_pack_marker(marker))
+
+    res = enr.validate_enrollment_trust_binding(
+        tmp_path,
+        profile,
+        expected_root=marker.root,
+        expected_helper_sha256=marker.helper_sha256,
+    )
+    assert res == marker
+
+    # Idempotent re-run
+    res2 = enr.validate_enrollment_trust_binding(
+        tmp_path,
+        profile,
+        expected_root=marker.root,
+        expected_helper_sha256=marker.helper_sha256,
+    )
+    assert res2 == marker
+
+
+def test_validate_enrollment_trust_binding_mismatches_fail_closed(tmp_path):
+    import neko_launcher.updater.enrollment as enr
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    marker = EnrollmentMarker(
+        schema_version=1,
+        installation_id="0" * 32,
+        root=RootIdentity(volume_serial="1" * 16, file_id="2" * 32),
+        helper_sha256="3" * 64,
+        helper_protocol=1,
+        profile_id="proof-v512",
+        profile_envelope_sha256="5" * 64,
+        keyset_sha256="4" * 64,
+        bootstrap_payload_sha256="7" * 64,
+        enrollment_status="PREPARED",
+    )
+    (state_dir / "enrollment.bin").write_bytes(_pack_marker(marker))
+
+    # Profile ID mismatch -> PROTOCOL_INVALID
+    prof_wrong_id = VerifiedUpdateTrustProfile(
+        profile_id="other-id",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"key1": b"\x01" * 32},
+        keyset_sha256="4" * 64,
+        profile_envelope_sha256="5" * 64,
+        profile_authority_key_id="auth-key-1",
+        profile_authority_public_key_sha256="6" * 64,
+    )
+    with pytest.raises(enr.EnrollmentError) as exc:
+        enr.validate_enrollment_trust_binding(
+            tmp_path, prof_wrong_id, expected_root=marker.root, expected_helper_sha256=marker.helper_sha256
+        )
+    assert exc.value.code == "PROTOCOL_INVALID"
+
+    # Profile envelope SHA mismatch -> PROTOCOL_INVALID
+    prof_wrong_env = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"key1": b"\x01" * 32},
+        keyset_sha256="4" * 64,
+        profile_envelope_sha256="9" * 64,
+        profile_authority_key_id="auth-key-1",
+        profile_authority_public_key_sha256="6" * 64,
+    )
+    with pytest.raises(enr.EnrollmentError) as exc:
+        enr.validate_enrollment_trust_binding(
+            tmp_path, prof_wrong_env, expected_root=marker.root, expected_helper_sha256=marker.helper_sha256
+        )
+    assert exc.value.code == "PROTOCOL_INVALID"
+
+    # Keyset SHA mismatch -> UNKNOWN_KEY
+    prof_wrong_keyset = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"key1": b"\x01" * 32},
+        keyset_sha256="9" * 64,
+        profile_envelope_sha256="5" * 64,
+        profile_authority_key_id="auth-key-1",
+        profile_authority_public_key_sha256="6" * 64,
+    )
+    with pytest.raises(enr.EnrollmentError) as exc:
+        enr.validate_enrollment_trust_binding(
+            tmp_path, prof_wrong_keyset, expected_root=marker.root, expected_helper_sha256=marker.helper_sha256
+        )
+    assert exc.value.code == "UNKNOWN_KEY"
+
+    # Helper SHA mismatch -> PROTOCOL_UNSUPPORTED
+    valid_prof = VerifiedUpdateTrustProfile(
+        profile_id="proof-v512",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys={"key1": b"\x01" * 32},
+        keyset_sha256="4" * 64,
+        profile_envelope_sha256="5" * 64,
+        profile_authority_key_id="auth-key-1",
+        profile_authority_public_key_sha256="6" * 64,
+    )
+    with pytest.raises(enr.EnrollmentError) as exc:
+        enr.validate_enrollment_trust_binding(
+            tmp_path, valid_prof, expected_root=marker.root, expected_helper_sha256="f" * 64
+        )
+    assert exc.value.code == "PROTOCOL_UNSUPPORTED"
+
+    # Root mismatch -> ROOT_UNSUPPORTED
+    with pytest.raises(enr.EnrollmentError) as exc:
+        enr.validate_enrollment_trust_binding(
+            tmp_path,
+            valid_prof,
+            expected_root=RootIdentity(volume_serial="f" * 16, file_id="f" * 32),
+            expected_helper_sha256=marker.helper_sha256,
+        )
+    assert exc.value.code == "ROOT_UNSUPPORTED"
+
+
+def test_enrolled_marker_pins_immutable_and_cannot_be_rewritten():
+    import neko_launcher.updater.enrollment as enr
+
+    marker = EnrollmentMarker(
+        schema_version=1,
+        installation_id="0" * 32,
+        root=RootIdentity(volume_serial="1" * 16, file_id="2" * 32),
+        helper_sha256="3" * 64,
+        helper_protocol=1,
+        profile_id="proof-v512",
+        profile_envelope_sha256="5" * 64,
+        keyset_sha256="4" * 64,
+        bootstrap_payload_sha256="7" * 64,
+        enrollment_status="PREPARED",
+    )
+
+    with pytest.raises((AttributeError, TypeError)):
+        marker.profile_id = "rewritten"
+
+    with pytest.raises((AttributeError, TypeError)):
+        marker.profile_envelope_sha256 = "rewritten"
+
+    # Assert no update/rewrite API exists in enrollment module
+    for attr in dir(enr):
+        assert "rewrite" not in attr.lower()
+        assert "update_marker" not in attr.lower()
+        assert "modify_marker" not in attr.lower()
