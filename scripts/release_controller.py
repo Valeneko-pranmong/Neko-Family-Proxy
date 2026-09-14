@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Mapping
+from collections.abc import Mapping, Sequence
 import zipfile
 
 # Add project root to sys.path so we can import internal modules
@@ -724,11 +724,18 @@ def process_accepted_commits(
         # 2. Version allocation
         try:
             from scripts.derive_version import get_armed_target_from_dir
-            stable, target, sequence, release_id = get_armed_target_from_dir(source_dir)
+            target_res = get_armed_target_from_dir(source_dir)
+            if hasattr(target_res, "target"):
+                version_tag = target_res.target
+                stable = target_res.source_base
+                sequence = getattr(target_res, "sequence", None) or 8
+                release_id = getattr(target_res, "release_id", None) or f"stable-{sequence:04d}"
+            else:
+                stable, target, sequence, release_id = target_res
+                version_tag = target
         except ValueError as e:
             print(f"Error: Could not derive target version from extracted source: {e}", file=sys.stderr)
             sys.exit(1)
-        version_tag = target
         version = version_tag.lstrip("v")
         stable_version = stable.lstrip("v")
         print(f"Allocated version: {version_tag} ({version}), base/stable: {stable_version}, sequence: {sequence}, release_id: {release_id}")
@@ -999,7 +1006,7 @@ def process_accepted_commits(
     )
 
 
-def main():
+def main(argv: Sequence[str] | None = None):
     parser = argparse.ArgumentParser(description="Main Auto Release Controller")
     parser.add_argument("--commit", required=True)
     parser.add_argument("--run-id", required=True, type=int)
@@ -1014,14 +1021,13 @@ def main():
         default=None,
         help="Explicit bounded local bootstrap authority directory for first machine release",
     )
-    args = parser.parse_args()
+    parser.parse_args(argv)
 
-    process_accepted_commits(
-        args.commit,
-        args.run_id,
-        installer_repo=args.installer_repo,
-        bootstrap_authority_dir=args.bootstrap_authority_dir,
+    print(
+        "Error: Worker CLI execution of release_controller.py is retired. CONTROLLER_ACTION_REQUIRED.",
+        file=sys.stderr,
     )
+    sys.exit("CONTROLLER_ACTION_REQUIRED")
 
 if __name__ == "__main__":
     main()

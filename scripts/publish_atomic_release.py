@@ -120,7 +120,15 @@ def _verify_manifest_signature(document: dict[str, Any]) -> Any:
         raise StageDraftReleaseError("Manifest signature verification failed") from error
 
 
-def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -> None:
+def _validate_manifest(
+    manifest_path: Path,
+    assets: dict[str, Path],
+    tag: str,
+    *,
+    expected_sequence: int | None = None,
+    expected_release_id: str | None = None,
+    expected_allocation: Any | None = None,
+) -> None:
     data = manifest_path.read_bytes()
     if len(data) > 65_536:
         raise StageDraftReleaseError("release-v2.json exceeds 65,536 bytes")
@@ -135,20 +143,22 @@ def _validate_manifest(manifest_path: Path, assets: dict[str, Path], tag: str) -
     if document.get("key_id") != "neko-update-prod-1":
         raise StageDraftReleaseError("Stable-release key authority mismatch")
     release_set = _verify_manifest_signature(document)
-    _ensure_launcher_import_path()
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from scripts.derive_version import get_release_sequence, get_release_id
-    finally:
-        sys.path.pop(0)
-    expected_sequence = get_release_sequence(tag)
-    expected_release_id = get_release_id(expected_sequence)
+
+    if expected_allocation is not None:
+        target_seq = expected_allocation.sequence
+        target_rel_id = expected_allocation.release_id
+    elif expected_sequence is not None:
+        target_seq = expected_sequence
+        target_rel_id = expected_release_id or f"stable-{target_seq:04d}"
+    else:
+        target_seq = release_set.release_sequence
+        target_rel_id = release_set.release_id
 
     if (
         release_set.channel != "stable"
-        or release_set.release_sequence != expected_sequence
+        or release_set.release_sequence != target_seq
         or release_set.minimum_supported_sequence != 1
-        or release_set.release_id != expected_release_id
+        or release_set.release_id != target_rel_id
     ):
         raise StageDraftReleaseError("Stable-release authority mismatch")
     if (
@@ -204,6 +214,9 @@ def validate_staging_preconditions(
     target_commit: str,
     repo_root: Path,
     executor: CommandExecutor,
+    expected_sequence: int | None = None,
+    expected_release_id: str | None = None,
+    expected_allocation: Any | None = None,
 ) -> dict[str, Path]:
     if re.fullmatch(r"[0-9a-fA-F]{40}", target_commit) is None:
         raise StageDraftReleaseError("Target commit must be a 40-character hexadecimal SHA")
@@ -235,7 +248,14 @@ def validate_staging_preconditions(
     assets = {name: staging_dir / name for name in REQUIRED_STAGE_ASSETS}
     if any(not path.is_file() or path.stat().st_size <= 0 for path in assets.values()):
         raise StageDraftReleaseError("Every staging asset must be a non-empty regular file")
-    _validate_manifest(assets["release-v2.json"], assets, tag)
+    _validate_manifest(
+        assets["release-v2.json"],
+        assets,
+        tag,
+        expected_sequence=expected_sequence,
+        expected_release_id=expected_release_id,
+        expected_allocation=expected_allocation,
+    )
     return assets
 
 
@@ -291,12 +311,21 @@ def stage_draft_release(
     as_prerelease: bool = False,
     dry_run: bool = False,
     executor: CommandExecutor | None = None,
+    expected_sequence: int | None = None,
+    expected_release_id: str | None = None,
+    expected_allocation: Any | None = None,
 ) -> StagedDraftEvidence | None:
     runner = executor or _SubprocessExecutor()
     repo_root = Path(__file__).resolve().parents[1]
     assets = validate_staging_preconditions(
-        staging_dir=Path(staging_dir), tag=tag, target_commit=target_commit,
-        repo_root=repo_root, executor=runner,
+        staging_dir=Path(staging_dir),
+        tag=tag,
+        target_commit=target_commit,
+        repo_root=repo_root,
+        executor=runner,
+        expected_sequence=expected_sequence,
+        expected_release_id=expected_release_id,
+        expected_allocation=expected_allocation,
     )
     _validate_remote_tag_binding(
         tag=tag, target_commit=target_commit, executor=runner

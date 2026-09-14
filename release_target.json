@@ -1,8 +1,5 @@
 {
-  "stable": "v5.1.1",
+  "source_base": "v5.1.1",
   "target": "v5.1.2",
-  "seq": 6,
-  "stable_id": "stable-0006",
-  "intent": "user_bug",
-  "installer_repo": "Valeneko-pranmong/Neko-Family-Proxy-Installer"
+  "intent": "user_bug"
 }

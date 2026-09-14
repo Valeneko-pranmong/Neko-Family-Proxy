@@ -206,7 +206,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     from pathlib import Path
     real_exists = Path.exists
-    def fake_exists(self):
+    def fake_exists(self, *args, **kwargs):
         if "__init__.py" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
@@ -219,7 +219,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
             return True
         if "NekoProxyCore.zip" in str(self) or "windowsdesktop-runtime" in str(self):
             return True
-        return real_exists(self)
+        return real_exists(self, *args, **kwargs)
 
     monkeypatch.setattr("scripts.release_controller.Path.exists", fake_exists)
 
@@ -228,10 +228,10 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         def __init__(self, size):
             self.st_size = size
             self.st_mode = 33206
-    def fake_stat(self):
+    def fake_stat(self, *args, **kwargs):
         if "NekoProxyCore.zip" in str(self):
             return FakeStat(fake_core_path.stat().st_size)
-        return real_stat(self)
+        return real_stat(self, *args, **kwargs)
     monkeypatch.setattr("scripts.release_controller.Path.stat", fake_stat)
 
     monkeypatch.setattr(
@@ -362,7 +362,7 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
 
     from pathlib import Path
     real_exists = Path.exists
-    def fake_exists(self):
+    def fake_exists(self, *args, **kwargs):
         if "__init__.py" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
@@ -373,7 +373,7 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
             if not real_exists(self):
                 self.write_text('version = "5.1.2"', encoding="utf-8")
             return True
-        return real_exists(self)
+        return real_exists(self, *args, **kwargs)
     monkeypatch.setattr("scripts.release_controller.Path.exists", fake_exists)
 
     import pytest

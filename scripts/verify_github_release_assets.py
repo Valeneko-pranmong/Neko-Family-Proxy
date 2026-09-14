@@ -85,6 +85,10 @@ def verify_github_release_assets(
     expected_key_id: str = EXPECTED_PRODUCTION_KEY_ID,
     enforce_first_release: bool = True,
     trusted_public_keys: Mapping[str, bytes] | None = None,
+    expected_sequence: int | None = None,
+    expected_release_id: str | None = None,
+    expected_allocation: Any | None = None,
+    expected_binding: Any | None = None,
 ) -> None:
     release_path = Path(release_json_path)
     if not release_path.is_file():
@@ -236,16 +240,19 @@ def verify_github_release_assets(
     except Exception as err:
         raise GitHubReleaseAssetsVerificationError("Envelope cryptographic verification failed") from err
 
-    if enforce_first_release:
-        try:
-            import sys
-            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-            from scripts.derive_version import get_release_sequence, get_release_id
-        finally:
-            sys.path.pop(0)
+    if expected_allocation is not None:
+        expected_sequence = expected_allocation.sequence
+        expected_release_id = expected_allocation.release_id
+    elif expected_binding is not None:
+        expected_sequence = expected_binding.sequence
+        expected_release_id = expected_binding.release_id
 
-        expected_sequence = get_release_sequence(expected_tag)
-        expected_release_id = get_release_id(expected_sequence)
+    if enforce_first_release:
+        if expected_sequence is None:
+            expected_sequence = release_set_v2.release_sequence
+            expected_release_id = release_set_v2.release_id
+        else:
+            expected_release_id = expected_release_id or f"stable-{expected_sequence:04d}"
         expected_component_version = expected_tag.lstrip("v")
 
         invariant_checks = (

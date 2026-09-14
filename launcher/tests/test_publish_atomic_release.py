@@ -13,7 +13,10 @@ import zipfile
 
 import pytest
 
-from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
+try:
+    from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
+except ImportError:
+    from launcher.tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
 
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "publish_atomic_release.py"
@@ -390,6 +393,8 @@ def test_recovery_authority_mismatch_fails_before_github_mutation(
             tag=TAG,
             target_commit=TARGET,
             executor=executor,
+            expected_sequence=8,
+            expected_release_id="stable-0008",
         )
     assert not any(call[0] == "gh" for call in executor.calls)
 

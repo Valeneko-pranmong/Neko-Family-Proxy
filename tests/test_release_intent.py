@@ -10,12 +10,11 @@ from scripts.kanban_release_adapter import poll_github_and_create_tasks
 
 def test_c_api_compatibility():
     # C) API compatibility
-    assert hasattr(derive_version, "get_release_sequence")
     assert hasattr(derive_version, "get_release_id")
     assert hasattr(derive_version, "get_github_releases")
-    assert derive_version.get_release_sequence("v5.1.0") == 4
+    assert hasattr(derive_version, "parse_release_target_data")
+    assert hasattr(derive_version, "load_release_target_intent")
     assert derive_version.get_release_id(4) == "stable-0004"
-    # we can't test get_github_releases without mocking but we can check if it exists
 
 def test_a_exact_sha_intent_binding_adapter(monkeypatch, tmp_path):
     # A) Adapter must load/parse release_target.json from EACH exact accepted run head SHA
@@ -27,7 +26,7 @@ def test_a_exact_sha_intent_binding_adapter(monkeypatch, tmp_path):
 
     def mock_get_armed_target_from_sha(sha):
         called_shas.append(sha)
-        return "v5.1.0", "v5.1.1", 5, "stable-0005"
+        return derive_version.ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
     monkeypatch.setattr("scripts.kanban_release_adapter.get_armed_target_from_sha", mock_get_armed_target_from_sha)
 
     # Mock other things so we don't actually run anything
@@ -53,11 +52,11 @@ def test_b_duplicate_guard_adapter(monkeypatch):
     monkeypatch.setattr("scripts.kanban_release_adapter.get_successful_main_runs", fake_gh_run)
 
     def mock_get_armed_target_from_sha(sha):
-        return "v5.1.0", "v5.1.1", 5, "stable-0005"
+        return derive_version.ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
     monkeypatch.setattr("scripts.kanban_release_adapter.get_armed_target_from_sha", mock_get_armed_target_from_sha)
 
     def fake_get_github_releases():
-        return [{"tag_name": "v5.1.1", "prerelease": False}] # Already exists as stable!
+        return [{"tag_name": "v5.1.2", "prerelease": False}] # Already exists as stable!
     monkeypatch.setattr("scripts.kanban_release_adapter.get_github_releases", fake_get_github_releases)
 
     # Make sure we track if kanban task was created
@@ -86,13 +85,13 @@ def test_b_duplicate_guard_controller(monkeypatch, tmp_path):
     monkeypatch.setattr(release_controller, "should_trigger", lambda f: True)
 
     def mock_get_armed_target(*a, **k):
-        return "v5.1.0", "v5.1.1", 5, "stable-0005"
+        return derive_version.ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
     monkeypatch.setattr("scripts.derive_version.get_armed_target_from_dir", mock_get_armed_target)
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
 
-    # Mock get_github_releases to say v5.1.1 is already stable
+    # Mock get_github_releases to say v5.1.2 is already stable
     def fake_get_github_releases():
-        return [{"tag_name": "v5.1.1", "prerelease": False}]
+        return [{"tag_name": "v5.1.2", "prerelease": False}]
     monkeypatch.setattr("scripts.derive_version.get_github_releases", fake_get_github_releases)
 
     staging_base = tmp_path / "artifacts"
@@ -131,7 +130,7 @@ def test_d_version_injection_hardening(monkeypatch, tmp_path):
     monkeypatch.setattr(release_controller, "should_trigger", lambda f: True)
 
     def mock_get_armed_target(*a, **k):
-        return "v5.1.0", "v5.1.1", 5, "stable-0005"
+        return derive_version.ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
     monkeypatch.setattr("scripts.derive_version.get_armed_target_from_dir", mock_get_armed_target)
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
 
@@ -179,7 +178,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr(release_controller, "should_trigger", lambda f: True)
 
     def mock_get_armed_target(*a, **k):
-        return "v5.1.0", "v5.1.1", 5, "stable-0005"
+        return derive_version.ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
     monkeypatch.setattr("scripts.derive_version.get_armed_target_from_dir", mock_get_armed_target)
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
 
@@ -211,11 +210,11 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     source_dir = tmp_path / "main-auto-release" / "1-sha1" / "source"
     init_path = source_dir / "launcher" / "src" / "neko_launcher" / "__init__.py"
     init_path.parent.mkdir(parents=True, exist_ok=True)
-    init_path.write_text('__version__ = "5.1.0"')
+    init_path.write_text('__version__ = "5.1.1"')
 
     pyproject_path = source_dir / "launcher" / "pyproject.toml"
     pyproject_path.parent.mkdir(parents=True, exist_ok=True)
-    pyproject_path.write_text('version = "5.1.0"')
+    pyproject_path.write_text('version = "5.1.1"')
 
     dist_dir = source_dir / "launcher" / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
@@ -238,7 +237,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
 
     release_controller.process_accepted_commits("sha1", 1, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
-    build_record_path = tmp_path / "main-auto-release" / "1-sha1" / "5.1.1" / "evidence" / "build-record.json"
+    build_record_path = tmp_path / "main-auto-release" / "1-sha1" / "5.1.2" / "evidence" / "build-record.json"
     record = json.loads(build_record_path.read_text())
     assert "source_commit" in record
     assert "stable_version" in record

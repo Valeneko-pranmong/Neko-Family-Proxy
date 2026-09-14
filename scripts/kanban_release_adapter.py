@@ -118,25 +118,29 @@ def create_kanban_task(run_id: int, sha: str):
     env.pop("HERMES_SUPERVISED_CHILD", None)
     subprocess.run(cmd, check=True, env=env)
 
-def poll_github_and_create_tasks():
+def poll_github_and_create_tasks() -> str | None:
     for run in get_successful_main_runs():
         run_id = run["databaseId"]
         sha = run["headSha"]
         files = get_changed_files_for_sha(sha)
         if should_trigger(files):
             try:
-                stable, target, seq, stable_id = get_armed_target_from_sha(sha)
+                target_intent = get_armed_target_from_sha(sha)
             except ValueError as e:
                 print(f"Skipping task creation for {sha}: {e}")
                 continue
 
             # Duplicate guard
             existing = get_github_releases()
-            if any(r["tag_name"] == target and not r["prerelease"] for r in existing):
-                print(f"Skipping task creation for {sha}: Target {target} is already accepted as Stable.")
+            target_tag = target_intent.target if hasattr(target_intent, "target") else target_intent[1]
+            if any(r["tag_name"] == target_tag and not r["prerelease"] for r in existing):
+                print(f"Skipping task creation for {sha}: Target {target_tag} is already accepted as Stable.")
                 continue
 
-            create_kanban_task(run_id, sha)
+            # Retired automatic release-worker dispatch: report readiness signal only
+            print(f"Observed accepted main run {run_id} for {sha}: CONTROLLER_RELEASE_REQUIRED")
+            return "CONTROLLER_RELEASE_REQUIRED"
+    return None
 
 if __name__ == "__main__":
     poll_github_and_create_tasks()

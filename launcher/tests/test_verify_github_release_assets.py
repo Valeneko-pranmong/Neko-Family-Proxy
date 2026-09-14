@@ -12,13 +12,22 @@ from typing import Any
 import pytest
 
 from neko_launcher.updater.canonical_json import canonical_json_dumps
-from tests.software_update_helpers import (
-    TEST_KEY_ID,
-    TEST_PUBLIC_KEY,
-    get_test_key_registry,
-    signed_envelope,
-    valid_v2_release_document,
-)
+try:
+    from tests.software_update_helpers import (
+        TEST_KEY_ID,
+        TEST_PUBLIC_KEY,
+        get_test_key_registry,
+        signed_envelope,
+        valid_v2_release_document,
+    )
+except ImportError:
+    from launcher.tests.software_update_helpers import (
+        TEST_KEY_ID,
+        TEST_PUBLIC_KEY,
+        get_test_key_registry,
+        signed_envelope,
+        valid_v2_release_document,
+    )
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 SCRIPT_PATH = REPOSITORY_ROOT / "scripts" / "verify_github_release_assets.py"
@@ -177,6 +186,8 @@ def verify_bundle(verifier: Any, bundle: dict[str, Any], **overrides: Any) -> No
         "require_draft": True,
         "expected_key_id": TEST_KEY_ID,
         "trusted_public_keys": get_test_key_registry(),
+        "expected_sequence": 8,
+        "expected_release_id": "stable-0008",
     }
     arguments.update(overrides)
     verifier.verify_github_release_assets(**arguments)

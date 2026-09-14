@@ -190,9 +190,9 @@ def test_idempotent_task_creation_with_valid_runtime(mock_check_output, mock_her
         return b""
     mock_check_output.side_effect = mock_check_output_side_effect
 
-    poll_github_and_create_tasks()
-
-    mock_hermes_kanban.assert_called_once()
+    res = poll_github_and_create_tasks()
+    assert res == "CONTROLLER_RELEASE_REQUIRED"
+    mock_hermes_kanban.assert_not_called()
 
 @patch("scripts.kanban_release_adapter.subprocess.check_output")
 def test_get_changed_files_merge_dedup_local(mock_check_output):
