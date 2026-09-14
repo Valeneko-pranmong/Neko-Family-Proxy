@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Protocol, Sequence
 from urllib.parse import quote
 
+CANONICAL_REPO = "Valeneko-pranmong/Neko-Family-Proxy"
 CANONICAL_MACHINE_REPO = "Valeneko-pranmong/Neko-Family-Proxy-Updates"
-CANONICAL_REPO = CANONICAL_MACHINE_REPO
 _REMOTE_TAG_MAX_DEPTH = 4
 _SHA = re.compile(r"[0-9a-fA-F]{40}")
 
@@ -433,9 +433,13 @@ def _github_object(raw: str, *, context: str) -> tuple[str, str]:
 
 
 def _validate_remote_tag_binding(
-    *, tag: str, target_commit: str, executor: CommandExecutor
+    *,
+    tag: str,
+    target_commit: str,
+    executor: CommandExecutor,
+    repo: str = CANONICAL_MACHINE_REPO,
 ) -> None:
-    endpoint = f"repos/{CANONICAL_REPO}/git/ref/tags/{quote(tag, safe='')}"
+    endpoint = f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}"
     object_type, sha = _github_object(
         _run(executor, ["gh", "api", endpoint]), context="Remote tag reference"
     )
@@ -449,7 +453,7 @@ def _validate_remote_tag_binding(
         object_type, sha = _github_object(
             _run(
                 executor,
-                ["gh", "api", f"repos/{CANONICAL_REPO}/git/tags/{sha}"],
+                ["gh", "api", f"repos/{repo}/git/tags/{sha}"],
             ),
             context="Remote annotated tag",
         )
@@ -484,7 +488,10 @@ def stage_draft_release(
         expected_allocation=expected_allocation,
     )
     _validate_remote_tag_binding(
-        tag=tag, target_commit=target_commit, executor=runner
+        tag=tag,
+        target_commit=target_commit,
+        executor=runner,
+        repo=CANONICAL_MACHINE_REPO,
     )
     create = [
         "gh",
@@ -497,7 +504,7 @@ def stage_draft_release(
         "--draft",
         f"--prerelease={str(as_prerelease).lower()}",
         "--repo",
-        CANONICAL_REPO,
+        CANONICAL_MACHINE_REPO,
     ]
     if title is not None:
         create.extend(["--title", title])
@@ -511,7 +518,7 @@ def stage_draft_release(
         *(str(assets[name]) for name in REQUIRED_STAGE_ASSETS),
         "--clobber=false",
         "--repo",
-        CANONICAL_REPO,
+        CANONICAL_MACHINE_REPO,
     ]
     if dry_run:
         print(_quoted(create))
@@ -524,7 +531,7 @@ def stage_draft_release(
         [
             "gh",
             "api",
-            f"repos/{CANONICAL_REPO}/releases?per_page=100",
+            f"repos/{CANONICAL_MACHINE_REPO}/releases?per_page=100",
             "--paginate",
             "--slurp",
         ],
@@ -553,7 +560,7 @@ def stage_draft_release(
     if type(release_id) is not int or release_id <= 0:
         raise StageDraftReleaseError("Draft ID discovery has invalid numeric release ID")
     release_raw = _run(
-        runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{release_id}"]
+        runner, ["gh", "api", f"repos/{CANONICAL_MACHINE_REPO}/releases/{release_id}"]
     )
     try:
         release = json.loads(release_raw)

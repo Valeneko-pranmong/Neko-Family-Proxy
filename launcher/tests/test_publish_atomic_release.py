@@ -537,10 +537,11 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
     create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])
     upload = next(call for call in executor.calls if call[:3] == ["gh", "release", "upload"])
-    canonical_repo = "Valeneko-pranmong/Neko-Family-Proxy-Updates"
-    assert module.CANONICAL_REPO == canonical_repo
-    assert create[create.index("--repo") + 1] == canonical_repo
-    assert upload[upload.index("--repo") + 1] == canonical_repo
+    canonical_machine_repo = "Valeneko-pranmong/Neko-Family-Proxy-Updates"
+    assert module.CANONICAL_MACHINE_REPO == canonical_machine_repo
+    assert module.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy"
+    assert create[create.index("--repo") + 1] == canonical_machine_repo
+    assert upload[upload.index("--repo") + 1] == canonical_machine_repo
     assert [
         TAG,
         "--target",
@@ -800,7 +801,8 @@ def test_build_release_payload_has_machine_notes() -> None:
 def test_machine_publisher_targets_only_updates_repository() -> None:
     module = load_module()
     assert module.CANONICAL_MACHINE_REPO == "Valeneko-pranmong/Neko-Family-Proxy-Updates"
-    assert module.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy-Updates"
+    assert module.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy"
+    assert module.CANONICAL_REPO != module.CANONICAL_MACHINE_REPO
 
 
 def _setup_machine_publish_test_env(
