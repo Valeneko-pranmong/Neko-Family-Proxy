@@ -7,7 +7,10 @@ from typing import Any
 
 import pytest
 
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
+)
 from neko_launcher.infrastructure.github_asset_downloader import (
     DownloadedArtifact,
     GitHubAssetDownloadError,
@@ -89,12 +92,24 @@ def _make_local_identity(
     launcher_sha: str = "0" * 64,
     core_version: str = "1.0.0",
     core_sha: str = "0" * 64,
+    updater_version: str = "5.1.0",
+    updater_sha: str = "0" * 64,
+    payload_sha256: str = "0" * 64,
 ) -> LocalReleaseIdentity:
-    return LocalReleaseIdentity(
+    binding = AuthenticatedReleaseBinding(
         release_sequence=sequence,
         release_id=release_id,
+        payload_sha256=payload_sha256,
+    )
+    return LocalReleaseIdentity(
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
         launcher_version=launcher_version,
         launcher_installed_identity_sha256=launcher_sha,
+        updater_version=updater_version,
+        updater_installed_identity_sha256=updater_sha,
         core_version=core_version,
         core_installed_identity_sha256=core_sha,
     )
@@ -303,19 +318,20 @@ def test_stage_noop_latest_release_returns_none_and_downloads_nothing(tmp_path: 
     same_c_bytes = b"PK-same-core"
     same_c_sha = hashlib.sha256(same_c_bytes).hexdigest()
 
-    local = _make_local_identity(
-        sequence=2,
-        release_id="r2-stable",
-        launcher_sha=same_l_sha,
-        core_sha=same_c_sha,
-    )
-
     resolved, payloads = _make_resolved_release(
         sequence=2,
         release_id="r2-stable",
         launcher_bytes=same_l_bytes,
         core_bytes=same_c_bytes,
         core_installed_sha=same_c_sha,
+    )
+
+    local = _make_local_identity(
+        sequence=2,
+        release_id="r2-stable",
+        launcher_sha=same_l_sha,
+        core_sha=same_c_sha,
+        payload_sha256=resolved.authenticated_release.payload_sha256,
     )
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)

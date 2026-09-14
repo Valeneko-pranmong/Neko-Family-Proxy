@@ -12,6 +12,7 @@ from neko_launcher.application.software_update_coordinator import (
     UpdateLifecycleSnapshot,
 )
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     LocalReleaseIdentity,
     UpdateLifecycleState,
     UpdateState,
@@ -126,14 +127,28 @@ def _make_local_identity(
     release_id: str = "r1-stable",
     launcher_version: str = "5.1.0",
     core_version: str = "1.0.0",
+    updater_version: str = "5.1.0",
+    launcher_sha: str = "0" * 64,
+    updater_sha: str = "0" * 64,
+    core_sha: str = "0" * 64,
+    payload_sha256: str = "0" * 64,
 ) -> LocalReleaseIdentity:
-    return LocalReleaseIdentity(
+    binding = AuthenticatedReleaseBinding(
         release_sequence=sequence,
         release_id=release_id,
+        payload_sha256=payload_sha256,
+    )
+    return LocalReleaseIdentity(
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
         launcher_version=launcher_version,
-        launcher_installed_identity_sha256="0" * 64,
+        launcher_installed_identity_sha256=launcher_sha,
+        updater_version=updater_version,
+        updater_installed_identity_sha256=updater_sha,
         core_version=core_version,
-        core_installed_identity_sha256="0" * 64,
+        core_installed_identity_sha256=core_sha,
     )
 
 
