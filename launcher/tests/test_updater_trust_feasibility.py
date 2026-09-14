@@ -55,11 +55,16 @@ def build_deterministic_candidate_core(core_dir: Path, zip_path: Path) -> tuple[
     res = verify_canonical_core_bundle(core_dir)
     assert res.valid is True, f"Core bundle verification failed: {res.error}"
 
+    all_entries = dict(files)
+    all_entries["core-manifest.json"] = manifest_bytes
+
     zip_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("core-manifest.json", manifest_bytes)
-        for rel_path in sorted(files.keys()):
-            zf.writestr(rel_path, files[rel_path])
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for name in sorted(all_entries.keys()):
+            zinfo = zipfile.ZipInfo(filename=name, date_time=(1980, 1, 1, 0, 0, 0))
+            zinfo.compress_type = zipfile.ZIP_STORED
+            zinfo.external_attr = 0o644 << 16
+            zf.writestr(zinfo, all_entries[name])
 
     zip_bytes = zip_path.read_bytes()
     return zip_bytes, hashlib.sha256(zip_bytes).hexdigest(), len(zip_bytes)
@@ -73,6 +78,40 @@ def test_deterministic_candidate_fixture(tmp_path):
     assert size == len(zip_bytes)
     assert sha == hashlib.sha256(zip_bytes).hexdigest()
     assert verify_canonical_core_bundle(core_dir).valid is True
+
+
+def test_deterministic_candidate_fixture_strict_reproducibility(tmp_path):
+    core1 = tmp_path / "c1" / "core"
+    zip1 = tmp_path / "c1" / "NekoProxyCore.zip"
+    core2 = tmp_path / "c2" / "core"
+    zip2 = tmp_path / "c2" / "NekoProxyCore.zip"
+
+    bytes1, sha1, size1 = build_deterministic_candidate_core(core1, zip1)
+    bytes2, sha2, size2 = build_deterministic_candidate_core(core2, zip2)
+
+    assert bytes1 == bytes2
+    assert sha1 == sha2
+    assert size1 == size2
+
+    expected_entries = sorted([
+        "NekoProxyCore.exe",
+        "NekoProxyCore.dll",
+        "runtime-settings.nkps",
+        "bin/Redirector.bin",
+        "bin/nfapi.dll",
+        "bin/v2ray-sn.exe",
+        "core-manifest.json",
+    ])
+
+    with zipfile.ZipFile(zip1, "r") as zf:
+        infolist = zf.infolist()
+        entry_names = [info.filename for info in infolist]
+        assert entry_names == expected_entries
+        for info in infolist:
+            assert info.compress_type == zipfile.ZIP_STORED
+            assert info.date_time == (1980, 1, 1, 0, 0, 0)
+            assert (info.external_attr >> 16) & 0o120000 != 0o120000
+            assert (info.external_attr >> 16) & 0o100000 == 0o100000 or (info.external_attr >> 16) == 0o644
 
 
 def test_cross_trust_rejection():
