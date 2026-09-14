@@ -742,3 +742,148 @@ def test_representative_assertions(tmp_path: Path) -> None:
         ledger=ledger3, authenticated_history=crash_pub_snapshot
     )
     assert reconciled_pub.recovery_action == "PUBLISHED_APPEND_REQUIRED"
+
+
+def test_ledger_signed_published_retired_missing_from_authenticated_history_raises(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    genesis = _make_genesis(7)
+    with open_authority_session(ledger_path) as session:
+        curr_sha = initialize_genesis(session, genesis)
+
+    # 1. SIGNED in ledger but missing from authenticated history
+    ev_res = _make_event(8, "RESERVED", curr_sha)
+    curr_sha = append_event(ledger_path, ev_res, curr_sha)
+    ev_signed = _make_event(
+        8,
+        "SIGNED",
+        curr_sha,
+        payload_sha256="payload_sha_8",
+        envelope_sha256="envelope_sha_8",
+        key_id="neko-update-prod-1",
+    )
+    curr_sha = append_event(ledger_path, ev_signed, curr_sha)
+
+    ledger = verify_ledger(ledger_path)
+    snapshot_missing_8 = _make_snapshot(bindings={7: genesis.floor_binding})
+
+    with pytest.raises(ReleaseAuthorityReconciliationRequired) as exc_info:
+        reconcile_ledger_with_authenticated_history(
+            ledger=ledger, authenticated_history=snapshot_missing_8
+        )
+    assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)
+
+    # 2. PUBLISHED in ledger but missing from authenticated history
+    ev_pub = _make_event(
+        8,
+        "PUBLISHED",
+        curr_sha,
+        payload_sha256="payload_sha_8",
+        envelope_sha256="envelope_sha_8",
+        key_id="neko-update-prod-1",
+    )
+    curr_sha = append_event(ledger_path, ev_pub, curr_sha)
+    ledger_pub = verify_ledger(ledger_path)
+
+    with pytest.raises(ReleaseAuthorityReconciliationRequired) as exc_info:
+        reconcile_ledger_with_authenticated_history(
+            ledger=ledger_pub, authenticated_history=snapshot_missing_8
+        )
+    assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)
+
+    # 3. RETIRED in ledger but missing from authenticated history
+    ev_ret = _make_event(
+        8,
+        "RETIRED",
+        curr_sha,
+        payload_sha256="payload_sha_8",
+        envelope_sha256="envelope_sha_8",
+        key_id="neko-update-prod-1",
+    )
+    curr_sha = append_event(ledger_path, ev_ret, curr_sha)
+    ledger_ret = verify_ledger(ledger_path)
+
+    with pytest.raises(ReleaseAuthorityReconciliationRequired) as exc_info:
+        reconcile_ledger_with_authenticated_history(
+            ledger=ledger_ret, authenticated_history=snapshot_missing_8
+        )
+    assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)
+
+
+def test_multiple_simultaneous_pending_recovery_actions_raises(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    genesis = _make_genesis(7)
+    with open_authority_session(ledger_path) as session:
+        curr_sha = initialize_genesis(session, genesis)
+
+    # Two sequences in RESERVED state: 8 and 9
+    ev_res8 = _make_event(8, "RESERVED", curr_sha)
+    curr_sha = append_event(ledger_path, ev_res8, curr_sha)
+    ev_res9 = _make_event(9, "RESERVED", curr_sha)
+    curr_sha = append_event(ledger_path, ev_res9, curr_sha)
+
+    ledger = verify_ledger(ledger_path)
+
+    b8 = AuthenticatedProductionBinding(8, "stable-0008", "p8", "e8", "neko-update-prod-1")
+    b9 = AuthenticatedProductionBinding(9, "stable-0009", "p9", "e9", "neko-update-prod-1")
+
+    # Case A: Two simultaneous SIGNED_APPEND_REQUIRED
+    snapshot_dual_signed = _make_snapshot(
+        bindings={7: genesis.floor_binding, 8: b8, 9: b9},
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired) as exc_info:
+        reconcile_ledger_with_authenticated_history(
+            ledger=ledger, authenticated_history=snapshot_dual_signed
+        )
+    assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)
+
+    # Case B: One SIGNED_APPEND_REQUIRED and one PUBLISHED_APPEND_REQUIRED
+    # Advance sequence 9 to SIGNED in ledger
+    ev_signed9 = _make_event(
+        9,
+        "SIGNED",
+        curr_sha,
+        payload_sha256="p9",
+        envelope_sha256="e9",
+        key_id="neko-update-prod-1",
+    )
+    curr_sha = append_event(ledger_path, ev_signed9, curr_sha)
+    ledger_signed9 = verify_ledger(ledger_path)
+
+    # seq 8 is RESERVED in ledger + has signed binding in history -> SIGNED_APPEND_REQUIRED
+    # seq 9 is SIGNED in ledger + has live_updates -> PUBLISHED_APPEND_REQUIRED
+    snapshot_mixed = _make_snapshot(
+        bindings={7: genesis.floor_binding, 8: b8, 9: b9},
+        live_updates={9},
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired) as exc_info:
+        reconcile_ledger_with_authenticated_history(
+            ledger=ledger_signed9, authenticated_history=snapshot_mixed
+        )
+    assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)
+
+    # Case C: Two simultaneous PUBLISHED_APPEND_REQUIRED
+    # Advance sequence 8 to SIGNED in ledger
+    ev_signed8 = _make_event(
+        8,
+        "SIGNED",
+        curr_sha,
+        payload_sha256="p8",
+        envelope_sha256="e8",
+        key_id="neko-update-prod-1",
+    )
+    curr_sha = append_event(ledger_path, ev_signed8, curr_sha)
+    ledger_signed_both = verify_ledger(ledger_path)
+
+    snapshot_dual_published = _make_snapshot(
+        bindings={7: genesis.floor_binding, 8: b8, 9: b9},
+        live_updates={8, 9},
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired) as exc_info:
+        reconcile_ledger_with_authenticated_history(
+            ledger=ledger_signed_both, authenticated_history=snapshot_dual_published
+        )
+    assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)

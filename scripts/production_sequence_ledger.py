@@ -673,6 +673,17 @@ def reconcile_ledger_with_authenticated_history(
                     f"Genesis floor provenance mismatch: {prov} vs {ledger.genesis.floor_provenance_source_commit}"
                 )
 
+    # Any ledger sequence in SIGNED/PUBLISHED/RETIRED state missing from
+    # authenticated_history.bindings_by_sequence must raise ReleaseAuthorityReconciliationRequired
+    ledger_sequences = sorted({e.sequence for e in ledger.events if e.sequence > floor_seq})
+    for seq in ledger_sequences:
+        state = latest_sequence_state(ledger.events, seq)
+        if state is not None and state.status in ("SIGNED", "PUBLISHED", "RETIRED"):
+            if seq not in authenticated_history.bindings_by_sequence:
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Ledger sequence {seq} in status {state.status} missing from authenticated history"
+                )
+
     recovery_action: Literal["SIGNED_APPEND_REQUIRED", "PUBLISHED_APPEND_REQUIRED"] | None = None
     recovery_seq: int | None = None
 
@@ -714,13 +725,12 @@ def reconcile_ledger_with_authenticated_history(
                 )
 
         # Recovery classification
+        pending_action: Literal["SIGNED_APPEND_REQUIRED", "PUBLISHED_APPEND_REQUIRED"] | None = None
         if state.status == "RESERVED":
-            recovery_action = "SIGNED_APPEND_REQUIRED"
-            recovery_seq = seq
+            pending_action = "SIGNED_APPEND_REQUIRED"
         elif state.status == "SIGNED":
             if seq in authenticated_history.live_updates_sequences:
-                recovery_action = "PUBLISHED_APPEND_REQUIRED"
-                recovery_seq = seq
+                pending_action = "PUBLISHED_APPEND_REQUIRED"
         elif state.status == "PUBLISHED":
             pass
         elif state.status in ("FAILED", "RETIRED"):
@@ -732,6 +742,14 @@ def reconcile_ledger_with_authenticated_history(
             raise ReleaseAuthorityReconciliationRequired(
                 f"Unknown ledger status {state.status} for sequence {seq}"
             )
+
+        if pending_action is not None:
+            if recovery_action is not None:
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Multiple simultaneous pending recovery actions: already pending {recovery_action} (sequence {recovery_seq}), but sequence {seq} requires {pending_action}"
+                )
+            recovery_action = pending_action
+            recovery_seq = seq
 
     highest_authenticated = max(
         authenticated_history.bindings_by_sequence.keys(), default=floor_seq
