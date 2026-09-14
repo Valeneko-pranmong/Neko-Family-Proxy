@@ -14,10 +14,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from neko_launcher.infrastructure.software_update_manifest import (
+import tests
+
+_launcher_tests = str(Path(__file__).resolve().parent)
+if _launcher_tests not in tests.__path__:
+    tests.__path__.append(_launcher_tests)
+
+from neko_launcher.infrastructure.software_update_manifest import (  # noqa: E402
     ReleaseManifestVerifier,
 )
-from tests.software_update_helpers import (
+from tests.software_update_helpers import (  # noqa: E402
     TEST_KEY_ID,
     TEST_PUBLIC_KEY,
     canonical_payload_bytes,
@@ -196,3 +202,77 @@ def test_invalid_raw_private_key_length_fails_safely(
     assert not output_path.exists()
     assert key_bytes.hex() not in completed.stdout + completed.stderr
     assert_private_markers_absent(completed)
+
+
+def test_signing_helper_error_reporting_never_dumps_traceback_or_environment_keys(
+    tmp_path: Path,
+) -> None:
+    bad_input = tmp_path / "bad.json"
+    bad_input.write_text("{not-valid-json", encoding="utf-8")
+    key_path = tmp_path / "key.bin"
+    key_path.write_bytes(TEST_PRIVATE_SEED)
+    out_path = tmp_path / "out.json"
+
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(LAUNCHER_SRC)
+    environment["SECRET_TOKEN_SENTINEL"] = "SUPER_SECRET_VALUE_12345"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--input",
+            str(bad_input),
+            "--private-key-file",
+            str(key_path),
+            "--key-id",
+            TEST_KEY_ID,
+            "--output",
+            str(out_path),
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "Traceback" not in completed.stderr
+    assert "KEYS:" not in completed.stderr
+    assert "SECRET_TOKEN_SENTINEL" not in completed.stderr
+    assert "SUPER_SECRET_VALUE_12345" not in completed.stderr
+    assert "software release signing failed" in completed.stderr
+
+
+def test_private_key_release_signer_adapter_semantics(tmp_path: Path) -> None:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from sign_software_release import (
+        DetachedReleaseSignature,
+        PrivateKeyReleaseSigner,
+        ReleaseSigner,
+    )
+
+    key_path = tmp_path / "signer-key.bin"
+    key_path.write_bytes(TEST_PRIVATE_SEED)
+
+    signer = PrivateKeyReleaseSigner(key_path, TEST_KEY_ID)
+    assert isinstance(signer, ReleaseSigner)
+    assert repr(signer) == f"PrivateKeyReleaseSigner(key_id='{TEST_KEY_ID}')"
+
+    payload = b'{"hello":"world"}'
+    sig = signer.sign(payload)
+    assert isinstance(sig, DetachedReleaseSignature)
+    assert sig.key_id == TEST_KEY_ID
+    assert len(sig.signature) == 64
+
+    Ed25519PublicKey.from_public_bytes(TEST_PUBLIC_KEY).verify(
+        sig.signature,
+        payload,
+    )
+
+    # Rejection of forbidden key name
+    with pytest.raises(ValueError, match="runtime-settings.key is forbidden"):
+        PrivateKeyReleaseSigner("C:/keys/runtime-settings.key", TEST_KEY_ID)
+
+    # Rejection of invalid key_id
+    with pytest.raises(ValueError, match="KEY_ID_INVALID"):
+        PrivateKeyReleaseSigner(key_path, "invalid key id with spaces!")

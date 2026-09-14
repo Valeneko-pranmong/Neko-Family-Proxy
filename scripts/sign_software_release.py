@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+from dataclasses import dataclass
 import json
 import os
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -18,6 +20,52 @@ from neko_launcher.application.software_update_models import parse_release_set
 PRODUCTION_KEY_REF = "C:/Users/Pranmong/AppData/Local/NekoFamily/release-custody/neko-update-prod-1.pem"
 
 _KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+@dataclass(frozen=True)
+class DetachedReleaseSignature:
+    key_id: str
+    signature: bytes
+
+
+@runtime_checkable
+class ReleaseSigner(Protocol):
+    def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature: ...
+
+
+class PrivateKeyReleaseSigner:
+    """Controller-only detached release signer backed by a private key file."""
+
+    def __init__(self, private_key_file: Path | str, key_id: str) -> None:
+        self._private_key_file = Path(private_key_file)
+        self._key_id = str(key_id)
+
+        if "runtime-settings.key" in str(self._private_key_file):
+            raise ValueError("runtime-settings.key is forbidden")
+
+        if str(self._private_key_file).replace("\\", "/") != PRODUCTION_KEY_REF:
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                raise ValueError("Custody reference violation")
+
+        if _KEY_ID_PATTERN.fullmatch(self._key_id) is None:
+            raise ValueError("KEY_ID_INVALID")
+
+    @property
+    def key_id(self) -> str:
+        return self._key_id
+
+    def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+        if not isinstance(canonical_payload, (bytes, bytearray)):
+            raise TypeError("canonical_payload must be bytes")
+        private_key = _load_private_key(self._private_key_file)
+        signature = private_key.sign(bytes(canonical_payload))
+        if len(signature) != 64:
+            raise ValueError(f"Invalid signature length: {len(signature)}")
+        return DetachedReleaseSignature(key_id=self._key_id, signature=signature)
+
+    def __repr__(self) -> str:
+        return f"PrivateKeyReleaseSigner(key_id={self._key_id!r})"
+
 
 def verify_and_sign(input_path: str | Path, output_path: str | Path, private_key_path: str | Path, key_id: str) -> None:
     if "runtime-settings.key" in str(private_key_path):
@@ -34,13 +82,13 @@ def verify_and_sign(input_path: str | Path, output_path: str | Path, private_key
         
     document, release = _load_release(Path(input_path))
     payload = _canonical_payload(document)
-    private_key = _load_private_key(Path(private_key_path))
-    signature = private_key.sign(payload)
+    signer = PrivateKeyReleaseSigner(private_key_path, key_id)
+    sig = signer.sign(payload)
     envelope = {
         "envelope_version": 1,
         "key_id": key_id,
         "payload_b64": base64.b64encode(payload).decode("ascii"),
-        "signature_b64": base64.b64encode(signature).decode("ascii"),
+        "signature_b64": base64.b64encode(sig.signature).decode("ascii"),
     }
     _write_new_file(Path(output_path), envelope)
 
@@ -125,19 +173,16 @@ def main() -> int:
             raise ValueError("KEY_ID_INVALID")
         document, release = _load_release(arguments.input)
         payload = _canonical_payload(document)
-        private_key = _load_private_key(arguments.private_key_file)
-        signature = private_key.sign(payload)
+        signer = PrivateKeyReleaseSigner(arguments.private_key_file, arguments.key_id)
+        sig = signer.sign(payload)
         envelope = {
             "envelope_version": 1,
             "key_id": arguments.key_id,
             "payload_b64": base64.b64encode(payload).decode("ascii"),
-            "signature_b64": base64.b64encode(signature).decode("ascii"),
+            "signature_b64": base64.b64encode(sig.signature).decode("ascii"),
         }
         _write_new_file(arguments.output, envelope)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        print("KEYS:", list(os.environ.keys()), file=sys.stderr)
         print("software release signing failed", file=sys.stderr)
         return 1
 

@@ -18,6 +18,9 @@ import zipfile
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
+_scripts_dir = Path(__file__).resolve().parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
 
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2  # noqa: E402
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: E402
@@ -49,8 +52,309 @@ from scripts.verify_installer_release_assets import (  # noqa: E402
     InstallerReleaseVerificationError,
     verify_installer_release_assets,
 )
+from datetime import datetime, timezone  # noqa: E402
+from typing import Literal  # noqa: E402
+from authenticated_production_history import (  # noqa: E402
+    AuthenticatedEnvelopeRecord,
+    AuthenticatedHistoryProvider,
+    append_custody_record,
+)
+from build_software_release_v2 import UnsignedBaselineEvidence  # noqa: E402
+from derive_version import ReleaseAllocation  # noqa: E402
+from production_sequence_ledger import (  # noqa: E402
+    ReleaseAuthorityReconciliationRequired,
+    SequenceAuthorityError,
+    SequenceLedgerEvent,
+    open_authority_session,
+    reconcile_ledger_with_authenticated_history,
+)
+from sign_software_release import (  # noqa: E402
+    DetachedReleaseSignature,
+    ReleaseSigner,
+)
 
 BOOTSTRAP_STABLE_TAG = "v5.1.0"
+
+
+@dataclass(frozen=True)
+class SigningRequired:
+    status: Literal["SIGNING_REQUIRED"]
+    payload_path: Path
+    payload_sha256: str
+
+
+@dataclass(frozen=True)
+class SignedBaselineEvidence:
+    sequence: int
+    release_id: str
+    component_set_sha256: str
+    payload_sha256: str
+    envelope_sha256: str
+    key_id: str
+    envelope_path: Path
+
+
+def sign_reserved_baseline(
+    *,
+    ledger_path: Path,
+    custody_root: Path,
+    history_provider: AuthenticatedHistoryProvider,
+    production_public_keys: Mapping[str, bytes],
+    allocation: ReleaseAllocation,
+    unsigned: UnsignedBaselineEvidence,
+    signer: ReleaseSigner | None,
+) -> SignedBaselineEvidence | SigningRequired:
+    if not isinstance(production_public_keys, Mapping) or not production_public_keys:
+        raise ValueError("production_public_keys must be a non-empty mapping")
+    for k, v in production_public_keys.items():
+        if not isinstance(k, str) or not isinstance(v, (bytes, bytearray)) or len(v) != 32:
+            raise ValueError(f"Invalid release public key entry: {k!r}")
+        if "proof" in k.lower():
+            raise ValueError(f"Proof release authority key is forbidden in production signing boundary: {k!r}")
+    if len(production_public_keys) > 1:
+        raise ValueError(
+            f"Mixed or multi-key registry forbidden in production signing boundary: {list(production_public_keys.keys())}"
+        )
+
+    if allocation.sequence != unsigned.sequence:
+        raise ValueError(
+            f"Allocation sequence {allocation.sequence} mismatch with unsigned baseline {unsigned.sequence}"
+        )
+    if allocation.release_id != unsigned.release_id:
+        raise ValueError(
+            f"Allocation release_id {allocation.release_id} mismatch with unsigned baseline {unsigned.release_id}"
+        )
+    if allocation.component_set_sha256 != unsigned.component_set_sha256:
+        raise ValueError("Allocation component set digest mismatch with unsigned baseline")
+
+    if not unsigned.payload_path.is_file():
+        raise FileNotFoundError(f"Unsigned payload file not found: {unsigned.payload_path}")
+    payload_bytes = unsigned.payload_path.read_bytes()
+    actual_payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+    if actual_payload_sha != unsigned.payload_sha256:
+        raise ValueError(
+            f"Unsigned payload SHA mismatch: got {actual_payload_sha}, expected {unsigned.payload_sha256}"
+        )
+
+    with open_authority_session(ledger_path) as session:
+        if not session.path.is_file() or session.path.stat().st_size == 0:
+            raise SequenceAuthorityError("Sequence ledger has not been initialized with genesis")
+
+        verified = session.read_verified()
+        snapshot = history_provider.load()
+        authority = reconcile_ledger_with_authenticated_history(
+            ledger=verified,
+            authenticated_history=snapshot,
+        )
+
+        reserved_event = next(
+            (e for e in verified.events if e.sequence == allocation.sequence and e.status == "RESERVED"),
+            None,
+        )
+        if reserved_event is None:
+            raise SequenceAuthorityError(f"No RESERVED event found for sequence {allocation.sequence}")
+
+        # Recovery case: exact custody already contains signed binding
+        if (
+            authority.recovery_action == "SIGNED_APPEND_REQUIRED"
+            and authority.recovery_sequence == allocation.sequence
+        ):
+            if allocation.sequence not in snapshot.bindings_by_sequence:
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Sequence {allocation.sequence} missing from authenticated history bindings during recovery"
+                )
+            auth_binding = snapshot.bindings_by_sequence[allocation.sequence]
+            envelope_path = custody_root / "envelopes" / f"{auth_binding.envelope_sha256}.json"
+            if not envelope_path.is_file():
+                raise FileNotFoundError(f"Custody envelope missing for sequence {allocation.sequence}: {envelope_path}")
+            envelope_bytes = envelope_path.read_bytes()
+            if hashlib.sha256(envelope_bytes).hexdigest() != auth_binding.envelope_sha256:
+                raise ValueError("Custody envelope sha256 mismatch")
+
+            try:
+                envelope_doc = json.loads(envelope_bytes.decode("utf-8"))
+            except Exception as exc:
+                raise ValueError(f"Malformed JSON in custody envelope: {exc}") from exc
+
+            rel_set, returned_payload_sha = verify_release_envelope_v2(envelope_doc, production_public_keys)
+            verified_key_id = envelope_doc.get("key_id")
+            if verified_key_id not in production_public_keys:
+                raise ValueError(f"Envelope key_id {verified_key_id!r} not in production public keys")
+            if verified_key_id != auth_binding.key_id:
+                raise ValueError(
+                    f"Envelope key_id mismatch: {verified_key_id} vs {auth_binding.key_id}"
+                )
+            if rel_set.release_sequence != allocation.sequence:
+                raise ValueError(
+                    f"Envelope sequence {rel_set.release_sequence} mismatch with allocation {allocation.sequence}"
+                )
+            if rel_set.release_id != allocation.release_id:
+                raise ValueError(
+                    f"Envelope release_id {rel_set.release_id} mismatch with allocation {allocation.release_id}"
+                )
+            if returned_payload_sha != unsigned.payload_sha256:
+                raise ValueError(
+                    f"Envelope payload sha {returned_payload_sha} mismatch with unsigned {unsigned.payload_sha256}"
+                )
+
+            signed_event = SequenceLedgerEvent(
+                record_type="EVENT",
+                sequence=allocation.sequence,
+                release_id=allocation.release_id,
+                status="SIGNED",
+                version=reserved_event.version,
+                channel=reserved_event.channel,
+                source_commit=reserved_event.source_commit,
+                component_set_sha256=unsigned.component_set_sha256,
+                payload_sha256=unsigned.payload_sha256,
+                envelope_sha256=auth_binding.envelope_sha256,
+                key_id=verified_key_id,
+                timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                previous_entry_sha256=verified.latest_entry_sha256,
+            )
+            entry_sha = session.append(signed_event, expected_previous_sha256=verified.latest_entry_sha256)
+            re_verified = session.read_verified()
+            if re_verified.latest_entry_sha256 != entry_sha:
+                raise SequenceAuthorityError("Append readback mismatch")
+
+            return SignedBaselineEvidence(
+                sequence=allocation.sequence,
+                release_id=allocation.release_id,
+                component_set_sha256=unsigned.component_set_sha256,
+                payload_sha256=unsigned.payload_sha256,
+                envelope_sha256=auth_binding.envelope_sha256,
+                key_id=verified_key_id,
+                envelope_path=envelope_path,
+            )
+
+        if authority.recovery_action is not None:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Ledger reconciliation required: {authority.recovery_action} for sequence {authority.recovery_sequence}"
+            )
+
+        if authority.highest_authenticated_sequence >= allocation.sequence:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Authenticated sequence {authority.highest_authenticated_sequence} conflicts with allocation {allocation.sequence}"
+            )
+        if authority.highest_consumed_sequence > allocation.sequence:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Consumed sequence {authority.highest_consumed_sequence} exceeds allocation {allocation.sequence}"
+            )
+        if authority.next_unused_sequence > allocation.sequence + 1:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Next unused sequence {authority.next_unused_sequence} exceeds allocation {allocation.sequence} + 1"
+            )
+
+        if signer is None:
+            return SigningRequired(
+                status="SIGNING_REQUIRED",
+                payload_path=unsigned.payload_path,
+                payload_sha256=unsigned.payload_sha256,
+            )
+
+        detached_sig = signer.sign(payload_bytes)
+        if not isinstance(detached_sig, DetachedReleaseSignature):
+            raise ValueError("Signer did not return a DetachedReleaseSignature")
+        if detached_sig.key_id not in production_public_keys:
+            raise ValueError(
+                f"Signer key_id {detached_sig.key_id!r} absent from supplied production public keys"
+            )
+        if not isinstance(detached_sig.signature, (bytes, bytearray)) or len(detached_sig.signature) != 64:
+            raise ValueError("Signer returned invalid signature length")
+
+        from scripts.assemble_release_v2_envelope import assemble_verified_release_v2_envelope
+
+        envelope_bytes = assemble_verified_release_v2_envelope(
+            payload_bytes=payload_bytes,
+            key_id=detached_sig.key_id,
+            detached_signature=bytes(detached_sig.signature),
+            release_public_keys=production_public_keys,
+        )
+
+        try:
+            envelope_doc = json.loads(envelope_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise ValueError(f"Malformed JSON in assembled envelope: {exc}") from exc
+
+        rel_set, returned_payload_sha = verify_release_envelope_v2(envelope_doc, production_public_keys)
+        verified_key_id = envelope_doc.get("key_id")
+        if verified_key_id not in production_public_keys:
+            raise ValueError(f"Verified envelope key_id {verified_key_id!r} not in production public keys")
+        if rel_set.release_sequence != allocation.sequence:
+            raise ValueError(
+                f"Envelope sequence {rel_set.release_sequence} mismatch with allocation {allocation.sequence}"
+            )
+        if rel_set.release_id != allocation.release_id:
+            raise ValueError(
+                f"Envelope release_id {rel_set.release_id} mismatch with allocation {allocation.release_id}"
+            )
+        if returned_payload_sha != unsigned.payload_sha256:
+            raise ValueError(
+                f"Envelope payload sha {returned_payload_sha} mismatch with unsigned {unsigned.payload_sha256}"
+            )
+
+        canon_envelope_bytes = envelope_bytes.strip()
+        envelope_sha256 = hashlib.sha256(canon_envelope_bytes).hexdigest()
+        custody_record = AuthenticatedEnvelopeRecord(
+            source_id=f"custody-{allocation.sequence:04d}",
+            source_kind="custody",
+            envelope_bytes=canon_envelope_bytes,
+            provenance_source_commit=reserved_event.source_commit,
+        )
+        index_file = custody_root / "history-index-v1.json"
+        expected_index_sha = (
+            hashlib.sha256(index_file.read_bytes()).hexdigest()
+            if index_file.is_file()
+            else None
+        )
+        append_custody_record(custody_root, custody_record, expected_index_sha256=expected_index_sha)
+        envelope_path = custody_root / "envelopes" / f"{envelope_sha256}.json"
+        if not envelope_path.is_file():
+            raise ValueError(f"Custody envelope file missing after append: {envelope_path}")
+
+        refreshed_snapshot = history_provider.load()
+        refreshed_authority = reconcile_ledger_with_authenticated_history(
+            ledger=session.read_verified(),
+            authenticated_history=refreshed_snapshot,
+        )
+        if (
+            refreshed_authority.recovery_action != "SIGNED_APPEND_REQUIRED"
+            or refreshed_authority.recovery_sequence != allocation.sequence
+        ):
+            raise SequenceAuthorityError(
+                f"Expected SIGNED_APPEND_REQUIRED for sequence {allocation.sequence} after custody write, "
+                f"got {refreshed_authority.recovery_action} (sequence {refreshed_authority.recovery_sequence})"
+            )
+
+        signed_event = SequenceLedgerEvent(
+            record_type="EVENT",
+            sequence=allocation.sequence,
+            release_id=allocation.release_id,
+            status="SIGNED",
+            version=reserved_event.version,
+            channel=reserved_event.channel,
+            source_commit=reserved_event.source_commit,
+            component_set_sha256=unsigned.component_set_sha256,
+            payload_sha256=unsigned.payload_sha256,
+            envelope_sha256=envelope_sha256,
+            key_id=verified_key_id,
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            previous_entry_sha256=session.read_verified().latest_entry_sha256,
+        )
+        entry_sha = session.append(signed_event, expected_previous_sha256=signed_event.previous_entry_sha256)
+        re_verified = session.read_verified()
+        if re_verified.latest_entry_sha256 != entry_sha:
+            raise SequenceAuthorityError("Append readback mismatch")
+
+        return SignedBaselineEvidence(
+            sequence=allocation.sequence,
+            release_id=allocation.release_id,
+            component_set_sha256=unsigned.component_set_sha256,
+            payload_sha256=unsigned.payload_sha256,
+            envelope_sha256=envelope_sha256,
+            key_id=verified_key_id,
+            envelope_path=envelope_path,
+        )
 
 
 def validate_installer_repo_configuration(repo: str | None) -> str:

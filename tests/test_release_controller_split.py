@@ -623,3 +623,597 @@ def test_freeze_integrity_rejects_changed_core_authority_binding():
     alloc = ReleaseAllocation(8, "stable-0008", "l" * 64, comp_sha, "b" * 64, "h" * 64)
     with pytest.raises(ValueError, match="(?i)(digest|mismatch|tamper)"):
         build_unsigned_baseline(allocation=alloc, component_set=tampered_component_set)
+
+
+# =============================================================================
+# RA4: Controller-Only Production Signing Boundary Tests
+# =============================================================================
+
+import tests as _root_tests  # noqa: E402
+_launcher_tests_dir = str(Path(__file__).resolve().parents[1] / "launcher" / "tests")
+if _launcher_tests_dir not in _root_tests.__path__:
+    _root_tests.__path__.append(_launcher_tests_dir)
+
+import sys  # noqa: E402
+_scripts_dir = str(Path(__file__).resolve().parents[1] / "scripts")
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from neko_launcher.updater.canonical_json import canonical_json_dumps  # noqa: E402
+from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2  # noqa: E402
+from tests.software_update_helpers import (  # noqa: E402
+    TEST_KEY_ID,
+    TEST_PUBLIC_KEY,
+    signed_envelope,
+    valid_v2_release_document,
+)
+from authenticated_production_history import (  # noqa: E402
+    AuthenticatedEnvelopeRecord,
+    append_custody_record,
+    bootstrap_sequence_ledger,
+    reserve_release_sequence,
+)
+from build_software_release_v2 import UnsignedBaselineEvidence  # noqa: E402
+from derive_version import ReleaseTargetIntent  # noqa: E402
+from production_sequence_ledger import (  # noqa: E402
+    AuthenticatedHistorySnapshot,
+    AuthenticatedProductionBinding,
+    ReleaseAuthorityReconciliationRequired,
+    open_authority_session,
+)
+
+
+class _FakeHistoryProvider:
+    def __init__(self, snapshot: AuthenticatedHistorySnapshot) -> None:
+        self.snapshot = snapshot
+        self.session_to_check = None
+        self.load_calls: list[bool] = []
+
+    def load(self) -> AuthenticatedHistorySnapshot:
+        if self.session_to_check is not None:
+            self.load_calls.append(bool(self.session_to_check.is_locked))
+        else:
+            self.load_calls.append(True)
+        return self.snapshot
+
+
+def _setup_seq7_floor_and_seq8_reserved(tmp_path: Path):
+    ledger_path = tmp_path / "ledger.jsonl"
+    custody_root = tmp_path / "custody"
+    custody_root.mkdir(parents=True, exist_ok=True)
+
+    doc7 = valid_v2_release_document(sequence=7, release_id="stable-0007")
+    env7 = signed_envelope(doc7, key_id=TEST_KEY_ID)
+    env_bytes7 = canonical_json_dumps(env7)
+    env_sha7 = hashlib.sha256(env_bytes7).hexdigest()
+    import base64
+    payload7 = base64.b64decode(env7["payload_b64"])
+    payload_sha7 = hashlib.sha256(payload7).hexdigest()
+
+    binding7 = AuthenticatedProductionBinding(
+        sequence=7,
+        release_id="stable-0007",
+        payload_sha256=payload_sha7,
+        envelope_sha256=env_sha7,
+        key_id=TEST_KEY_ID,
+    )
+    floor_snapshot = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7},
+        provenance_source_commit_by_sequence={7: "c" * 40},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=7,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+    bootstrap_sequence_ledger(
+        ledger_path=ledger_path,
+        history_provider=_FakeHistoryProvider(floor_snapshot),
+        expected_floor=binding7,
+        expected_floor_provenance_source_commit="c" * 40,
+    )
+
+    target = ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
+    allocation = reserve_release_sequence(
+        ledger_path=ledger_path,
+        history_provider=_FakeHistoryProvider(floor_snapshot),
+        target=target,
+        source_commit="a" * 40,
+        component_set_sha256="comp" * 16,
+    )
+
+    doc8 = valid_v2_release_document(sequence=8, release_id="stable-0008")
+    payload8_bytes = canonical_json_dumps(doc8)
+    payload8_sha = hashlib.sha256(payload8_bytes).hexdigest()
+    payload_path = tmp_path / "unsigned_payload.json"
+    payload_path.write_bytes(payload8_bytes)
+
+    unsigned = UnsignedBaselineEvidence(
+        sequence=8,
+        release_id="stable-0008",
+        component_set_sha256="comp" * 16,
+        payload_sha256=payload8_sha,
+        payload_path=payload_path,
+    )
+
+    return ledger_path, custody_root, floor_snapshot, binding7, allocation, unsigned, doc8
+
+
+def test_sign_reserved_baseline_none_signer_returns_signing_required_without_side_effects(tmp_path: Path):
+    from scripts.release_controller import SigningRequired, sign_reserved_baseline
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    res = sign_reserved_baseline(
+        ledger_path=ledger_path,
+        custody_root=custody_root,
+        history_provider=_FakeHistoryProvider(floor_snapshot),
+        production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        allocation=allocation,
+        unsigned=unsigned,
+        signer=None,
+    )
+
+    assert isinstance(res, SigningRequired)
+    assert res.status == "SIGNING_REQUIRED"
+    assert res.payload_path == unsigned.payload_path
+    assert res.payload_sha256 == unsigned.payload_sha256
+
+    # Verify no envelopes created in custody
+    env_dir = custody_root / "envelopes"
+    assert not env_dir.exists() or not list(env_dir.iterdir())
+
+    # Verify ledger still only has the 1 RESERVED event
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        assert len(verified.events) == 1
+        assert verified.events[0].status == "RESERVED"
+
+
+def test_sign_reserved_baseline_none_signer_recovers_existing_custody_signed_binding(tmp_path: Path):
+    from scripts.release_controller import (
+        SignedBaselineEvidence,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, _floor_snapshot, binding7, allocation, unsigned, doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    # Put signed envelope for seq 8 into custody
+    env8 = signed_envelope(doc8, key_id=TEST_KEY_ID)
+    env_bytes8 = canonical_json_dumps(env8)
+    env_sha8 = hashlib.sha256(env_bytes8).hexdigest()
+    rec8 = AuthenticatedEnvelopeRecord(
+        source_id="custody-0008",
+        source_kind="custody",
+        envelope_bytes=env_bytes8,
+        provenance_source_commit="a" * 40,
+    )
+    append_custody_record(custody_root, rec8, expected_index_sha256=None)
+
+    binding8 = AuthenticatedProductionBinding(
+        sequence=8,
+        release_id="stable-0008",
+        payload_sha256=unsigned.payload_sha256,
+        envelope_sha256=env_sha8,
+        key_id=TEST_KEY_ID,
+    )
+    snapshot8 = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 8: binding8},
+        provenance_source_commit_by_sequence={7: "c" * 40, 8: "a" * 40},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=8,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class FailingSigner:
+        def sign(self, payload: bytes):
+            raise AssertionError("Signer must not be invoked when custody contains exact binding")
+
+    res = sign_reserved_baseline(
+        ledger_path=ledger_path,
+        custody_root=custody_root,
+        history_provider=_FakeHistoryProvider(snapshot8),
+        production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        allocation=allocation,
+        unsigned=unsigned,
+        signer=FailingSigner(),
+    )
+
+    assert isinstance(res, SignedBaselineEvidence)
+    assert res.sequence == 8
+    assert res.release_id == "stable-0008"
+    assert res.key_id == TEST_KEY_ID
+    assert res.envelope_sha256 == env_sha8
+    assert res.envelope_path == custody_root / "envelopes" / f"{env_sha8}.json"
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        assert len(verified.events) == 2
+        assert verified.events[1].status == "SIGNED"
+        assert verified.events[1].key_id == TEST_KEY_ID
+
+
+def test_sign_reserved_baseline_ephemeral_signer_and_shared_assembler_happy_path(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        ReleaseSigner,
+        SignedBaselineEvidence,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    priv = Ed25519PrivateKey.generate()
+    pub_bytes = priv.public_key().public_bytes_raw()
+    key_id = "test-eph-release-1"
+
+    class EphemeralSigner:
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            sig = priv.sign(canonical_payload)
+            return DetachedReleaseSignature(key_id=key_id, signature=sig)
+
+    signer = EphemeralSigner()
+    assert isinstance(signer, ReleaseSigner)
+
+    # Provider that updates snapshot after custody append
+    class AutoUpdatingProvider:
+        def __init__(self, initial_snapshot: AuthenticatedHistorySnapshot):
+            self.snapshot = initial_snapshot
+            self.load_count = 0
+
+        def load(self) -> AuthenticatedHistorySnapshot:
+            self.load_count += 1
+            # If custody has envelopes, load them
+            from scripts.authenticated_production_history import load_custody_records
+            recs = load_custody_records(custody_root)
+            if len(recs) > 0:
+                env_doc = json.loads(recs[0].envelope_bytes.decode("utf-8"))
+                import base64
+                payload = base64.b64decode(env_doc["payload_b64"])
+                b8 = AuthenticatedProductionBinding(
+                    sequence=8,
+                    release_id="stable-0008",
+                    payload_sha256=hashlib.sha256(payload).hexdigest(),
+                    envelope_sha256=hashlib.sha256(recs[0].envelope_bytes).hexdigest(),
+                    key_id=key_id,
+                )
+                bindings = dict(self.snapshot.bindings_by_sequence)
+                bindings[8] = b8
+                prov = dict(self.snapshot.provenance_source_commit_by_sequence)
+                prov[8] = "a" * 40
+                return AuthenticatedHistorySnapshot(
+                    bindings_by_sequence=bindings,
+                    provenance_source_commit_by_sequence=prov,
+                    live_updates_sequences=frozenset(),
+                    highest_authenticated_sequence=8,
+                    authenticated_bindings_sha256="b" * 64,
+                    snapshot_sha256="s" * 64,
+                )
+            return self.snapshot
+
+    provider = AutoUpdatingProvider(floor_snapshot)
+
+    res = sign_reserved_baseline(
+        ledger_path=ledger_path,
+        custody_root=custody_root,
+        history_provider=provider,
+        production_public_keys={key_id: pub_bytes},
+        allocation=allocation,
+        unsigned=unsigned,
+        signer=signer,
+    )
+
+    assert isinstance(res, SignedBaselineEvidence)
+    assert res.sequence == 8
+    assert res.release_id == "stable-0008"
+    assert res.key_id == key_id
+    assert res.envelope_path.is_file()
+
+    # Re-verify envelope using public key
+    envelope_doc = json.loads(res.envelope_path.read_text(encoding="utf-8"))
+    rel_set, ret_sha = verify_release_envelope_v2(envelope_doc, {key_id: pub_bytes})
+    assert rel_set.release_sequence == 8
+    assert rel_set.release_id == "stable-0008"
+    assert ret_sha == unsigned.payload_sha256
+
+    # Verify ledger append
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        assert len(verified.events) == 2
+        assert verified.events[1].status == "SIGNED"
+        assert verified.events[1].key_id == key_id
+
+
+def test_sign_reserved_baseline_rejects_unknown_signer_key_id(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    class UnknownKeySigner:
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            return DetachedReleaseSignature(key_id="unknown-key-id", signature=b"\x00" * 64)
+
+    with pytest.raises(ValueError, match="(?i)(unknown|absent|key_id)"):
+        sign_reserved_baseline(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            history_provider=_FakeHistoryProvider(floor_snapshot),
+            production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+            allocation=allocation,
+            unsigned=unsigned,
+            signer=UnknownKeySigner(),
+        )
+
+    # Confirm no mutation
+    env_dir = custody_root / "envelopes"
+    assert not env_dir.exists() or not list(env_dir.iterdir())
+    with open_authority_session(ledger_path) as session:
+        assert len(session.read_verified().events) == 1
+
+
+def test_sign_reserved_baseline_rejects_bad_signature_length(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    class BadLengthSigner:
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            return DetachedReleaseSignature(key_id=TEST_KEY_ID, signature=b"\x00" * 32)
+
+    with pytest.raises(ValueError, match="(?i)(signature|length)"):
+        sign_reserved_baseline(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            history_provider=_FakeHistoryProvider(floor_snapshot),
+            production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+            allocation=allocation,
+            unsigned=unsigned,
+            signer=BadLengthSigner(),
+        )
+
+
+def test_sign_reserved_baseline_rejects_corrupted_signature_for_payload(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    class CorruptSigner:
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            return DetachedReleaseSignature(key_id=TEST_KEY_ID, signature=b"\x00" * 64)
+
+    with pytest.raises(ValueError, match="(?i)(invalid|signature)"):
+        sign_reserved_baseline(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            history_provider=_FakeHistoryProvider(floor_snapshot),
+            production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+            allocation=allocation,
+            unsigned=unsigned,
+            signer=CorruptSigner(),
+        )
+
+
+def test_sign_reserved_baseline_rejects_proof_authority_keys_and_mixed_registries(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    class SpySigner:
+        called = False
+
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            self.called = True
+            return DetachedReleaseSignature(key_id="test", signature=b"\x00" * 64)
+
+    signer = SpySigner()
+
+    # Proof key rejected
+    with pytest.raises(ValueError, match="(?i)(proof|forbidden)"):
+        sign_reserved_baseline(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            history_provider=_FakeHistoryProvider(floor_snapshot),
+            production_public_keys={"proof-release-key-v512-1": TEST_PUBLIC_KEY},
+            allocation=allocation,
+            unsigned=unsigned,
+            signer=signer,
+        )
+    assert not signer.called
+
+    # Mixed registry rejected
+    with pytest.raises(ValueError, match="(?i)(mixed|multi-key|forbidden)"):
+        sign_reserved_baseline(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            history_provider=_FakeHistoryProvider(floor_snapshot),
+            production_public_keys={"neko-update-prod-1": TEST_PUBLIC_KEY, "extra-key": TEST_PUBLIC_KEY},
+            allocation=allocation,
+            unsigned=unsigned,
+            signer=signer,
+        )
+    assert not signer.called
+
+
+def test_sign_reserved_baseline_checks_history_freshness_under_lock_and_stops_on_conflict(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, _floor_snapshot, binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    # Newer unallocated sequence 9 present in history
+    binding9 = AuthenticatedProductionBinding(
+        sequence=9,
+        release_id="stable-0009",
+        payload_sha256="p" * 64,
+        envelope_sha256="e" * 64,
+        key_id=TEST_KEY_ID,
+    )
+    conflicting_snapshot = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={7: binding7, 9: binding9},
+        provenance_source_commit_by_sequence={7: "c" * 40, 9: "x" * 40},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=9,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class SpySigner:
+        called = False
+
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            self.called = True
+            return DetachedReleaseSignature(key_id=TEST_KEY_ID, signature=b"\x00" * 64)
+
+    signer = SpySigner()
+
+    with pytest.raises(ReleaseAuthorityReconciliationRequired):
+        sign_reserved_baseline(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            history_provider=_FakeHistoryProvider(conflicting_snapshot),
+            production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+            allocation=allocation,
+            unsigned=unsigned,
+            signer=signer,
+        )
+    assert not signer.called
+
+
+def test_sign_reserved_baseline_crash_recovery_after_custody_write_does_not_resign(tmp_path: Path):
+    from scripts.release_controller import (
+        DetachedReleaseSignature,
+        SignedBaselineEvidence,
+        sign_reserved_baseline,
+    )
+
+    ledger_path, custody_root, floor_snapshot, _binding7, allocation, unsigned, _doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+
+    priv = Ed25519PrivateKey.generate()
+    pub_bytes = priv.public_key().public_bytes_raw()
+    key_id = "test-eph-crash-1"
+
+    call_count = 0
+
+    class CountingSigner:
+        def sign(self, canonical_payload: bytes) -> DetachedReleaseSignature:
+            nonlocal call_count
+            call_count += 1
+            sig = priv.sign(canonical_payload)
+            return DetachedReleaseSignature(key_id=key_id, signature=sig)
+
+    class AutoUpdatingProvider:
+        def __init__(self, initial_snapshot: AuthenticatedHistorySnapshot):
+            self.snapshot = initial_snapshot
+
+        def load(self) -> AuthenticatedHistorySnapshot:
+            from scripts.authenticated_production_history import load_custody_records
+            recs = load_custody_records(custody_root)
+            if len(recs) > 0:
+                env_doc = json.loads(recs[0].envelope_bytes.decode("utf-8"))
+                import base64
+                payload = base64.b64decode(env_doc["payload_b64"])
+                b8 = AuthenticatedProductionBinding(
+                    sequence=8,
+                    release_id="stable-0008",
+                    payload_sha256=hashlib.sha256(payload).hexdigest(),
+                    envelope_sha256=hashlib.sha256(recs[0].envelope_bytes).hexdigest(),
+                    key_id=key_id,
+                )
+                bindings = dict(self.snapshot.bindings_by_sequence)
+                bindings[8] = b8
+                prov = dict(self.snapshot.provenance_source_commit_by_sequence)
+                prov[8] = "a" * 40
+                return AuthenticatedHistorySnapshot(
+                    bindings_by_sequence=bindings,
+                    provenance_source_commit_by_sequence=prov,
+                    live_updates_sequences=frozenset(),
+                    highest_authenticated_sequence=8,
+                    authenticated_bindings_sha256="b" * 64,
+                    snapshot_sha256="s" * 64,
+                )
+            return self.snapshot
+
+    provider = AutoUpdatingProvider(floor_snapshot)
+    signer = CountingSigner()
+
+    # Simulate crash right after custody persistence by hooking append_custody_record to write custody then raise
+    import scripts.release_controller as rc
+    orig_append = rc.append_custody_record
+
+    def failing_custody_append(*args, **kwargs):
+        orig_append(*args, **kwargs)
+        raise RuntimeError("Simulated power outage / process kill after custody write")
+
+    rc.append_custody_record = failing_custody_append
+    try:
+        with pytest.raises(RuntimeError, match="Simulated power outage"):
+            sign_reserved_baseline(
+                ledger_path=ledger_path,
+                custody_root=custody_root,
+                history_provider=provider,
+                production_public_keys={key_id: pub_bytes},
+                allocation=allocation,
+                unsigned=unsigned,
+                signer=signer,
+            )
+    finally:
+        rc.append_custody_record = orig_append
+
+    assert call_count == 1
+    # Ledger should still only have RESERVED
+    with open_authority_session(ledger_path) as session:
+        assert len(session.read_verified().events) == 1
+
+    # Rerun sign_reserved_baseline
+    res = sign_reserved_baseline(
+        ledger_path=ledger_path,
+        custody_root=custody_root,
+        history_provider=provider,
+        production_public_keys={key_id: pub_bytes},
+        allocation=allocation,
+        unsigned=unsigned,
+        signer=signer,
+    )
+
+    assert isinstance(res, SignedBaselineEvidence)
+    assert res.sequence == 8
+    assert res.key_id == key_id
+    assert call_count == 1  # Crucial: NO second signature performed!
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        assert len(verified.events) == 2
+        assert verified.events[1].status == "SIGNED"
