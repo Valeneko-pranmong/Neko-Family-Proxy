@@ -59,6 +59,15 @@ SOFTWARE_UPDATE_UNTRUSTED_SOURCE_PATTERNS = {
     "GitHub raw content endpoint": re.compile(r"\braw\.githubusercontent\.com\b"),
     "unsigned checksum file": re.compile(r"\bSHA256SUMS\.txt\b"),
 }
+OLD_INSTALLER_DEPENDENCY_PATTERNS = {
+    "old installer repository reference": re.compile(
+        r"\bNeko-Family-Proxy-Installer\b"
+    ),
+    "old installer repository full slug": re.compile(
+        r"\bValeneko-pranmong/Neko-Family-Proxy-Installer\b"
+    ),
+}
+
 
 
 def repository_files() -> list[Path]:
@@ -183,6 +192,51 @@ def validate_software_update_untrusted_sources(path: Path) -> list[str]:
         if pattern.search(content):
             errors.append(
                 f"untrusted software update source ({label}) found in production code: {relative}"
+            )
+    return errors
+
+
+def validate_old_installer_dependencies(path: Path) -> list[str]:
+    try:
+        relative = path.relative_to(REPOSITORY_ROOT)
+    except ValueError:
+        relative = path
+    if (
+        is_allowlisted_history_doc(relative)
+        or is_test_path(relative)
+        or relative.as_posix() == "scripts/check_repository_safety.py"
+    ):
+        return []
+    if path.suffix.lower() in {".ico", ".png", ".ttf"}:
+        return []
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return []
+
+    errors: list[str] = []
+    for label, pattern in OLD_INSTALLER_DEPENDENCY_PATTERNS.items():
+        if pattern.search(content):
+            errors.append(
+                f"operational old installer repository dependency ({label}) found in tracked file: {relative}"
+            )
+            break
+
+    if not errors and "Valeneko-pranmong" in content and "Installer" in content:
+        if (
+            re.search(
+                r"""\b(?:OWNER|REPO_OWNER|GITHUB_OWNER|ORG)\s*=\s*["']Valeneko-pranmong["']""",
+                content,
+                re.IGNORECASE,
+            )
+            and re.search(
+                r"""\b(?:REPO|REPO_NAME|REPOSITORY|INSTALLER_REPO)\s*=\s*["'](?:Neko-Family-Proxy-)?Installer["']""",
+                content,
+                re.IGNORECASE,
+            )
+        ):
+            errors.append(
+                f"operational old installer repository dependency (split owner/repo constants) found in tracked file: {relative}"
             )
     return errors
 

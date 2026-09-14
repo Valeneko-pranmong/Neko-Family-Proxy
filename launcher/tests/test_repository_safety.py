@@ -145,3 +145,30 @@ def test_release_controller_is_software_update_production_code() -> None:
         "scripts/release_controller.py must be guarded as software update production code"
     )
 
+
+def test_safety_guard_rejects_old_installer_dependencies(tmp_path: Path) -> None:
+    safety = load_safety_module()
+    test_file = tmp_path / "fake_installer_dep.py"
+    test_file.write_text(
+        'TARGET = "Valeneko-pranmong/Neko-Family-Proxy-Installer"\n',
+        encoding="utf-8",
+    )
+    errors = safety.validate_old_installer_dependencies(test_file)
+    assert errors, "Expected safety guard to reject old installer repo reference"
+
+
+def test_safety_guard_allows_historical_superpowers_docs() -> None:
+    safety = load_safety_module()
+    history_plan = (
+        REPOSITORY_ROOT
+        / "docs"
+        / "superpowers"
+        / "plans"
+        / "2026-09-13-v512-retirement-human-promotion.md"
+    )
+    assert safety.is_allowlisted_history_doc(
+        history_plan.relative_to(REPOSITORY_ROOT)
+    )
+    errors = safety.validate_old_installer_dependencies(history_plan)
+    assert not errors, f"Expected historical superpowers docs to be permitted: {errors}"
+
