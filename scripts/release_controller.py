@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from typing import Any
 import zipfile
 
 # Add project root to sys.path so we can import internal modules
@@ -196,11 +197,47 @@ def resolve_core_authority(
     *,
     bootstrap_authority_dir: Path | None = None,
     trusted_keys: Mapping[str, bytes] | None = None,
+    core_authority: Any | None = None,
+    core_authority_custody_dir: Path | None = None,
+    network_executor: Any | None = None,
 ) -> CoreAuthoritySource:
     staging_dir.mkdir(parents=True, exist_ok=True)
     release_json_path = staging_dir / "release-v2.json"
     core_zip_path = staging_dir / "NekoProxyCore.zip"
     updater_exe_path: Path | None = None
+
+    if core_authority is not None or core_authority_custody_dir is not None:
+        if core_authority is None:
+            from scripts.core_authority_custody import load_verified_core_authority
+            core_authority = load_verified_core_authority(
+                core_authority_custody_dir,
+                trusted_public_keys=trusted_keys,
+            )
+
+        # Stage assets into staging_dir
+        if core_authority.core_zip_path.resolve() != core_zip_path.resolve():
+            shutil.copy2(core_authority.core_zip_path, core_zip_path)
+
+        provenance: dict[str, object] = {
+            "source": "core_authority_custody",
+            "authority_version_tag": core_authority.binding.authority_version_tag,
+            "authority_release_sequence": core_authority.binding.authority_release_sequence,
+            "authority_release_id": core_authority.binding.authority_release_id,
+            "authority_envelope_sha256": core_authority.binding.authority_envelope_sha256,
+            "authority_payload_sha256": core_authority.binding.authority_payload_sha256,
+            "authority_key_id": core_authority.binding.authority_key_id,
+            "core_source_commit": core_authority.binding.core_source_commit,
+            "provenance_sha256": core_authority.binding.provenance_sha256,
+        }
+
+        return CoreAuthoritySource(
+            manifest_path=release_json_path,
+            core_zip_path=core_zip_path,
+            provenance=provenance,
+            core_sha256=core_authority.core.sha256,
+            core_size=core_authority.core.size,
+            installed_identity_sha256=core_authority.core.installed_identity_sha256,
+        )
 
     if bootstrap_authority_dir is not None:
         # Bounded bootstrap authority override
@@ -241,7 +278,7 @@ def resolve_core_authority(
                 shutil.copy2(updater_src, staged_updater)
             updater_exe_path = staged_updater
 
-        provenance: dict[str, object] = {
+        provenance = {
             "source": "local_bootstrap_override",
             "stable_tag": stable_tag,
             "bootstrap_authority_dir": str(bootstrap_authority_dir.resolve()),
@@ -253,7 +290,10 @@ def resolve_core_authority(
         print(f"Fetching {stable_tag} Core authority from GitHub...")
         cmd = ["gh", "api", f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/tags/{stable_tag}"]
         try:
-            out = subprocess.check_output(cmd)
+            if network_executor is not None:
+                out = network_executor.run(cmd, capture_output=True).stdout
+            else:
+                out = subprocess.check_output(cmd)
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to fetch release {stable_tag}: {e}") from e
 
@@ -286,17 +326,29 @@ def resolve_core_authority(
         core_asset_id = core_zip_asset["id"]
 
         # 4. Download BOTH by immutable asset ID into staging
-        subprocess.run([
-            "gh", "api",
-            f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{manifest_asset_id}",
-            "-H", "Accept: application/octet-stream"
-        ], stdout=release_json_path.open("wb"), check=True)
+        if network_executor is not None:
+            network_executor.run([
+                "gh", "api",
+                f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{manifest_asset_id}",
+                "-H", "Accept: application/octet-stream"
+            ])
+            network_executor.run([
+                "gh", "api",
+                f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{core_asset_id}",
+                "-H", "Accept: application/octet-stream"
+            ])
+        else:
+            subprocess.run([
+                "gh", "api",
+                f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{manifest_asset_id}",
+                "-H", "Accept: application/octet-stream"
+            ], stdout=release_json_path.open("wb"), check=True)
 
-        subprocess.run([
-            "gh", "api",
-            f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{core_asset_id}",
-            "-H", "Accept: application/octet-stream"
-        ], stdout=core_zip_path.open("wb"), check=True)
+            subprocess.run([
+                "gh", "api",
+                f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{core_asset_id}",
+                "-H", "Accept: application/octet-stream"
+            ], stdout=core_zip_path.open("wb"), check=True)
 
         provenance = {
             "source": "github_release",
@@ -332,6 +384,8 @@ def verify_and_fetch_core(
     *,
     bootstrap_authority_dir: Path | None = None,
     trusted_keys: Mapping[str, bytes] | None = None,
+    core_authority: Any | None = None,
+    core_authority_custody_dir: Path | None = None,
 ) -> tuple[Path, str, int, str, dict]:
     print(f"Fetching and verifying {stable_tag} Core authority...")
     source = resolve_core_authority(
@@ -339,6 +393,8 @@ def verify_and_fetch_core(
         staging_dir,
         bootstrap_authority_dir=bootstrap_authority_dir,
         trusted_keys=trusted_keys,
+        core_authority=core_authority,
+        core_authority_custody_dir=core_authority_custody_dir,
     )
     return (
         source.core_zip_path,
@@ -659,6 +715,8 @@ def process_accepted_commits(
     *,
     installer_repo: str | None = None,
     bootstrap_authority_dir: Path | None = None,
+    core_authority: Any | None = None,
+    core_authority_custody_dir: Path | None = None,
 ):
     repo_root = Path(__file__).resolve().parent.parent
 
@@ -822,6 +880,8 @@ def process_accepted_commits(
         stable,
         staging_base / "evidence" / "core_authority",
         bootstrap_authority_dir=bootstrap_authority_dir,
+        core_authority=core_authority,
+        core_authority_custody_dir=core_authority_custody_dir,
     )
 
     publish_dir = staging_base / "publish"

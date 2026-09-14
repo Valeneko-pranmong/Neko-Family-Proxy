@@ -2,24 +2,37 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections.abc import Mapping
+from dataclasses import dataclass
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 from typing import Any, Sequence
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+# Add project root to sys.path so we can import internal modules
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
 
-from neko_launcher.updater.canonical_json import canonical_json_dumps
-from neko_launcher.updater.manifest_v2 import (
+from neko_launcher.updater.canonical_json import canonical_json_dumps  # noqa: E402
+from neko_launcher.updater.manifest_v2 import (  # noqa: E402
     parse_release_v2,
     verify_release_envelope_v2,
+)
+from scripts.core_authority_custody import (  # noqa: E402
+    ArtifactIdentity,
+    CoreAuthorityBinding,
+    VerifiedCoreAuthority,
 )
 
 EXPECTED_ASSETS = [
@@ -31,6 +44,275 @@ EXPECTED_ASSETS = [
 ]
 
 _KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+@dataclass(frozen=True)
+class TrustProfileBinding:
+    profile_id: str
+    channel: str
+    owner: str
+    repository: str
+    profile_authority_key_id: str
+    profile_authority_public_key_sha256: str
+    profile_envelope_sha256: str
+    keyset_sha256: str
+
+
+@dataclass(frozen=True)
+class FinalComponentSet:
+    source_commit: str
+    launcher: ArtifactIdentity
+    updater: ArtifactIdentity
+    core: ArtifactIdentity
+    core_authority: CoreAuthorityBinding
+    trust_profile: TrustProfileBinding
+    component_set_sha256: str
+
+
+@dataclass(frozen=True)
+class UnsignedBaselineEvidence:
+    sequence: int
+    release_id: str
+    component_set_sha256: str
+    payload_sha256: str
+    payload_path: Path
+
+
+def compute_component_set_sha256(
+    *,
+    source_commit: str,
+    launcher: ArtifactIdentity,
+    updater: ArtifactIdentity,
+    core: ArtifactIdentity,
+    core_authority: CoreAuthorityBinding,
+    trust_profile: TrustProfileBinding,
+) -> str:
+    data = {
+        "core": {
+            "artifact_format": core.artifact_format,
+            "artifact_id": core.artifact_id,
+            "installed_identity_sha256": core.installed_identity_sha256,
+            "sha256": core.sha256,
+            "size": core.size,
+            "version": core.version,
+        },
+        "core_authority": {
+            "authority_envelope_sha256": core_authority.authority_envelope_sha256,
+            "authority_key_id": core_authority.authority_key_id,
+            "authority_payload_sha256": core_authority.authority_payload_sha256,
+            "authority_release_id": core_authority.authority_release_id,
+            "authority_release_sequence": core_authority.authority_release_sequence,
+            "authority_version_tag": core_authority.authority_version_tag,
+            "core_source_commit": core_authority.core_source_commit,
+            "provenance_sha256": core_authority.provenance_sha256,
+        },
+        "launcher": {
+            "artifact_format": launcher.artifact_format,
+            "artifact_id": launcher.artifact_id,
+            "installed_identity_sha256": launcher.installed_identity_sha256,
+            "sha256": launcher.sha256,
+            "size": launcher.size,
+            "version": launcher.version,
+        },
+        "source_commit": source_commit,
+        "trust_profile": {
+            "channel": trust_profile.channel,
+            "keyset_sha256": trust_profile.keyset_sha256,
+            "owner": trust_profile.owner,
+            "profile_authority_key_id": trust_profile.profile_authority_key_id,
+            "profile_authority_public_key_sha256": trust_profile.profile_authority_public_key_sha256,
+            "profile_envelope_sha256": trust_profile.profile_envelope_sha256,
+            "profile_id": trust_profile.profile_id,
+            "repository": trust_profile.repository,
+        },
+        "updater": {
+            "artifact_format": updater.artifact_format,
+            "artifact_id": updater.artifact_id,
+            "installed_identity_sha256": updater.installed_identity_sha256,
+            "sha256": updater.sha256,
+            "size": updater.size,
+            "version": updater.version,
+        },
+    }
+    return hashlib.sha256(canonical_json_dumps(data)).hexdigest()
+
+
+def collect_final_component_set(
+    *,
+    source_commit: str,
+    launcher_path: Path,
+    launcher_version: str,
+    updater_path: Path,
+    updater_version: str,
+    core_authority: VerifiedCoreAuthority,
+    trust_profile_path: Path,
+    profile_authority_public_keys: Mapping[str, bytes] | None = None,
+    expected_profile_id: str = "production",
+) -> FinalComponentSet:
+    if not isinstance(source_commit, str) or not source_commit:
+        raise ValueError("source_commit must be a non-empty string")
+
+    launcher_path = Path(launcher_path)
+    updater_path = Path(updater_path)
+    trust_profile_path = Path(trust_profile_path)
+
+    if not launcher_path.is_file():
+        raise FileNotFoundError(f"Launcher artifact not found: {launcher_path}")
+    if not updater_path.is_file():
+        raise FileNotFoundError(f"Updater artifact not found: {updater_path}")
+    if not trust_profile_path.is_file():
+        raise FileNotFoundError(f"Trust profile not found: {trust_profile_path}")
+
+    launcher_sha, launcher_size = _artifact_identity(launcher_path)
+    updater_sha, updater_size = _artifact_identity(updater_path)
+
+    launcher_identity = ArtifactIdentity(
+        artifact_id=launcher_path.name,
+        version=launcher_version,
+        sha256=launcher_sha,
+        size=launcher_size,
+        installed_identity_sha256=launcher_sha,
+        artifact_format="raw-pe-v1",
+    )
+    updater_identity = ArtifactIdentity(
+        artifact_id=updater_path.name,
+        version=updater_version,
+        sha256=updater_sha,
+        size=updater_size,
+        installed_identity_sha256=updater_sha,
+        artifact_format="raw-pe-v1",
+    )
+
+    if not isinstance(core_authority, VerifiedCoreAuthority):
+        raise TypeError(f"core_authority must be a VerifiedCoreAuthority, got {type(core_authority)}")
+
+    from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
+    from neko_launcher.updater.trust_profile import verify_update_trust_profile
+
+    if profile_authority_public_keys is None:
+        profile_authority_public_keys = PROFILE_AUTHORITY_PUBLIC_KEYS
+
+    raw_profile = trust_profile_path.read_bytes()
+    verified_profile = verify_update_trust_profile(
+        raw_profile,
+        profile_authority_public_keys=profile_authority_public_keys,
+    )
+
+    if verified_profile.profile_id != expected_profile_id:
+        raise ValueError(
+            f"Trust profile profile_id must be '{expected_profile_id}', got '{verified_profile.profile_id}'"
+        )
+    if verified_profile.channel != "stable":
+        raise ValueError(f"Trust profile channel must be 'stable', got '{verified_profile.channel}'")
+
+    trust_binding = TrustProfileBinding(
+        profile_id=verified_profile.profile_id,
+        channel=verified_profile.channel,
+        owner=verified_profile.owner,
+        repository=verified_profile.repository,
+        profile_authority_key_id=verified_profile.profile_authority_key_id,
+        profile_authority_public_key_sha256=verified_profile.profile_authority_public_key_sha256,
+        profile_envelope_sha256=verified_profile.profile_envelope_sha256,
+        keyset_sha256=verified_profile.keyset_sha256,
+    )
+
+    comp_set_sha = compute_component_set_sha256(
+        source_commit=source_commit,
+        launcher=launcher_identity,
+        updater=updater_identity,
+        core=core_authority.core,
+        core_authority=core_authority.binding,
+        trust_profile=trust_binding,
+    )
+
+    return FinalComponentSet(
+        source_commit=source_commit,
+        launcher=launcher_identity,
+        updater=updater_identity,
+        core=core_authority.core,
+        core_authority=core_authority.binding,
+        trust_profile=trust_binding,
+        component_set_sha256=comp_set_sha,
+    )
+
+
+def build_unsigned_baseline(
+    *,
+    allocation: Any,
+    component_set: FinalComponentSet,
+    output_path: Path | None = None,
+) -> UnsignedBaselineEvidence:
+    expected_sha = compute_component_set_sha256(
+        source_commit=component_set.source_commit,
+        launcher=component_set.launcher,
+        updater=component_set.updater,
+        core=component_set.core,
+        core_authority=component_set.core_authority,
+        trust_profile=component_set.trust_profile,
+    )
+    if component_set.component_set_sha256 != expected_sha:
+        raise ValueError(
+            f"FinalComponentSet digest mismatch (tamper detected): "
+            f"{component_set.component_set_sha256} vs {expected_sha}"
+        )
+
+    payload_obj = {
+        "channel": "stable",
+        "components": {
+            "core": {
+                "artifact_format": component_set.core.artifact_format,
+                "artifact_id": component_set.core.artifact_id,
+                "artifact_sha256": component_set.core.sha256,
+                "artifact_size": component_set.core.size,
+                "installed_identity_sha256": component_set.core.installed_identity_sha256,
+                "version": component_set.core.version,
+            },
+            "launcher": {
+                "artifact_format": component_set.launcher.artifact_format,
+                "artifact_id": component_set.launcher.artifact_id,
+                "artifact_sha256": component_set.launcher.sha256,
+                "artifact_size": component_set.launcher.size,
+                "installed_identity_sha256": component_set.launcher.installed_identity_sha256,
+                "version": component_set.launcher.version,
+            },
+            "updater": {
+                "artifact_format": component_set.updater.artifact_format,
+                "artifact_id": component_set.updater.artifact_id,
+                "artifact_sha256": component_set.updater.sha256,
+                "artifact_size": component_set.updater.size,
+                "installed_identity_sha256": component_set.updater.installed_identity_sha256,
+                "version": component_set.updater.version,
+            },
+        },
+        "mandatory": False,
+        "minimum_supported_sequence": allocation.sequence,
+        "release_id": allocation.release_id,
+        "release_sequence": allocation.sequence,
+        "schema_version": 2,
+        "updater_protocol": {"maximum": 1, "minimum": 1},
+    }
+
+    parse_release_v2(payload_obj)
+    canonical_payload = canonical_json_dumps(payload_obj)
+    payload_sha = hashlib.sha256(canonical_payload).hexdigest()
+
+    if output_path is None:
+        temp_dir = Path(tempfile.mkdtemp(prefix="neko_unsigned_baseline_"))
+        target_path = temp_dir / "release-metadata.json"
+    else:
+        target_path = Path(output_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    target_path.write_bytes(canonical_payload)
+
+    return UnsignedBaselineEvidence(
+        sequence=allocation.sequence,
+        release_id=allocation.release_id,
+        component_set_sha256=component_set.component_set_sha256,
+        payload_sha256=payload_sha,
+        payload_path=target_path,
+    )
+
 
 
 class _SafeArgumentParser(argparse.ArgumentParser):

@@ -496,3 +496,130 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
 
     assert record["destination_repositories"]["machine"] == CANONICAL_REPO
     assert record["destination_repositories"]["installer"] == installer_repo
+
+
+def test_release_controller_consumes_explicit_core_authority_custody_without_network(tmp_path):
+    from scripts.core_authority_custody import (
+        ArtifactIdentity,
+        CoreAuthorityBinding,
+        VerifiedCoreAuthority,
+    )
+    from scripts.release_controller import resolve_core_authority
+
+    fake_core = tmp_path / "NekoProxyCore.zip"
+    fake_core.write_bytes(b"core-bytes")
+    fake_env = tmp_path / "release-v2.json"
+    fake_env.write_bytes(b"{}")
+
+    core_id = ArtifactIdentity(
+        artifact_id="NekoProxyCore.zip",
+        version="5.1.2",
+        sha256=hashlib.sha256(b"core-bytes").hexdigest(),
+        size=len(b"core-bytes"),
+        installed_identity_sha256="i" * 64,
+        artifact_format="zip-core-v1",
+    )
+    binding = CoreAuthorityBinding(
+        authority_version_tag="v5.1.2",
+        authority_release_sequence=6,
+        authority_release_id="stable-0006",
+        authority_payload_sha256="p" * 64,
+        authority_envelope_sha256="e" * 64,
+        authority_key_id="neko-update-prod-1",
+        core_source_commit="6ab94bb",
+        provenance_sha256="pr" * 32,
+    )
+    verified = VerifiedCoreAuthority(
+        binding=binding,
+        core_zip_path=fake_core,
+        core=core_id,
+    )
+
+    # Calling resolve_core_authority with explicit verified core_authority requires 0 network calls
+    staging_dir = tmp_path / "staging"
+    network_calls = []
+
+    class FakeNetworkExecutor:
+        def run(self, *a, **k):
+            network_calls.append((a, k))
+            raise AssertionError("Network executor must not be called")
+
+    res = resolve_core_authority(
+        "v5.1.1",
+        staging_dir,
+        core_authority=verified,
+        network_executor=FakeNetworkExecutor(),
+    )
+    assert len(network_calls) == 0
+    assert res.core_zip_path.is_file()
+    assert res.core_sha256 == core_id.sha256
+    assert res.installed_identity_sha256 == core_id.installed_identity_sha256
+
+
+def test_freeze_integrity_rejects_changed_core_authority_binding():
+    from scripts.build_software_release_v2 import (
+        ArtifactIdentity,
+        CoreAuthorityBinding,
+        FinalComponentSet,
+        TrustProfileBinding,
+        build_unsigned_baseline,
+        compute_component_set_sha256,
+    )
+    from scripts.derive_version import ReleaseAllocation
+
+    launcher_id = ArtifactIdentity("NekoLauncher.exe", "5.1.2", "1" * 64, 100, "1" * 64, "raw-pe-v1")
+    updater_id = ArtifactIdentity("NekoUpdater.exe", "5.1.2", "2" * 64, 200, "2" * 64, "raw-pe-v1")
+    core_id = ArtifactIdentity("NekoProxyCore.zip", "5.1.2", "3" * 64, 300, "3" * 64, "zip-core-v1")
+    core_binding = CoreAuthorityBinding(
+        authority_version_tag="v5.1.2",
+        authority_release_sequence=6,
+        authority_release_id="stable-0006",
+        authority_payload_sha256="p" * 64,
+        authority_envelope_sha256="e" * 64,
+        authority_key_id="neko-update-prod-1",
+        core_source_commit="6ab94bb",
+        provenance_sha256="pr" * 32,
+    )
+    trust_binding = TrustProfileBinding(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates",
+        profile_authority_key_id="neko-update-profile-v512-1",
+        profile_authority_public_key_sha256="a" * 64,
+        profile_envelope_sha256="env" * 21 + "e",
+        keyset_sha256="k" * 64,
+    )
+    comp_sha = compute_component_set_sha256(
+        source_commit="c" * 40,
+        launcher=launcher_id,
+        updater=updater_id,
+        core=core_id,
+        core_authority=core_binding,
+        trust_profile=trust_binding,
+    )
+
+    # If any core_authority field is mutated after collection, build_unsigned_baseline rejects it
+    mutated_binding = CoreAuthorityBinding(
+        authority_version_tag="v5.1.2",
+        authority_release_sequence=6,
+        authority_release_id="stable-0006",
+        authority_payload_sha256="p" * 64,
+        authority_envelope_sha256="mutated" + "e" * 57,
+        authority_key_id="neko-update-prod-1",
+        core_source_commit="6ab94bb",
+        provenance_sha256="pr" * 32,
+    )
+    tampered_component_set = FinalComponentSet(
+        source_commit="c" * 40,
+        launcher=launcher_id,
+        updater=updater_id,
+        core=core_id,
+        core_authority=mutated_binding,
+        trust_profile=trust_binding,
+        component_set_sha256=comp_sha,
+    )
+
+    alloc = ReleaseAllocation(8, "stable-0008", "l" * 64, comp_sha, "b" * 64, "h" * 64)
+    with pytest.raises(ValueError, match="(?i)(digest|mismatch|tamper)"):
+        build_unsigned_baseline(allocation=alloc, component_set=tampered_component_set)
