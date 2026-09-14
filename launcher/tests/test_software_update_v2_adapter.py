@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     LocalReleaseIdentity,
     UpdateDiagnosticCode,
     UpdateInvocationReason,
@@ -130,14 +131,23 @@ def test_v2_adapter_maps_valid_signed_release_set_v2_to_application_release_set(
     assert core.installed_identity_sha256 == "c" * 64
     assert core.artifact_size == 2048
 
+    assert hasattr(release_set, "payload_sha256")
+    assert isinstance(release_set.payload_sha256, str)
+    assert len(release_set.payload_sha256) == 64
+
     # Verify compatibility with policy evaluation
+    b41 = AuthenticatedReleaseBinding(41, "rel-41", "f" * 64)
     local_id = LocalReleaseIdentity(
-        release_sequence=41,
-        release_id="rel-41",
+        committed=b41,
+        high_water=b41,
+        observed=b41,
+        failed=None,
         launcher_version="1.9.0",
-        launcher_installed_identity_sha256="z" * 64,
+        launcher_installed_identity_sha256="1" * 64,
+        updater_version="1.9.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="2.9.0",
-        core_installed_identity_sha256="y" * 64,
+        core_installed_identity_sha256="2" * 64,
     )
     result = evaluate_release(local_id, release_set, UpdateInvocationReason.MANUAL)
     assert result.state == UpdateState.MANDATORY

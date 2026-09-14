@@ -27,7 +27,7 @@ class V2ReleaseManifestVerifierAdapter:
 
     def verify(self, document: object) -> ReleaseSet:
         try:
-            release_v2, _payload_sha256 = verify_release_envelope_v2(
+            release_v2, payload_sha256 = verify_release_envelope_v2(
                 document,
                 self._key_registry,
             )
@@ -57,4 +57,5 @@ class V2ReleaseManifestVerifierAdapter:
             mandatory=release_v2.mandatory,
             minimum_supported_sequence=release_v2.minimum_supported_sequence,
             components=components,
+            payload_sha256=payload_sha256,
         )

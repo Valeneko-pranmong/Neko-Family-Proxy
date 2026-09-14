@@ -1,3 +1,5 @@
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -49,6 +51,11 @@ class ReleaseSet:
     mandatory: bool
     minimum_supported_sequence: int
     components: tuple[ComponentRelease, ...]
+    payload_sha256: str
+
+    def __post_init__(self) -> None:
+        if type(self.payload_sha256) is not str or not re.fullmatch(r"[0-9a-f]{64}", self.payload_sha256):
+            raise ValueError("payload_sha256 must be lowercase 64-hex")
 
 @dataclass(frozen=True)
 class AuthenticatedReleaseBinding:
@@ -165,6 +172,7 @@ class UpdateCheckResult:
     core_version: str | None
     mandatory: bool
     diagnostic_code: UpdateDiagnosticCode | None
+    retry_staging: bool = False
 
     def __post_init__(self):
         if self.diagnostic_code is not None and not isinstance(self.diagnostic_code, UpdateDiagnosticCode):
@@ -253,6 +261,9 @@ def parse_release_set(document: object) -> ReleaseSet:
     # Fixed returned order launcher, core
     ordered_components = (components["launcher"], components["core"])
 
+    payload_bytes = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
+
     return ReleaseSet(
         schema_version=schema_version,
         channel=document["channel"],
@@ -260,5 +271,6 @@ def parse_release_set(document: object) -> ReleaseSet:
         release_id=release_id,
         mandatory=mandatory,
         minimum_supported_sequence=minimum_supported_sequence,
-        components=ordered_components
+        components=ordered_components,
+        payload_sha256=payload_sha256,
     )

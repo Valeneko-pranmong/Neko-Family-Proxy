@@ -1,4 +1,5 @@
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     ComponentRelease,
     LocalReleaseIdentity,
     ReleaseSet,
@@ -14,6 +15,11 @@ def evaluate_release(
     remote: ReleaseSet,
     reason: UpdateInvocationReason,
 ) -> UpdateCheckResult:
+    if not isinstance(local, LocalReleaseIdentity):
+        raise TypeError(
+            f"Production policy requires LocalReleaseIdentity, got {type(local).__name__}"
+        )
+
     components: dict[str, ComponentRelease] = {
         component.name: component for component in remote.components
     }
@@ -28,15 +34,6 @@ def evaluate_release(
         "core_version": core.version,
     }
 
-    if remote.release_sequence < local.release_sequence:
-        return UpdateCheckResult(
-            state=UpdateState.VERIFY_FAILED,
-            changed_components=(),
-            mandatory=False,
-            diagnostic_code=UpdateDiagnosticCode.DOWNGRADE_REJECTED,
-            **common,
-        )
-
     launcher_changed = (
         launcher.installed_identity_sha256
         != local.launcher_installed_identity_sha256
@@ -44,26 +41,6 @@ def evaluate_release(
     core_changed = (
         core.installed_identity_sha256 != local.core_installed_identity_sha256
     )
-
-    if remote.release_sequence == local.release_sequence:
-        if launcher_changed or core_changed:
-            return UpdateCheckResult(
-                state=UpdateState.VERIFY_FAILED,
-                changed_components=(),
-                mandatory=False,
-                diagnostic_code=(
-                    UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
-                ),
-                **common,
-            )
-        return UpdateCheckResult(
-            state=UpdateState.LATEST,
-            changed_components=(),
-            mandatory=False,
-            diagnostic_code=None,
-            **common,
-        )
-
     changed_components = tuple(
         name
         for name, changed in (
@@ -72,16 +49,76 @@ def evaluate_release(
         )
         if changed
     )
+
+    remote_binding = AuthenticatedReleaseBinding(
+        release_sequence=remote.release_sequence,
+        release_id=remote.release_id,
+        payload_sha256=remote.payload_sha256,
+    )
+
     mandatory = (
         remote.mandatory
-        or local.release_sequence < remote.minimum_supported_sequence
+        or local.committed.release_sequence < remote.minimum_supported_sequence
     )
+
+    if remote.release_sequence < local.high_water.release_sequence:
+        return UpdateCheckResult(
+            state=UpdateState.VERIFY_FAILED,
+            changed_components=(),
+            mandatory=False,
+            diagnostic_code=UpdateDiagnosticCode.DOWNGRADE_REJECTED,
+            retry_staging=False,
+            **common,
+        )
+
+    if remote.release_sequence == local.high_water.release_sequence:
+        if remote_binding != local.high_water:
+            return UpdateCheckResult(
+                state=UpdateState.VERIFY_FAILED,
+                changed_components=(),
+                mandatory=False,
+                diagnostic_code=(
+                    UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
+                ),
+                retry_staging=False,
+                **common,
+            )
+
+        if remote_binding == local.committed:
+            return UpdateCheckResult(
+                state=UpdateState.LATEST,
+                changed_components=(),
+                mandatory=False,
+                diagnostic_code=None,
+                retry_staging=False,
+                **common,
+            )
+
+        if local.failed is not None and remote_binding == local.failed:
+            return UpdateCheckResult(
+                state=UpdateState.LATEST,
+                changed_components=(),
+                mandatory=False,
+                diagnostic_code=None,
+                retry_staging=False,
+                **common,
+            )
+
+        return UpdateCheckResult(
+            state=UpdateState.LATEST,
+            changed_components=changed_components,
+            mandatory=mandatory,
+            diagnostic_code=None,
+            retry_staging=True,
+            **common,
+        )
 
     return UpdateCheckResult(
         state=UpdateState.MANDATORY if mandatory else UpdateState.AVAILABLE,
         changed_components=changed_components,
         mandatory=mandatory,
         diagnostic_code=None,
+        retry_staging=False,
         **common,
     )
 

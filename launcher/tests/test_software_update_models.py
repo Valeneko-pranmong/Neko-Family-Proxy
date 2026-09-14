@@ -3,6 +3,8 @@ import re
 import pytest
 from dataclasses import FrozenInstanceError
 
+from neko_launcher.application.software_update_models import AuthenticatedReleaseBinding
+
 def lazy_import():
     try:
         from neko_launcher.application.software_update_models import (
@@ -70,13 +72,25 @@ def test_enums_and_immutability():
         launcher_c.version = "1.1"
     core_c = ComponentRelease("core", "1.0", "c_id", "c"*64, 20, "d"*64)
 
-    r = ReleaseSet(1, "beta", 2, "r2", False, 1, (launcher_c, core_c))
+    r = ReleaseSet(1, "beta", 2, "r2", False, 1, (launcher_c, core_c), "0"*64)
     with pytest.raises(FrozenInstanceError):
         r.release_sequence = 3
 
-    loc_ident = LocalReleaseIdentity(1, "r1", "1.0", "a"*64, "1.0", "b"*64)
+    b = AuthenticatedReleaseBinding(1, "r1", "0"*64)
+    loc_ident = LocalReleaseIdentity(
+        committed=b,
+        high_water=b,
+        observed=b,
+        failed=None,
+        launcher_version="1.0",
+        launcher_installed_identity_sha256="a"*64,
+        updater_version="1.0",
+        updater_installed_identity_sha256="b"*64,
+        core_version="1.0",
+        core_installed_identity_sha256="c"*64,
+    )
     with pytest.raises(FrozenInstanceError):
-        loc_ident.release_id = "r2"
+        loc_ident.launcher_version = "2.0"
 
     u = UpdateCheckResult(UpdateState.LATEST, UpdateInvocationReason.STARTUP, "r1", 1, ("launcher",), "1.0", "1.0", False, None)
     with pytest.raises(FrozenInstanceError):
@@ -98,13 +112,37 @@ def test_local_identity_validation():
         pytest.fail("Module neko_launcher.application.software_update_models missing or fails to import")
     _, _, LocalReleaseIdentity, _, _, _, _, _ = symbols
 
-    loc_ident = LocalReleaseIdentity(0, "dev-unpublished", "1.0", "a"*64, "1.0", "b"*64)
-    assert loc_ident.release_sequence == 0
+    b1 = AuthenticatedReleaseBinding(1, "r1", "0"*64)
+    loc_ident = LocalReleaseIdentity(
+        committed=b1,
+        high_water=b1,
+        observed=b1,
+        failed=None,
+        launcher_version="1.0",
+        launcher_installed_identity_sha256="a"*64,
+        updater_version="1.0",
+        updater_installed_identity_sha256="b"*64,
+        core_version="1.0",
+        core_installed_identity_sha256="c"*64,
+    )
+    assert loc_ident.release_sequence == 1
+    assert loc_ident.release_id == "r1"
 
-    with pytest.raises(ValueError):
-        LocalReleaseIdentity(0, "some-other-id", "1.0", "a"*64, "1.0", "b"*64)
-
-    LocalReleaseIdentity(1, "some-other-id", "1.0", "a"*64, "1.0", "b"*64)
+    # committed sequence cannot exceed high_water sequence
+    b2 = AuthenticatedReleaseBinding(2, "r2", "1"*64)
+    with pytest.raises(ValueError, match="committed release_sequence cannot exceed high_water"):
+        LocalReleaseIdentity(
+            committed=b2,
+            high_water=b1,
+            observed=b1,
+            failed=None,
+            launcher_version="1.0",
+            launcher_installed_identity_sha256="a"*64,
+            updater_version="1.0",
+            updater_installed_identity_sha256="b"*64,
+            core_version="1.0",
+            core_installed_identity_sha256="c"*64,
+        )
 
 def test_parse_release_set_accepts_exact_beta_schema():
     ok, symbols = lazy_import()
@@ -307,16 +345,50 @@ def test_dataclasses_exact_fields():
     ]
 
     assert [f.name for f in dataclasses.fields(ReleaseSet)] == [
-        "schema_version", "channel", "release_sequence", "release_id", "mandatory", "minimum_supported_sequence", "components"
+        "schema_version", "channel", "release_sequence", "release_id", "mandatory", "minimum_supported_sequence", "components", "payload_sha256"
     ]
 
     assert [f.name for f in dataclasses.fields(LocalReleaseIdentity)] == [
-        "release_sequence", "release_id", "launcher_version", "launcher_installed_identity_sha256", "core_version", "core_installed_identity_sha256"
+        "committed", "high_water", "observed", "failed", "launcher_version", "launcher_installed_identity_sha256", "updater_version", "updater_installed_identity_sha256", "core_version", "core_installed_identity_sha256"
     ]
 
     assert [f.name for f in dataclasses.fields(UpdateCheckResult)] == [
-        "state", "invocation_reason", "release_id", "release_sequence", "changed_components", "launcher_version", "core_version", "mandatory", "diagnostic_code"
+        "state", "invocation_reason", "release_id", "release_sequence", "changed_components", "launcher_version", "core_version", "mandatory", "diagnostic_code", "retry_staging"
     ]
+
+
+def test_update_check_result_retry_staging_field():
+    ok, symbols = lazy_import()
+    if not ok:
+        pytest.fail("Module neko_launcher.application.software_update_models missing or fails to import")
+    _, _, _, UpdateInvocationReason, UpdateState, _, UpdateCheckResult, _ = symbols
+
+    res_default = UpdateCheckResult(
+        state=UpdateState.LATEST,
+        invocation_reason=UpdateInvocationReason.STARTUP,
+        release_id="r1",
+        release_sequence=1,
+        changed_components=(),
+        launcher_version="1.0",
+        core_version="1.0",
+        mandatory=False,
+        diagnostic_code=None,
+    )
+    assert res_default.retry_staging is False
+
+    res_retry = UpdateCheckResult(
+        state=UpdateState.LATEST,
+        invocation_reason=UpdateInvocationReason.STARTUP,
+        release_id="r1",
+        release_sequence=1,
+        changed_components=("launcher",),
+        launcher_version="1.0",
+        core_version="1.0",
+        mandatory=True,
+        diagnostic_code=None,
+        retry_staging=True,
+    )
+    assert res_retry.retry_staging is True
 
 def test_update_check_result_diagnostic_acceptance():
     ok, symbols = lazy_import()

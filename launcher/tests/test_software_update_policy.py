@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 
 import pytest
@@ -15,6 +16,7 @@ from neko_launcher.application.software_update_models import (
     UpdateInvocationReason,
     UpdateState,
 )
+from neko_launcher.application.software_update_policy import evaluate_release
 
 H_A = "a" * 64
 H_B = "b" * 64
@@ -69,6 +71,7 @@ def release_set(
     launcher_artifact_size: int = LAUNCHER_SIZE,
     core_artifact_size: int = CORE_SIZE,
     core_first: bool = False,
+    payload_sha256: str | None = None,
 ) -> ReleaseSet:
     launcher = component(
         "launcher",
@@ -87,14 +90,105 @@ def release_set(
         installed_identity_sha256=core_identity,
     )
     components = (core, launcher) if core_first else (launcher, core)
-    return ReleaseSet(
-        schema_version=1,
-        channel="beta",
-        release_sequence=sequence,
-        release_id=release_id or f"beta-{sequence}",
+    effective_release_id = release_id or f"beta-{sequence}"
+    if payload_sha256 is None:
+        if (
+            launcher_identity == H_A
+            and core_identity == H_B
+            and effective_release_id == f"beta-{sequence}"
+        ):
+            effective_payload_sha = f"{sequence:04x}".ljust(64, "0")
+        else:
+            effective_payload_sha = hashlib.sha256(
+                f"{sequence}:{effective_release_id}:{launcher_identity}:{core_identity}".encode()
+            ).hexdigest()
+    else:
+        effective_payload_sha = payload_sha256
+
+    try:
+        return ReleaseSet(
+            schema_version=1,
+            channel="beta",
+            release_sequence=sequence,
+            release_id=effective_release_id,
+            mandatory=mandatory,
+            minimum_supported_sequence=minimum_supported_sequence,
+            components=components,
+            payload_sha256=effective_payload_sha,
+        )
+    except TypeError:
+        # Before ReleaseSet gains payload_sha256 in RED phase
+        return ReleaseSet(
+            schema_version=1,
+            channel="beta",
+            release_sequence=sequence,
+            release_id=effective_release_id,
+            mandatory=mandatory,
+            minimum_supported_sequence=minimum_supported_sequence,
+            components=components,
+        )
+
+
+def bind(
+    seq: int,
+    release_id: str | None = None,
+    payload_sha: str | None = None,
+) -> AuthenticatedReleaseBinding:
+    effective_id = release_id or f"beta-{seq}"
+    effective_sha = payload_sha or f"{seq:04x}".ljust(64, "0")
+    return AuthenticatedReleaseBinding(
+        release_sequence=seq,
+        release_id=effective_id,
+        payload_sha256=effective_sha,
+    )
+
+
+def local_with(
+    committed: AuthenticatedReleaseBinding,
+    high_water: AuthenticatedReleaseBinding,
+    observed: AuthenticatedReleaseBinding,
+    failed: AuthenticatedReleaseBinding | None = None,
+    launcher_identity: str = H_A,
+    core_identity: str = H_B,
+    updater_identity: str = H_C,
+    launcher_version: str = "5.0.0",
+    core_version: str = "1.1.0",
+    updater_version: str = "5.0.0",
+) -> LocalReleaseIdentity:
+    return LocalReleaseIdentity(
+        committed=committed,
+        high_water=high_water,
+        observed=observed,
+        failed=failed,
+        launcher_version=launcher_version,
+        launcher_installed_identity_sha256=launcher_identity,
+        updater_version=updater_version,
+        updater_installed_identity_sha256=updater_identity,
+        core_version=core_version,
+        core_installed_identity_sha256=core_identity,
+    )
+
+
+def release_for(
+    binding: AuthenticatedReleaseBinding,
+    *,
+    mandatory: bool = False,
+    minimum_supported_sequence: int = 1,
+    launcher_identity: str = H_C,
+    core_identity: str = H_D,
+    launcher_version: str = "5.1.0",
+    core_version: str = "1.2.0",
+) -> ReleaseSet:
+    return release_set(
+        binding.release_sequence,
+        release_id=binding.release_id,
+        payload_sha256=binding.payload_sha256,
         mandatory=mandatory,
         minimum_supported_sequence=minimum_supported_sequence,
-        components=components,
+        launcher_identity=launcher_identity,
+        core_identity=core_identity,
+        launcher_version=launcher_version,
+        core_version=core_version,
     )
 
 
@@ -242,7 +336,6 @@ def test_downgrade_rejects_remote_even_when_metadata_differs() -> None:
 def test_same_sequence_ignores_artifact_metadata_when_identities_match_by_name() -> None:
     remote = release_set(
         10,
-        release_id="beta-10-repacked",
         mandatory=True,
         minimum_supported_sequence=10,
         launcher_version="5.0.0-metadata2",
@@ -565,4 +658,105 @@ def test_production_policy_fixture_rejects_development_identity() -> None:
     )
     with pytest.raises(TypeError, match="LocalReleaseIdentity"):
         execute(dev, release_set(11))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("remote_seq", "mandatory_flag", "minimum", "expected_state"),
+    [
+        (9, False, 8, UpdateState.AVAILABLE),
+        (9, True, 8, UpdateState.MANDATORY),
+        (9, False, 9, UpdateState.MANDATORY),
+    ],
+)
+def test_newer_release_uses_committed_sequence_for_mandatory(
+    remote_seq: int,
+    mandatory_flag: bool,
+    minimum: int,
+    expected_state: UpdateState,
+) -> None:
+    local = local_with(committed=bind(8), high_water=bind(8), observed=bind(8))
+    remote = release_for(
+        bind(remote_seq),
+        mandatory=mandatory_flag,
+        minimum_supported_sequence=minimum,
+    )
+    result = evaluate_release(local, remote, UpdateInvocationReason.STARTUP)
+    assert result.state == expected_state
+
+
+def test_committed_exact_high_water_is_latest() -> None:
+    local = local_with(committed=bind(8), high_water=bind(8), observed=bind(8))
+    result = evaluate_release(local, release_for(bind(8)), UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.LATEST
+    assert result.mandatory is False
+
+
+def test_exact_failed_high_water_is_known_not_fresh_update() -> None:
+    local = local_with(committed=bind(8), high_water=bind(9), observed=bind(9), failed=bind(9))
+    result = evaluate_release(local, release_for(bind(9)), UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.LATEST
+    assert result.mandatory is False
+    assert result.changed_components == ()
+
+
+def test_exact_observed_unfailed_high_water_is_retryable_mandatory() -> None:
+    local = local_with(committed=bind(8), high_water=bind(9), observed=bind(9), failed=None)
+    remote = release_for(bind(9), mandatory=True, minimum_supported_sequence=8)
+    result = evaluate_release(local, remote, UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.LATEST  # no new authority
+    assert result.mandatory is True
+    assert result.retry_staging is True
+    assert result.changed_components == ("launcher", "core")
+
+
+def test_same_sequence_identity_conflict_different_release_id() -> None:
+    local = local_with(committed=bind(8), high_water=bind(9), observed=bind(9))
+    remote = release_for(
+        bind(9, release_id="beta-9-conflict", payload_sha=f"{9:04x}".ljust(64, "0"))
+    )
+    result = evaluate_release(local, remote, UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.VERIFY_FAILED
+    assert result.diagnostic_code == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
+
+
+def test_same_sequence_identity_conflict_different_payload_sha() -> None:
+    local = local_with(committed=bind(8), high_water=bind(9), observed=bind(9))
+    remote = release_for(
+        bind(9, payload_sha="f" * 64)
+    )
+    result = evaluate_release(local, remote, UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.VERIFY_FAILED
+    assert result.diagnostic_code == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
+
+
+def test_lower_than_high_water_rejected_even_if_above_committed() -> None:
+    local = local_with(committed=bind(8), high_water=bind(10), observed=bind(10))
+    remote = release_for(bind(9))
+    result = evaluate_release(local, remote, UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.VERIFY_FAILED
+    assert result.diagnostic_code == UpdateDiagnosticCode.DOWNGRADE_REJECTED
+
+
+def test_semantic_version_does_not_affect_ordering() -> None:
+    # Lower semantic version but newer sequence is accepted
+    local = local_with(committed=bind(8), high_water=bind(8), observed=bind(8))
+    remote_newer = release_for(bind(9), launcher_version="0.1.0", core_version="0.1.0")
+    result = evaluate_release(local, remote_newer, UpdateInvocationReason.STARTUP)
+    assert result.state == UpdateState.AVAILABLE
+
+    # Higher semantic version but lower sequence is rejected
+    remote_older = release_for(bind(7), launcher_version="99.9.9", core_version="99.9.9")
+    result_older = evaluate_release(local, remote_older, UpdateInvocationReason.STARTUP)
+    assert result_older.state == UpdateState.VERIFY_FAILED
+    assert result_older.diagnostic_code == UpdateDiagnosticCode.DOWNGRADE_REJECTED
+
+    # Same sequence different payload_sha with identical semantic version is conflict
+    remote_conflict = release_for(
+        bind(8, payload_sha="e" * 64),
+        launcher_version="5.0.0",
+        core_version="1.1.0",
+    )
+    result_conflict = evaluate_release(local, remote_conflict, UpdateInvocationReason.STARTUP)
+    assert result_conflict.state == UpdateState.VERIFY_FAILED
+    assert result_conflict.diagnostic_code == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
 
