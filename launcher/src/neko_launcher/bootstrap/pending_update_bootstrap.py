@@ -8,8 +8,15 @@ from neko_launcher.application.software_update_models import LocalReleaseIdentit
 from neko_launcher.infrastructure.software_update_apply import (
     SoftwareUpdateApplyService,
 )
+from neko_launcher.infrastructure.authenticated_release_identity import (
+    AuthenticatedReleaseIdentityReader,
+)
 from neko_launcher.infrastructure.software_update_pending_store import (
     PendingUpdateStore,
+)
+from neko_launcher.updater.trust_profile import (
+    VerifiedUpdateTrustProfile,
+    load_installed_update_trust_profile,
 )
 
 
@@ -107,58 +114,57 @@ def run_pending_update_bootstrap(
     workspace_root: Path | None = None,
     *,
     game_active: Callable[[], bool] | None = None,
+    verified_profile: VerifiedUpdateTrustProfile | None = None,
+    identity_reader: AuthenticatedReleaseIdentityReader | None = None,
+    root_dir: Path | None = None,
 ) -> PendingUpdateBootstrapResult:
     """Compose dependencies and evaluate pending update apply before constructing UI."""
     try:
-        import sys
-
-        from neko_launcher import __version__
         from neko_launcher.bootstrap.app_factory import (
             application_root,
             compose_update_apply_service,
         )
         from neko_launcher.infrastructure.config import LauncherConfig
-        from neko_launcher.infrastructure.software_release_identity import (
-            load_local_release_identity,
-        )
         from neko_launcher.infrastructure.software_update_pending_store import (
             PendingUpdateStore,
         )
         from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
         from neko_launcher.updater.root_validator import get_expected_install_root
-        from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
         root = workspace_root or application_root()
         config = LauncherConfig.from_environment(root)
-        install_root = get_expected_install_root()
+        install_root = root_dir or (Path(workspace_root) if workspace_root is not None else get_expected_install_root())
+
+        profile = verified_profile
+        if profile is None:
+            reader_prof = getattr(identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None))
+            if reader_prof is not None:
+                profile = reader_prof
+            else:
+                profile = load_installed_update_trust_profile(install_root)
+
+        if identity_reader is None:
+            reader = AuthenticatedReleaseIdentityReader(profile)
+        else:
+            reader = identity_reader
+
+        if profile is None:
+            return PendingUpdateBootstrapResult.NONE
 
         pending_store = PendingUpdateStore(
             root_dir=install_root,
-            key_registry=PRODUCTION_RELEASE_PUBLIC_KEYS,
+            key_registry=profile.release_public_keys,
             updater_protocol=UPDATER_PROTOCOL_VERSION,
         )
 
         apply_service = compose_update_apply_service(
             config,
+            verified_profile=profile,
             root_dir=install_root,
         )
 
-        launcher_executable = (
-            Path(sys.executable)
-            if getattr(sys, "frozen", False)
-            else Path(__file__).resolve()
-        )
-        core_manifest = config.proxy_core_path.with_name("canonical-core-manifest.json")
-
         def identity_provider() -> LocalReleaseIdentity:
-            return load_local_release_identity(
-                release_sequence=0,
-                release_id="dev-unpublished",
-                launcher_version=__version__,
-                launcher_executable=launcher_executable,
-                core_version="dev-unpublished",
-                core_manifest=core_manifest,
-            )
+            return reader.read(install_root)
 
         checker = game_active or is_game_active_early
 

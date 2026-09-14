@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from types import MappingProxyType, SimpleNamespace
+from typing import Any, Mapping
 
 import pytest
 
 import neko_launcher.bootstrap.app_factory as app_factory
 import neko_launcher.infrastructure.defaults as defaults
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
     UpdateDiagnosticCode,
     UpdateState,
+)
+from neko_launcher.infrastructure.authenticated_release_identity import (
+    AuthenticatedReleaseIdentityReader,
 )
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.github_asset_downloader import (
@@ -24,17 +29,74 @@ from neko_launcher.infrastructure.github_release_binding import (
     GitHubReleaseResolverError,
     ResolvedGitHubRelease,
 )
+from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
 from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
-from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+from neko_launcher.updater.trust_profile import (
+    VerifiedUpdateTrustProfile,
+    load_installed_update_trust_profile,
+)
 from software_update_helpers import get_test_key_registry
 
 
-EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
+TEST_KEY_ID = "neko-update-prod-1"
+TEST_PUBLIC_KEY = get_test_key_registry()["neko-update-test-1"]
 
 
-def assert_approved_production_registry() -> None:
-    assert set(PRODUCTION_RELEASE_PUBLIC_KEYS) == {EXPECTED_PRODUCTION_KEY_ID}
-    assert len(PRODUCTION_RELEASE_PUBLIC_KEYS[EXPECTED_PRODUCTION_KEY_ID]) == 32
+def make_test_verified_profile(
+    *,
+    profile_id: str = "production",
+    channel: str = "stable",
+    owner: str = "Valeneko-pranmong",
+    repo: str = "Neko-Family-Proxy-Updates-Proof",
+    keys: Mapping[str, bytes] | None = None,
+) -> VerifiedUpdateTrustProfile:
+    key_mapping = keys if keys is not None else {TEST_KEY_ID: TEST_PUBLIC_KEY}
+    return VerifiedUpdateTrustProfile(
+        profile_id=profile_id,
+        channel=channel,
+        owner=owner,
+        repository=repo,
+        release_public_keys=MappingProxyType(dict(key_mapping)),
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth-key",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+
+
+def make_test_local_identity(sequence: int = 8) -> LocalReleaseIdentity:
+    binding = AuthenticatedReleaseBinding(
+        release_sequence=sequence,
+        release_id=f"r{sequence}-stable",
+        payload_sha256="a" * 64,
+    )
+    return LocalReleaseIdentity(
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
+        launcher_version="5.1.2",
+        launcher_installed_identity_sha256="b" * 64,
+        updater_version="5.1.2",
+        updater_installed_identity_sha256="c" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256="d" * 64,
+    )
+
+
+class FakeIdentityReader:
+    def __init__(
+        self,
+        identity: LocalReleaseIdentity,
+        trust_profile: VerifiedUpdateTrustProfile | None = None,
+    ) -> None:
+        self.identity = identity
+        self.calls: list[Path] = []
+        self._trust_profile = trust_profile or make_test_verified_profile()
+
+    def read(self, install_root: Path) -> LocalReleaseIdentity:
+        self.calls.append(install_root)
+        return self.identity
 
 
 class StaticReleaseGateway:
@@ -57,6 +119,8 @@ def make_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> LauncherConf
 
 def test_composition_helper_exists() -> None:
     assert hasattr(app_factory, "compose_update_check_service")
+    assert app_factory.AuthenticatedReleaseIdentityReader is AuthenticatedReleaseIdentityReader
+    assert app_factory.load_installed_update_trust_profile is load_installed_update_trust_profile
 
 
 def test_composition_helper_apply_service_exists() -> None:
@@ -65,6 +129,106 @@ def test_composition_helper_apply_service_exists() -> None:
 
 def test_composition_helper_coordinator_exists() -> None:
     assert hasattr(app_factory, "compose_update_coordinator")
+
+
+def test_production_composition_uses_authenticated_identity_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = make_config(monkeypatch, tmp_path)
+    reader = FakeIdentityReader(make_test_local_identity(sequence=8))
+    service = app_factory.compose_update_check_service(
+        config,
+        root_dir=tmp_path,
+        identity_reader=reader,
+    )
+    result = service._local_identity_provider()
+    assert result.committed.release_sequence == 8
+    assert reader.calls == [tmp_path]
+
+
+def test_production_composition_does_not_accept_raw_release_key_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = make_config(monkeypatch, tmp_path)
+    with pytest.raises(TypeError):
+        app_factory.compose_update_check_service(
+            config,
+            key_registry=get_test_key_registry(),  # type: ignore[call-arg]
+        )
+
+
+def test_production_composition_derives_discovery_and_identity_from_same_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = make_config(monkeypatch, tmp_path)
+    profile = make_test_verified_profile(owner="Valeneko-pranmong", repo="Neko-Family-Proxy-Updates-Proof")
+    monkeypatch.setattr(
+        app_factory,
+        "load_installed_update_trust_profile",
+        lambda root: profile,
+    )
+    reader = FakeIdentityReader(make_test_local_identity(sequence=8), trust_profile=profile)
+    service = app_factory.compose_update_check_service(
+        config,
+        root_dir=tmp_path,
+        identity_reader=reader,
+    )
+    assert service._release_gateway._channel_profile.owner == "Valeneko-pranmong"
+    assert service._release_gateway._channel_profile.repository == "Neko-Family-Proxy-Updates-Proof"
+    result = service._local_identity_provider()
+    assert result.committed.release_sequence == 8
+    assert result.release_id != "dev-unpublished"
+
+
+def test_production_composition_gateway_uses_profile_authenticated_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = make_config(monkeypatch, tmp_path)
+    profile = make_test_verified_profile(owner="Valeneko-pranmong", repo="Neko-Family-Proxy-Updates-Proof")
+    reader = FakeIdentityReader(make_test_local_identity(sequence=8), trust_profile=profile)
+    service = app_factory.compose_update_check_service(
+        config,
+        verified_profile=profile,
+        root_dir=tmp_path,
+        identity_reader=reader,
+    )
+    gateway = service._release_gateway._release_gateway
+    assert gateway.channel_profile.owner == "Valeneko-pranmong"
+    assert gateway.channel_profile.repository == "Neko-Family-Proxy-Updates-Proof"
+    assert gateway.channel_profile.latest_release_api == (
+        "https://api.github.com/repos/Valeneko-pranmong/Neko-Family-Proxy-Updates-Proof/releases/latest"
+    )
+
+
+def test_production_composition_rejects_mismatched_profile_between_gateway_and_identity_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = make_config(monkeypatch, tmp_path)
+    profile_a = make_test_verified_profile(owner="Valeneko-pranmong", repo="RepoA")
+    profile_b = make_test_verified_profile(owner="Valeneko-pranmong", repo="RepoB")
+
+    channel_profile_b = UpdateChannelProfile.from_verified(profile_b)
+    mismatched_resolver = GitHubReleaseResolver(
+        release_gateway=GitHubLatestReleaseGateway(channel_profile=channel_profile_b),
+        manifest_downloader=GitHubManifestDownloader(channel_profile=channel_profile_b),
+        channel_profile=channel_profile_b,
+        install_root=tmp_path,
+        updater_protocol=UPDATER_PROTOCOL_VERSION,
+    )
+    reader_a = FakeIdentityReader(make_test_local_identity(sequence=5), trust_profile=profile_a)
+
+    with pytest.raises(ValueError, match="mismatch"):
+        app_factory.compose_update_check_service(
+            config,
+            resolver=mismatched_resolver,
+            identity_reader=reader_a,
+            root_dir=tmp_path,
+        )
 
 
 def test_development_composition_uses_unpublished_sequence_zero_identity(
@@ -80,7 +244,7 @@ def test_development_composition_uses_unpublished_sequence_zero_identity(
 
     captured: dict[str, object] = {}
 
-    def fake_load_local_release_identity(**kwargs: object) -> object:
+    def fake_load_development_release_identity(**kwargs: object) -> object:
         captured.update(kwargs)
         return object()
 
@@ -88,20 +252,20 @@ def test_development_composition_uses_unpublished_sequence_zero_identity(
     monkeypatch.setattr(app_factory, "__file__", str(launcher))
     monkeypatch.setattr(
         app_factory,
-        "load_local_release_identity",
-        fake_load_local_release_identity,
+        "load_development_release_identity",
+        fake_load_development_release_identity,
     )
 
-    service = app_factory.compose_update_check_service(
+    service = app_factory.compose_development_update_check_service(
         config,
-        key_registry=get_test_key_registry(),
+        resolver=StaticReleaseGateway(),
     )
 
     service._local_identity_provider()
 
-    assert captured["release_sequence"] == 0
-    assert captured["release_id"] == "dev-unpublished"
+    assert captured["launcher_version"] == app_factory.__version__
     assert captured["launcher_executable"] == launcher.resolve()
+    assert captured["core_version"] == "dev-unpublished"
     assert captured["core_manifest"] == core_manifest
 
 
@@ -113,7 +277,7 @@ def test_packaged_composition_hashes_sys_executable_as_launcher_identity(
     packaged_executable = tmp_path / "NekoLauncher.exe"
     captured: dict[str, object] = {}
 
-    def fake_load_local_release_identity(**kwargs: object) -> object:
+    def fake_load_development_release_identity(**kwargs: object) -> object:
         captured.update(kwargs)
         return object()
 
@@ -121,13 +285,13 @@ def test_packaged_composition_hashes_sys_executable_as_launcher_identity(
     monkeypatch.setattr(app_factory.sys, "executable", str(packaged_executable))
     monkeypatch.setattr(
         app_factory,
-        "load_local_release_identity",
-        fake_load_local_release_identity,
+        "load_development_release_identity",
+        fake_load_development_release_identity,
     )
 
-    service = app_factory.compose_update_check_service(
+    service = app_factory.compose_development_update_check_service(
         config,
-        key_registry=get_test_key_registry(),
+        resolver=StaticReleaseGateway(),
     )
 
     service._local_identity_provider()
@@ -140,11 +304,14 @@ def test_composition_uses_github_resolver_and_update_check_service(
     tmp_path: Path,
 ) -> None:
     config = make_config(monkeypatch, tmp_path)
+    profile = make_test_verified_profile()
+    reader = FakeIdentityReader(make_test_local_identity(sequence=8), trust_profile=profile)
 
     service = app_factory.compose_update_check_service(
         config,
-        key_registry=get_test_key_registry(),
+        verified_profile=profile,
         root_dir=tmp_path,
+        identity_reader=reader,
     )
 
     assert type(service).__name__ == "UpdateCheckService"
@@ -152,7 +319,7 @@ def test_composition_uses_github_resolver_and_update_check_service(
     assert isinstance(resolver, GitHubReleaseResolver)
     assert isinstance(resolver._release_gateway, GitHubLatestReleaseGateway)
     assert isinstance(resolver._manifest_downloader, GitHubManifestDownloader)
-    assert resolver._key_registry == get_test_key_registry()
+    assert resolver._channel_profile == UpdateChannelProfile.from_verified(profile)
     assert resolver._install_root == tmp_path
     assert resolver._updater_protocol == UPDATER_PROTOCOL_VERSION
 
@@ -166,26 +333,38 @@ def test_composition_is_lazy_when_canonical_core_manifest_is_missing(
 
     assert not core_manifest.exists()
 
+    profile = make_test_verified_profile()
+    reader = FakeIdentityReader(make_test_local_identity(sequence=8), trust_profile=profile)
     service = app_factory.compose_update_check_service(
         config,
-        key_registry=get_test_key_registry(),
+        verified_profile=profile,
+        root_dir=tmp_path,
+        identity_reader=reader,
     )
 
     assert service is not None
     assert not core_manifest.exists()
 
 
-def test_production_public_key_registry_is_approved_and_untrusted_signature_fails_closed(
+def test_profile_authenticated_registry_rejects_untrusted_signature(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    assert_approved_production_registry()
-
     config = make_config(monkeypatch, tmp_path)
+    profile = make_test_verified_profile()
+    monkeypatch.setattr(
+        app_factory,
+        "load_installed_update_trust_profile",
+        lambda root: profile,
+    )
     gateway = StaticReleaseGateway(error=GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED"))
 
-    service = app_factory.compose_update_check_service(config)
-    assert service._release_gateway._key_registry == PRODUCTION_RELEASE_PUBLIC_KEYS
+    service = app_factory.compose_update_check_service(
+        config,
+        root_dir=tmp_path,
+        identity_reader=FakeIdentityReader(make_test_local_identity(), trust_profile=profile),
+    )
+    assert service._release_gateway._channel_profile == UpdateChannelProfile.from_verified(profile)
 
     service._release_gateway = gateway
     result = service.check_manual()
@@ -194,11 +373,30 @@ def test_production_public_key_registry_is_approved_and_untrusted_signature_fail
     assert result.diagnostic_code == UpdateDiagnosticCode.MANIFEST_REJECTED
 
 
-def test_production_compose_update_apply_service_uses_approved_registry_and_resolver(
+def test_missing_installed_profile_disables_production_composition_without_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    assert_approved_production_registry()
+    config = make_config(monkeypatch, tmp_path)
+
+    service = app_factory.compose_update_check_service(config, root_dir=tmp_path)
+    result = service.check_manual()
+
+    assert result.state == UpdateState.UNAVAILABLE
+    assert service._release_gateway.__class__.__name__ == "_UnavailableReleaseGateway"
+    assert not hasattr(service._release_gateway, "_key_registry")
+
+
+def test_production_compose_update_apply_service_uses_profile_registry_and_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    profile = make_test_verified_profile()
+    monkeypatch.setattr(
+        app_factory,
+        "load_installed_update_trust_profile",
+        lambda root: profile,
+    )
 
     compose_update_apply_service = getattr(
         app_factory, "compose_update_apply_service", None
@@ -211,7 +409,8 @@ def test_production_compose_update_apply_service_uses_approved_registry_and_reso
 
     resolver = getattr(service, "release_gateway", getattr(service, "_release_gateway", None))
     assert isinstance(resolver, GitHubReleaseResolver)
-    assert resolver._key_registry == PRODUCTION_RELEASE_PUBLIC_KEYS
+    assert resolver._key_registry == dict(profile.release_public_keys)
+    assert resolver._channel_profile == UpdateChannelProfile.from_verified(profile)
     assert resolver._install_root == tmp_path
     assert resolver._updater_protocol == UPDATER_PROTOCOL_VERSION
 
@@ -299,6 +498,17 @@ def test_build_window_shares_same_resolver_instance_between_check_and_apply(
             captured["window_kwargs"] = kwargs
 
     monkeypatch.setattr(app_factory, "AppWindow", CapturingWindow)
+    profile = make_test_verified_profile()
+    monkeypatch.setattr(
+        app_factory,
+        "load_installed_update_trust_profile",
+        lambda root: profile,
+    )
+    monkeypatch.setattr(
+        app_factory,
+        "AuthenticatedReleaseIdentityReader",
+        lambda prof: FakeIdentityReader(make_test_local_identity(), trust_profile=prof),
+    )
 
     window = app_factory.build_window(tmp_path)
 
@@ -323,7 +533,17 @@ def test_production_update_configuration_contains_no_private_key_material(
     tmp_path: Path,
 ) -> None:
     config = make_config(monkeypatch, tmp_path)
-    service = app_factory.compose_update_check_service(config)
+    profile = make_test_verified_profile()
+    monkeypatch.setattr(
+        app_factory,
+        "load_installed_update_trust_profile",
+        lambda root: profile,
+    )
+    service = app_factory.compose_update_check_service(
+        config,
+        root_dir=tmp_path,
+        identity_reader=FakeIdentityReader(make_test_local_identity(), trust_profile=profile),
+    )
 
     production_source = "\n".join(
         (

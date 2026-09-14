@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from neko_launcher import __version__
 from neko_launcher.application.authorized_core import (
@@ -20,7 +20,6 @@ from neko_launcher.application.services import LauncherService
 from neko_launcher.application.software_update_coordinator import (
     SoftwareUpdateCoordinator,
 )
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
 from neko_launcher.application.software_update_service import UpdateCheckService
 from neko_launcher.domain.models import AuthStatus, EntitlementStatus
 from neko_launcher.infrastructure.account_recovery_gateway import (
@@ -32,6 +31,13 @@ from neko_launcher.infrastructure.core.authorized_proxy_gateway import Authorize
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
 from neko_launcher.infrastructure.core.core_telemetry_client import NamedPipeCoreTelemetryClient
+from neko_launcher.application.software_update_models import (
+    DevelopmentReleaseIdentity,
+    LocalReleaseIdentity,
+)
+from neko_launcher.infrastructure.authenticated_release_identity import (
+    AuthenticatedReleaseIdentityReader,
+)
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.github_asset_downloader import (
     GitHubAssetDownloader,
@@ -41,11 +47,13 @@ from neko_launcher.infrastructure.github_release import GitHubLatestReleaseGatew
 from neko_launcher.infrastructure.github_release_binding import (
     AuthenticatedReleaseGateway,
     GitHubReleaseResolver,
+    GitHubReleaseResolverError,
 )
+
 from neko_launcher.infrastructure.process.game_process_manager import GameProcessManager
 from neko_launcher.infrastructure.proxy_status_client import PublicProxyStatusClient
 from neko_launcher.infrastructure.software_release_identity import (
-    load_local_release_identity,
+    load_development_release_identity,
 )
 from neko_launcher.infrastructure.software_update_apply import SoftwareUpdateApplyService
 from neko_launcher.infrastructure.software_update_pending_store import (
@@ -55,12 +63,46 @@ from neko_launcher.infrastructure.software_update_stage import (
     SoftwareUpdateStageService,
 )
 from neko_launcher.infrastructure.process.process_detector import ExactPso2TargetDetector
+from neko_launcher.infrastructure.update_channel_profile import (
+    UpdateChannelProfile,
+)
 from neko_launcher.updater.manifest_v2 import UPDATER_PROTOCOL_VERSION
 from neko_launcher.updater.root_validator import get_expected_install_root
-from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+from neko_launcher.updater.trust_profile import (
+    VerifiedUpdateTrustProfile,
+    load_installed_update_trust_profile,
+)
 from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
 from neko_launcher.ui.app_window import AppWindow
+
+
+class _UnavailableReleaseGateway:
+    def resolve(self) -> None:
+        raise GitHubReleaseResolverError("GITHUB_RELEASE_UNAVAILABLE")
+
+
+def _unavailable_local_identity() -> LocalReleaseIdentity:
+    raise RuntimeError("Installed update trust profile unavailable")
+
+
+def _profiles_match(profile_a: Any, profile_b: Any) -> bool:
+    if profile_a is profile_b:
+        return True
+    try:
+        if profile_a.profile_id != profile_b.profile_id:
+            return False
+        if profile_a.channel != profile_b.channel:
+            return False
+        if profile_a.owner != profile_b.owner:
+            return False
+        if profile_a.repository != profile_b.repository:
+            return False
+        if dict(profile_a.release_public_keys) != dict(profile_b.release_public_keys):
+            return False
+        return True
+    except AttributeError:
+        return False
 
 
 def application_root() -> Path:
@@ -76,25 +118,73 @@ def application_root() -> Path:
 def compose_update_check_service(
     config: LauncherConfig,
     *,
-    key_registry: Mapping[str, bytes] | None = None,
+    verified_profile: VerifiedUpdateTrustProfile | None = None,
     resolver: AuthenticatedReleaseGateway | None = None,
     root_dir: Path | None = None,
+    identity_reader: AuthenticatedReleaseIdentityReader | None = None,
 ) -> UpdateCheckService:
     install_root = root_dir or get_expected_install_root()
+
+    profile = verified_profile
+    if profile is None:
+        reader_prof = getattr(identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None))
+        if reader_prof is not None:
+            profile = reader_prof
+        else:
+            try:
+                profile = load_installed_update_trust_profile(install_root)
+            except Exception:
+                return UpdateCheckService(
+                    resolver or _UnavailableReleaseGateway(),
+                    _unavailable_local_identity,
+                )
+
+    if not isinstance(profile, VerifiedUpdateTrustProfile):
+        raise TypeError("verified_profile must be a VerifiedUpdateTrustProfile")
+
+    if identity_reader is not None:
+        reader_prof = getattr(identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None))
+        if reader_prof is not None and not _profiles_match(reader_prof, profile):
+            raise ValueError(f"Trust profile mismatch between verified profile and identity reader: {reader_prof} != {profile}")
+
     if resolver is None:
+        channel_profile = UpdateChannelProfile.from_verified(profile)
         release_resolver: AuthenticatedReleaseGateway = GitHubReleaseResolver(
-            release_gateway=GitHubLatestReleaseGateway(),
-            manifest_downloader=GitHubManifestDownloader(),
-            key_registry=(
-                PRODUCTION_RELEASE_PUBLIC_KEYS
-                if key_registry is None
-                else key_registry
-            ),
+            release_gateway=GitHubLatestReleaseGateway(channel_profile=channel_profile),
+            manifest_downloader=GitHubManifestDownloader(channel_profile=channel_profile),
+            channel_profile=channel_profile,
             install_root=install_root,
             updater_protocol=UPDATER_PROTOCOL_VERSION,
         )
     else:
+        resolver_prof = getattr(resolver, "channel_profile", getattr(resolver, "_channel_profile", None))
+        if resolver_prof is not None and not _profiles_match(resolver_prof, profile):
+            raise ValueError(f"Trust profile mismatch between gateway and profile/identity reader: {resolver_prof} != {profile}")
         release_resolver = resolver
+
+    if identity_reader is None:
+        reader = AuthenticatedReleaseIdentityReader(profile)
+    else:
+        reader = identity_reader
+
+    def local_identity_provider() -> LocalReleaseIdentity:
+        return reader.read(install_root)
+
+    return UpdateCheckService(
+        release_resolver,
+        local_identity_provider,
+    )
+
+
+def compose_development_update_check_service(
+    config: LauncherConfig,
+    *,
+    resolver: AuthenticatedReleaseGateway | None = None,
+    root_dir: Path | None = None,
+) -> UpdateCheckService:
+    del root_dir
+    if resolver is None:
+        raise ValueError("resolver must be provided for development update check service")
 
     launcher_executable = (
         Path(sys.executable)
@@ -103,10 +193,8 @@ def compose_update_check_service(
     )
     core_manifest = config.proxy_core_path.with_name("canonical-core-manifest.json")
 
-    def local_identity_provider() -> LocalReleaseIdentity:
-        return load_local_release_identity(
-            release_sequence=0,
-            release_id="dev-unpublished",
+    def local_identity_provider() -> DevelopmentReleaseIdentity:
+        return load_development_release_identity(
             launcher_version=__version__,
             launcher_executable=launcher_executable,
             core_version="dev-unpublished",
@@ -114,39 +202,46 @@ def compose_update_check_service(
         )
 
     return UpdateCheckService(
-        release_resolver,
-        local_identity_provider,
+        resolver,
+        local_identity_provider,  # type: ignore[arg-type]
     )
 
 
 def compose_update_apply_service(
     config: LauncherConfig,
     *,
-    key_registry: Mapping[str, bytes] | None = None,
+    verified_profile: VerifiedUpdateTrustProfile | None = None,
     resolver: AuthenticatedReleaseGateway | None = None,
     root_dir: Path | None = None,
     asset_downloader: GitHubAssetDownloader | None = None,
 ) -> SoftwareUpdateApplyService:
     install_root = root_dir or get_expected_install_root()
-    if resolver is None:
-        release_resolver: AuthenticatedReleaseGateway = GitHubReleaseResolver(
-            release_gateway=GitHubLatestReleaseGateway(),
-            manifest_downloader=GitHubManifestDownloader(),
-            key_registry=(
-                PRODUCTION_RELEASE_PUBLIC_KEYS
-                if key_registry is None
-                else key_registry
-            ),
+    release_resolver = resolver
+    if verified_profile is None:
+        try:
+            verified_profile = load_installed_update_trust_profile(install_root)
+        except Exception:
+            verified_profile = None
+    if release_resolver is None and verified_profile is not None:
+        channel_profile = UpdateChannelProfile.from_verified(verified_profile)
+        release_resolver = GitHubReleaseResolver(
+            release_gateway=GitHubLatestReleaseGateway(channel_profile=channel_profile),
+            manifest_downloader=GitHubManifestDownloader(channel_profile=channel_profile),
+            channel_profile=channel_profile,
             install_root=install_root,
             updater_protocol=UPDATER_PROTOCOL_VERSION,
         )
-    else:
-        release_resolver = resolver
 
     downloader = (
         asset_downloader
         if asset_downloader is not None
-        else GitHubAssetDownloader()
+        else GitHubAssetDownloader(
+            channel_profile=(
+                UpdateChannelProfile.from_verified(verified_profile)
+                if verified_profile is not None
+                else None
+            )
+        )
     )
     return SoftwareUpdateApplyService(
         root_dir=install_root,
@@ -161,10 +256,11 @@ def compose_update_coordinator(
     check_service: UpdateCheckService | None = None,
     stage_service: SoftwareUpdateStageService | None = None,
     pending_store: PendingUpdateStore | None = None,
-    key_registry: Mapping[str, bytes] | None = None,
+    verified_profile: VerifiedUpdateTrustProfile | None = None,
     resolver: AuthenticatedReleaseGateway | None = None,
     root_dir: Path | None = None,
     asset_downloader: GitHubAssetDownloader | None = None,
+    identity_reader: AuthenticatedReleaseIdentityReader | None = None,
 ) -> SoftwareUpdateCoordinator:
     install_root = root_dir or get_expected_install_root()
     shared_downloader = (
@@ -172,15 +268,21 @@ def compose_update_coordinator(
         if asset_downloader is not None
         else GitHubAssetDownloader()
     )
+    if verified_profile is None and pending_store is None:
+        try:
+            verified_profile = load_installed_update_trust_profile(install_root)
+        except Exception:
+            verified_profile = None
+
     store = (
         pending_store
         if pending_store is not None
         else PendingUpdateStore(
             root_dir=install_root,
             key_registry=(
-                PRODUCTION_RELEASE_PUBLIC_KEYS
-                if key_registry is None
-                else key_registry
+                verified_profile.release_public_keys
+                if verified_profile is not None
+                else {}
             ),
             updater_protocol=UPDATER_PROTOCOL_VERSION,
         )
@@ -198,9 +300,10 @@ def compose_update_coordinator(
         if check_service is not None
         else compose_update_check_service(
             config,
-            key_registry=key_registry,
+            verified_profile=verified_profile,
             resolver=resolver,
             root_dir=install_root,
+            identity_reader=identity_reader,
         )
     )
     return SoftwareUpdateCoordinator(
@@ -215,25 +318,43 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
     install_root = get_expected_install_root()
-    shared_resolver = GitHubReleaseResolver(
-        release_gateway=GitHubLatestReleaseGateway(),
-        manifest_downloader=GitHubManifestDownloader(),
-        key_registry=PRODUCTION_RELEASE_PUBLIC_KEYS,
-        install_root=install_root,
-        updater_protocol=UPDATER_PROTOCOL_VERSION,
-    )
-    shared_downloader = GitHubAssetDownloader()
-    pending_store = PendingUpdateStore(
-        root_dir=install_root,
-        key_registry=PRODUCTION_RELEASE_PUBLIC_KEYS,
-        updater_protocol=UPDATER_PROTOCOL_VERSION,
-    )
+    try:
+        verified_profile = load_installed_update_trust_profile(install_root)
+        channel_profile = UpdateChannelProfile.from_verified(verified_profile)
+    except Exception:
+        verified_profile = None
+        channel_profile = None
+
+    if channel_profile is not None:
+        shared_resolver = GitHubReleaseResolver(
+            release_gateway=GitHubLatestReleaseGateway(channel_profile=channel_profile),
+            manifest_downloader=GitHubManifestDownloader(channel_profile=channel_profile),
+            channel_profile=channel_profile,
+            install_root=install_root,
+            updater_protocol=UPDATER_PROTOCOL_VERSION,
+        )
+        shared_downloader = GitHubAssetDownloader(channel_profile=channel_profile)
+        pending_store = PendingUpdateStore(
+            root_dir=install_root,
+            key_registry=dict(channel_profile.release_public_keys),
+            updater_protocol=UPDATER_PROTOCOL_VERSION,
+        )
+    else:
+        shared_resolver = _UnavailableReleaseGateway()
+        shared_downloader = GitHubAssetDownloader()
+        pending_store = PendingUpdateStore(
+            root_dir=install_root,
+            key_registry={},
+            updater_protocol=UPDATER_PROTOCOL_VERSION,
+        )
+
     stage_service = SoftwareUpdateStageService(
         pending_store=pending_store,
         asset_downloader=shared_downloader,
     )
     update_check_service = compose_update_check_service(
         config,
+        verified_profile=verified_profile,
         resolver=shared_resolver,
         root_dir=install_root,
     )

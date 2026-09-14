@@ -5,7 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
+)
 from neko_launcher.updater.manifest_v2 import parse_release_v2
 try:
     from tests.software_update_helpers import (
@@ -90,15 +93,32 @@ def _make_fixture_payload(
     return parsed_release, envelope_bytes, staged_files, launcher_bytes, core_bytes
 
 
-def _local_identity_seq_1():
+def _make_local_identity(
+    sequence: int = 1,
+    release_id: str | None = None,
+) -> LocalReleaseIdentity:
+    rel_id = release_id or f"r{sequence}-stable"
+    binding = AuthenticatedReleaseBinding(
+        release_sequence=sequence,
+        release_id=rel_id,
+        payload_sha256="0" * 64,
+    )
     return LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="r1-stable",
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
         launcher_version="5.1.0",
         launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256="0" * 64,
     )
+
+
+def _local_identity_seq_1():
+    return _make_local_identity(sequence=1, release_id="r1-stable")
 
 
 def test_bootstrap_returns_none_when_no_pending_update(tmp_path: Path):
@@ -222,14 +242,7 @@ def test_bootstrap_clears_already_current_stale_record(tmp_path: Path):
     )
 
     # Local installation is already sequence 2 (update already applied)
-    already_updated_identity = LocalReleaseIdentity(
-        release_sequence=2,
-        release_id="r2-stable",
-        launcher_version="5.1.2",
-        launcher_installed_identity_sha256="0" * 64,
-        core_version="1.0.0",
-        core_installed_identity_sha256="0" * 64,
-    )
+    already_updated_identity = _make_local_identity(sequence=2, release_id="r2-stable")
 
     apply_service = MagicMock()
     game_active = MagicMock(return_value=False)
@@ -309,10 +322,30 @@ def test_bootstrap_defers_when_game_observation_raises(tmp_path: Path):
     assert store.load_verified(_local_identity_seq_1()) is not None
 
 
+def _make_test_verified_profile():
+    from types import MappingProxyType
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+    return VerifiedUpdateTrustProfile(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates-Proof",
+        release_public_keys=MappingProxyType(dict(get_test_key_registry())),
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth-key",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+
+
 def test_run_pending_update_bootstrap_safe_execution(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(
+        "neko_launcher.bootstrap.pending_update_bootstrap.load_installed_update_trust_profile",
+        lambda root: _make_test_verified_profile(),
+    )
     # 1. When try_apply_pending_on_launch returns HANDOFF_STARTED
     monkeypatch.setattr(
         "neko_launcher.bootstrap.pending_update_bootstrap.try_apply_pending_on_launch",
@@ -373,3 +406,40 @@ def test_is_game_active_early_probes_processes(
     )
     assert is_game_active_early() is False
 
+
+def test_pending_bootstrap_reads_authenticated_local_authority_not_dev_unpublished(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_try_apply(*, local_identity_provider, **kwargs):
+        captured["identity"] = local_identity_provider()
+        return PendingUpdateBootstrapResult.NONE
+
+    monkeypatch.setattr(
+        "neko_launcher.bootstrap.pending_update_bootstrap.try_apply_pending_on_launch",
+        fake_try_apply,
+    )
+
+    class FakeReader:
+        def __init__(self) -> None:
+            self.calls: list[Path] = []
+            self._trust_profile = _make_test_verified_profile()
+
+        def read(self, install_root: Path) -> LocalReleaseIdentity:
+            self.calls.append(install_root)
+            return _make_local_identity(sequence=8, release_id="r8-stable")
+
+    reader = FakeReader()
+    res = run_pending_update_bootstrap(
+        tmp_path,
+        identity_reader=reader,  # type: ignore[arg-type]
+    )
+    assert res == PendingUpdateBootstrapResult.NONE
+    assert reader.calls == [tmp_path]
+    identity = captured.get("identity")
+    assert isinstance(identity, LocalReleaseIdentity)
+    assert identity.committed.release_sequence == 8
+    assert identity.release_id == "r8-stable"
+    assert identity.release_id != "dev-unpublished"
