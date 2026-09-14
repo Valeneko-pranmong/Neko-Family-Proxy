@@ -15,8 +15,10 @@ from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
 from neko_launcher.updater.precommit_abort import execute_precommit_abort
 from neko_launcher.updater.slot_selector import SelectionStatus
 from neko_launcher.updater.staging_handoff import (
+    AuthorityAdmissionResponse,
     RequestReadyResult,
     handle_apply_request,
+    handle_authority_admission_request,
     handle_begin_request,
 )
 from neko_launcher.updater.state_machine import validate_transition
@@ -92,6 +94,24 @@ class BrokerCoordinator:
         except Exception:  # noqa: BLE001
             return ApplyResult(False, None, "STATE_CORRUPT")
         return ApplyResult(False, None, error)
+
+    def admit_authority(self, envelope_b64: str) -> AuthorityAdmissionResponse:
+        selection = self.slot_store.load()
+        if selection.status != SelectionStatus.SELECTED or selection.state is None:
+            return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="STATE_CORRUPT")
+
+        if selection.state.phase != "IDLE":
+            return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="LOCK_BUSY")
+
+        result, next_state = handle_authority_admission_request(selection.state, envelope_b64, self.public_keys)
+        if not result.accepted or next_state is None:
+            return result
+
+        write_res = self.slot_store.write_state(next_state)
+        if write_res.status != SelectionStatus.SELECTED or write_res.state != next_state:
+            return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="STATE_CORRUPT")
+
+        return result
 
     def begin(self, envelope_b64: str) -> RequestReadyResult:
         selection = self.slot_store.load()
@@ -175,7 +195,10 @@ class BrokerCoordinator:
             return self._abort(current_state, "STATE_CORRUPT")
             
         try:
-            build_result = build_generation(self.root_dir, building_state, self.public_keys)
+            build_state = building_state
+            if building_state.committed is not None and building_state.highwater == tx.candidate.binding:
+                build_state = dataclasses.replace(building_state, highwater=building_state.committed.binding)
+            build_result = build_generation(self.root_dir, build_state, self.public_keys)
             if build_result.generation != tx.candidate:
                 return self._abort(building_state, "PACKAGE_INVALID")
             published_path = publisher.publish_generation(build_result.generation_dir, build_result.generation_id)

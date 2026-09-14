@@ -700,3 +700,51 @@ def test_default_published_verifier_accepts_valid_generation(tmp_path: Path) -> 
     env = Env(tmp_path)
     coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
     coordinator.published_verifier(env.old_dir, env.old, env.old_envelope)
+
+
+def test_broker_coordinator_admit_authority_success(tmp_path: Path) -> None:
+    from neko_launcher.updater import broker
+
+    env = Env(tmp_path)
+    coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
+    res = coordinator.admit_authority(env.envelope_b64)
+    assert res.accepted is True
+    assert res.changed is True
+    assert res.binding is not None
+    assert res.binding.release_sequence == 2
+    assert env.store.state is not None
+    assert env.store.state.phase == "IDLE"
+    assert env.store.state.highwater == res.binding
+    assert env.store.state.observed == res.binding
+    assert env.store.state.transaction is None
+
+
+def test_broker_coordinator_admit_authority_idempotent_no_write(tmp_path: Path) -> None:
+    from neko_launcher.updater import broker
+
+    env = Env(tmp_path)
+    coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
+    res1 = coordinator.admit_authority(env.envelope_b64)
+    assert res1.accepted is True
+    assert res1.changed is True
+
+    history_len = len(env.store.history)
+    res2 = coordinator.admit_authority(env.envelope_b64)
+    assert res2.accepted is True
+    assert res2.changed is False
+    assert res2.binding == res1.binding
+    assert len(env.store.history) == history_len, "Idempotent admission must not invoke write_state"
+
+
+def test_broker_coordinator_admit_authority_lock_busy_when_not_idle(tmp_path: Path) -> None:
+    from neko_launcher.updater import broker
+
+    env = Env(tmp_path)
+    coordinator = broker.BrokerCoordinator(tmp_path, env.store, env.keys)
+    begin_res = coordinator.begin(env.envelope_b64)
+    assert begin_res.accepted is True
+    assert env.store.state.phase == "PREPARING"
+
+    res = coordinator.admit_authority(env.envelope_b64)
+    assert res.accepted is False
+    assert res.error == "LOCK_BUSY"

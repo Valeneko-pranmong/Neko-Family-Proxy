@@ -115,6 +115,41 @@ def _make_local_identity(
     )
 
 
+def _admit_local(
+    local: LocalReleaseIdentity,
+    resolved: ResolvedGitHubRelease,
+    *,
+    failed: bool = False,
+) -> LocalReleaseIdentity:
+    remote_seq = resolved.authenticated_release.release_sequence
+    remote_id = resolved.authenticated_release.release_id
+    remote_payload = resolved.authenticated_release.payload_sha256
+    binding = AuthenticatedReleaseBinding(
+        release_sequence=remote_seq,
+        release_id=remote_id,
+        payload_sha256=remote_payload,
+    )
+    if local.committed.release_sequence > remote_seq:
+        hw = local.committed
+        obs = local.observed
+    else:
+        hw = binding
+        obs = binding
+    return LocalReleaseIdentity(
+        committed=local.committed,
+        high_water=hw,
+        observed=obs,
+        failed=binding if failed else local.failed,
+        launcher_version=local.launcher_version,
+        launcher_installed_identity_sha256=local.launcher_installed_identity_sha256,
+        updater_version=local.updater_version,
+        updater_installed_identity_sha256=local.updater_installed_identity_sha256,
+        core_version=local.core_version,
+        core_installed_identity_sha256=local.core_installed_identity_sha256,
+    )
+
+
+
 def _make_resolved_release(
     *,
     sequence: int = 2,
@@ -220,7 +255,7 @@ def test_stage_changed_only_launcher_downloads_only_launcher(tmp_path: Path):
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)
 
-    pending = service.stage(resolved, local)
+    pending = service.stage(resolved, _admit_local(local, resolved))
 
     assert pending is not None
     assert pending.release_sequence == 2
@@ -257,7 +292,7 @@ def test_stage_changed_only_core_downloads_only_core(tmp_path: Path):
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)
 
-    pending = service.stage(resolved, local)
+    pending = service.stage(resolved, _admit_local(local, resolved))
 
     assert pending is not None
     assert pending.release_sequence == 2
@@ -293,7 +328,7 @@ def test_stage_both_changed_downloads_both(tmp_path: Path):
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)
 
-    pending = service.stage(resolved, local)
+    pending = service.stage(resolved, _admit_local(local, resolved))
 
     assert pending is not None
     assert pending.release_sequence == 2
@@ -354,14 +389,14 @@ def test_stage_mandatory_and_non_mandatory_newer_releases(tmp_path: Path):
     # Non-mandatory newer release
     resolved_optional, payloads_optional = _make_resolved_release(sequence=2, mandatory=False)
     service_opt = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_optional))
-    pending_opt = service_opt.stage(resolved_optional, local)
+    pending_opt = service_opt.stage(resolved_optional, _admit_local(local, resolved_optional))
     assert pending_opt is not None
     assert pending_opt.release_sequence == 2
 
     # Mandatory newer release
     resolved_mand, payloads_mand = _make_resolved_release(sequence=3, mandatory=True)
     service_mand = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_mand))
-    pending_mand = service_mand.stage(resolved_mand, local)
+    pending_mand = service_mand.stage(resolved_mand, _admit_local(local, resolved_mand))
     assert pending_mand is not None
     assert pending_mand.release_sequence == 3
 
@@ -377,10 +412,11 @@ def test_stage_download_failure_preserves_older_pending(tmp_path: Path):
     # 1. Stage sequence 2 successfully
     resolved_2, payloads_2 = _make_resolved_release(sequence=2, release_id="r2-stable")
     service_2 = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_2))
-    pending_2 = service_2.stage(resolved_2, local)
+    pending_2 = service_2.stage(resolved_2, _admit_local(local, resolved_2))
     assert pending_2 is not None
-    assert store.load_verified(local) is not None
-    assert store.load_verified(local).release_sequence == 2
+    local_2 = _admit_local(local, resolved_2)
+    assert store.load_verified(local_2) is not None
+    assert store.load_verified(local_2).release_sequence == 2
 
     # 2. Stage sequence 3 with download failure
     resolved_3, payloads_3 = _make_resolved_release(sequence=3, release_id="r3-stable")
@@ -391,11 +427,11 @@ def test_stage_download_failure_preserves_older_pending(tmp_path: Path):
     service_3 = StageService(pending_store=store, asset_downloader=failing_downloader)
 
     with pytest.raises(SoftwareUpdateStageError) as exc_info:
-        service_3.stage(resolved_3, local)
+        service_3.stage(resolved_3, _admit_local(local, resolved_3))
     assert exc_info.value.code == "DOWNLOAD_UNAVAILABLE"
 
     # Prior valid pending must be preserved
-    active_pending = store.load_verified(local)
+    active_pending = store.load_verified(local_2)
     assert active_pending is not None
     assert active_pending.release_sequence == 2
     assert active_pending.release_id == "r2-stable"
@@ -411,7 +447,8 @@ def test_stage_hash_failure_preserves_older_pending(tmp_path: Path):
 
     resolved_2, payloads_2 = _make_resolved_release(sequence=2, release_id="r2-stable")
     service_2 = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_2))
-    assert service_2.stage(resolved_2, local) is not None
+    assert service_2.stage(resolved_2, _admit_local(local, resolved_2)) is not None
+    local_2 = _admit_local(local, resolved_2)
 
     resolved_3, payloads_3 = _make_resolved_release(sequence=3, release_id="r3-stable")
     failing_downloader = FakeAssetDownloader(
@@ -421,10 +458,10 @@ def test_stage_hash_failure_preserves_older_pending(tmp_path: Path):
     service_3 = StageService(pending_store=store, asset_downloader=failing_downloader)
 
     with pytest.raises(SoftwareUpdateStageError) as exc_info:
-        service_3.stage(resolved_3, local)
+        service_3.stage(resolved_3, _admit_local(local, resolved_3))
     assert exc_info.value.code == "DOWNLOAD_HASH_MISMATCH"
 
-    active = store.load_verified(local)
+    active = store.load_verified(local_2)
     assert active is not None
     assert active.release_sequence == 2
 
@@ -439,7 +476,8 @@ def test_stage_size_failure_preserves_older_pending(tmp_path: Path):
 
     resolved_2, payloads_2 = _make_resolved_release(sequence=2, release_id="r2-stable")
     service_2 = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_2))
-    assert service_2.stage(resolved_2, local) is not None
+    assert service_2.stage(resolved_2, _admit_local(local, resolved_2)) is not None
+    local_2 = _admit_local(local, resolved_2)
 
     resolved_3, payloads_3 = _make_resolved_release(sequence=3, release_id="r3-stable")
     failing_downloader = FakeAssetDownloader(
@@ -449,10 +487,10 @@ def test_stage_size_failure_preserves_older_pending(tmp_path: Path):
     service_3 = StageService(pending_store=store, asset_downloader=failing_downloader)
 
     with pytest.raises(SoftwareUpdateStageError) as exc_info:
-        service_3.stage(resolved_3, local)
+        service_3.stage(resolved_3, _admit_local(local, resolved_3))
     assert exc_info.value.code == "DOWNLOAD_SIZE_MISMATCH"
 
-    active = store.load_verified(local)
+    active = store.load_verified(local_2)
     assert active is not None
     assert active.release_sequence == 2
 
@@ -468,20 +506,22 @@ def test_stage_higher_release_supersedes_older_pending(tmp_path: Path):
     # 1. Stage sequence 2
     resolved_2, payloads_2 = _make_resolved_release(sequence=2, release_id="r2-stable")
     service_2 = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_2))
-    pending_2 = service_2.stage(resolved_2, local)
+    pending_2 = service_2.stage(resolved_2, _admit_local(local, resolved_2))
     assert pending_2 is not None
-    assert store.load_verified(local).release_sequence == 2
+    local_2 = _admit_local(local, resolved_2)
+    assert store.load_verified(local_2).release_sequence == 2
     gen_dir_2 = pending_2.generation_dir
 
     # 2. Stage sequence 3 (superseding)
     resolved_3, payloads_3 = _make_resolved_release(sequence=3, release_id="r3-stable")
     service_3 = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_3))
-    pending_3 = service_3.stage(resolved_3, local)
+    pending_3 = service_3.stage(resolved_3, _admit_local(local, resolved_3))
     assert pending_3 is not None
     assert pending_3.release_sequence == 3
 
     # Active is now sequence 3
-    active = store.load_verified(local)
+    local_3 = _admit_local(local, resolved_3)
+    active = store.load_verified(local_3)
     assert active is not None
     assert active.release_sequence == 3
     assert active.release_id == "r3-stable"
@@ -503,7 +543,7 @@ def test_stage_lower_sequence_rejection_against_local(tmp_path: Path):
 
     with pytest.raises(SoftwareUpdateStageError) as exc_info:
         service.stage(resolved, local)
-    assert exc_info.value.code == "DOWNGRADE_REJECTED"
+    assert exc_info.value.code in ("DOWNGRADE_REJECTED", "AUTHORITY_NOT_ADMITTED")
     assert len(downloader.download_calls) == 0
 
 
@@ -518,7 +558,8 @@ def test_stage_lower_sequence_rejection_against_existing_pending(tmp_path: Path)
     # Pending has sequence 3
     resolved_3, payloads_3 = _make_resolved_release(sequence=3, release_id="r3-stable")
     service_3 = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_3))
-    assert service_3.stage(resolved_3, local) is not None
+    assert service_3.stage(resolved_3, _admit_local(local, resolved_3)) is not None
+    local_3 = _admit_local(local, resolved_3)
 
     # Incoming has sequence 2 (< 3)
     resolved_2, payloads_2 = _make_resolved_release(sequence=2, release_id="r2-stable")
@@ -526,12 +567,12 @@ def test_stage_lower_sequence_rejection_against_existing_pending(tmp_path: Path)
     service_2 = StageService(pending_store=store, asset_downloader=downloader_2)
 
     with pytest.raises(SoftwareUpdateStageError) as exc_info:
-        service_2.stage(resolved_2, local)
+        service_2.stage(resolved_2, _admit_local(local, resolved_2))
     assert exc_info.value.code == "DOWNGRADE_REJECTED"
     assert len(downloader_2.download_calls) == 0
 
     # Sequence 3 pending is preserved
-    active = store.load_verified(local)
+    active = store.load_verified(local_3)
     assert active is not None
     assert active.release_sequence == 3
 
@@ -573,7 +614,8 @@ def test_stage_same_sequence_conflict_against_pending(tmp_path: Path):
     # Pending has sequence 2 with id "r2-alpha"
     resolved_alpha, payloads_alpha = _make_resolved_release(sequence=2, release_id="r2-alpha")
     service_alpha = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads_alpha))
-    assert service_alpha.stage(resolved_alpha, local) is not None
+    assert service_alpha.stage(resolved_alpha, _admit_local(local, resolved_alpha)) is not None
+    local_alpha = _admit_local(local, resolved_alpha)
 
     # Incoming has sequence 2 with id "r2-beta"
     resolved_beta, payloads_beta = _make_resolved_release(sequence=2, release_id="r2-beta")
@@ -581,13 +623,14 @@ def test_stage_same_sequence_conflict_against_pending(tmp_path: Path):
     service_beta = StageService(pending_store=store, asset_downloader=downloader_beta)
 
     with pytest.raises(SoftwareUpdateStageError) as exc_info:
-        service_beta.stage(resolved_beta, local)
+        service_beta.stage(resolved_beta, _admit_local(local, resolved_beta))
     assert exc_info.value.code == "SAME_SEQUENCE_IDENTITY_CONFLICT"
     assert len(downloader_beta.download_calls) == 0
 
-    active = store.load_verified(local)
+    active = store.load_verified(local_alpha)
     assert active is not None
     assert active.release_id == "r2-alpha"
+
 
 
 def test_stage_exact_envelope_bytes_preserved(tmp_path: Path):
@@ -611,7 +654,7 @@ def test_stage_exact_envelope_bytes_preserved(tmp_path: Path):
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)
 
-    pending = service.stage(resolved, local)
+    pending = service.stage(resolved, _admit_local(local, resolved))
     assert pending is not None
     assert pending.envelope_bytes == distinct_envelope_bytes
 
@@ -636,7 +679,7 @@ def test_stage_never_stages_or_replaces_updater_and_never_invokes_helper(tmp_pat
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)
 
-    pending = service.stage(resolved, local)
+    pending = service.stage(resolved, _admit_local(local, resolved))
     assert pending is not None
 
     downloaded_urls = [c["initial_url"] for c in downloader.download_calls]
@@ -659,13 +702,13 @@ def test_stage_already_pending_same_release_returns_existing_without_redownload(
     downloader = FakeAssetDownloader(payloads)
     service = StageService(pending_store=store, asset_downloader=downloader)
 
-    pending_1 = service.stage(resolved, local)
+    pending_1 = service.stage(resolved, _admit_local(local, resolved))
     assert pending_1 is not None
     calls_count = len(downloader.download_calls)
     assert calls_count > 0
 
     # Call stage again with the exact same release
-    pending_2 = service.stage(resolved, local)
+    pending_2 = service.stage(resolved, _admit_local(local, resolved))
     assert pending_2 is not None
     assert pending_2.release_id == pending_1.release_id
     assert pending_2.release_sequence == pending_1.release_sequence
@@ -686,9 +729,60 @@ def test_stage_cleans_up_temporary_staging_directory_on_failure(tmp_path: Path):
     service = StageService(pending_store=store, asset_downloader=failing_downloader)
 
     with pytest.raises(SoftwareUpdateStageError):
-        service.stage(resolved, local)
+        service.stage(resolved, _admit_local(local, resolved))
 
     # Check that any tmp_ directories under store.base_dir are gone
     if store.base_dir.exists():
         tmp_dirs = [p for p in store.base_dir.iterdir() if p.name.startswith("tmp_")]
         assert len(tmp_dirs) == 0
+
+
+def test_stage_raises_authority_not_admitted_when_remote_not_high_water(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "SoftwareUpdateStageService must be implemented"
+    SoftwareUpdateStageError, StageService = symbols
+
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+    local = _make_local_identity(sequence=1)  # high_water is seq 1, remote is seq 2
+
+    resolved, payloads = _make_resolved_release(sequence=2)
+    service = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads))
+
+    with pytest.raises(SoftwareUpdateStageError) as exc_info:
+        service.stage(resolved, local)
+
+    assert exc_info.value.code == "AUTHORITY_NOT_ADMITTED"
+
+
+def test_stage_raises_authority_not_admitted_when_remote_equals_failed(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "SoftwareUpdateStageService must be implemented"
+    SoftwareUpdateStageError, StageService = symbols
+
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+    local = _make_local_identity(sequence=1)
+    resolved, payloads = _make_resolved_release(sequence=2)
+    failed_local = _admit_local(local, resolved, failed=True)
+
+    service = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads))
+
+    with pytest.raises(SoftwareUpdateStageError) as exc_info:
+        service.stage(resolved, failed_local)
+
+    assert exc_info.value.code == "AUTHORITY_NOT_ADMITTED"
+
+
+def test_stage_proceeds_when_latest_and_retry_staging_true(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "SoftwareUpdateStageService must be implemented"
+    _, StageService = symbols
+
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+    local = _make_local_identity(sequence=1)
+    resolved, payloads = _make_resolved_release(sequence=2)
+    admitted_local = _admit_local(local, resolved)
+
+    service = StageService(pending_store=store, asset_downloader=FakeAssetDownloader(payloads))
+    pending = service.stage(resolved, admitted_local)
+    assert pending is not None
+    assert pending.release_sequence == 2

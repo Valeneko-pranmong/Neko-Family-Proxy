@@ -11,10 +11,14 @@ from typing import Any
 import pytest
 
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     LocalReleaseIdentity,
     UpdateDiagnosticCode,
     UpdateInvocationReason,
     UpdateState,
+)
+from neko_launcher.application.software_update_pending import (
+    VerifiedPendingUpdate,
 )
 from neko_launcher.application.software_update_policy import evaluate_release
 from neko_launcher.application.software_update_service import UpdateCheckService
@@ -106,11 +110,20 @@ class SecretFailingReleaseGateway:
 
 
 def _local_identity(sequence: int = 3) -> LocalReleaseIdentity:
-    return LocalReleaseIdentity(
+    binding = AuthenticatedReleaseBinding(
         release_sequence=sequence,
         release_id=f"release-{sequence}",
+        payload_sha256="0" * 64,
+    )
+    return LocalReleaseIdentity(
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
         launcher_version="5.1.0a1",
         launcher_installed_identity_sha256="1" * 64,
+        updater_version="5.1.0a1",
+        updater_installed_identity_sha256="0" * 64,
         core_version="5.0.0",
         core_installed_identity_sha256="2" * 64,
     )
@@ -197,7 +210,7 @@ def test_unknown_update_signing_key_is_rejected_without_echoing_key_id() -> None
     assert unknown_key_id not in repr(caught.value)
 
 
-def test_apply_service_has_no_capability_seam_and_sanitizes_resolver_failure(
+def test_apply_service_has_no_capability_seam_and_retires_legacy_prepare(
     tmp_path: Path,
 ) -> None:
     sig = inspect.signature(SoftwareUpdateApplyService.__init__)
@@ -208,97 +221,40 @@ def test_apply_service_has_no_capability_seam_and_sanitizes_resolver_failure(
 
     service = SoftwareUpdateApplyService(
         root_dir=tmp_path,
-        release_gateway=SecretFailingReleaseGateway(),
-        asset_downloader=None,  # type: ignore[arg-type]
     )
 
     with pytest.raises(SoftwareUpdateApplyError) as caught:
         service.prepare()
 
     error = caught.value
-    assert error.code == "MANIFEST_VERIFY_FAILED"
-    assert str(error) == "MANIFEST_VERIFY_FAILED"
-
-    forbidden = (
-        RAW_PAYLOAD_SENTINEL,
-        SIGNATURE_SENTINEL,
-        SIGNED_URL,
-        SIGNED_URL_TOKEN,
-        JWT_TOKEN,
-        PERMIT_SENTINEL,
-        RUNTIME_CONFIG_SENTINEL,
-        PROXY_CREDENTIAL,
-    )
-    assert_secrets_absent(str(error), *forbidden)
-    assert_secrets_absent(repr(error), *forbidden)
-    assert_secrets_absent(repr(service), *forbidden)
-
-    logger = DevelopmentLogger(tmp_path / "logs")
-    logger.record_exception(error, stage="software-update-apply")
-    for log_file in (tmp_path / "logs").glob("*.log"):
-        assert_secrets_absent(log_file.read_text(encoding="utf-8"), *forbidden)
+    assert error.code == "PENDING_UPDATE_REQUIRED"
+    assert str(error) == "PENDING_UPDATE_REQUIRED"
 
 
-def test_apply_service_sanitizes_download_failure(tmp_path: Path) -> None:
-    try:
-        from tests.test_software_update_apply import (
-            FakeChannel,
-            FakeReleaseGateway,
-            FakeSpawner,
-            make_resolved_release,
-        )
-    except ImportError:
-        from test_software_update_apply import (  # type: ignore[no-redef]
-            FakeChannel,
-            FakeReleaseGateway,
-            FakeSpawner,
-            make_resolved_release,
-        )
-
-    class SecretFailingDownloader:
-        def download(self, *args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError(
-                f"leaked secret={SIGNED_URL_TOKEN} cdn={CDN_QUERY_TOKEN_TASK3} auth={PROXY_CREDENTIAL}"
-            )
-
-    resolved = make_resolved_release(50)
-    gateway = FakeReleaseGateway(resolved)
-    downloader = SecretFailingDownloader()
-    spawner = FakeSpawner()
-    channel = FakeChannel(
-        responses=[
-            {
-                "type": "REQUEST_READY",
-                "message_id": "msg-0",
-                "body": {
-                    "accepted": True,
-                    "request_id": "req-privacy-dl",
-                    "transaction_id": "tx-privacy-dl",
-                    "changed": {"launcher": True, "core": True},
-                    "error": None,
-                },
-            }
-        ]
+def test_apply_service_sanitizes_pending_apply_failure(tmp_path: Path) -> None:
+    # Invalid pending envelope fails closed without leaking secrets
+    secret_envelope = f'{{"payload": "test", "secret": "{JWT_TOKEN}"}}'.encode("utf-8")
+    gen_dir = tmp_path / "gen_2_test"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    pending = VerifiedPendingUpdate(
+        release_id="r2-test",
+        release_sequence=2,
+        changed_components=("launcher",),
+        envelope_bytes=secret_envelope,
+        generation_dir=gen_dir,
+        launcher_artifact=None,
+        core_artifact=None,
     )
 
-    service = SoftwareUpdateApplyService(
-        root_dir=tmp_path,
-        release_gateway=gateway,
-        asset_downloader=downloader,  # type: ignore[arg-type]
-        spawner=spawner,
-        channel_factory=lambda: channel,
-    )
+    service = SoftwareUpdateApplyService(root_dir=tmp_path)
 
     with pytest.raises(SoftwareUpdateApplyError) as exc_info:
-        service.prepare()
+        service.prepare_pending(pending)
 
     error = exc_info.value
-    assert error.code == "DOWNLOAD_FAILED"
-    assert str(error) == "DOWNLOAD_FAILED"
-
     forbidden = (
+        JWT_TOKEN,
         SIGNED_URL_TOKEN,
-        CDN_QUERY_TOKEN_TASK3,
         PROXY_CREDENTIAL,
     )
     assert_secrets_absent(str(error), *forbidden)

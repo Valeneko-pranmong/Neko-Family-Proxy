@@ -1418,9 +1418,9 @@ class AppWindow:
             }:
                 raise RuntimeError("GAME_ACTIVE")
 
-            if hasattr(service, "prepare_pending"):
-                return service.prepare_pending(pending)
-            return service.prepare()
+            if pending is None:
+                raise RuntimeError("UPDATE_NOT_STAGED")
+            return service.prepare_pending(pending)
 
         try:
             future = self._update_executor.submit(do_apply_workflow)
@@ -2280,10 +2280,7 @@ class AppWindow:
             apply_service = getattr(self, "_update_apply_service", None)
             if pending is not None and apply_service is not None:
                 try:
-                    if hasattr(apply_service, "prepare_pending"):
-                        prepared = apply_service.prepare_pending(pending)
-                    else:
-                        prepared = apply_service.prepare()
+                    prepared = apply_service.prepare_pending(pending)
                     if prepared is not None and hasattr(prepared, "release"):
                         prepared.release()
                 except Exception:

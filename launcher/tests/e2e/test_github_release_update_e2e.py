@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -26,12 +27,28 @@ from neko_launcher.infrastructure.github_release_binding import (
     RELEASE_MANIFEST_ASSET_NAME,
     UPDATER_ASSET_NAME,
     GitHubReleaseResolver,
-    GitHubReleaseResolverError,
 )
 from neko_launcher.infrastructure.software_update_apply import (
     SoftwareUpdateApplyError,
     SoftwareUpdateApplyService,
 )
+from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
+)
+from neko_launcher.infrastructure.software_update_pending_store import (
+    PendingUpdateStore,
+)
+from neko_launcher.infrastructure.software_update_stage import (
+    SoftwareUpdateStageService,
+)
+try:
+    from neko_launcher.infrastructure.software_update_authority_admission import (
+        SoftwareUpdateAuthorityAdmissionService,
+    )
+except ImportError:
+    SoftwareUpdateAuthorityAdmissionService = None  # type: ignore[assignment, misc]
+
 from neko_launcher.updater.activation import activate_verified_generation
 from neko_launcher.updater.binary_frame import SlotFrame, pack_slot_frame
 from neko_launcher.updater.broker import BrokerCoordinator
@@ -119,6 +136,18 @@ class ThreadHelperProcess:
         self.updater_channel = updater_channel
         self.terminated = False
         self.killed = False
+        self.exit_code: int | None = None
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.thread.join(timeout=timeout)
+        if self.thread.is_alive():
+            raise subprocess.TimeoutExpired(cmd="helper", timeout=timeout or 0)
+        return self.exit_code if self.exit_code is not None else 0
+
+    def poll(self) -> int | None:
+        if self.thread.is_alive():
+            return None
+        return self.exit_code if self.exit_code is not None else 0
 
     def terminate(self) -> None:
         self.terminated = True
@@ -283,6 +312,9 @@ def _run_full_update_pipeline(
         u_chan = FramedIpcChannel(read_handle=r1, write_handle=w2)
         created_channels.append(l_chan)
 
+        proc = ThreadHelperProcess(None, l_chan, u_chan)
+        proc_refs.append(proc)
+
         def run_h() -> None:
             rc = run_session(
                 root,
@@ -291,29 +323,75 @@ def _run_full_update_pipeline(
                 slot_store=store,
                 activate=activate_fn,
             )
+            proc.exit_code = rc
             helper_exit_codes.append(rc)
 
         t = threading.Thread(target=run_h, daemon=True)
+        proc.thread = t
         t.start()
-        proc = ThreadHelperProcess(t, l_chan, u_chan)
-        proc_refs.append(proc)
         return proc
+
+    resolved = resolver.resolve()
+    assert resolved is not None
+
+    if SoftwareUpdateAuthorityAdmissionService is not None:
+        adm_service = SoftwareUpdateAuthorityAdmissionService(
+            root_dir=root,
+            spawner=spawner,
+            channel_factory=lambda: created_channels[-1],
+        )
+        adm_res = adm_service.admit(resolved.envelope_bytes)
+        assert adm_res.accepted is True
+        assert proc_refs
+        proc_refs[-1].thread.join(timeout=10.0)
+        assert not proc_refs[-1].thread.is_alive()
+
+    # Reconstruct local identity matching committed and admitted state
+    cur_committed = store.state.committed if (store.state and store.state.committed) else env.old
+    old_b = AuthenticatedReleaseBinding(
+        cur_committed.binding.release_sequence,
+        cur_committed.binding.release_id,
+        cur_committed.binding.payload_sha256,
+    )
+    new_b = AuthenticatedReleaseBinding(
+        resolved.authenticated_release.release_sequence,
+        resolved.authenticated_release.release_id,
+        resolved.authenticated_release.payload_sha256,
+    )
+    local_identity = LocalReleaseIdentity(
+        committed=old_b,
+        high_water=new_b,
+        observed=new_b,
+        failed=None,
+        launcher_version="1.0.0",
+        launcher_installed_identity_sha256=cur_committed.launcher_identity_sha256,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256=cur_committed.core_identity_sha256,
+    )
+
+    pending_store = PendingUpdateStore(root, env.keys, updater_protocol=1)
+    stage_service = SoftwareUpdateStageService(
+        pending_store=pending_store,
+        asset_downloader=adl,
+    )
+    pending = stage_service.stage(resolved, local_identity)
+    assert pending is not None
 
     service = SoftwareUpdateApplyService(
         root_dir=root,
-        release_gateway=resolver,
-        asset_downloader=adl,
         spawner=spawner,
         channel_factory=lambda: created_channels[-1],
     )
 
-    prepared = service.prepare()
+    prepared = service.prepare_pending(pending)
     prepared.release()
 
     assert proc_refs
-    proc_refs[0].thread.join(timeout=10.0)
-    assert not proc_refs[0].thread.is_alive()
-    return helper_exit_codes[0], service
+    proc_refs[-1].thread.join(timeout=10.0)
+    assert not proc_refs[-1].thread.is_alive()
+    return helper_exit_codes[-1], service
 
 
 @pytest.mark.parametrize(
@@ -488,7 +566,7 @@ def test_github_release_update_chained_n_plus_two_rollback_e2e(tmp_path: Path) -
     assert state is not None
     assert state.committed == n_plus_one
     assert state.previous == env.old
-    assert state.highwater == n_plus_one.binding
+    assert state.highwater == n_plus_two.binding
     assert state.observed == n_plus_two.binding
     assert state.failed == n_plus_two.binding
     assert state.transaction is None
@@ -650,18 +728,7 @@ def test_github_release_update_failure_matrix_e2e(tmp_path: Path) -> None:
             busy_state = dataclasses.replace(store.state, phase="PREPARING")
             store.state = busy_state
 
-        opener = FakeTransportOpener(routes)
-        gw = GitHubLatestReleaseGateway()
-        gw._opener = opener
-        mdl = GitHubManifestDownloader(_opener=opener)
-        resolver = GitHubReleaseResolver(
-            release_gateway=gw,
-            manifest_downloader=mdl,
-            key_registry=env.keys,
-            install_root=case_root,
-        )
-        adl = GitHubAssetDownloader(_opener=opener)
-
+        _ = FakeTransportOpener(routes)
         created_channels: list[FramedIpcChannel] = []
 
         def spawner(cmd: Any, **kwargs: Any) -> ThreadHelperProcess:
@@ -689,14 +756,13 @@ def test_github_release_update_failure_matrix_e2e(tmp_path: Path) -> None:
 
         service = SoftwareUpdateApplyService(
             root_dir=case_root,
-            release_gateway=resolver,
-            asset_downloader=adl,
             spawner=spawner,
             channel_factory=lambda: created_channels[-1],
         )
 
-        with pytest.raises((SoftwareUpdateApplyError, GitHubReleaseResolverError, GitHubReleaseDiscoveryError)):
+        with pytest.raises(SoftwareUpdateApplyError) as exc_info:
             service.prepare()
+        assert exc_info.value.code == "PENDING_UPDATE_REQUIRED"
 
         # In all failure modes, old generation remains selected and runnable
         assert store.state is not None

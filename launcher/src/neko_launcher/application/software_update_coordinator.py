@@ -3,17 +3,19 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from neko_launcher.application.software_update_models import (
     LocalReleaseIdentity,
     UpdateCheckResult,
+    UpdateInvocationReason,
     UpdateState,
 )
 from neko_launcher.application.software_update_pending import (
     UpdateLifecycleState,
     VerifiedPendingUpdate,
 )
+from neko_launcher.application.software_update_policy import evaluate_release
 from neko_launcher.infrastructure.software_update_stage import (
     SoftwareUpdateStageError,
 )
@@ -51,6 +53,7 @@ class SoftwareUpdateCoordinator:
         stage_service: SoftwareUpdateStageService,
         pending_store: PendingUpdateStore | None = None,
         local_identity_provider: Callable[[], LocalReleaseIdentity] | None = None,
+        admission_service: Any | None = None,
     ) -> None:
         self._check_service = check_service
         self._stage_service = stage_service
@@ -65,6 +68,16 @@ class SoftwareUpdateCoordinator:
         )
         if self._local_identity_provider is None:
             raise ValueError("local_identity_provider is required")
+
+        if admission_service is not None:
+            self._admission_service = admission_service
+        else:
+            from neko_launcher.infrastructure.software_update_authority_admission import (
+                SoftwareUpdateAuthorityAdmissionService,
+            )
+            self._admission_service = SoftwareUpdateAuthorityAdmissionService(
+                root_dir=self._pending_store.root_dir
+            )
 
         self._lock = threading.Lock()
         self._startup_condition = threading.Condition(self._lock)
@@ -258,17 +271,22 @@ class SoftwareUpdateCoordinator:
     ) -> tuple[UpdateLifecycleSnapshot, VerifiedPendingUpdate | None]:
         pending = existing_pending
 
-        if check_result.diagnostic_code is not None or check_result.state in (
-            UpdateState.UNAVAILABLE,
-            UpdateState.VERIFY_FAILED,
-        ):
+        should_admit_and_stage = (
+            resolved is not None
+            and (
+                check_result.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
+                or check_result.retry_staging
+            )
+        )
+
+        if not should_admit_and_stage:
             diag_code = (
                 check_result.diagnostic_code.value
                 if hasattr(check_result.diagnostic_code, "value")
                 else (
                     str(check_result.diagnostic_code)
                     if check_result.diagnostic_code is not None
-                    else "UPDATE_CHECK_INTERNAL_FAILURE"
+                    else None
                 )
             )
             state = (
@@ -286,7 +304,9 @@ class SoftwareUpdateCoordinator:
                 pending,
             )
 
-        if check_result.state == UpdateState.LATEST:
+        assert resolved is not None
+        admit_res = self._admission_service.admit(resolved.envelope_bytes)
+        if not admit_res.accepted or admit_res.binding is None:
             state = (
                 UpdateLifecycleState.UPDATE_PENDING
                 if pending is not None
@@ -297,33 +317,22 @@ class SoftwareUpdateCoordinator:
                     state=state,
                     check_result=check_result,
                     pending=pending,
-                    diagnostic_code=None,
+                    diagnostic_code=admit_res.error or "ADMISSION_FAILED",
                 ),
                 pending,
             )
 
-        if (
-            check_result.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
-            and resolved is not None
+        fresh_local = self._local_identity_provider()
+        refreshed_check = evaluate_release(
+            fresh_local,
+            resolved.authenticated_release,
+            UpdateInvocationReason.STARTUP,
+        )
+
+        if not (
+            refreshed_check.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
+            or refreshed_check.retry_staging
         ):
-            with self._lock:
-                self._current_snapshot = UpdateLifecycleSnapshot(
-                    state=UpdateLifecycleState.STAGING,
-                    check_result=check_result,
-                    pending=pending,
-                    diagnostic_code=None,
-                )
-
-            diag_code: str | None = None
-            try:
-                staged = self._stage_service.stage(resolved, local)
-                if staged is not None:
-                    pending = staged
-            except SoftwareUpdateStageError as err:
-                diag_code = err.code
-            except Exception:
-                diag_code = "STAGE_FAILED"
-
             state = (
                 UpdateLifecycleState.UPDATE_PENDING
                 if pending is not None
@@ -332,12 +341,30 @@ class SoftwareUpdateCoordinator:
             return (
                 UpdateLifecycleSnapshot(
                     state=state,
-                    check_result=check_result,
+                    check_result=refreshed_check,
                     pending=pending,
-                    diagnostic_code=diag_code,
+                    diagnostic_code=None,
                 ),
                 pending,
             )
+
+        with self._lock:
+            self._current_snapshot = UpdateLifecycleSnapshot(
+                state=UpdateLifecycleState.STAGING,
+                check_result=refreshed_check,
+                pending=pending,
+                diagnostic_code=None,
+            )
+
+        diag_code: str | None = None
+        try:
+            staged = self._stage_service.stage(resolved, fresh_local)
+            if staged is not None:
+                pending = staged
+        except SoftwareUpdateStageError as err:
+            diag_code = err.code
+        except Exception:
+            diag_code = "STAGE_FAILED"
 
         state = (
             UpdateLifecycleState.UPDATE_PENDING
@@ -349,7 +376,7 @@ class SoftwareUpdateCoordinator:
                 state=state,
                 check_result=check_result,
                 pending=pending,
-                diagnostic_code=None,
+                diagnostic_code=diag_code,
             ),
             pending,
         )

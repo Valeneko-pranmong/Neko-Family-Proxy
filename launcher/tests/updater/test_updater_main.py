@@ -79,7 +79,7 @@ def test_serve_session_happy_path():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is True
+    assert result == updater_main.SessionDisposition.APPLY_VERIFIED
     assert channel.receive_count == 3
 
     coordinator.begin.assert_called_once_with("dummy_env")
@@ -142,7 +142,7 @@ def test_serve_session_uses_real_send_message_api():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is True
+    assert result == updater_main.SessionDisposition.APPLY_VERIFIED
     assert [message[0] for message in channel.sent] == ["REQUEST_READY", "APPLY_RESULT"]
 
 
@@ -172,7 +172,7 @@ def test_serve_session_begin_rejected():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is False
+    assert result == updater_main.SessionDisposition.FAILED
     assert channel.receive_count == 1
     coordinator.begin.assert_called_once_with("bad_env")
     coordinator.apply.assert_not_called()
@@ -204,7 +204,7 @@ def test_serve_session_protocol_fail():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is False
+    assert result == updater_main.SessionDisposition.FAILED
     coordinator.begin.assert_not_called()
     coordinator.apply.assert_not_called()
 
@@ -227,7 +227,7 @@ def test_serve_session_protocol_fail():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is False
+    assert result == updater_main.SessionDisposition.FAILED
     coordinator.begin.assert_not_called()
     coordinator.apply.assert_not_called()
 
@@ -261,7 +261,7 @@ def test_serve_session_protocol_fail():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is False
+    assert result == updater_main.SessionDisposition.FAILED
     coordinator.begin.assert_called_once_with("dummy_env")
     coordinator.apply.assert_called_once_with("tx1", "req1")
 
@@ -295,7 +295,7 @@ def test_serve_session_protocol_fail():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is False
+    assert result == updater_main.SessionDisposition.FAILED
     coordinator.begin.assert_called_once_with("dummy_env")
     coordinator.apply.assert_called_once_with("tx1", "req1")
 
@@ -334,7 +334,7 @@ def test_serve_session_protocol_fail():
 
     result = updater_main.serve_session(channel, coordinator)
 
-    assert result is False
+    assert result == updater_main.SessionDisposition.FAILED
     coordinator.begin.assert_called_once_with("dummy_env")
     coordinator.apply.assert_called_once_with("tx1", "req1")
 
@@ -342,7 +342,7 @@ def test_serve_session_protocol_fail():
 def test_run_session_success(monkeypatch):
     updater_main = get_updater_main()
 
-    monkeypatch.setattr(updater_main, "serve_session", lambda ch, coord: True)
+    monkeypatch.setattr(updater_main, "serve_session", lambda ch, coord: updater_main.SessionDisposition.APPLY_VERIFIED)
 
     channel = FakeChannel([])
     store = FakeSlotStore()
@@ -367,10 +367,13 @@ def test_run_session_success(monkeypatch):
 def test_run_session_fail_closed(monkeypatch):
     updater_main = get_updater_main()
 
-    cases = [(False, None), (True, ActivationResult(False, None, "error"))]
+    cases = [
+        (updater_main.SessionDisposition.FAILED, None),
+        (updater_main.SessionDisposition.APPLY_VERIFIED, ActivationResult(False, None, "error")),
+    ]
 
-    for serve_success, act_result in cases:
-        monkeypatch.setattr(updater_main, "serve_session", lambda ch, coord: serve_success)
+    for serve_disposition, act_result in cases:
+        monkeypatch.setattr(updater_main, "serve_session", lambda ch, coord: serve_disposition)
 
         channel = FakeChannel([])
         store = FakeSlotStore()
@@ -394,10 +397,11 @@ def test_run_session_fail_closed(monkeypatch):
         assert channel.closed is True
         assert store.closed is True
 
-        if not serve_success:
+        if serve_disposition == updater_main.SessionDisposition.FAILED:
             assert not activate_called
         else:
             assert activate_called
+
 
 
 def test_cli_contract(monkeypatch, tmp_path):
@@ -498,3 +502,140 @@ def test_packaged_session_resolves_keys_from_fixed_verified_profile_and_pin(monk
     assert profile_loaded is True
     assert binding_validated is True
     assert passed_keys == {"verified-key": b"\x05" * 32}
+
+
+def test_session_disposition_enum():
+    updater_main = get_updater_main()
+    assert hasattr(updater_main, "SessionDisposition")
+    SD = updater_main.SessionDisposition
+    assert hasattr(SD, "ADMISSION_ONLY")
+    assert hasattr(SD, "APPLY_VERIFIED")
+    assert hasattr(SD, "FAILED")
+
+
+def test_serve_session_admit_authority_success():
+    updater_main = get_updater_main()
+    from neko_launcher.updater.staging_handoff import AuthorityAdmissionResponse
+    from neko_launcher.updater.state_models import Binding
+
+    channel = FakeChannel(
+        [
+            IpcMessage(
+                protocol_version=1,
+                type="ADMIT_AUTHORITY",
+                body={"envelope_b64": "dummy_env"},
+                message_id="msg_admit_1",
+            ),
+            IpcProtocolError("EOF reached on IPC read handle"),
+        ]
+    )
+
+    coordinator = Mock()
+    coordinator.admit_authority.return_value = AuthorityAdmissionResponse(
+        accepted=True,
+        binding=Binding(2, "rel-2", "2" * 64),
+        changed=True,
+        error=None,
+    )
+
+    disposition = updater_main.serve_session(channel, coordinator)
+    assert disposition == updater_main.SessionDisposition.ADMISSION_ONLY
+    coordinator.admit_authority.assert_called_once_with("dummy_env")
+
+    assert len(channel.sent) == 1
+    admitted_msg = channel.sent[0]
+    assert admitted_msg[0] == "AUTHORITY_ADMITTED"
+    assert admitted_msg[1] == {
+        "accepted": True,
+        "release_sequence": 2,
+        "release_id": "rel-2",
+        "payload_sha256": "2" * 64,
+        "changed": True,
+        "error": None,
+    }
+    assert admitted_msg[2] == "msg_admit_1"
+
+
+def test_serve_session_admit_authority_rejection():
+    updater_main = get_updater_main()
+    from neko_launcher.updater.staging_handoff import AuthorityAdmissionResponse
+
+    channel = FakeChannel(
+        [
+            IpcMessage(
+                protocol_version=1,
+                type="ADMIT_AUTHORITY",
+                body={"envelope_b64": "dummy_env"},
+                message_id="msg_admit_2",
+            ),
+        ]
+    )
+
+    coordinator = Mock()
+    coordinator.admit_authority.return_value = AuthorityAdmissionResponse(
+        accepted=False,
+        binding=None,
+        changed=False,
+        error="DOWNGRADE_REJECTED",
+    )
+
+    disposition = updater_main.serve_session(channel, coordinator)
+    assert disposition == updater_main.SessionDisposition.FAILED
+
+    assert len(channel.sent) == 1
+    admitted_msg = channel.sent[0]
+    assert admitted_msg[0] == "AUTHORITY_ADMITTED"
+    assert admitted_msg[1] == {
+        "accepted": False,
+        "release_sequence": None,
+        "release_id": None,
+        "payload_sha256": None,
+        "changed": False,
+        "error": "DOWNGRADE_REJECTED",
+    }
+
+
+def test_run_session_admission_only_skips_activation(tmp_path):
+    updater_main = get_updater_main()
+
+    channel = FakeChannel([])
+    slot_store = FakeSlotStore()
+    activate_mock = Mock()
+
+    from unittest.mock import patch
+    with patch.object(updater_main, "serve_session", return_value=updater_main.SessionDisposition.ADMISSION_ONLY):
+        exit_code = updater_main.run_session(
+            tmp_path,
+            {"k": b"v" * 32},
+            channel=channel,
+            slot_store=slot_store,
+            activate=activate_mock,
+        )
+
+    assert exit_code == 0
+    assert channel.closed is True
+    assert slot_store.closed is True
+    activate_mock.assert_not_called()
+
+
+def test_run_session_apply_verified_activates(tmp_path):
+    updater_main = get_updater_main()
+
+    channel = FakeChannel([])
+    slot_store = FakeSlotStore()
+    activate_mock = Mock(return_value=ActivationResult(committed=True, generation=None, error=None))
+
+    from unittest.mock import patch
+    with patch.object(updater_main, "serve_session", return_value=updater_main.SessionDisposition.APPLY_VERIFIED):
+        exit_code = updater_main.run_session(
+            tmp_path,
+            {"k": b"v" * 32},
+            channel=channel,
+            slot_store=slot_store,
+            activate=activate_mock,
+        )
+
+    assert exit_code == 0
+    assert channel.closed is True
+    assert slot_store.closed is True
+    activate_mock.assert_called_once_with(tmp_path, slot_store)

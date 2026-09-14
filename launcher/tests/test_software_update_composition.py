@@ -20,7 +20,6 @@ from neko_launcher.infrastructure.authenticated_release_identity import (
 )
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.github_asset_downloader import (
-    GitHubAssetDownloader,
     GitHubManifestDownloader,
 )
 from neko_launcher.infrastructure.github_release import GitHubLatestReleaseGateway
@@ -36,6 +35,14 @@ from neko_launcher.updater.trust_profile import (
     load_installed_update_trust_profile,
 )
 from software_update_helpers import get_test_key_registry
+
+try:
+    from neko_launcher.infrastructure.software_update_authority_admission import (
+        SoftwareUpdateAuthorityAdmissionService,
+    )
+except ImportError:
+    SoftwareUpdateAuthorityAdmissionService = None  # type: ignore[assignment, misc]
+
 
 
 TEST_KEY_ID = "neko-update-prod-1"
@@ -387,7 +394,7 @@ def test_missing_installed_profile_disables_production_composition_without_fallb
     assert not hasattr(service._release_gateway, "_key_registry")
 
 
-def test_production_compose_update_apply_service_uses_profile_registry_and_resolver(
+def test_production_compose_update_apply_service_does_not_wire_network_resolver_or_downloader(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -408,21 +415,17 @@ def test_production_compose_update_apply_service_uses_profile_registry_and_resol
     service = compose_update_apply_service(config, root_dir=tmp_path)
 
     resolver = getattr(service, "release_gateway", getattr(service, "_release_gateway", None))
-    assert isinstance(resolver, GitHubReleaseResolver)
-    assert resolver._key_registry == dict(profile.release_public_keys)
-    assert resolver._channel_profile == UpdateChannelProfile.from_verified(profile)
-    assert resolver._install_root == tmp_path
-    assert resolver._updater_protocol == UPDATER_PROTOCOL_VERSION
+    assert resolver is None
 
     downloader = getattr(service, "asset_downloader", getattr(service, "_asset_downloader", None))
-    assert isinstance(downloader, GitHubAssetDownloader)
+    assert downloader is None
 
     # No separate key registry or grant gateway or capability provider on apply service
     assert not hasattr(service, "grant_gateway")
     assert not hasattr(service, "distribution_capability_provider")
 
 
-def test_build_window_shares_same_resolver_instance_between_check_and_apply(
+def test_build_window_wires_coordinator_with_admission_and_apply_service_without_network_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -516,16 +519,19 @@ def test_build_window_shares_same_resolver_instance_between_check_and_apply(
     check_service = captured["window_kwargs"]["update_check_service"]
     apply_service = captured["window_kwargs"]["update_apply_service"]
 
-    # Proves same resolver instance injected into check and apply!
-    assert check_service._release_gateway is apply_service.release_gateway
+    assert not hasattr(apply_service, "release_gateway")
+    assert not hasattr(apply_service, "asset_downloader")
 
     assert "update_coordinator" in captured["window_kwargs"]
     coordinator = captured["window_kwargs"]["update_coordinator"]
     assert coordinator is not None
     assert coordinator._pending_store is coordinator._stage_service._pending_store
-    assert coordinator._stage_service._asset_downloader is apply_service.asset_downloader
-    assert check_service._release_gateway is apply_service.release_gateway
     assert coordinator._check_service is check_service
+    assert hasattr(coordinator, "_admission_service")
+    assert coordinator._admission_service is not None
+    if SoftwareUpdateAuthorityAdmissionService is not None:
+        assert isinstance(coordinator._admission_service, SoftwareUpdateAuthorityAdmissionService)
+
 
 
 def test_production_update_configuration_contains_no_private_key_material(

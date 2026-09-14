@@ -4,7 +4,13 @@ import json
 import pytest
 from pathlib import Path
 
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
+)
+from neko_launcher.application.software_update_pending import (
+    VerifiedPendingUpdate,
+)
 from neko_launcher.updater.manifest_v2 import parse_release_v2
 from tests.software_update_helpers import (
     get_test_key_registry,
@@ -76,12 +82,54 @@ def _make_fixture_payload(
     return parsed_release, envelope_bytes, staged_files, launcher_bytes, core_bytes
 
 
-def _local_identity_seq_1():
+def _local_identity_seq_1(
+    high_water_binding: AuthenticatedReleaseBinding | None = None,
+    failed_binding: AuthenticatedReleaseBinding | None = None,
+) -> LocalReleaseIdentity:
+    b1 = AuthenticatedReleaseBinding(1, "r1-stable", "0" * 64)
+    hw = high_water_binding or b1
     return LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="r1-stable",
+        committed=b1,
+        high_water=hw,
+        observed=hw,
+        failed=failed_binding,
         launcher_version="5.1.0",
         launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256="0" * 64,
+    )
+
+
+def _local_identity_for_pending(
+    pending: VerifiedPendingUpdate,
+    committed_seq: int = 1,
+    failed_binding: AuthenticatedReleaseBinding | None = None,
+) -> LocalReleaseIdentity:
+    from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+
+    doc = json.loads(pending.envelope_bytes.decode("utf-8"))
+    _, payload_sha = verify_release_envelope_v2(doc, get_test_key_registry())
+    hw = AuthenticatedReleaseBinding(
+        release_sequence=pending.release_sequence,
+        release_id=pending.release_id,
+        payload_sha256=payload_sha,
+    )
+    c = AuthenticatedReleaseBinding(
+        release_sequence=committed_seq,
+        release_id=f"r{committed_seq}-stable",
+        payload_sha256="0" * 64,
+    )
+    return LocalReleaseIdentity(
+        committed=c,
+        high_water=hw,
+        observed=hw,
+        failed=failed_binding,
+        launcher_version="5.1.0",
+        launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256="0" * 64,
     )
@@ -121,10 +169,13 @@ def test_atomic_promotion_and_exact_update_pending(tmp_path: Path):
     assert pending.launcher_artifact is not None and pending.launcher_artifact.read_bytes() == l_bytes
     assert pending.core_artifact is not None and pending.core_artifact.read_bytes() == c_bytes
 
-    # load_verified returns identical pending update
-    loaded = store.load_verified(local)
+    # load_verified returns identical pending update with admitted identity
+    admitted = _local_identity_for_pending(pending)
+    loaded = store.load_verified(admitted)
     assert loaded == pending
-    assert store.state(local) == UpdateLifecycleState.UPDATE_PENDING
+    assert store.state(admitted) == UpdateLifecycleState.UPDATE_PENDING
+    assert store.load_verified(local) is None
+    assert store.state(local) == UpdateLifecycleState.IDLE
 
 
 def test_process_restart_reload(tmp_path: Path):
@@ -143,7 +194,7 @@ def test_process_restart_reload(tmp_path: Path):
 
     # Re-instantiate store representing new process
     store2 = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
+    local = _local_identity_for_pending(promoted)
     loaded = store2.load_verified(local)
     assert loaded is not None
     assert loaded.release_id == promoted.release_id
@@ -175,7 +226,7 @@ def test_envelope_byte_tamper_rejection(tmp_path: Path):
     tampered[-5] ^= 0xFF
     envelope_file.write_bytes(bytes(tampered))
 
-    local = _local_identity_seq_1()
+    local = _local_identity_for_pending(pending)
     assert store.load_verified(local) is None
     assert store.state(local) == UpdateLifecycleState.IDLE
 
@@ -185,15 +236,14 @@ def test_staged_artifact_tamper_rejection(tmp_path: Path):
     assert ok and symbols is not None, "Pending update symbols must be implemented"
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
-    local = _local_identity_seq_1()
-
     # Case 1: launcher tampered
     store1 = PendingUpdateStore(tmp_path / "case1", get_test_key_registry(), updater_protocol=1)
     release1, env_bytes1, staged1, l_bytes, _ = _make_fixture_payload(tmp_path / "case1", sequence=2, release_id="r2-stable")
     p1 = store1.promote(envelope_bytes=env_bytes1, release=release1, changed_components=("launcher", "core"), staged_files=staged1)
     assert p1.launcher_artifact is not None
     p1.launcher_artifact.write_bytes(b"tampered-launcher-bytes")
-    assert store1.load_verified(local) is None
+    local1 = _local_identity_for_pending(p1)
+    assert store1.load_verified(local1) is None
 
     # Case 2: core tampered
     store2 = PendingUpdateStore(tmp_path / "case2", get_test_key_registry(), updater_protocol=1)
@@ -201,7 +251,8 @@ def test_staged_artifact_tamper_rejection(tmp_path: Path):
     p2 = store2.promote(envelope_bytes=env_bytes2, release=release2, changed_components=("launcher", "core"), staged_files=staged2)
     assert p2.core_artifact is not None
     p2.core_artifact.write_bytes(b"tampered-core-bytes")
-    assert store2.load_verified(local) is None
+    local2 = _local_identity_for_pending(p2)
+    assert store2.load_verified(local2) is None
 
     # Case 3: artifact missing
     store3 = PendingUpdateStore(tmp_path / "case3", get_test_key_registry(), updater_protocol=1)
@@ -209,7 +260,8 @@ def test_staged_artifact_tamper_rejection(tmp_path: Path):
     p3 = store3.promote(envelope_bytes=env_bytes3, release=release3, changed_components=("launcher", "core"), staged_files=staged3)
     assert p3.launcher_artifact is not None
     p3.launcher_artifact.unlink()
-    assert store3.load_verified(local) is None
+    local3 = _local_identity_for_pending(p3)
+    assert store3.load_verified(local3) is None
 
 
 def test_metadata_path_injection_ignored_or_rejected(tmp_path: Path):
@@ -226,7 +278,7 @@ def test_metadata_path_injection_ignored_or_rejected(tmp_path: Path):
         staged_files=staged_files,
     )
 
-    local = _local_identity_seq_1()
+    local = _local_identity_for_pending(pending)
 
     # Tamper pointer file with directory traversal injection
     pointer_path = tmp_path / "update-pending" / "current.json"
@@ -265,7 +317,6 @@ def test_lower_sequence_cannot_replace_higher(tmp_path: Path):
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
 
     # Promote sequence 3
     rel3, env3, staged3, l3, c3 = _make_fixture_payload(tmp_path, sequence=3, release_id="r3-stable")
@@ -278,17 +329,23 @@ def test_lower_sequence_cannot_replace_higher(tmp_path: Path):
         store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
 
     # Sequence 3 remains current pending
-    loaded = store.load_verified(local)
+    local3 = _local_identity_for_pending(p3)
+    loaded = store.load_verified(local3)
     assert loaded is not None
     assert loaded.release_sequence == 3
     assert loaded.release_id == "r3-stable"
 
-    # Anti-downgrade against local identity: local sequence 4 rejects pending sequence 3
+    # Anti-downgrade against local identity: local committed sequence 4 rejects pending sequence 3
+    b4 = AuthenticatedReleaseBinding(4, "r4-stable", "0" * 64)
     local_seq_4 = LocalReleaseIdentity(
-        release_sequence=4,
-        release_id="r4-stable",
+        committed=b4,
+        high_water=b4,
+        observed=b4,
+        failed=None,
         launcher_version="5.1.0",
         launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256="0" * 64,
     )
@@ -301,11 +358,10 @@ def test_same_sequence_different_identity_rejected(tmp_path: Path):
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
 
     # Promote sequence 3 with identity "r3-stable-a"
     rel3a, env3a, staged3a, _, _ = _make_fixture_payload(tmp_path, sequence=3, release_id="r3-stable-a")
-    store.promote(envelope_bytes=env3a, release=rel3a, changed_components=("launcher", "core"), staged_files=staged3a)
+    p3a = store.promote(envelope_bytes=env3a, release=rel3a, changed_components=("launcher", "core"), staged_files=staged3a)
 
     # Attempt to promote sequence 3 with conflicting identity "r3-stable-b"
     rel3b, env3b, staged3b, _, _ = _make_fixture_payload(tmp_path, sequence=3, release_id="r3-stable-b")
@@ -313,16 +369,21 @@ def test_same_sequence_different_identity_rejected(tmp_path: Path):
         store.promote(envelope_bytes=env3b, release=rel3b, changed_components=("launcher", "core"), staged_files=staged3b)
 
     # Sequence 3 identity "r3-stable-a" remains intact
-    loaded = store.load_verified(local)
+    local3a = _local_identity_for_pending(p3a)
+    loaded = store.load_verified(local3a)
     assert loaded is not None
     assert loaded.release_id == "r3-stable-a"
 
-    # Same sequence as local identity is not an update (rejected by load_verified)
+    # Same sequence as local committed identity is not an update (rejected by load_verified)
     local_same_seq = LocalReleaseIdentity(
-        release_sequence=3,
-        release_id="r3-stable-a",
+        committed=local3a.high_water,
+        high_water=local3a.high_water,
+        observed=local3a.high_water,
+        failed=None,
         launcher_version="5.1.0",
         launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256="0" * 64,
     )
@@ -335,11 +396,10 @@ def test_incomplete_temporary_directory_does_not_replace_verified_pending(tmp_pa
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
 
     # Promote valid sequence 2
     rel2, env2, staged2, _, _ = _make_fixture_payload(tmp_path, sequence=2, release_id="r2-stable")
-    store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
+    p2 = store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
 
     # Simulate incomplete crash leftovers in update-pending
     base_dir = tmp_path / "update-pending"
@@ -348,7 +408,8 @@ def test_incomplete_temporary_directory_does_not_replace_verified_pending(tmp_pa
     (tmp_crash_dir / "corrupt.file").write_bytes(b"garbage")
 
     # load_verified ignores incomplete temporary directories
-    loaded = store.load_verified(local)
+    local2 = _local_identity_for_pending(p2)
+    loaded = store.load_verified(local2)
     assert loaded is not None
     assert loaded.release_sequence == 2
     assert loaded.release_id == "r2-stable"
@@ -356,7 +417,7 @@ def test_incomplete_temporary_directory_does_not_replace_verified_pending(tmp_pa
     # cleanup_incomplete cleans temporary leftovers and preserves valid pending
     store.cleanup_incomplete()
     assert not tmp_crash_dir.exists()
-    assert store.load_verified(local) is not None
+    assert store.load_verified(local2) is not None
 
 
 def test_failed_promotion_preserves_prior_valid_pending(tmp_path: Path):
@@ -365,11 +426,10 @@ def test_failed_promotion_preserves_prior_valid_pending(tmp_path: Path):
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
 
     # Promote valid sequence 2
     rel2, env2, staged2, _, _ = _make_fixture_payload(tmp_path, sequence=2, release_id="r2-stable")
-    store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
+    p2 = store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
 
     # Create sequence 3 with corrupt staged file (bad hash)
     rel3, env3, staged3, _, _ = _make_fixture_payload(tmp_path, sequence=3, release_id="r3-stable")
@@ -379,7 +439,8 @@ def test_failed_promotion_preserves_prior_valid_pending(tmp_path: Path):
         store.promote(envelope_bytes=env3, release=rel3, changed_components=("launcher", "core"), staged_files=staged3)
 
     # Sequence 2 must still be the authoritative pending update
-    loaded = store.load_verified(local)
+    local2 = _local_identity_for_pending(p2)
+    loaded = store.load_verified(local2)
     assert loaded is not None
     assert loaded.release_sequence == 2
     assert loaded.release_id == "r2-stable"
@@ -396,30 +457,31 @@ def test_clear_and_supersession(tmp_path: Path):
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
 
     # Promote sequence 2
     rel2, env2, staged2, _, _ = _make_fixture_payload(tmp_path, sequence=2, release_id="r2-stable")
-    store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
-    assert store.load_verified(local) is not None
+    p2 = store.promote(envelope_bytes=env2, release=rel2, changed_components=("launcher", "core"), staged_files=staged2)
+    local2 = _local_identity_for_pending(p2)
+    assert store.load_verified(local2) is not None
 
     # Supersede with sequence 3
     rel3, env3, staged3, _, _ = _make_fixture_payload(tmp_path, sequence=3, release_id="r3-stable")
-    store.promote(envelope_bytes=env3, release=rel3, changed_components=("launcher", "core"), staged_files=staged3)
+    p3 = store.promote(envelope_bytes=env3, release=rel3, changed_components=("launcher", "core"), staged_files=staged3)
+    local3 = _local_identity_for_pending(p3)
 
-    loaded = store.load_verified(local)
+    loaded = store.load_verified(local3)
     assert loaded is not None
     assert loaded.release_sequence == 3
     assert loaded.release_id == "r3-stable"
 
     # Clear with mismatched expected sequence/id does nothing
     store.clear(expected_release_id="r2-stable", expected_release_sequence=2)
-    assert store.load_verified(local) is not None
+    assert store.load_verified(local3) is not None
 
     # Clear with matching expected sequence and id clears pending update
     store.clear(expected_release_id="r3-stable", expected_release_sequence=3)
-    assert store.load_verified(local) is None
-    assert store.state(local) == UpdateLifecycleState.IDLE
+    assert store.load_verified(local3) is None
+    assert store.state(local3) == UpdateLifecycleState.IDLE
 
 
 def test_updater_protocol_incompatibility_rejected(tmp_path: Path):
@@ -467,7 +529,6 @@ def test_partial_component_change(tmp_path: Path):
     UpdateLifecycleState, VerifiedPendingUpdate, PendingUpdateStore = symbols
 
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
-    local = _local_identity_seq_1()
 
     # Only launcher changed
     rel, env, staged, l_bytes, _ = _make_fixture_payload(tmp_path, sequence=2, release_id="r2-stable")
@@ -480,7 +541,56 @@ def test_partial_component_change(tmp_path: Path):
     assert p_launcher.launcher_artifact is not None and p_launcher.launcher_artifact.read_bytes() == l_bytes
     assert p_launcher.core_artifact is None
 
+    local = _local_identity_for_pending(p_launcher)
     loaded = store.load_verified(local)
     assert loaded is not None
     assert loaded.launcher_artifact is not None
     assert loaded.core_artifact is None
+
+
+def test_pending_store_load_verified_exact_binding_contract(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "Pending update symbols must be implemented"
+    _, _, PendingUpdateStore = symbols
+
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+    rel, env, staged, _, _ = _make_fixture_payload(tmp_path, sequence=2, release_id="r2-stable")
+    pending = store.promote(
+        envelope_bytes=env,
+        release=rel,
+        changed_components=("launcher", "core"),
+        staged_files=staged,
+    )
+
+    # 1. Unadmitted local (high_water seq 1) cannot load pending seq 2
+    unadmitted = _local_identity_seq_1()
+    assert store.load_verified(unadmitted) is None
+
+    # 2. Admitted local loads pending
+    admitted = _local_identity_for_pending(pending)
+    assert store.load_verified(admitted) == pending
+
+    # 3. Local with failed matching pending cannot load pending
+    failed_local = _local_identity_for_pending(pending, failed_binding=admitted.high_water)
+    assert store.load_verified(failed_local) is None
+
+    # 4. Conflicting same-sequence payload cannot load pending
+    conflict_binding = AuthenticatedReleaseBinding(2, "r2-stable", "f" * 64)
+    conflict_local = _local_identity_seq_1(high_water_binding=conflict_binding)
+    assert store.load_verified(conflict_local) is None
+
+    # 5. Local committed at or higher than pending cannot load pending
+    higher_binding = AuthenticatedReleaseBinding(2, pending.release_id, admitted.high_water.payload_sha256)
+    higher_committed = LocalReleaseIdentity(
+        committed=higher_binding,
+        high_water=higher_binding,
+        observed=higher_binding,
+        failed=None,
+        launcher_version="5.1.0",
+        launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256="0" * 64,
+    )
+    assert store.load_verified(higher_committed) is None

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     LocalReleaseIdentity,
     UpdateDiagnosticCode,
     UpdateInvocationReason,
@@ -67,13 +68,40 @@ class SoftwareUpdateStageService:
         if check_result.diagnostic_code is not None:
             raise SoftwareUpdateStageError(check_result.diagnostic_code.value)
 
+        # Internal stage admission gate: must be admitted before staging
+        remote_binding = AuthenticatedReleaseBinding(
+            release_sequence=resolved.authenticated_release.release_sequence,
+            release_id=resolved.authenticated_release.release_id,
+            payload_sha256=resolved.authenticated_release.payload_sha256,
+        )
+        if remote_binding == local.committed:
+            return None
+
+        if not (
+            remote_binding == local.high_water == local.observed
+            and (local.failed is None or remote_binding != local.failed)
+            and resolved.authenticated_release.release_sequence > local.committed.release_sequence
+        ):
+            raise SoftwareUpdateStageError("AUTHORITY_NOT_ADMITTED")
+
         if (
-            check_result.state == UpdateState.LATEST
+            (check_result.state == UpdateState.LATEST and not check_result.retry_staging)
             or not check_result.changed_components
         ):
             return None
 
-        # Check supersession against existing valid pending update
+        # Check supersession against existing valid pending update or active pointer
+        active_pointer = getattr(self._pending_store, "_read_active_pointer", lambda: None)()
+        if active_pointer is not None:
+            p_seq = active_pointer.get("release_sequence")
+            p_id = active_pointer.get("release_id")
+            if isinstance(p_seq, int):
+                if resolved.authenticated_release.release_sequence < p_seq:
+                    raise SoftwareUpdateStageError("DOWNGRADE_REJECTED")
+                if resolved.authenticated_release.release_sequence == p_seq:
+                    if isinstance(p_id, str) and resolved.authenticated_release.release_id != p_id:
+                        raise SoftwareUpdateStageError("SAME_SEQUENCE_IDENTITY_CONFLICT")
+
         existing_pending = self._pending_store.load_verified(local)
         if existing_pending is not None:
             if (

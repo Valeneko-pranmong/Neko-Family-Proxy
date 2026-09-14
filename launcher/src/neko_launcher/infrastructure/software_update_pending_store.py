@@ -9,7 +9,10 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
+)
 from neko_launcher.application.software_update_pending import (
     UpdateLifecycleState,
     VerifiedPendingUpdate,
@@ -308,7 +311,7 @@ class PendingUpdateStore:
             if hashlib.sha256(envelope_bytes).hexdigest() != expected_env_sha:
                 return None
             envelope_obj = json.loads(envelope_bytes.decode("utf-8"))
-            release, _ = verify_release_envelope_v2(envelope_obj, self.key_registry)
+            release, payload_sha = verify_release_envelope_v2(envelope_obj, self.key_registry)
         except Exception:
             return None
 
@@ -325,10 +328,19 @@ class PendingUpdateStore:
         ):
             return None
 
-        # Anti-downgrade and same-sequence against local installation
-        if release.release_sequence < local_identity.release_sequence:
+        pending_binding = AuthenticatedReleaseBinding(
+            release_sequence=release.release_sequence,
+            release_id=release.release_id,
+            payload_sha256=payload_sha,
+        )
+
+        if pending_binding != local_identity.high_water:
             return None
-        if release.release_sequence == local_identity.release_sequence:
+        if pending_binding != local_identity.observed:
+            return None
+        if release.release_sequence <= local_identity.committed.release_sequence:
+            return None
+        if local_identity.failed is not None and pending_binding == local_identity.failed:
             return None
 
         # Verify staged artifact bytes and sizes strictly against release definition

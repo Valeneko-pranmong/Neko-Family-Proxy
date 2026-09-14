@@ -39,6 +39,9 @@ from neko_launcher.bootstrap.pending_update_bootstrap import (
 from neko_launcher.infrastructure.software_update_apply import (
     SoftwareUpdateApplyError,
 )
+from neko_launcher.application.software_update_pending import (
+    VerifiedPendingUpdate,
+)
 from neko_launcher.infrastructure.software_update_pending_store import (
     PendingUpdateStore,
 )
@@ -121,6 +124,39 @@ def _local_identity_seq_1():
     return _make_local_identity(sequence=1, release_id="r1-stable")
 
 
+def _local_identity_for_pending(
+    pending: VerifiedPendingUpdate,
+    committed_seq: int = 1,
+    failed_binding: AuthenticatedReleaseBinding | None = None,
+) -> LocalReleaseIdentity:
+    from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+
+    doc = json.loads(pending.envelope_bytes.decode("utf-8"))
+    _, payload_sha = verify_release_envelope_v2(doc, get_test_key_registry())
+    hw = AuthenticatedReleaseBinding(
+        release_sequence=pending.release_sequence,
+        release_id=pending.release_id,
+        payload_sha256=payload_sha,
+    )
+    c = AuthenticatedReleaseBinding(
+        release_sequence=committed_seq,
+        release_id=f"r{committed_seq}-stable",
+        payload_sha256="0" * 64,
+    )
+    return LocalReleaseIdentity(
+        committed=c,
+        high_water=hw,
+        observed=hw,
+        failed=failed_binding,
+        launcher_version="5.1.0",
+        launcher_installed_identity_sha256="0" * 64,
+        updater_version="5.1.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256="0" * 64,
+    )
+
+
 def test_bootstrap_returns_none_when_no_pending_update(tmp_path: Path):
     store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
     apply_service = MagicMock()
@@ -155,7 +191,8 @@ def test_bootstrap_hands_off_when_valid_pending_and_no_game(tmp_path: Path):
     apply_service.prepare_pending.return_value = mock_prepared
 
     game_active = MagicMock(return_value=False)
-    local_identity_provider = MagicMock(return_value=_local_identity_seq_1())
+    local_id = _local_identity_for_pending(pending)
+    local_identity_provider = MagicMock(return_value=local_id)
 
     result = try_apply_pending_on_launch(
         pending_store=store,
@@ -174,7 +211,7 @@ def test_bootstrap_defers_when_game_active(tmp_path: Path):
     release, env_bytes, staged_files, _, _ = _make_fixture_payload(
         tmp_path, sequence=2, release_id="r2-stable"
     )
-    store.promote(
+    pending = store.promote(
         envelope_bytes=env_bytes,
         release=release,
         changed_components=("launcher", "core"),
@@ -183,7 +220,8 @@ def test_bootstrap_defers_when_game_active(tmp_path: Path):
 
     apply_service = MagicMock()
     game_active = MagicMock(return_value=True)
-    local_identity_provider = MagicMock(return_value=_local_identity_seq_1())
+    local_id = _local_identity_for_pending(pending)
+    local_identity_provider = MagicMock(return_value=local_id)
 
     result = try_apply_pending_on_launch(
         pending_store=store,
@@ -195,7 +233,7 @@ def test_bootstrap_defers_when_game_active(tmp_path: Path):
     assert result == PendingUpdateBootstrapResult.DEFERRED
     apply_service.prepare_pending.assert_not_called()
     # Pending update must be preserved in store
-    assert store.load_verified(_local_identity_seq_1()) is not None
+    assert store.load_verified(local_id) is not None
 
 
 def test_bootstrap_rejects_tampered_pending_and_opens_normally(tmp_path: Path):
@@ -216,7 +254,8 @@ def test_bootstrap_rejects_tampered_pending_and_opens_normally(tmp_path: Path):
 
     apply_service = MagicMock()
     game_active = MagicMock(return_value=False)
-    local_identity_provider = MagicMock(return_value=_local_identity_seq_1())
+    local_id = _local_identity_for_pending(pending)
+    local_identity_provider = MagicMock(return_value=local_id)
 
     result = try_apply_pending_on_launch(
         pending_store=store,
@@ -266,7 +305,7 @@ def test_bootstrap_preserves_pending_when_apply_preparation_fails(tmp_path: Path
     release, env_bytes, staged_files, _, _ = _make_fixture_payload(
         tmp_path, sequence=2, release_id="r2-stable"
     )
-    store.promote(
+    pending = store.promote(
         envelope_bytes=env_bytes,
         release=release,
         changed_components=("launcher", "core"),
@@ -277,7 +316,8 @@ def test_bootstrap_preserves_pending_when_apply_preparation_fails(tmp_path: Path
     apply_service.prepare_pending.side_effect = SoftwareUpdateApplyError("APPLY_REJECTED")
 
     game_active = MagicMock(return_value=False)
-    local_identity_provider = MagicMock(return_value=_local_identity_seq_1())
+    local_id = _local_identity_for_pending(pending)
+    local_identity_provider = MagicMock(return_value=local_id)
 
     result = try_apply_pending_on_launch(
         pending_store=store,
@@ -290,7 +330,7 @@ def test_bootstrap_preserves_pending_when_apply_preparation_fails(tmp_path: Path
     assert result == PendingUpdateBootstrapResult.DEFERRED
     apply_service.prepare_pending.assert_called_once()
     # Pending update must still be intact and valid in store
-    assert store.load_verified(_local_identity_seq_1()) is not None
+    assert store.load_verified(local_id) is not None
 
 
 def test_bootstrap_defers_when_game_observation_raises(tmp_path: Path):
@@ -298,7 +338,7 @@ def test_bootstrap_defers_when_game_observation_raises(tmp_path: Path):
     release, env_bytes, staged_files, _, _ = _make_fixture_payload(
         tmp_path, sequence=2, release_id="r2-stable"
     )
-    store.promote(
+    pending = store.promote(
         envelope_bytes=env_bytes,
         release=release,
         changed_components=("launcher", "core"),
@@ -307,7 +347,8 @@ def test_bootstrap_defers_when_game_observation_raises(tmp_path: Path):
 
     apply_service = MagicMock()
     game_active = MagicMock(side_effect=RuntimeError("Process check failed"))
-    local_identity_provider = MagicMock(return_value=_local_identity_seq_1())
+    local_id = _local_identity_for_pending(pending)
+    local_identity_provider = MagicMock(return_value=local_id)
 
     result = try_apply_pending_on_launch(
         pending_store=store,
@@ -319,7 +360,7 @@ def test_bootstrap_defers_when_game_observation_raises(tmp_path: Path):
     # Must fail closed: defer rather than risk mutating during active game
     assert result == PendingUpdateBootstrapResult.DEFERRED
     apply_service.prepare_pending.assert_not_called()
-    assert store.load_verified(_local_identity_seq_1()) is not None
+    assert store.load_verified(local_id) is not None
 
 
 def _make_test_verified_profile():

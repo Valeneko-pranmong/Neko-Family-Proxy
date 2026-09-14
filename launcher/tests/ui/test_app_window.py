@@ -2176,3 +2176,195 @@ def test_u1_app_window_initialization_sets_canonical_window_title(
         assert title_calls == [expected_title]
     finally:
         real_root.destroy()
+
+
+def test_app_window_explicit_apply_requires_prepare_pending_and_never_calls_prepare(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import Mock
+    from neko_launcher.application.software_update_pending import VerifiedPendingUpdate
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._applied_update_prepared = False
+    window._update_apply_pending = False
+    window._update_apply_future = None
+    window._proxy_action_in_flight = False
+    from concurrent.futures import ThreadPoolExecutor
+    executor = ThreadPoolExecutor(max_workers=1)
+    window._update_executor = executor
+    window._executor = FakeExecutor()
+    window._service = FakeShutdownService()
+    window._proxy_status_executor = FakeExecutor()
+    window._tray_manager = None
+    window._cancel_automatic_reconnect = lambda **kw: None
+    window._clear_recovery_sensitive_fields = lambda: None
+    window._can_apply_software_update = lambda: True
+    window.root = FakeRoot()
+    window.root.winfo_exists = lambda: True
+    window.root.after = lambda delay, cb: cb()
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    window._refresh_software_update_apply_action = lambda: None
+    window._controller = SimpleNamespace(state=AppState(proxy_status=ProxyStatus.STOPPED, game_status=GameStatus.STOPPED))
+    window._state_value = lambda v: getattr(v, "value", v)
+
+    legacy_service = Mock(spec=["prepare"])
+    legacy_service.prepare = Mock()
+    window._update_apply_service = legacy_service
+
+    pending = VerifiedPendingUpdate(
+        release_id="r2-test",
+        release_sequence=2,
+        changed_components=("launcher",),
+        envelope_bytes=b"env",
+        generation_dir=tmp_path,
+        launcher_artifact=None,
+        core_artifact=None,
+    )
+    window._get_verified_pending_update = lambda: pending
+
+    try:
+        window._apply_software_update()
+        executor.shutdown(wait=True)
+        legacy_service.prepare.assert_not_called()
+    finally:
+        executor.shutdown(wait=False)
+
+
+def test_app_window_safe_close_requires_prepare_pending_and_never_calls_prepare(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import Mock
+    from neko_launcher.application.software_update_pending import VerifiedPendingUpdate
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._applied_update_prepared = False
+    window._update_apply_pending = False
+    window._update_apply_future = None
+    window._service = FakeShutdownService()
+    window._executor = FakeExecutor()
+    window._update_executor = FakeExecutor()
+    window._proxy_status_executor = FakeExecutor()
+    window._tray_manager = None
+    window.root = FakeRoot()
+    window._cancel_automatic_reconnect = lambda **kw: None
+    window._clear_recovery_sensitive_fields = lambda: None
+    window._controller = SimpleNamespace(state=AppState(proxy_status=ProxyStatus.STOPPED, game_status=GameStatus.STOPPED))
+    window._state_value = lambda v: getattr(v, "value", v)
+
+    legacy_service = Mock(spec=["prepare"])
+    legacy_service.prepare = Mock()
+    window._update_apply_service = legacy_service
+
+    pending = VerifiedPendingUpdate(
+        release_id="r2-test",
+        release_sequence=2,
+        changed_components=("launcher",),
+        envelope_bytes=b"env",
+        generation_dir=tmp_path,
+        launcher_artifact=None,
+        core_artifact=None,
+    )
+    window._get_verified_pending_update = lambda: pending
+
+    window.close()
+    legacy_service.prepare.assert_not_called()
+
+
+def test_app_window_explicit_apply_invokes_prepare_pending_exactly_once(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import Mock
+    from neko_launcher.application.software_update_pending import VerifiedPendingUpdate
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._applied_update_prepared = False
+    window._update_apply_pending = False
+    window._update_apply_future = None
+    window._proxy_action_in_flight = False
+    from concurrent.futures import ThreadPoolExecutor
+    executor = ThreadPoolExecutor(max_workers=1)
+    window._update_executor = executor
+    window._executor = FakeExecutor()
+    window._service = FakeShutdownService()
+    window._proxy_status_executor = FakeExecutor()
+    window._tray_manager = None
+    window._cancel_automatic_reconnect = lambda **kw: None
+    window._clear_recovery_sensitive_fields = lambda: None
+    window._can_apply_software_update = lambda: True
+    window.root = FakeRoot()
+    window.root.winfo_exists = lambda: True
+    window.root.after = lambda delay, cb: cb()
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    window._refresh_software_update_apply_action = lambda: None
+    window._controller = SimpleNamespace(state=AppState(proxy_status=ProxyStatus.STOPPED, game_status=GameStatus.STOPPED))
+    window._state_value = lambda v: getattr(v, "value", v)
+
+    service = Mock(spec=["prepare_pending"])
+    prepared_mock = Mock()
+    service.prepare_pending.return_value = prepared_mock
+    window._update_apply_service = service
+
+    pending = VerifiedPendingUpdate(
+        release_id="r2-test",
+        release_sequence=2,
+        changed_components=("launcher",),
+        envelope_bytes=b"env",
+        generation_dir=tmp_path,
+        launcher_artifact=None,
+        core_artifact=None,
+    )
+    window._get_verified_pending_update = lambda: pending
+
+    try:
+        window._apply_software_update()
+        executor.shutdown(wait=True)
+        service.prepare_pending.assert_called_once_with(pending)
+    finally:
+        executor.shutdown(wait=False)
+
+
+def test_app_window_safe_close_invokes_prepare_pending_exactly_once(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import Mock
+    from neko_launcher.application.software_update_pending import VerifiedPendingUpdate
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._applied_update_prepared = False
+    window._update_apply_pending = False
+    window._update_apply_future = None
+    window._service = FakeShutdownService()
+    window._executor = FakeExecutor()
+    window._update_executor = FakeExecutor()
+    window._proxy_status_executor = FakeExecutor()
+    window._tray_manager = None
+    window.root = FakeRoot()
+    window._cancel_automatic_reconnect = lambda **kw: None
+    window._clear_recovery_sensitive_fields = lambda: None
+    window._controller = SimpleNamespace(state=AppState(proxy_status=ProxyStatus.STOPPED, game_status=GameStatus.STOPPED))
+    window._state_value = lambda v: getattr(v, "value", v)
+
+    service = Mock(spec=["prepare_pending"])
+    prepared_mock = Mock()
+    service.prepare_pending.return_value = prepared_mock
+    window._update_apply_service = service
+
+    pending = VerifiedPendingUpdate(
+        release_id="r2-test",
+        release_sequence=2,
+        changed_components=("launcher",),
+        envelope_bytes=b"env",
+        generation_dir=tmp_path,
+        launcher_artifact=None,
+        core_artifact=None,
+    )
+    window._get_verified_pending_update = lambda: pending
+
+    window.close()
+    service.prepare_pending.assert_called_once_with(pending)

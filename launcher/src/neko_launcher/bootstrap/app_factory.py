@@ -215,38 +215,10 @@ def compose_update_apply_service(
     root_dir: Path | None = None,
     asset_downloader: GitHubAssetDownloader | None = None,
 ) -> SoftwareUpdateApplyService:
+    del verified_profile, resolver, asset_downloader
     install_root = root_dir or get_expected_install_root()
-    release_resolver = resolver
-    if verified_profile is None:
-        try:
-            verified_profile = load_installed_update_trust_profile(install_root)
-        except Exception:
-            verified_profile = None
-    if release_resolver is None and verified_profile is not None:
-        channel_profile = UpdateChannelProfile.from_verified(verified_profile)
-        release_resolver = GitHubReleaseResolver(
-            release_gateway=GitHubLatestReleaseGateway(channel_profile=channel_profile),
-            manifest_downloader=GitHubManifestDownloader(channel_profile=channel_profile),
-            channel_profile=channel_profile,
-            install_root=install_root,
-            updater_protocol=UPDATER_PROTOCOL_VERSION,
-        )
-
-    downloader = (
-        asset_downloader
-        if asset_downloader is not None
-        else GitHubAssetDownloader(
-            channel_profile=(
-                UpdateChannelProfile.from_verified(verified_profile)
-                if verified_profile is not None
-                else None
-            )
-        )
-    )
     return SoftwareUpdateApplyService(
         root_dir=install_root,
-        release_gateway=release_resolver,
-        asset_downloader=downloader,
     )
 
 
@@ -261,6 +233,7 @@ def compose_update_coordinator(
     root_dir: Path | None = None,
     asset_downloader: GitHubAssetDownloader | None = None,
     identity_reader: AuthenticatedReleaseIdentityReader | None = None,
+    admission_service: Any | None = None,
 ) -> SoftwareUpdateCoordinator:
     install_root = root_dir or get_expected_install_root()
     shared_downloader = (
@@ -306,11 +279,20 @@ def compose_update_coordinator(
             identity_reader=identity_reader,
         )
     )
+    from neko_launcher.infrastructure.software_update_authority_admission import (
+        SoftwareUpdateAuthorityAdmissionService,
+    )
+    admission = (
+        admission_service
+        if admission_service is not None
+        else SoftwareUpdateAuthorityAdmissionService(root_dir=install_root)
+    )
     return SoftwareUpdateCoordinator(
         check_service=checking,
         stage_service=staging,
         pending_store=store,
         local_identity_provider=checking._local_identity_provider,
+        admission_service=admission,
     )
 
 
@@ -358,17 +340,20 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         resolver=shared_resolver,
         root_dir=install_root,
     )
+    from neko_launcher.infrastructure.software_update_authority_admission import (
+        SoftwareUpdateAuthorityAdmissionService,
+    )
+    admission_service = SoftwareUpdateAuthorityAdmissionService(root_dir=install_root)
     update_coordinator = SoftwareUpdateCoordinator(
         check_service=update_check_service,
         stage_service=stage_service,
         pending_store=pending_store,
         local_identity_provider=update_check_service._local_identity_provider,
+        admission_service=admission_service,
     )
     update_apply_service = compose_update_apply_service(
         config,
-        resolver=shared_resolver,
         root_dir=install_root,
-        asset_downloader=shared_downloader,
     )
     event_bus = EventBus()
     game_manager = GameProcessManager()

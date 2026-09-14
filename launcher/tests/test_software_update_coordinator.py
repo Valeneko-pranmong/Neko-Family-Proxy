@@ -30,6 +30,20 @@ from neko_launcher.infrastructure.github_release_binding import (
     AuthenticatedReleaseGateway,
     ResolvedGitHubRelease,
 )
+try:
+    from neko_launcher.infrastructure.software_update_authority_admission import (
+        AuthorityAdmissionResult,
+    )
+except ImportError:
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)  # type: ignore[no-redef]
+    class AuthorityAdmissionResult:
+        accepted: bool
+        binding: AuthenticatedReleaseBinding | None
+        changed: bool
+        error: str | None
+
 from neko_launcher.infrastructure.software_update_pending_store import (
     PendingUpdateStore,
 )
@@ -232,25 +246,90 @@ def _make_resolved_release(
     return resolved, payloads
 
 
+def _admit_local(
+    local: LocalReleaseIdentity,
+    resolved: ResolvedGitHubRelease,
+) -> LocalReleaseIdentity:
+    binding = AuthenticatedReleaseBinding(
+        release_sequence=resolved.authenticated_release.release_sequence,
+        release_id=resolved.authenticated_release.release_id,
+        payload_sha256=resolved.authenticated_release.payload_sha256,
+    )
+    return LocalReleaseIdentity(
+        committed=local.committed,
+        high_water=binding,
+        observed=binding,
+        failed=local.failed,
+        launcher_version=local.launcher_version,
+        launcher_installed_identity_sha256=local.launcher_installed_identity_sha256,
+        updater_version=local.updater_version,
+        updater_installed_identity_sha256=local.updater_installed_identity_sha256,
+        core_version=local.core_version,
+        core_installed_identity_sha256=local.core_installed_identity_sha256,
+    )
+
+
+class FakeAdmissionService:
+    def __init__(self, local_box: list[LocalReleaseIdentity]) -> None:
+        self.local_box = local_box
+        self.admit_calls: list[bytes] = []
+
+    def admit(self, envelope_bytes: bytes) -> AuthorityAdmissionResult:
+        self.admit_calls.append(envelope_bytes)
+        from neko_launcher.updater.canonical_json import canonical_json_loads
+        from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+
+        doc = canonical_json_loads(envelope_bytes)
+        rel_set, payload_sha = verify_release_envelope_v2(doc, get_test_key_registry())
+        binding = AuthenticatedReleaseBinding(
+            release_sequence=rel_set.release_sequence,
+            release_id=rel_set.release_id,
+            payload_sha256=payload_sha,
+        )
+        cur = self.local_box[0]
+        self.local_box[0] = LocalReleaseIdentity(
+            committed=cur.committed,
+            high_water=binding,
+            observed=binding,
+            failed=cur.failed,
+            launcher_version=cur.launcher_version,
+            launcher_installed_identity_sha256=cur.launcher_installed_identity_sha256,
+            updater_version=cur.updater_version,
+            updater_installed_identity_sha256=cur.updater_installed_identity_sha256,
+            core_version=cur.core_version,
+            core_installed_identity_sha256=cur.core_installed_identity_sha256,
+        )
+        return AuthorityAdmissionResult(
+            accepted=True,
+            binding=binding,
+            changed=True,
+            error=None,
+        )
+
+
 def _setup_coordinator(
     tmp_path: Path,
     gateway: AuthenticatedReleaseGateway,
     downloader: FakeAssetDownloader,
     local_id: LocalReleaseIdentity | None = None,
+    admission_service: Any = None,
 ) -> tuple[SoftwareUpdateCoordinator, PendingUpdateStore, SoftwareUpdateStageService]:
     keys = get_test_key_registry()
     local = local_id or _make_local_identity()
+    local_box = [local]
     store = PendingUpdateStore(tmp_path, keys, updater_protocol=1)
     stage_service = SoftwareUpdateStageService(
         pending_store=store,
         asset_downloader=downloader,
     )
-    check_service = UpdateCheckService(gateway, lambda: local)
+    adm_svc = admission_service or FakeAdmissionService(local_box)
+    check_service = UpdateCheckService(gateway, lambda: local_box[0])
     coordinator = SoftwareUpdateCoordinator(
         check_service=check_service,
         stage_service=stage_service,
         pending_store=store,
-        local_identity_provider=lambda: local,
+        local_identity_provider=lambda: local_box[0],
+        admission_service=adm_svc,
     )
     return coordinator, store, stage_service
 
@@ -288,17 +367,18 @@ def test_pending_first_load_without_online_check(tmp_path: Path) -> None:
     resolved, payloads = _make_resolved_release(sequence=2)
     downloader = FakeAssetDownloader(payloads)
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved, local)
+    admitted_local = _admit_local(local, resolved)
+    pre_staged = stage_service.stage(resolved, admitted_local)
     assert pre_staged is not None
 
     # Now create coordinator
     gateway = TrackingGateway(resolved=None)
-    check_service = UpdateCheckService(gateway, lambda: local)
+    check_service = UpdateCheckService(gateway, lambda: admitted_local)
     coordinator = SoftwareUpdateCoordinator(
         check_service=check_service,
         stage_service=stage_service,
         pending_store=store,
-        local_identity_provider=lambda: local,
+        local_identity_provider=lambda: admitted_local,
     )
 
     # Calling current() before startup() loads verified pending from disk
@@ -327,7 +407,7 @@ def test_every_process_startup_performs_check_and_stages_valid_newer(tmp_path: P
     assert gateway.calls == 1
 
     # Verify store has the pending update
-    loaded = store.load_verified(_make_local_identity())
+    loaded = store.load_verified(coordinator._local_identity_provider())
     assert loaded is not None
     assert loaded.release_sequence == 2
 
@@ -435,18 +515,13 @@ def test_offline_with_existing_pending_preserves_verified_pending(tmp_path: Path
     resolved, payloads = _make_resolved_release(sequence=2)
     downloader = FakeAssetDownloader(payloads)
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved, local)
+    admitted_local = _admit_local(local, resolved)
+    pre_staged = stage_service.stage(resolved, admitted_local)
     assert pre_staged is not None
 
     # Gateway simulates offline network error
     gateway = TrackingGateway(error=CodedError("MANIFEST_UNAVAILABLE", "network is unreachable"))
-    check_service = UpdateCheckService(gateway, lambda: local)
-    coordinator = SoftwareUpdateCoordinator(
-        check_service=check_service,
-        stage_service=stage_service,
-        pending_store=store,
-        local_identity_provider=lambda: local,
-    )
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=admitted_local)
 
     snapshot = coordinator.startup()
     assert snapshot.state == UpdateLifecycleState.UPDATE_PENDING
@@ -457,7 +532,7 @@ def test_offline_with_existing_pending_preserves_verified_pending(tmp_path: Path
     assert snapshot.diagnostic_code == "MANIFEST_UNAVAILABLE"
 
     # Store still has valid pending update
-    assert store.load_verified(local) is not None
+    assert store.load_verified(admitted_local) is not None
 
 
 def test_invalid_remote_preserves_verified_pending(tmp_path: Path) -> None:
@@ -469,18 +544,13 @@ def test_invalid_remote_preserves_verified_pending(tmp_path: Path) -> None:
     resolved, payloads = _make_resolved_release(sequence=2)
     downloader = FakeAssetDownloader(payloads)
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved, local)
+    admitted_local = _admit_local(local, resolved)
+    pre_staged = stage_service.stage(resolved, admitted_local)
     assert pre_staged is not None
 
     # Gateway simulates invalid manifest signature
     gateway = TrackingGateway(error=CodedError("SIGNATURE_INVALID", "signature check failed"))
-    check_service = UpdateCheckService(gateway, lambda: local)
-    coordinator = SoftwareUpdateCoordinator(
-        check_service=check_service,
-        stage_service=stage_service,
-        pending_store=store,
-        local_identity_provider=lambda: local,
-    )
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=admitted_local)
 
     snapshot = coordinator.startup()
     assert snapshot.state == UpdateLifecycleState.UPDATE_PENDING
@@ -491,7 +561,7 @@ def test_invalid_remote_preserves_verified_pending(tmp_path: Path) -> None:
     assert snapshot.diagnostic_code == "MANIFEST_REJECTED"
 
     # Store still has valid pending update
-    assert store.load_verified(local) is not None
+    assert store.load_verified(admitted_local) is not None
 
 
 def test_online_newer_supersedes_existing_pending(tmp_path: Path) -> None:
@@ -505,19 +575,14 @@ def test_online_newer_supersedes_existing_pending(tmp_path: Path) -> None:
 
     downloader = FakeAssetDownloader({**payloads_r2, **payloads_r3})
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved_r2, local)
+    admitted_local = _admit_local(local, resolved_r2)
+    pre_staged = stage_service.stage(resolved_r2, admitted_local)
     assert pre_staged is not None
-    assert store.load_verified(local).release_sequence == 2
+    assert store.load_verified(admitted_local).release_sequence == 2
 
     # Now startup with remote having sequence 3
     gateway = TrackingGateway(resolved=resolved_r3)
-    check_service = UpdateCheckService(gateway, lambda: local)
-    coordinator = SoftwareUpdateCoordinator(
-        check_service=check_service,
-        stage_service=stage_service,
-        pending_store=store,
-        local_identity_provider=lambda: local,
-    )
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=admitted_local)
 
     snapshot = coordinator.startup()
     assert snapshot.state == UpdateLifecycleState.UPDATE_PENDING
@@ -526,7 +591,8 @@ def test_online_newer_supersedes_existing_pending(tmp_path: Path) -> None:
     assert snapshot.diagnostic_code is None
 
     # Store active pointer is now sequence 3
-    active = store.load_verified(local)
+    final_local = coordinator._local_identity_provider()
+    active = store.load_verified(final_local)
     assert active is not None
     assert active.release_sequence == 3
 
@@ -539,18 +605,13 @@ def test_same_sequence_already_pending_does_not_redownload(tmp_path: Path) -> No
     resolved, payloads = _make_resolved_release(sequence=2, release_id="r2-beta")
     downloader = FakeAssetDownloader(payloads)
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved, local)
+    admitted_local = _admit_local(local, resolved)
+    pre_staged = stage_service.stage(resolved, admitted_local)
     assert pre_staged is not None
     initial_download_calls = len(downloader.download_calls)
 
     gateway = TrackingGateway(resolved=resolved)
-    check_service = UpdateCheckService(gateway, lambda: local)
-    coordinator = SoftwareUpdateCoordinator(
-        check_service=check_service,
-        stage_service=stage_service,
-        pending_store=store,
-        local_identity_provider=lambda: local,
-    )
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=admitted_local)
 
     snapshot = coordinator.startup()
     assert snapshot.state == UpdateLifecycleState.UPDATE_PENDING
@@ -570,20 +631,15 @@ def test_staging_download_failure_preserves_prior_pending(tmp_path: Path) -> Non
 
     downloader = FakeAssetDownloader(payloads_r2)
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved_r2, local)
+    admitted_local = _admit_local(local, resolved_r2)
+    pre_staged = stage_service.stage(resolved_r2, admitted_local)
     assert pre_staged is not None
 
     # Now make downloader fail for sequence 3
     downloader.default_error = GitHubAssetDownloadError("DOWNLOAD_FAILED")
 
     gateway = TrackingGateway(resolved=resolved_r3)
-    check_service = UpdateCheckService(gateway, lambda: local)
-    coordinator = SoftwareUpdateCoordinator(
-        check_service=check_service,
-        stage_service=stage_service,
-        pending_store=store,
-        local_identity_provider=lambda: local,
-    )
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=admitted_local)
 
     snapshot = coordinator.startup()
     # Prior pending sequence 2 is preserved
@@ -591,7 +647,7 @@ def test_staging_download_failure_preserves_prior_pending(tmp_path: Path) -> Non
     assert snapshot.pending is not None
     assert snapshot.pending.release_sequence == 2
     assert snapshot.diagnostic_code == "DOWNLOAD_FAILED"
-    assert store.load_verified(local).release_sequence == 2
+    assert store.load_verified(admitted_local).release_sequence == 2
 
 
 def test_startup_cleans_incomplete_staging_after_preserving_pending(tmp_path: Path) -> None:
@@ -602,7 +658,8 @@ def test_startup_cleans_incomplete_staging_after_preserving_pending(tmp_path: Pa
     resolved, payloads = _make_resolved_release(sequence=2, release_id="r2-beta")
     downloader = FakeAssetDownloader(payloads)
     stage_service = SoftwareUpdateStageService(pending_store=store, asset_downloader=downloader)
-    pre_staged = stage_service.stage(resolved, local)
+    admitted_local = _admit_local(local, resolved)
+    pre_staged = stage_service.stage(resolved, admitted_local)
     assert pre_staged is not None
 
     # Create orphan temporary staging directory simulating a crash
@@ -612,16 +669,11 @@ def test_startup_cleans_incomplete_staging_after_preserving_pending(tmp_path: Pa
     assert crash_dir.exists()
 
     gateway = TrackingGateway(resolved=resolved)
-    check_service = UpdateCheckService(gateway, lambda: local)
-    coordinator = SoftwareUpdateCoordinator(
-        check_service=check_service,
-        stage_service=stage_service,
-        pending_store=store,
-        local_identity_provider=lambda: local,
-    )
+    coordinator, _, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=admitted_local)
 
     snapshot = coordinator.startup()
     assert snapshot.state == UpdateLifecycleState.UPDATE_PENDING
+    assert snapshot.pending is not None
     assert snapshot.pending.release_sequence == 2
     # Incomplete dir was cleaned up
     assert not crash_dir.exists()
@@ -759,3 +811,137 @@ def test_concurrent_startup_callbacks_invoked_exactly_once_with_current_access(
         assert call_counts[i] == 1
         assert current_results[i] is not None
     assert len(coordinator._startup_callbacks) == 0
+
+
+def test_coordinator_ordering_admits_before_stage_and_refreshes_local(
+    tmp_path: Path,
+) -> None:
+    call_order: list[str] = []
+    resolved, payloads = _make_resolved_release(sequence=2)
+
+    class OrderingGateway(TrackingGateway):
+        def resolve(self) -> ResolvedGitHubRelease | None:
+            call_order.append("resolve")
+            return super().resolve()
+
+    gateway = OrderingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+
+    local = _make_local_identity()
+    local_box = [local]
+
+    class OrderingAdmissionService:
+        def admit(self, envelope_bytes: bytes) -> AuthorityAdmissionResult:
+            call_order.append("admit")
+            cur = local_box[0]
+            binding = AuthenticatedReleaseBinding(
+                release_sequence=2,
+                release_id="r2-stable",
+                payload_sha256=resolved.authenticated_release.payload_sha256,
+            )
+            local_box[0] = LocalReleaseIdentity(
+                committed=cur.committed,
+                high_water=binding,
+                observed=binding,
+                failed=cur.failed,
+                launcher_version=cur.launcher_version,
+                launcher_installed_identity_sha256=cur.launcher_installed_identity_sha256,
+                updater_version=cur.updater_version,
+                updater_installed_identity_sha256=cur.updater_installed_identity_sha256,
+                core_version=cur.core_version,
+                core_installed_identity_sha256=cur.core_installed_identity_sha256,
+            )
+            return AuthorityAdmissionResult(
+                accepted=True,
+                binding=binding,
+                changed=True,
+                error=None,
+            )
+
+    adm_svc = OrderingAdmissionService()
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+
+    class OrderingStageService(SoftwareUpdateStageService):
+        def stage(self, res: ResolvedGitHubRelease, loc: LocalReleaseIdentity):
+            call_order.append("stage")
+            assert loc.high_water.release_sequence == 2
+            assert loc.observed.release_sequence == 2
+            return super().stage(res, loc)
+
+    stage_svc = OrderingStageService(
+        pending_store=store,
+        asset_downloader=downloader,
+    )
+
+    def tracked_local_provider() -> LocalReleaseIdentity:
+        call_order.append("local_identity_provider")
+        return local_box[0]
+
+    check_svc = UpdateCheckService(gateway, tracked_local_provider)
+    coordinator = SoftwareUpdateCoordinator(
+        check_service=check_svc,
+        stage_service=stage_svc,
+        pending_store=store,
+        local_identity_provider=tracked_local_provider,
+        admission_service=adm_svc,
+    )
+
+    snap = coordinator.startup()
+    assert snap.state == UpdateLifecycleState.UPDATE_PENDING
+    assert snap.pending is not None
+    # Verify admit was called BEFORE stage!
+    assert "admit" in call_order
+    assert "stage" in call_order
+    assert call_order.index("admit") < call_order.index("stage")
+
+
+def test_coordinator_admission_rejection_fails_closed_without_staging(
+    tmp_path: Path,
+) -> None:
+    resolved, payloads = _make_resolved_release(sequence=2)
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+
+    class RejectingAdmissionService:
+        def __init__(self) -> None:
+            self.admit_called = False
+
+        def admit(self, envelope_bytes: bytes) -> AuthorityAdmissionResult:
+            self.admit_called = True
+            return AuthorityAdmissionResult(
+                accepted=False,
+                binding=None,
+                changed=False,
+                error="DOWNGRADE_REJECTED",
+            )
+
+    adm_svc = RejectingAdmissionService()
+    local = _make_local_identity()
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+
+    stage_called = False
+
+    class TrackingStageService(SoftwareUpdateStageService):
+        def stage(self, res, loc):
+            nonlocal stage_called
+            stage_called = True
+            return super().stage(res, loc)
+
+    stage_svc = TrackingStageService(
+        pending_store=store,
+        asset_downloader=downloader,
+    )
+    check_svc = UpdateCheckService(gateway, lambda: local)
+    coordinator = SoftwareUpdateCoordinator(
+        check_service=check_svc,
+        stage_service=stage_svc,
+        pending_store=store,
+        local_identity_provider=lambda: local,
+        admission_service=adm_svc,
+    )
+
+    snap = coordinator.startup()
+    assert adm_svc.admit_called is True
+    assert stage_called is False
+    assert snap.state == UpdateLifecycleState.IDLE
+    assert snap.diagnostic_code == "DOWNGRADE_REJECTED"

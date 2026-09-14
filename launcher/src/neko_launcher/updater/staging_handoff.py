@@ -35,6 +35,102 @@ class ApplyResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class AuthorityAdmissionResponse:
+    accepted: bool
+    binding: Binding | None
+    changed: bool
+    error: str | None
+
+
+def handle_authority_admission_request(
+    current_state: State,
+    envelope_b64: str,
+    public_keys: Mapping[str, bytes],
+) -> tuple[AuthorityAdmissionResponse, State | None]:
+    """Handle ADMIT_AUTHORITY from Launcher, authenticate envelope, and formulate next State without creating an update transaction or incoming directory."""
+    if current_state.phase != "IDLE":
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="LOCK_BUSY"), None
+
+    if not current_state.enrollment_complete:
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="STATE_CORRUPT"), None
+
+    try:
+        raw_envelope_bytes = base64.b64decode(envelope_b64, validate=True)
+        envelope_doc = canonical_json_loads(raw_envelope_bytes)
+        if not isinstance(envelope_doc, dict):
+            return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="SCHEMA_INVALID"), None
+        release_set_v2, payload_sha = verify_release_envelope_v2(envelope_doc, public_keys)
+    except Exception:
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="SIGNATURE_INVALID"), None
+
+    proto = release_set_v2.updater_protocol
+    if not (proto.minimum <= current_state.helper_protocol <= proto.maximum):
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="PROTOCOL_UNSUPPORTED"), None
+
+    cand_seq = release_set_v2.release_sequence
+    candidate_binding = Binding(
+        release_sequence=cand_seq,
+        release_id=release_set_v2.release_id,
+        payload_sha256=payload_sha,
+    )
+
+    if current_state.failed is not None and current_state.failed == candidate_binding:
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="CANDIDATE_SUPPRESSED"), None
+
+    highwater_seq = current_state.highwater.release_sequence if current_state.highwater else 0
+    observed_seq = current_state.observed.release_sequence if current_state.observed else 0
+    committed_seq = current_state.committed.binding.release_sequence if current_state.committed else 0
+    floor = max(highwater_seq, observed_seq, committed_seq)
+
+    if (
+        current_state.highwater is not None
+        and current_state.highwater == candidate_binding
+        and current_state.observed == candidate_binding
+    ):
+        return AuthorityAdmissionResponse(accepted=True, binding=candidate_binding, changed=False, error=None), None
+
+    if cand_seq < floor:
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="DOWNGRADE_REJECTED"), None
+
+    if cand_seq == floor:
+        if current_state.observed is not None:
+            if current_state.observed.payload_sha256 != payload_sha or current_state.observed.release_id != release_set_v2.release_id:
+                return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="SAME_SEQUENCE_CONFLICT"), None
+            if current_state.failed == current_state.observed:
+                return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="CANDIDATE_SUPPRESSED"), None
+
+    next_evidence = dict(current_state.evidence)
+    next_evidence[payload_sha] = envelope_b64
+
+    next_state = State(
+        schema_version=1,
+        revision=current_state.revision + 1,
+        installation_id=current_state.installation_id,
+        helper_protocol=current_state.helper_protocol,
+        enrollment_complete=current_state.enrollment_complete,
+        phase="IDLE",
+        committed=current_state.committed,
+        previous=current_state.previous,
+        highwater=candidate_binding,
+        observed=candidate_binding,
+        failed=current_state.failed,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence=next_evidence,
+    )
+
+    try:
+        validate_transition(current_state, next_state)
+    except Exception:
+        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="STATE_CORRUPT"), None
+
+    return AuthorityAdmissionResponse(accepted=True, binding=candidate_binding, changed=True, error=None), next_state
+
+
+
 def handle_begin_request(
     root_dir: Path,
     current_state: State,

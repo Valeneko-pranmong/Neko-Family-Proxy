@@ -79,6 +79,32 @@ def validate_transition(current: State, next_state: State) -> None:
             # Allowed for enrollment final mirror IDLE(false) -> IDLE(true)
             if not current.enrollment_complete and next_state.enrollment_complete:
                 return
+            # Narrow enrolled IDLE -> IDLE authority-admission transition
+            if (
+                current.enrollment_complete
+                and next_state.enrollment_complete
+                and next_state.committed == current.committed
+                and next_state.previous == current.previous
+                and next_state.failed == current.failed
+                and next_state.transaction is None
+                and next_state.cleanup is None
+                and next_state.rollback is None
+                and next_state.last_error is None
+                and next_state.highwater is not None
+                and next_state.observed is not None
+                and next_state.highwater == next_state.observed
+            ):
+                cur_hw_seq = current.highwater.release_sequence if current.highwater is not None else 0
+                com_seq = current.committed.binding.release_sequence if current.committed is not None else 0
+                floor = max(cur_hw_seq, com_seq)
+                if next_state.highwater.release_sequence > floor:
+                    for k, v in current.evidence.items():
+                        if next_state.evidence.get(k) != v:
+                            raise StateTransitionError("Existing evidence entries must be byte-for-byte preserved")
+                    cand_payload = next_state.highwater.payload_sha256
+                    if set(next_state.evidence.keys()) != set(current.evidence.keys()) | {cand_payload}:
+                        raise StateTransitionError("Only candidate payload evidence may be added during authority admission")
+                    return
             raise StateTransitionError("Illegal IDLE -> IDLE transition without enrollment completion")
         elif np == "PREPARING":
             if next_state.transaction is None or next_state.transaction.stage != "ADMITTED":

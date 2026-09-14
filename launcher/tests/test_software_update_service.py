@@ -10,6 +10,7 @@ from typing import get_type_hints
 import pytest
 
 from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
     ComponentRelease,
     LocalReleaseIdentity,
     ReleaseSet,
@@ -129,6 +130,7 @@ def remote_release(sequence: int) -> ReleaseSet:
                 "d" * 64,
             ),
         ),
+        payload_sha256="0" * 64,
     )
 
 
@@ -184,11 +186,20 @@ def local_release(
     launcher_identity: str = "e" * 64,
     core_identity: str = "d" * 64,
 ) -> LocalReleaseIdentity:
-    return LocalReleaseIdentity(
+    binding = AuthenticatedReleaseBinding(
         release_sequence=sequence,
         release_id=f"local-{sequence}",
+        payload_sha256="0" * 64,
+    )
+    return LocalReleaseIdentity(
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=launcher_identity,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=core_identity,
     )
@@ -594,3 +605,63 @@ def test_check_with_resolved_error_returns_none_for_resolved() -> None:
     result, res = service.check_startup_with_resolved()
     assert result.state is UpdateState.UNAVAILABLE
     assert res is None
+
+
+def test_restart_outage_preserves_committed_and_recovers_via_retry_staging() -> None:
+    # Begin with committed 1; admit mandatory 2; stage download fails
+    # Local identity reconstructed from durable state:
+    committed_binding = AuthenticatedReleaseBinding(1, "release-1", "0" * 64)
+    admitted_binding = AuthenticatedReleaseBinding(2, "release-2", "2" * 64)
+
+    admitted_local = LocalReleaseIdentity(
+        committed=committed_binding,
+        high_water=admitted_binding,
+        observed=admitted_binding,
+        failed=None,
+        launcher_version="1.0.0",
+        launcher_installed_identity_sha256="e" * 64,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256="d" * 64,
+    )
+
+    # 1. Make discovery unavailable: committed runtime remains non-bricking
+    offline_gw = CountingReleaseGateway(error=CodedError("MANIFEST_UNAVAILABLE", "cannot reach github"))
+    service_offline = make_service(offline_gw, LocalProvider(admitted_local))
+    res_offline, _ = service_offline.check_startup_with_resolved()
+    assert res_offline.state == UpdateState.UNAVAILABLE
+    # Committed version 1 remains running
+
+    # 2. Restore exact N+1 remote: policy returns LATEST with mandatory=True and retry_staging=True
+    remote_mandatory = ReleaseSet(
+        schema_version=1,
+        channel="stable",
+        release_sequence=2,
+        release_id="release-2",
+        mandatory=True,
+        minimum_supported_sequence=1,
+        components=(
+            ComponentRelease("launcher", "2.0.0", "NekoLauncher.exe", "a" * 64, 100, "b" * 64),
+            ComponentRelease("core", "2.0.0", "NekoProxyCore.zip", "c" * 64, 100, "d" * 64),
+        ),
+        payload_sha256="2" * 64,
+    )
+    restored_gw = CountingReleaseGateway(ResolvedGitHubRelease(
+        authenticated_release=remote_mandatory,
+        authenticated_release_v2=None,  # type: ignore[arg-type]
+        envelope_bytes=b"env",
+        envelope_document={},
+        github_release=GitHubRelease(1, "v2", False, False, ()),
+        manifest_asset=GitHubReleaseAsset(1, "m", 10, "u"),
+        launcher_asset=GitHubReleaseAsset(2, "l", 10, "u"),
+        updater_asset=GitHubReleaseAsset(3, "u", 10, "u"),
+        core_asset=GitHubReleaseAsset(4, "c", 10, "u"),
+    ))
+
+    service_restored = make_service(restored_gw, LocalProvider(admitted_local))
+    res_restored, resolved_restored = service_restored.check_startup_with_resolved()
+
+    assert res_restored.state == UpdateState.LATEST
+    assert res_restored.mandatory is True
+    assert res_restored.retry_staging is True

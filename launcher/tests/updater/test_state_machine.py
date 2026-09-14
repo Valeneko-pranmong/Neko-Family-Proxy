@@ -222,3 +222,220 @@ def test_illegal_highwater_decrease_rejected() -> None:
     )
     with pytest.raises(StateTransitionError, match="Highwater floor cannot decrease"):
         validate_transition(s1, s2)
+
+
+def test_idle_to_idle_authority_admission_success() -> None:
+    gen1 = _make_dummy_gen(1)
+    cand_binding = Binding(release_sequence=2, release_id="rel-2", payload_sha256="2" * 64)
+    s1 = State(
+        schema_version=1,
+        revision=5,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=gen1.binding,
+        observed=gen1.binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1"},
+    )
+    s2 = State(
+        schema_version=1,
+        revision=6,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=cand_binding,
+        observed=cand_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1", cand_binding.payload_sha256: "env2"},
+    )
+    validate_transition(s1, s2)
+
+
+def test_idle_to_idle_authority_admission_rejects_non_enrolled() -> None:
+    gen1 = _make_dummy_gen(1)
+    cand_binding = Binding(release_sequence=2, release_id="rel-2", payload_sha256="2" * 64)
+    s1 = State(
+        schema_version=1,
+        revision=5,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=False,  # Not enrolled
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=gen1.binding,
+        observed=gen1.binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1"},
+    )
+    s2 = State(
+        schema_version=1,
+        revision=6,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=False,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=cand_binding,
+        observed=cand_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1", cand_binding.payload_sha256: "env2"},
+    )
+    with pytest.raises(StateTransitionError):
+        validate_transition(s1, s2)
+
+
+def test_idle_to_idle_authority_admission_rejects_highwater_observed_mismatch() -> None:
+    gen1 = _make_dummy_gen(1)
+    cand_b2 = Binding(release_sequence=2, release_id="rel-2", payload_sha256="2" * 64)
+    cand_b3 = Binding(release_sequence=3, release_id="rel-3", payload_sha256="3" * 64)
+    s1 = State(
+        schema_version=1,
+        revision=5,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=gen1.binding,
+        observed=gen1.binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1"},
+    )
+    s2 = State(
+        schema_version=1,
+        revision=6,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=cand_b3,
+        observed=cand_b2,  # Mismatch!
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1", cand_b3.payload_sha256: "env3"},
+    )
+    with pytest.raises(StateTransitionError):
+        validate_transition(s1, s2)
+
+
+def test_idle_to_idle_authority_admission_rejects_committed_mutation() -> None:
+    gen1 = _make_dummy_gen(1)
+    gen2 = _make_dummy_gen(2)
+    cand_binding = Binding(release_sequence=2, release_id="rel-2", payload_sha256="2" * 64)
+    s1 = State(
+        schema_version=1,
+        revision=5,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=gen1.binding,
+        observed=gen1.binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1"},
+    )
+    s2 = State(
+        schema_version=1,
+        revision=6,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen2,  # Mutated committed in admission!
+        previous=None,
+        highwater=cand_binding,
+        observed=cand_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1", cand_binding.payload_sha256: "env2"},
+    )
+    with pytest.raises(StateTransitionError):
+        validate_transition(s1, s2)
+
+
+def test_idle_to_idle_authority_admission_rejects_evidence_tampering() -> None:
+    gen1 = _make_dummy_gen(1)
+    cand_binding = Binding(release_sequence=2, release_id="rel-2", payload_sha256="2" * 64)
+    s1 = State(
+        schema_version=1,
+        revision=5,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=gen1.binding,
+        observed=gen1.binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1"},
+    )
+    # Tampered existing evidence value
+    s2 = State(
+        schema_version=1,
+        revision=6,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=gen1,
+        previous=None,
+        highwater=cand_binding,
+        observed=cand_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={gen1.binding.payload_sha256: "env1_tampered", cand_binding.payload_sha256: "env2"},
+    )
+    with pytest.raises(StateTransitionError):
+        validate_transition(s1, s2)
