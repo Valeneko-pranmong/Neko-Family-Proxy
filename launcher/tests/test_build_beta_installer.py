@@ -91,7 +91,9 @@ def _stage(tmp_path: Path) -> Path:
     (core / "bin" / "v2ray-sn.exe").write_bytes(b"v2ray")
     (core / "runtime-settings.nkps").write_bytes(b"sealed")
     core_manifest_bytes = (
-        '{"source_commit": "' + CORE_AUTHORITY + '", "files": {}, '
+        '{"source_commit": "' + CORE_AUTHORITY + '", "files": '
+        '[{"path": "bin/v2ray-sn.exe", "sha256": "' + _digest(b"v2ray")
+        + '", "size": 5}], '
         '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
     ).encode("utf-8")
     (core / "core-manifest.json").write_bytes(core_manifest_bytes)
@@ -350,9 +352,13 @@ def _setup_verified_core_dir(
     manifest = {
         "source_commit": source_commit,
         "v2ray_sn_exe_hash": v2ray_hash,
-        "files": {
-            "bin/v2ray-sn.exe": v2ray_hash,
-        },
+        "files": [
+            {
+                "path": "bin/v2ray-sn.exe",
+                "size": len(v2ray_bytes),
+                "sha256": v2ray_hash,
+            }
+        ],
     }
     (core_dir / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -478,9 +484,13 @@ def test_candidate_build_record_and_post_install_verification_agree(
     manifest = {
         "source_commit": candidate_authority,
         "v2ray_sn_exe_hash": v2ray_hash,
-        "files": {
-            "bin/v2ray-sn.exe": v2ray_hash,
-        },
+        "files": [
+            {
+                "path": "bin/v2ray-sn.exe",
+                "size": len(v2ray_bytes),
+                "sha256": v2ray_hash,
+            }
+        ],
     }
     (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -613,7 +623,9 @@ def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path,
     launcher_bytes = b"launcher"
     updater_bytes = b"updater"
     core_manifest_bytes = (
-        '{"source_commit": "' + CORE_AUTHORITY + '", "files": {}, '
+        '{"source_commit": "' + CORE_AUTHORITY + '", "files": '
+        '[{"path": "bin/v2ray-sn.exe", "sha256": "' + _digest(b"v2ray")
+        + '", "size": 5}], '
         '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
     ).encode("utf-8")
 

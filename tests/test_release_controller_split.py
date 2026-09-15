@@ -343,7 +343,12 @@ def test_publish_split_release_installer_verify_failure_stops_cutover(monkeypatc
     assert "installer_verify_failed" in events
 
 
-def test_process_accepted_commits_requires_installer_repo(monkeypatch):
+def test_process_accepted_commits_requires_installer_repo(monkeypatch, tmp_path):
+    # Isolate the controller from this checkout's real release_target.json.
+    monkeypatch.setattr(
+        "scripts.release_controller.__file__",
+        str(tmp_path / "scripts" / "release_controller.py"),
+    )
     monkeypatch.setattr(
         "scripts.release_controller.get_successful_main_runs",
         lambda: [{"databaseId": 1, "headSha": "a" * 40}],
