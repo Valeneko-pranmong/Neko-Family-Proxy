@@ -7,17 +7,15 @@ import subprocess
 import pytest
 
 from scripts.publish_atomic_release import (
-    CANONICAL_REPO,
+    CANONICAL_MACHINE_REPO,
     REQUIRED_STAGE_ASSETS,
     StageDraftReleaseError,
     StagedDraftEvidence,
 )
-from scripts.publish_installer_release import (
+from scripts.release_controller import (
     InstallerPublishError,
     REQUIRED_INSTALLER_ASSET,
     StagedInstallerDraftEvidence,
-)
-from scripts.release_controller import (
     process_accepted_commits,
     publish_split_release,
     validate_installer_repo_configuration,
@@ -52,7 +50,7 @@ def test_validate_installer_repo_rejects_none_and_empty():
 
 
 def test_validate_installer_repo_rejects_canonical_machine_repo():
-    canonical = "Valeneko-pranmong/Neko-Family-Proxy"
+    canonical = CANONICAL_MACHINE_REPO
     with pytest.raises(ValueError, match="[Cc]annot be the canonical machine repository"):
         validate_installer_repo_configuration(canonical)
 
@@ -197,7 +195,7 @@ def test_publish_split_release_order_and_cutover(monkeypatch, tmp_path):
             if installer_repo in args:
                 events.append("promote_installer_first")
                 return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-            elif CANONICAL_REPO in args:
+            elif CANONICAL_MACHINE_REPO in args:
                 events.append("promote_machine_second")
                 return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "releases/latest" in "".join(args):
@@ -213,7 +211,7 @@ def test_publish_split_release_order_and_cutover(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps(latest_data), stderr="")
         if "api" in args and f"repos/{installer_repo}/releases/202" in "".join(args):
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"draft": False}), stderr="")
-        if "api" in args and f"repos/{CANONICAL_REPO}/releases/101" in "".join(args):
+        if "api" in args and f"repos/{CANONICAL_MACHINE_REPO}/releases/101" in "".join(args):
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"draft": False}), stderr="")
         return None
 
@@ -359,7 +357,7 @@ def test_process_accepted_commits_requires_installer_repo(monkeypatch, tmp_path)
 
     # When installer_repo is canonical machine repo
     with pytest.raises((ValueError, SystemExit)):
-        process_accepted_commits("a" * 40, 1, installer_repo=CANONICAL_REPO)
+        process_accepted_commits("a" * 40, 1, installer_repo=CANONICAL_MACHINE_REPO)
 
 
 def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_path):
@@ -545,7 +543,7 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
     assert record["installer_asset"]["sha256"] == hashlib.sha256(fake_setup_bytes).hexdigest()
     assert record["installer_asset"]["size"] == len(fake_setup_bytes)
 
-    assert record["destination_repositories"]["machine"] == CANONICAL_REPO
+    assert record["destination_repositories"]["machine"] == CANONICAL_MACHINE_REPO
     assert record["destination_repositories"]["installer"] == installer_repo
 
     assert "--release-version" in installer_builder_args
