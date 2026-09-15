@@ -289,7 +289,7 @@ def test_execute_publish_passes_machine_release_notes(monkeypatch):
 
     execute_publish("v5.1.5", "sha_123")
     assert "notes" in stage_kwargs
-    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in stage_kwargs["notes"]
+    assert "Valeneko-pranmong/Neko-Family-Proxy/releases" in stage_kwargs["notes"]
     assert "v5.1.5" in stage_kwargs["notes"]
 
 
