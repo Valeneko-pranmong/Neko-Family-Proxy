@@ -1346,3 +1346,34 @@ def test_enrolled_marker_pins_immutable_and_cannot_be_rewritten():
         assert "rewrite" not in attr.lower()
         assert "update_marker" not in attr.lower()
         assert "modify_marker" not in attr.lower()
+
+
+def test_write_enrollment_marker_and_load_selected_state(tmp_path, keys):
+    import neko_launcher.updater.enrollment as enr
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    marker, state_rev2, state_rev3 = _ready_states()
+
+    # write marker
+    enr.write_enrollment_marker(state_dir, marker)
+    marker_path = state_dir / "enrollment.bin"
+    assert marker_path.is_file()
+    assert marker_path.stat().st_size == MARKER_FRAME_SIZE
+
+    # write again idempotently
+    enr.write_enrollment_marker(state_dir, marker)
+
+    # write slots
+    slot_a = pack_slot_frame(
+        SlotFrame(revision=state_rev2.revision, format_version=1, body_bytes=serialize_state(state_rev2))
+    )
+    slot_b = pack_slot_frame(
+        SlotFrame(revision=state_rev3.revision, format_version=1, body_bytes=serialize_state(state_rev3))
+    )
+    (state_dir / "slot-a.bin").write_bytes(slot_a)
+    (state_dir / "slot-b.bin").write_bytes(slot_b)
+
+    selected = enr.load_selected_state(state_dir, keys)
+    assert selected == state_rev3

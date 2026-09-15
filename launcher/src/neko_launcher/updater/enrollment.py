@@ -8,7 +8,9 @@ from typing import Any, Mapping
 from neko_launcher.updater.binary_frame import (
     MARKER_FRAME_SIZE,
     SLOT_FRAME_SIZE,
+    MarkerFrame,
     SlotFrame,
+    pack_marker_frame,
     pack_slot_frame,
     unpack_marker_frame,
     unpack_slot_frame,
@@ -39,6 +41,7 @@ from neko_launcher.updater.state_models import (
     State,
     deserialize_marker,
     deserialize_state,
+    serialize_marker,
     serialize_state,
 )
 
@@ -593,3 +596,72 @@ def validate_enrollment_trust_binding(
             _close_handle(marker_handle)
         if guard_handle is not None:
             _close_handle(guard_handle)
+
+
+def write_enrollment_marker(state_dir: pathlib.Path, marker: EnrollmentMarker) -> None:
+    if not state_dir.is_dir():
+        raise EnrollmentError("ROOT_UNSUPPORTED")
+    marker_path = state_dir / "enrollment.bin"
+    marker_frame = MarkerFrame(format_version=1, body_bytes=serialize_marker(marker))
+    marker_raw = pack_marker_frame(marker_frame)
+    if len(marker_raw) != MARKER_FRAME_SIZE:
+        raise EnrollmentError("STATE_CORRUPT")
+
+    guard_handle = None
+    marker_handle = None
+    try:
+        guard_handle = _open_state_dir_guard(state_dir)
+        try:
+            marker_handle = _create_exclusive_fixed(marker_path, MARKER_FRAME_SIZE)
+        except OSError:
+            if marker_path.exists():
+                existing_h = None
+                try:
+                    existing_h = _open_existing_readonly(marker_path)
+                    _validate_trusted_leaf(existing_h, guard_handle)
+                    if _get_file_size(existing_h) != MARKER_FRAME_SIZE:
+                        raise EnrollmentError("STATE_CORRUPT")
+                    reread = _read_exact_at_zero(existing_h, MARKER_FRAME_SIZE)
+                    if reread != marker_raw:
+                        raise EnrollmentError("PROTOCOL_INVALID")
+                    return
+                finally:
+                    if existing_h is not None:
+                        _close_handle(existing_h)
+            raise EnrollmentError("IO_FAILED")
+
+        _validate_trusted_leaf(marker_handle, guard_handle)
+        _write_all_at_zero(marker_handle, marker_raw)
+        try:
+            _flush_handle(marker_handle)
+        except OSError:
+            raise EnrollmentError("FLUSH_FAILED")
+        reread = _read_exact_at_zero(marker_handle, MARKER_FRAME_SIZE)
+        if reread != marker_raw:
+            raise EnrollmentError("STATE_CORRUPT")
+    finally:
+        _close_handle(marker_handle)
+        _close_handle(guard_handle)
+
+
+def load_selected_state(
+    state_dir: pathlib.Path,
+    public_keys: Mapping[str, bytes],
+) -> State:
+    key_snapshot = dict(public_keys)
+    slot_a_path = state_dir / "slot-a.bin"
+    slot_b_path = state_dir / "slot-b.bin"
+    store = None
+    try:
+        store = SlotStore(slot_a_path, slot_b_path, key_snapshot)
+        result = store.load()
+        if result.status != SelectionStatus.SELECTED or result.state is None:
+            raise EnrollmentError("REPAIR_REQUIRED")
+        return result.state
+    except SlotStoreError as exc:
+        if exc.code == "IO_FAILED":
+            raise EnrollmentError("IO_FAILED")
+        raise EnrollmentError("REPAIR_REQUIRED")
+    finally:
+        if store is not None:
+            store.close()
