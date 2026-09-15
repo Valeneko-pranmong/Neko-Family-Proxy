@@ -195,16 +195,48 @@ def build_candidate(args: argparse.Namespace) -> int:
         fail(f"baseline envelope JSON parsing failed: {exc}")
 
     try:
-        release_set, _ = verify_release_envelope_v2(
+        release_set, payload_sha256 = verify_release_envelope_v2(
             envelope_doc,
             dict(verified_profile.release_public_keys),
         )
     except Exception as exc:
         fail(f"baseline envelope verification failed: {exc}")
 
+    key_id = envelope_doc.get("key_id")
+    if not key_id:
+        fail("missing key_id in baseline envelope")
+
     if release_set.channel != verified_profile.channel:
         fail(
             f"baseline envelope channel mismatch: {release_set.channel} != {verified_profile.channel}"
+        )
+
+    # Component identity verification against staged bytes
+    components = release_set.components
+    for req_comp in ("launcher", "updater", "core"):
+        if req_comp not in components:
+            fail(f"baseline envelope missing required component: {req_comp}")
+
+    launcher_comp = components["launcher"]
+    if launcher_comp.installed_identity_sha256 != got:
+        fail(
+            f"baseline envelope launcher installed identity mismatch: "
+            f"{launcher_comp.installed_identity_sha256} != {got}"
+        )
+
+    updater_comp = components["updater"]
+    if updater_comp.installed_identity_sha256 != updater_sha256:
+        fail(
+            f"baseline envelope updater installed identity mismatch: "
+            f"{updater_comp.installed_identity_sha256} != {updater_sha256}"
+        )
+
+    core_comp = components["core"]
+    staged_core_installed_identity = sha256_file(manifest_path)
+    if core_comp.installed_identity_sha256 != staged_core_installed_identity:
+        fail(
+            f"baseline envelope core installed identity mismatch: "
+            f"{core_comp.installed_identity_sha256} != {staged_core_installed_identity}"
         )
 
     # Stage exact bytes at baseline\release-v2.json and trust\update-profile-v1.json
@@ -227,7 +259,8 @@ def build_candidate(args: argparse.Namespace) -> int:
     if staged_envelope_sha256 != input_envelope_sha256:
         fail("staged baseline envelope hash mismatch after copy")
     with open(staged_envelope_path, "rb") as fh:
-        if fh.read() != raw_baseline_envelope:
+        staged_envelope_bytes = fh.read()
+        if staged_envelope_bytes != raw_baseline_envelope:
             fail("staged baseline envelope bytes mismatch after copy")
 
     input_profile_sha256 = hashlib.sha256(raw_trust_profile).hexdigest()
@@ -235,8 +268,27 @@ def build_candidate(args: argparse.Namespace) -> int:
     if staged_profile_sha256 != input_profile_sha256:
         fail("staged trust profile hash mismatch after copy")
     with open(staged_profile_path, "rb") as fh:
-        if fh.read() != raw_trust_profile:
+        staged_profile_bytes = fh.read()
+        if staged_profile_bytes != raw_trust_profile:
             fail("staged trust profile bytes mismatch after copy")
+
+    # Re-verify the staged embedded envelope
+    try:
+        staged_doc = canonical_json_loads(staged_envelope_bytes.strip())
+        staged_set, staged_payload_sha = verify_release_envelope_v2(
+            staged_doc,
+            dict(verified_profile.release_public_keys),
+        )
+    except Exception as exc:
+        fail(f"staged baseline envelope re-verification failed: {exc}")
+    if staged_doc.get("key_id") != key_id:
+        fail(f"staged baseline envelope key_id mismatch: {staged_doc.get('key_id')} != {key_id}")
+    if staged_set.release_sequence != release_set.release_sequence:
+        fail("staged baseline envelope sequence mismatch")
+    if staged_set.release_id != release_set.release_id:
+        fail("staged baseline envelope release_id mismatch")
+    if staged_payload_sha != payload_sha256:
+        fail("staged baseline envelope payload sha mismatch")
 
     print("GATE trust-profile=PASS")
     print("GATE baseline-envelope=PASS")
@@ -370,6 +422,11 @@ def build_candidate(args: argparse.Namespace) -> int:
             "version": DOTNET_RUNTIME_VERSION_PIN,
             "sha256": DOTNET_RUNTIME_SHA256_PIN,
         },
+        "sequence": release_set.release_sequence,
+        "release_id": release_set.release_id,
+        "key_id": key_id,
+        "payload_sha256": payload_sha256,
+        "envelope_sha256": staged_envelope_sha256,
         "embedded_envelope_sha256": staged_envelope_sha256,
         "embedded_trust_profile_sha256": staged_profile_sha256,
         "profile_id": verified_profile.profile_id,

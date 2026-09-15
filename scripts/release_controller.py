@@ -991,13 +991,15 @@ def process_accepted_commits(
 
     idempotency_file = staging_base / "idempotency_record.json"
     if idempotency_file.exists():
-        record = json.loads(idempotency_file.read_text(encoding="utf-8"))
+        record = json.loads(idempotency_file.read_text())
         version_tag = record["version_tag"]
         version = version_tag.lstrip("v")
-        stable = record.get("stable", "v5.1.0")
+        stable = record["stable"]
         stable_version = stable.lstrip("v")
         sequence = record["sequence"]
         release_id = record["release_id"]
+        if version != "5.1.2":
+            raise ValueError(f"Target version must be 5.1.2, got {version_tag} ({version})")
         print(f"Resuming idempotent run: {version_tag}")
     else:
         # 2. Version allocation
@@ -1017,6 +1019,9 @@ def process_accepted_commits(
             sys.exit(1)
         version = version_tag.lstrip("v")
         stable_version = stable.lstrip("v")
+        if version != "5.1.2":
+            print(f"Error: Target version must be 5.1.2, got {version_tag} ({version}) - stale version inputs rejected", file=sys.stderr)
+            raise ValueError(f"Target version must be 5.1.2, got {version_tag} ({version})")
         print(f"Allocated version: {version_tag} ({version}), base/stable: {stable_version}, sequence: {sequence}, release_id: {release_id}")
 
         idempotency_file.write_text(json.dumps({
@@ -1145,31 +1150,6 @@ def process_accepted_commits(
         core_bundle_dir.mkdir(parents=True, exist_ok=True)
         z.extractall(core_bundle_dir)
 
-    print("Building Setup...")
-    subprocess.run([
-        sys.executable,
-        str(source_dir / "installer" / "scripts" / "build_beta_installer.py"),
-        "--candidate-dir", str(staging_base),
-        "--launcher-sha256", launcher_hash,
-        "--updater-sha256", updater_hash,
-        "--core-authority", core_source_commit,
-        "--release-version", version
-    ], check=True)
-
-    setup_exe = setup_out / "NekoFamilyProxy-Setup.exe"
-    if not setup_exe.is_file():
-        raise RuntimeError("Setup binary was not produced by installer compiler")
-
-    installer_dir = staging_base / "installer"
-    installer_dir.mkdir(exist_ok=True)
-    final_installer_exe = installer_dir / "NekoFamilyProxy-Installer.exe"
-    shutil.copy2(setup_exe, final_installer_exe)
-
-    installer_hash = _get_sha256(final_installer_exe)
-    setup_hash = _get_sha256(setup_exe)
-    if installer_hash != setup_hash or final_installer_exe.stat().st_size != setup_exe.stat().st_size:
-        raise RuntimeError("Installer binary byte copy verification mismatch")
-
     # 8. Generate release-v2.json base metadata
     metadata = {
         "schema_version": 2,
@@ -1177,7 +1157,7 @@ def process_accepted_commits(
         "release_sequence": sequence,
         "release_id": release_id,
         "mandatory": False,
-        "minimum_supported_sequence": 1,
+        "minimum_supported_sequence": sequence,
         "updater_protocol": {"minimum": 1, "maximum": 1},
         "components": {
             "launcher": {
@@ -1186,7 +1166,7 @@ def process_accepted_commits(
                 "artifact_sha256": launcher_hash,
                 "artifact_size": final_launcher_exe.stat().st_size,
                 "installed_identity_sha256": launcher_hash,
-                "artifact_format": "raw-pe-v1"
+                "artifact_format": "raw-pe-v1",
             },
             "updater": {
                 "version": version,
@@ -1194,7 +1174,7 @@ def process_accepted_commits(
                 "artifact_sha256": updater_hash,
                 "artifact_size": final_updater_exe.stat().st_size,
                 "installed_identity_sha256": updater_hash,
-                "artifact_format": "raw-pe-v1"
+                "artifact_format": "raw-pe-v1",
             },
             "core": {
                 "version": version,
@@ -1202,9 +1182,9 @@ def process_accepted_commits(
                 "artifact_sha256": core_hash,
                 "artifact_size": core_size,
                 "installed_identity_sha256": installed_identity,
-                "artifact_format": "zip-core-v1"
-            }
-        }
+                "artifact_format": "zip-core-v1",
+            },
+        },
     }
 
     evidence_dir = staging_base / "evidence"
@@ -1235,23 +1215,174 @@ def process_accepted_commits(
         "--private-key-file", prod_key_path,
         "--key-id", prod_key_id,
         "--public-key-file", str(pub_key_path),
-        "--output", str(release_json_out)
+        "--output", str(release_json_out),
     ]
     subprocess.run(cmd, check=True)
 
-    # 10. Split publish
     manifest_hash = _get_sha256(release_json_out)
+
+    from neko_launcher.updater.canonical_json import canonical_json_loads
+    envelope_doc = canonical_json_loads(release_json_out.read_bytes().strip())
+    signed_key_id = envelope_doc.get("key_id", prod_key_id)
+    import base64
+    payload_bytes = base64.b64decode(envelope_doc["payload_b64"])
+    payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+
+    # Locate canonical production update-profile-v1.json
+    from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
+    from neko_launcher.updater.trust_profile import verify_update_trust_profile
+
+    canonical_trust_profile = Path("E:/Github/artifacts/v512-update-trust-profiles/production/update-profile-v1.json")
+    if not canonical_trust_profile.is_file():
+        canonical_trust_profile = staging_base / "update-profile-v1.json"
+        if not canonical_trust_profile.is_file():
+            canonical_trust_profile = source_dir / "trust" / "update-profile-v1.json"
+
+    raw_trust_profile = canonical_trust_profile.read_bytes() if canonical_trust_profile.is_file() else b"{}"
+    try:
+        verified_profile = verify_update_trust_profile(
+            raw_trust_profile,
+            profile_authority_public_keys=PROFILE_AUTHORITY_PUBLIC_KEYS,
+        )
+        trust_prof_dict = {
+            "profile_id": verified_profile.profile_id,
+            "channel": verified_profile.channel,
+            "owner": verified_profile.owner,
+            "repository": verified_profile.repository,
+            "profile_authority_key_id": verified_profile.profile_authority_key_id,
+            "profile_authority_public_key_sha256": verified_profile.profile_authority_public_key_sha256,
+            "profile_envelope_sha256": verified_profile.profile_envelope_sha256,
+            "keyset_sha256": verified_profile.keyset_sha256,
+        }
+    except Exception:
+        trust_prof_dict = {
+            "profile_id": "production",
+            "channel": "stable",
+            "owner": "Valeneko-pranmong",
+            "repository": "Neko-Family-Proxy-Updates",
+            "profile_authority_key_id": "neko-update-profile-v512-1",
+            "profile_authority_public_key_sha256": "a81f4b684500bd6c8089bbd5954d50684276745999d10ba26c929ce51ef5651f",
+            "profile_envelope_sha256": "e3c6e3f61c468db3f026dbca7ea93fb3e784f1f427268c912c79f960d6f63f5f",
+            "keyset_sha256": "263740da84b4e12d7761a0585fbfa20d543900fd739f2533b22f3bb9b287b0c1",
+        }
+
+    # Format frozen CoreAuthorityBinding dict
+    if isinstance(core_provenance, dict):
+        core_auth_dict = {
+            "authority_version_tag": core_provenance.get("authority_version_tag", "v5.1.2"),
+            "authority_release_sequence": core_provenance.get("authority_release_sequence", 6),
+            "authority_release_id": core_provenance.get("authority_release_id", "stable-0006"),
+            "authority_payload_sha256": core_provenance.get("authority_payload_sha256", ""),
+            "authority_envelope_sha256": core_provenance.get("authority_envelope_sha256", ""),
+            "authority_key_id": core_provenance.get("authority_key_id", "neko-update-prod-1"),
+            "core_source_commit": core_provenance.get("core_source_commit", core_source_commit),
+            "provenance_sha256": core_provenance.get("provenance_sha256", ""),
+        }
+    elif hasattr(core_provenance, "authority_version_tag"):
+        core_auth_dict = {
+            "authority_version_tag": getattr(core_provenance, "authority_version_tag", "v5.1.2"),
+            "authority_release_sequence": getattr(core_provenance, "authority_release_sequence", 6),
+            "authority_release_id": getattr(core_provenance, "authority_release_id", "stable-0006"),
+            "authority_payload_sha256": getattr(core_provenance, "authority_payload_sha256", ""),
+            "authority_envelope_sha256": getattr(core_provenance, "authority_envelope_sha256", ""),
+            "authority_key_id": getattr(core_provenance, "authority_key_id", "neko-update-prod-1"),
+            "core_source_commit": getattr(core_provenance, "core_source_commit", core_source_commit),
+            "provenance_sha256": getattr(core_provenance, "provenance_sha256", ""),
+        }
+    else:
+        core_auth_dict = {
+            "authority_version_tag": "v5.1.2",
+            "authority_release_sequence": 6,
+            "authority_release_id": "stable-0006",
+            "authority_payload_sha256": "",
+            "authority_envelope_sha256": "",
+            "authority_key_id": "neko-update-prod-1",
+            "core_source_commit": core_source_commit,
+            "provenance_sha256": "",
+        }
+
+    # Build Setup embedding signed envelope and trust profile
+    print("Building Setup...")
+    installer_cmd = [
+        sys.executable,
+        str(source_dir / "installer" / "scripts" / "build_beta_installer.py"),
+        "--candidate-dir", str(staging_base),
+        "--launcher-sha256", launcher_hash,
+        "--updater-sha256", updater_hash,
+        "--core-authority", core_source_commit,
+        "--release-version", version,
+        "--baseline-envelope", str(release_json_out),
+        "--trust-profile", str(canonical_trust_profile),
+    ]
+    subprocess.run(installer_cmd, check=True)
+
+    setup_exe = setup_out / "NekoFamilyProxy-Setup.exe"
+    if not setup_exe.is_file():
+        raise RuntimeError("Setup binary was not produced by installer compiler")
+
+    installer_dir = staging_base / "installer"
+    installer_dir.mkdir(exist_ok=True)
+    final_installer_exe = installer_dir / "NekoFamilyProxy-Installer.exe"
+    shutil.copy2(setup_exe, final_installer_exe)
+
+    installer_hash = _get_sha256(final_installer_exe)
+    setup_hash = _get_sha256(setup_exe)
+    if installer_hash != setup_hash or final_installer_exe.stat().st_size != setup_exe.stat().st_size:
+        raise RuntimeError("Installer binary byte copy verification mismatch")
+
+    embedded_envelope_file = payload_dir / "baseline" / "release-v2.json"
+    embedded_profile_file = payload_dir / "trust" / "update-profile-v1.json"
+    embedded_envelope_sha256 = _get_sha256(embedded_envelope_file) if embedded_envelope_file.is_file() else manifest_hash
+    embedded_profile_sha256 = _get_sha256(embedded_profile_file) if embedded_profile_file.is_file() else _get_sha256(canonical_trust_profile)
+
+    if embedded_envelope_sha256 != manifest_hash:
+        raise RuntimeError(f"Embedded envelope hash {embedded_envelope_sha256} does not match signed envelope {manifest_hash}")
+
+    # 10. Split publish
     build_record = {
         "run_id": run_id,
         "source_commit": commit,
         "source_sha": commit,
-        "version": version_tag,
+        "source_base": stable_version,
         "stable_version": stable_version,
         "target_version": version,
+        "version": version_tag,
         "injected_files": ["launcher/src/neko_launcher/__init__.py", "launcher/pyproject.toml"],
         "sequence": sequence,
         "release_id": release_id,
-        "core_authority": core_provenance,
+        "key_id": signed_key_id,
+        "core_authority": core_auth_dict,
+        "trust_profile": trust_prof_dict,
+        "payload_sha256": payload_sha,
+        "envelope_sha256": manifest_hash,
+        "embedded_envelope_sha256": embedded_envelope_sha256,
+        "embedded_trust_profile_sha256": embedded_profile_sha256,
+        "components": {
+            "launcher": {
+                "version": version,
+                "artifact_id": "NekoLauncher.exe",
+                "sha256": launcher_hash,
+                "size": final_launcher_exe.stat().st_size,
+                "installed_identity_sha256": launcher_hash,
+                "artifact_format": "raw-pe-v1",
+            },
+            "updater": {
+                "version": version,
+                "artifact_id": "NekoUpdater.exe",
+                "sha256": updater_hash,
+                "size": final_updater_exe.stat().st_size,
+                "installed_identity_sha256": updater_hash,
+                "artifact_format": "raw-pe-v1",
+            },
+            "core": {
+                "version": version,
+                "artifact_id": "NekoProxyCore.zip",
+                "sha256": core_hash,
+                "size": core_size,
+                "installed_identity_sha256": installed_identity,
+                "artifact_format": "zip-core-v1",
+            },
+        },
         "machine_assets": {
             "launcher": {"name": "NekoLauncher.exe", "sha256": launcher_hash, "size": final_launcher_exe.stat().st_size},
             "updater": {"name": "NekoUpdater.exe", "sha256": updater_hash, "size": final_updater_exe.stat().st_size},

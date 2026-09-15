@@ -13,8 +13,13 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from neko_launcher.updater.canonical_json import canonical_json_dumps
-from tests.software_update_helpers import signed_envelope, valid_v2_release_document
+import tests as _root_tests
+_launcher_tests_dir = str(Path(__file__).resolve().parent)
+if hasattr(_root_tests, "__path__") and _launcher_tests_dir not in _root_tests.__path__:
+    _root_tests.__path__.append(_launcher_tests_dir)
+
+from neko_launcher.updater.canonical_json import canonical_json_dumps  # noqa: E402
+from tests.software_update_helpers import signed_envelope, valid_v2_release_document  # noqa: E402
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -260,6 +265,21 @@ def test_core_manifest_list_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         ]
     }
     (core / "core-manifest.json").write_text(json.dumps(list_manifest), encoding="utf-8")
+
+    doc = valid_v2_release_document(
+        sequence=1,
+        release_id="rel-0001",
+        channel="stable",
+        launcher_sha=_digest(b"launcher"),
+        launcher_size=len(b"launcher"),
+        updater_sha=_digest(b"updater"),
+        updater_size=len(b"updater"),
+        core_installed_sha=_digest((core / "core-manifest.json").read_bytes()),
+        core_sha=_digest(b"core-zip"),
+        core_size=1024,
+    )
+    env_dict = signed_envelope(doc, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
+    (stage / "baseline_envelope.json").write_bytes(canonical_json_dumps(env_dict) + b"\n")
 
     monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
 
@@ -622,12 +642,16 @@ def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path,
 
     launcher_bytes = b"launcher"
     updater_bytes = b"updater"
-    core_manifest_bytes = (
-        '{"source_commit": "' + CORE_AUTHORITY + '", "files": '
-        '[{"path": "bin/v2ray-sn.exe", "sha256": "' + _digest(b"v2ray")
-        + '", "size": 5}], '
-        '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
-    ).encode("utf-8")
+    manifest_file = tmp_path / "payload" / "CoreBundle" / "core-manifest.json"
+    if manifest_file.is_file():
+        core_manifest_bytes = manifest_file.read_bytes()
+    else:
+        core_manifest_bytes = (
+            '{"source_commit": "' + CORE_AUTHORITY + '", "files": '
+            '[{"path": "bin/v2ray-sn.exe", "sha256": "' + _digest(b"v2ray")
+            + '", "size": 5}], '
+            '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
+        ).encode("utf-8")
 
     doc = valid_v2_release_document(
         sequence=1,
@@ -831,3 +855,208 @@ def test_builder_rejects_one_byte_tampered_baseline_envelope(
     with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
         build_candidate(parse_args(argv))
     assert not iscc_called
+
+
+def test_builder_refuses_envelope_with_mismatched_component_identities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path)
+
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+
+    iscc_called = False
+
+    def forbidden_find_iscc() -> str:
+        nonlocal iscc_called
+        iscc_called = True
+        raise AssertionError("find_iscc reached on mismatched component identity")
+
+    monkeypatch.setattr(module, "find_iscc", forbidden_find_iscc)
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+
+    # 1. Launcher sha in envelope does not match staged launcher
+    doc = valid_v2_release_document(
+        sequence=1,
+        release_id="rel-0001",
+        launcher_sha="f" * 64,
+        updater_sha=_digest(b"updater"),
+        core_installed_sha=_digest((stage / "payload" / "CoreBundle" / "core-manifest.json").read_bytes()),
+    )
+    env_dict = signed_envelope(doc, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
+    envelope_path.write_bytes(canonical_json_dumps(env_dict) + b"\n")
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope", str(envelope_path),
+        "--trust-profile", str(profile_path),
+    ]
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called
+
+    # 2. Updater sha in envelope does not match staged updater
+    doc2 = valid_v2_release_document(
+        sequence=1,
+        release_id="rel-0001",
+        launcher_sha=_digest(b"launcher"),
+        updater_sha="e" * 64,
+        core_installed_sha=_digest((stage / "payload" / "CoreBundle" / "core-manifest.json").read_bytes()),
+    )
+    env_dict2 = signed_envelope(doc2, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
+    envelope_path.write_bytes(canonical_json_dumps(env_dict2) + b"\n")
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called
+
+    # 3. Core installed identity in envelope does not match staged core manifest
+    doc3 = valid_v2_release_document(
+        sequence=1,
+        release_id="rel-0001",
+        launcher_sha=_digest(b"launcher"),
+        updater_sha=_digest(b"updater"),
+        core_installed_sha="c" * 64,
+    )
+    env_dict3 = signed_envelope(doc3, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
+    envelope_path.write_bytes(canonical_json_dumps(env_dict3) + b"\n")
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called
+
+
+def test_builder_refuses_one_byte_difference_between_supplied_and_staged_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path)
+
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+
+    iscc_called = False
+
+    def forbidden_find_iscc() -> str:
+        nonlocal iscc_called
+        iscc_called = True
+        raise AssertionError("find_iscc reached on tampered staged envelope")
+
+    monkeypatch.setattr(module, "find_iscc", forbidden_find_iscc)
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+
+    real_open = open
+
+    def fake_open(file, mode="r", *args, **kwargs):
+        fh = real_open(file, mode, *args, **kwargs)
+        if "baseline" in str(file) and "release-v2.json" in str(file) and "w" in mode:
+            class TamperingWriter:
+                def __init__(self, target):
+                    self._target = target
+                def write(self, data):
+                    tampered = bytearray(data)
+                    tampered[len(tampered) // 2] ^= 0x01
+                    return self._target.write(bytes(tampered))
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return self._target.__exit__(*a)
+            return TamperingWriter(fh)
+        return fh
+
+    monkeypatch.setattr("builtins.open", fake_open)
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope", str(envelope_path),
+        "--trust-profile", str(profile_path),
+    ]
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called
+
+
+def test_builder_record_contains_exact_envelope_provenance_and_verifies_key_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path)
+
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+
+    def mock_find_iscc() -> str:
+        return "mock_iscc.exe"
+
+    def mock_subprocess_run(args, **kwargs) -> Any:
+        if args and args[0] == "mock_iscc.exe":
+            out_dir = stage / "out"
+            out_dir.mkdir(exist_ok=True)
+            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", mock_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope", str(envelope_path),
+        "--trust-profile", str(profile_path),
+    ]
+
+    ret = build_candidate(parse_args(argv))
+    assert ret == 0
+
+    record_path = stage / "out" / "build-record.json"
+    assert record_path.exists()
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+
+    assert record["embedded_envelope_sha256"] == _digest(envelope_path.read_bytes())
+    assert record["envelope_sha256"] == record["embedded_envelope_sha256"]
+    assert record["key_id"] == TEST_REL_KEY_ID
+    assert record["sequence"] == 1
+    assert record["release_id"] == "rel-0001"
+    assert "payload_sha256" in record
+    assert len(record["payload_sha256"]) == 64
+
+    # Independently re-verify the embedded envelope and require its verified key_id to equal record["key_id"]
+    from neko_launcher.updater.canonical_json import canonical_json_loads
+    from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+    from neko_launcher.updater.trust_profile import verify_update_trust_profile
+
+    staged_envelope_path = stage / "payload" / "baseline" / "release-v2.json"
+    staged_profile_path = stage / "payload" / "trust" / "update-profile-v1.json"
+    re_verified_profile = verify_update_trust_profile(
+        staged_profile_path.read_bytes(),
+        profile_authority_public_keys=auth_keys,
+    )
+    re_verified_doc = canonical_json_loads(staged_envelope_path.read_bytes().strip())
+    re_verified_set, re_verified_payload_sha = verify_release_envelope_v2(
+        re_verified_doc,
+        dict(re_verified_profile.release_public_keys),
+    )
+    assert re_verified_doc["key_id"] == record["key_id"]
+    assert re_verified_set.release_sequence == record["sequence"]
+    assert re_verified_set.release_id == record["release_id"]
+    assert re_verified_payload_sha == record["payload_sha256"]
+
+
+def test_builder_rejects_unsigned_provenance_flags(tmp_path: Path) -> None:
+    module = _load_builder()
+    parse_args, _ = _candidate_api(module)
+    stage = _stage(tmp_path)
+    with pytest.raises(SystemExit):
+        parse_args(_argv(stage) + ["--sequence", "1"])
+    with pytest.raises(SystemExit):
+        parse_args(_argv(stage) + ["--key-id", "some-key"])
+    with pytest.raises(SystemExit):
+        parse_args(_argv(stage) + ["--release-id", "stable-0001"])

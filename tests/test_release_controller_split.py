@@ -377,7 +377,7 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(
         "scripts.derive_version.get_armed_target_from_dir",
-        lambda *args, **kwargs: ("v5.1.0", "v5.1.1", 5, "stable-0005"),
+        lambda *args, **kwargs: ("v5.1.1", "v5.1.2", 8, "stable-0008"),
     )
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
     monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
@@ -394,11 +394,21 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
             hashlib.sha256(b"core-zip-bytes").hexdigest(),
             len(b"core-zip-bytes"),
             "core-installed-id",
-            {"source": "provenance-test"},
+            {
+                "authority_version_tag": "v5.1.2",
+                "authority_release_sequence": 6,
+                "authority_release_id": "stable-0006",
+                "authority_payload_sha256": "p" * 64,
+                "authority_envelope_sha256": "e" * 64,
+                "authority_key_id": "neko-update-prod-1",
+                "core_source_commit": "6ab94bb",
+                "provenance_sha256": "pr" * 32,
+            },
         ),
     )
 
     fake_setup_bytes = b"inno-setup-installer-binary-12345"
+    installer_builder_args: list[str] = []
 
     def fake_run(args, **kwargs):
         if args[0] == "git" and "merge-base" in args:
@@ -408,8 +418,8 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
         if args[0] == "tar":
             s_dir = staging_base / "source"
             (s_dir / "launcher" / "src" / "neko_launcher").mkdir(parents=True, exist_ok=True)
-            (s_dir / "launcher" / "src" / "neko_launcher" / "__init__.py").write_text('__version__ = "5.1.0"\n')
-            (s_dir / "launcher" / "pyproject.toml").write_text('version = "5.1.0"\n')
+            (s_dir / "launcher" / "src" / "neko_launcher" / "__init__.py").write_text('__version__ = "5.1.1"\n')
+            (s_dir / "launcher" / "pyproject.toml").write_text('version = "5.1.1"\n')
             (s_dir / "launcher" / "dist").mkdir(parents=True, exist_ok=True)
             (s_dir / "launcher" / "dist" / "NekoLauncher.exe").write_bytes(b"launcher-exe")
             (s_dir / "launcher" / "dist" / "NekoUpdater.exe").write_bytes(b"updater-exe")
@@ -417,13 +427,27 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
         if args[0] == "uv":
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "build_beta_installer.py" in str(args[1]):
-            out_dir = staging_base / "5.1.1" / "out"
+            installer_builder_args.extend(args)
+            out_dir = staging_base / "5.1.2" / "out"
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(fake_setup_bytes)
+            # simulate installer builder staging baseline envelope
+            baseline_dir = staging_base / "5.1.2" / "payload" / "baseline"
+            baseline_dir.mkdir(parents=True, exist_ok=True)
+            if "--baseline-envelope" in args:
+                env_in = Path(args[args.index("--baseline-envelope") + 1])
+                (baseline_dir / "release-v2.json").write_bytes(env_in.read_bytes())
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "build_software_release_v2.py" in str(args[1]):
+            import base64
             out_idx = args.index("--output")
-            Path(args[out_idx + 1]).write_bytes(b'{"envelope_version": 1}')
+            fake_env = {
+                "envelope_version": 1,
+                "key_id": "neko-update-prod-1",
+                "payload_b64": base64.b64encode(b'{"schema_version": 2}').decode("ascii"),
+                "signature_b64": base64.b64encode(b"s" * 64).decode("ascii"),
+            }
+            Path(args[out_idx + 1]).write_bytes(canonical_json_dumps(fake_env) + b"\n")
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
@@ -460,7 +484,7 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
 
     assert len(split_publish_calls) == 1
     call = split_publish_calls[0]
-    assert call["tag"] == "v5.1.1"
+    assert call["tag"] == "v5.1.2"
     assert call["commit"] == sha
     assert call["installer_repo"] == installer_repo
 
@@ -476,18 +500,45 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
     installer_file = i_dir / REQUIRED_INSTALLER_ASSET
     assert installer_file.read_bytes() == fake_setup_bytes
 
-    record_file = staging_base / "5.1.1" / "evidence" / "build-record.json"
+    record_file = staging_base / "5.1.2" / "evidence" / "build-record.json"
     assert record_file.is_file()
     record = json.loads(record_file.read_text(encoding="utf-8"))
 
     assert record["source_commit"] == sha
     assert record["source_sha"] == sha
-    assert record["stable_version"] == "5.1.0"
-    assert record["target_version"] == "5.1.1"
-    assert record["version"] == "v5.1.1"
+    assert record["stable_version"] == "5.1.1"
+    assert record["target_version"] == "5.1.2"
+    assert record["version"] == "v5.1.2"
     assert "launcher/src/neko_launcher/__init__.py" in record["injected_files"]
     assert "launcher/pyproject.toml" in record["injected_files"]
-    assert record["core_authority"] == {"source": "provenance-test"}
+
+    core_auth = record["core_authority"]
+    assert core_auth["authority_version_tag"] == "v5.1.2"
+    assert core_auth["authority_release_sequence"] == 6
+    assert core_auth["authority_release_id"] == "stable-0006"
+    assert len(core_auth["authority_payload_sha256"]) == 64
+    assert len(core_auth["authority_envelope_sha256"]) == 64
+    assert core_auth["authority_key_id"] == "neko-update-prod-1"
+    assert core_auth["core_source_commit"] == "6ab94bb"
+    assert len(core_auth["provenance_sha256"]) == 64
+
+    trust_prof = record["trust_profile"]
+    assert trust_prof["profile_id"] == "production"
+    assert trust_prof["channel"] == "stable"
+    assert trust_prof["owner"] == "Valeneko-pranmong"
+    assert trust_prof["repository"] == "Neko-Family-Proxy-Updates"
+    assert "profile_authority_key_id" in trust_prof
+    assert len(trust_prof["profile_authority_public_key_sha256"]) == 64
+    assert len(trust_prof["profile_envelope_sha256"]) == 64
+    assert len(trust_prof["keyset_sha256"]) == 64
+
+    assert record["sequence"] == 8
+    assert record["release_id"] == "stable-0008"
+    assert record["key_id"] == "neko-update-prod-1"
+    assert len(record["payload_sha256"]) == 64
+    assert len(record["envelope_sha256"]) == 64
+    assert record["embedded_envelope_sha256"] == record["envelope_sha256"]
+    assert len(record["embedded_trust_profile_sha256"]) == 64
 
     assert set(record["machine_assets"].keys()) == {"launcher", "updater", "core", "manifest"}
     assert record["installer_asset"]["name"] == "NekoFamilyProxy-Installer.exe"
@@ -496,6 +547,45 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
 
     assert record["destination_repositories"]["machine"] == CANONICAL_REPO
     assert record["destination_repositories"]["installer"] == installer_repo
+
+    assert "--release-version" in installer_builder_args
+    rel_ver_idx = installer_builder_args.index("--release-version")
+    assert installer_builder_args[rel_ver_idx + 1] == "5.1.2"
+    assert "--baseline-envelope" in installer_builder_args
+    assert "--trust-profile" in installer_builder_args
+
+
+def test_process_accepted_commits_rejects_stale_target_version(monkeypatch, tmp_path):
+    sha = "8" * 40
+    run_id = 99998
+    installer_repo = "Valeneko-pranmong/Neko-Family-Proxy-Installer"
+    monkeypatch.setattr(
+        "scripts.release_controller.get_successful_main_runs",
+        lambda: [{"databaseId": run_id, "headSha": sha}],
+    )
+    monkeypatch.setattr(
+        "scripts.derive_version.get_armed_target_from_dir",
+        lambda *args, **kwargs: ("v5.1.1", "v5.1.1", 5, "stable-0005"),
+    )
+    monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
+    monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
+
+    def fake_run(args, **kwargs):
+        if args[0] == "git" and "merge-base" in args:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[0] == "git" and "archive" in args:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if args[0] == "tar":
+            s_dir = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}") / "source"
+            (s_dir / "launcher" / "src" / "neko_launcher").mkdir(parents=True, exist_ok=True)
+            (s_dir / "launcher" / "src" / "neko_launcher" / "__init__.py").write_text('__version__ = "5.1.1"\n')
+            (s_dir / "launcher" / "pyproject.toml").write_text('version = "5.1.1"\n')
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("scripts.release_controller.subprocess.run", fake_run)
+    with pytest.raises((ValueError, SystemExit), match="(?i)(5\\.1\\.2|target|stale)"):
+        process_accepted_commits(sha, run_id, installer_repo=installer_repo)
 
 
 def test_release_controller_consumes_explicit_core_authority_custody_without_network(tmp_path):
