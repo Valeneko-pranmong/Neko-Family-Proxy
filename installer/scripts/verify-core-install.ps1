@@ -56,40 +56,122 @@ function Get-Sha256([string]$Path) {
     }
 }
 
-# --- all declared files present + hash match ---
-$files = $manifest.files.PSObject.Properties
+# --- manifest files array validation ---
+if (-not ($manifest.files -is [System.Array])) {
+    Fail 6 "FAIL: manifest files must be a non-empty array"
+}
+if ($manifest.files.Count -eq 0) {
+    Fail 5 "FAIL: manifest declares zero files"
+}
+
+$resolvedCore = [System.IO.Path]::GetFullPath($CoreDir)
+$resolvedCoreWithSep = $resolvedCore.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+
+$seenPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$bad = New-Object 'System.Collections.Generic.List[string]'
 $total = 0
-$bad = New-Object System.Collections.Generic.List[string]
-foreach ($entry in $files) {
+
+foreach ($entry in $manifest.files) {
     $total++
-    $rel = $entry.Name -replace '/', '\'
-    $path = Join-Path $CoreDir $rel
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    if ($null -eq $entry -or -not ($entry -is [System.Management.Automation.PSCustomObject])) {
+        Fail 6 "FAIL: manifest entry must be a JSON object"
+    }
+
+    $props = @($entry.PSObject.Properties)
+    if ($props.Count -ne 3 -or
+        (-not $entry.PSObject.Properties['path']) -or
+        (-not $entry.PSObject.Properties['size']) -or
+        (-not $entry.PSObject.Properties['sha256'])) {
+        Fail 6 "FAIL: manifest entry must contain exactly path, size, and sha256 fields"
+    }
+
+    $rawPath = [string]$entry.path
+    if ([string]::IsNullOrWhiteSpace($rawPath)) {
+        Fail 6 "FAIL: manifest entry path must not be empty"
+    }
+
+    # Safe relative path validation
+    if ($rawPath -match '(^|[\\/])\.\.([\\/]|$)' -or
+        $rawPath.StartsWith('\') -or $rawPath.StartsWith('/') -or
+        $rawPath -match '^[a-zA-Z]:' -or
+        [System.IO.Path]::IsPathRooted($rawPath)) {
+        Fail 6 "FAIL: unsafe relative path: $rawPath"
+    }
+
+    $rel = $rawPath -replace '/', '\'
+    $targetPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedCore $rel))
+    if (-not $targetPath.StartsWith($resolvedCoreWithSep, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Fail 6 "FAIL: path escapes CoreDir: $rawPath"
+    }
+
+    $normalizedRel = $rel.ToLowerInvariant()
+    if ($seenPaths.Contains($normalizedRel)) {
+        Fail 6 "FAIL: duplicate path declared in manifest: $rawPath"
+    }
+    $seenPaths.Add($normalizedRel) | Out-Null
+
+    # Validate size type and value
+    if (-not ($entry.size -is [int] -or $entry.size -is [long] -or $entry.size -is [int64]) -or $entry.size -lt 0) {
+        Fail 6 "FAIL: invalid size for entry $rawPath"
+    }
+    $expectedSize = [int64]$entry.size
+
+    # Validate sha256 format
+    $rawSha = [string]$entry.sha256
+    if (-not ($rawSha -match '^[0-9a-fA-F]{64}$')) {
+        Fail 6 "FAIL: invalid sha256 for entry $rawPath"
+    }
+    $expectedSha = $rawSha.ToLowerInvariant()
+
+    # Check file on disk
+    if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
         $bad.Add("MISSING $rel") | Out-Null
         continue
     }
-    $got = Get-Sha256 $path
-    if ($got -ne $entry.Value) {
-        $bad.Add("HASH $rel") | Out-Null
+
+    $fileItem = Get-Item -LiteralPath $targetPath
+    if ($fileItem.Length -ne $expectedSize) {
+        $bad.Add("SIZE $rel (expected $expectedSize, got $($fileItem.Length))") | Out-Null
+        continue
+    }
+
+    $got = Get-Sha256 $targetPath
+    if ($got -ne $expectedSha) {
+        $bad.Add("HASH $rel (expected $expectedSha, got $got)") | Out-Null
     }
 }
-if ($total -eq 0) { Fail 5 'FAIL: manifest declares zero files' }
+
 if ($bad.Count -gt 0) {
     $head = ($bad | Select-Object -First 8) -join '; '
     Fail 6 "FAIL: $($bad.Count)/$total declared files bad: $head"
 }
 
 # --- v2ray-sn.exe pinned approved hash ---
-$v2rayRel = 'bin/v2ray-sn.exe'
-if (-not $manifest.files.PSObject.Properties[$v2rayRel]) {
+$v2rayExpected = 'a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff'
+$v2rayRel = 'bin\v2ray-sn.exe'
+$v2rayEntry = $manifest.files | Where-Object {
+    ($_.path -replace '/', '\').ToLowerInvariant() -eq $v2rayRel.ToLowerInvariant()
+} | Select-Object -First 1
+
+if (-not $v2rayEntry) {
     Fail 7 'FAIL: v2ray-sn.exe not declared by manifest'
 }
-$v2rayExpected = 'a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff'
-$v2rayGot = Get-Sha256 (Join-Path $CoreDir 'bin\v2ray-sn.exe')
+
+$v2rayTarget = Join-Path $resolvedCore $v2rayRel
+if (-not (Test-Path -LiteralPath $v2rayTarget -PathType Leaf)) {
+    Fail 7 "FAIL: v2ray-sn.exe missing on disk"
+}
+
+$v2rayGot = Get-Sha256 $v2rayTarget
 if ($v2rayGot -ne $v2rayExpected) {
     Fail 7 "FAIL: v2ray-sn.exe hash mismatch"
 }
-if ($manifest.v2ray_sn_exe_hash -and $manifest.v2ray_sn_exe_hash -ne $v2rayExpected) {
+
+if (([string]$v2rayEntry.sha256).ToLowerInvariant() -ne $v2rayExpected) {
+    Fail 7 "FAIL: manifest v2ray-sn.exe hash mismatch"
+}
+
+if ($manifest.v2ray_sn_exe_hash -and (([string]$manifest.v2ray_sn_exe_hash).ToLowerInvariant() -ne $v2rayExpected)) {
     Fail 7 "FAIL: manifest v2ray_sn_exe_hash mismatch"
 }
 
