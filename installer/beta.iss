@@ -98,6 +98,14 @@ Source: "{#PayloadDir}\CoreBundle\*"; \
     DestDir: "{app}\ProxyCore"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Signed baseline authority & trust profile (fail-closed hash-gated by build_beta_installer.py).
+Source: "{#PayloadDir}\trust\update-profile-v1.json"; \
+    DestDir: "{app}\trust"; \
+    Flags: ignoreversion
+Source: "{#PayloadDir}\baseline\release-v2.json"; \
+    DestDir: "{app}\baseline"; \
+    Flags: ignoreversion
+
 ; .NET Desktop Runtime 6.x x64 bootstrapper (staged prerequisite).
 ; Pinned version + SHA-256 are enforced by build_beta_installer.py, which
 ; FAILS CLOSED before compiling when the approved EXE is absent from
@@ -134,6 +142,7 @@ var
   g_CoreVerifyOK: Boolean;
   g_DriverOK: Boolean;
   g_DotnetOK: Boolean;
+  g_EnrollmentOK: Boolean;
   g_Detail: String;
 
 function B2S(B: Boolean): String;
@@ -176,9 +185,9 @@ end;
 function LaunchAllowed(): Boolean;
 begin
   { The optional launch is suppressed unless the Core is verified, the
-    .NET Desktop Runtime 6.x x64 prerequisite ended up present, AND the
-    netfilter2 driver is ready. }
-  Result := g_CoreVerifyOK and g_DotnetOK and g_DriverOK;
+    .NET Desktop Runtime 6.x x64 prerequisite ended up present, the
+    netfilter2 driver is ready, AND baseline trust enrollment succeeded. }
+  Result := g_CoreVerifyOK and g_DotnetOK and g_DriverOK and g_EnrollmentOK;
 end;
 
 { Machine-wide x64 .NET runtime installs live under the NATIVE Program Files
@@ -254,13 +263,14 @@ begin
   g_CoreVerifyOK := False;
   g_DriverOK := False;
   g_DotnetOK := False;
+  g_EnrollmentOK := False;
   g_Detail := '';
   Result := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  AppDir, CoreDir, BinDir, ToolsDir: String;
+  AppDir, CoreDir, BinDir, ToolsDir, LauncherExe: String;
   VerifyScript, DriverScript, ResFile: String;
   Bootstrapper: String;
   RC: Integer;
@@ -365,12 +375,32 @@ begin
         'Detail: ' + Msg,
         mbError, MB_OK, IDOK);
     end;
-  end;
+    end;
 
-  Log('postinstall summary: core_verify=' + B2S(g_CoreVerifyOK) +
-      ' dotnet_ok=' + B2S(g_DotnetOK) +
-      ' netfilter2_ok=' + B2S(g_DriverOK));
-end;
+    { ---- 4. Baseline trust authority enrollment (unelevated) ---- }
+    LauncherExe := AppDir + '\NekoLauncher.exe';
+    if not FileExists(LauncherExe) then begin
+      AddDetail('internal error: NekoLauncher.exe missing');
+    end else begin
+      Ok := Exec(LauncherExe, '--enroll-baseline', AppDir, HideCmd, ewWaitUntilTerminated, RC);
+      g_EnrollmentOK := Ok and (RC = 0);
+      Log('baseline enrollment exit code: ' + IntToStr(RC));
+      if not g_EnrollmentOK then begin
+        AddDetail('Baseline enrollment FAILED (exit ' + IntToStr(RC) + ')');
+        SuppressibleMsgBox(
+          'Setup could not enroll the baseline trust authority.'#13#10#13#10 +
+          'The installation must not be used. Please run the uninstaller and ' +
+          'contact the operator.'#13#10#13#10 +
+          'Enrollment exit code: ' + IntToStr(RC),
+          mbCriticalError, MB_OK, IDOK);
+      end;
+    end;
+
+    Log('postinstall summary: core_verify=' + B2S(g_CoreVerifyOK) +
+        ' dotnet_ok=' + B2S(g_DotnetOK) +
+        ' netfilter2_ok=' + B2S(g_DriverOK) +
+        ' enrollment_ok=' + B2S(g_EnrollmentOK));
+    end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin

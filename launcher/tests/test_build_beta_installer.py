@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -10,6 +11,10 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from neko_launcher.updater.canonical_json import canonical_json_dumps
+from tests.software_update_helpers import signed_envelope, valid_v2_release_document
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +23,15 @@ HEX_A = "a" * 64
 HEX_B = "b" * 64
 CORE_AUTHORITY = "operator-approved-core-authority"
 
+TEST_AUTH_KEY_ID = "neko-update-profile-v512-1"
+TEST_AUTH_PRIV = Ed25519PrivateKey.from_private_bytes(b"a" * 32)
+TEST_AUTH_PUB = TEST_AUTH_PRIV.public_key().public_bytes_raw()
+TEST_AUTH_REGISTRY = {TEST_AUTH_KEY_ID: TEST_AUTH_PUB}
+
+TEST_REL_KEY_ID = "test-rel-key-1"
+TEST_REL_PRIV = Ed25519PrivateKey.from_private_bytes(b"r" * 32)
+TEST_REL_PUB = TEST_REL_PRIV.public_key().public_bytes_raw()
+
 
 def _load_builder() -> ModuleType:
     spec = importlib.util.spec_from_file_location("phase3_build_beta_installer", SCRIPT_PATH)
@@ -25,6 +39,8 @@ def _load_builder() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        module.PROFILE_AUTHORITY_PUBLIC_KEYS = dict(TEST_AUTH_REGISTRY)
     return module
 
 
@@ -36,7 +52,15 @@ def _candidate_api(module: ModuleType) -> tuple[Any, Any]:
     return parse_args, build_candidate
 
 
-def _argv(stage: Path, launcher_hash: str = HEX_A, updater_hash: str = HEX_B) -> list[str]:
+def _argv(
+    stage: Path,
+    launcher_hash: str = HEX_A,
+    updater_hash: str = HEX_B,
+    baseline_envelope: Path | str | None = None,
+    trust_profile: Path | str | None = None,
+) -> list[str]:
+    env_path = str(baseline_envelope if baseline_envelope is not None else stage / "baseline_envelope.json")
+    prof_path = str(trust_profile if trust_profile is not None else stage / "trust_profile.json")
     return [
         "--candidate-dir",
         str(stage),
@@ -48,6 +72,10 @@ def _argv(stage: Path, launcher_hash: str = HEX_A, updater_hash: str = HEX_B) ->
         CORE_AUTHORITY,
         "--release-version",
         "5.1.3",
+        "--baseline-envelope",
+        env_path,
+        "--trust-profile",
+        prof_path,
     ]
 
 
@@ -62,12 +90,47 @@ def _stage(tmp_path: Path) -> Path:
     (payload / "NekoUpdater.exe").write_bytes(b"updater")
     (core / "bin" / "v2ray-sn.exe").write_bytes(b"v2ray")
     (core / "runtime-settings.nkps").write_bytes(b"sealed")
-    (core / "core-manifest.json").write_text(
+    core_manifest_bytes = (
         '{"source_commit": "' + CORE_AUTHORITY + '", "files": {}, '
-        '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}',
-        encoding="utf-8",
-    )
+        '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
+    ).encode("utf-8")
+    (core / "core-manifest.json").write_bytes(core_manifest_bytes)
     (prereqs / "windowsdesktop-runtime-6.0.36-win-x64.exe").write_bytes(b"dotnet")
+
+    # Create default valid envelope & trust profile in stage dir
+    stage.mkdir(parents=True, exist_ok=True)
+    profile_payload = {
+        "channel": "stable",
+        "owner": "Valeneko-pranmong",
+        "profile_id": "proof-v512",
+        "release_keys": [{"key_id": TEST_REL_KEY_ID, "public_key_hex": TEST_REL_PUB.hex()}],
+        "repository": "Neko-Family-Proxy-Updates-Proof",
+    }
+    payload_bytes = canonical_json_dumps(profile_payload)
+    sig_bytes = TEST_AUTH_PRIV.sign(payload_bytes)
+    profile_envelope = {
+        "key_id": TEST_AUTH_KEY_ID,
+        "payload": profile_payload,
+        "schema_version": 1,
+        "signature_b64": base64.b64encode(sig_bytes).decode("ascii"),
+    }
+    (stage / "trust_profile.json").write_bytes(canonical_json_dumps(profile_envelope) + b"\n")
+
+    doc = valid_v2_release_document(
+        sequence=1,
+        release_id="rel-0001",
+        channel="stable",
+        launcher_sha=_digest(b"launcher"),
+        launcher_size=len(b"launcher"),
+        updater_sha=_digest(b"updater"),
+        updater_size=len(b"updater"),
+        core_installed_sha=_digest(core_manifest_bytes),
+        core_sha=_digest(b"core-zip"),
+        core_size=1024,
+    )
+    env_dict = signed_envelope(doc, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
+    (stage / "baseline_envelope.json").write_bytes(canonical_json_dumps(env_dict) + b"\n")
+
     return stage
 
 
@@ -91,6 +154,8 @@ def test_candidate_authorities_are_explicit_and_canonical() -> None:
         "--launcher-sha256",
         "--updater-sha256",
         "--core-authority",
+        "--baseline-envelope",
+        "--trust-profile",
     )
     for omitted in required_options:
         argv = _argv(Path("candidate"))
@@ -236,6 +301,21 @@ def test_static_beta_iss_inspection() -> None:
     assert "ต้องติดตั้ง Microsoft .NET Desktop Runtime" not in iss_text, "must not instruct manual install"
     assert "Please run this same Setup again and allow the required Windows UAC prompt" in iss_text, "must instruct rerunning setup"
     assert "หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล" in iss_text, "must instruct contacting operator on failure"
+
+
+def test_beta_iss_baseline_enrollment_contract() -> None:
+    iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    assert r'{#PayloadDir}\trust\update-profile-v1.json' in iss_text and r'{app}\trust' in iss_text, (
+        "beta.iss must install exact trust/update-profile-v1.json to {app}/trust"
+    )
+    assert r'{#PayloadDir}\baseline\release-v2.json' in iss_text and r'{app}\baseline' in iss_text, (
+        "beta.iss must install exact baseline/release-v2.json to {app}/baseline"
+    )
+    assert "--enroll-baseline" in iss_text, "beta.iss must invoke --enroll-baseline"
+    assert "g_EnrollmentOK" in iss_text, "beta.iss must track enrollment outcome"
+    assert "g_EnrollmentOK" in iss_text.split("function LaunchAllowed")[1].split("end;")[0], (
+        "LaunchAllowed must require g_EnrollmentOK to suppress normal launch on nonzero enrollment"
+    )
 
 
 def test_verify_core_install_no_stale_fixed_authority_in_script() -> None:
@@ -426,18 +506,12 @@ def test_candidate_build_record_and_post_install_verification_agree(
     monkeypatch.setattr(module, "find_iscc", mock_find_iscc)
     monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
 
-    argv = [
-        "--candidate-dir",
-        str(stage),
-        "--launcher-sha256",
-        _digest(b"launcher"),
-        "--updater-sha256",
-        _digest(b"updater"),
-        "--core-authority",
-        candidate_authority,
-        "--release-version",
-        "5.1.3",
-    ]
+    prof_file, env_file, _ = _make_keys_and_files(stage)
+    (stage / "trust_profile.json").write_bytes(prof_file.read_bytes())
+    (stage / "baseline_envelope.json").write_bytes(env_file.read_bytes())
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater"))
+    argv[argv.index("--core-authority") + 1] = candidate_authority
 
     # Build candidate accepts the candidate authority
     ret = build_candidate(parse_args(argv))
@@ -506,3 +580,242 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
     assert record["release_version"] == "5.1.3"
     assert "installer_version" not in record
     assert record["installer_file"] == "NekoFamilyProxy-Setup.exe"
+
+
+def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path, Path, dict[str, bytes]]:
+    auth_priv = TEST_AUTH_PRIV
+    auth_pub = TEST_AUTH_PUB
+    auth_key_id = TEST_AUTH_KEY_ID
+
+    rel_priv = TEST_REL_PRIV
+    rel_pub = TEST_REL_PUB
+    rel_key_id = TEST_REL_KEY_ID
+
+    profile_payload = {
+        "channel": channel,
+        "owner": "Valeneko-pranmong",
+        "profile_id": "proof-v512",
+        "release_keys": [{"key_id": rel_key_id, "public_key_hex": rel_pub.hex()}],
+        "repository": "Neko-Family-Proxy-Updates-Proof",
+    }
+    payload_bytes = canonical_json_dumps(profile_payload)
+    sig_bytes = auth_priv.sign(payload_bytes)
+    profile_envelope = {
+        "key_id": auth_key_id,
+        "payload": profile_payload,
+        "schema_version": 1,
+        "signature_b64": base64.b64encode(sig_bytes).decode("ascii"),
+    }
+    profile_bytes = canonical_json_dumps(profile_envelope) + b"\n"
+    profile_path = tmp_path / "update-profile-v1.json"
+    profile_path.write_bytes(profile_bytes)
+
+    launcher_bytes = b"launcher"
+    updater_bytes = b"updater"
+    core_manifest_bytes = (
+        '{"source_commit": "' + CORE_AUTHORITY + '", "files": {}, '
+        '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
+    ).encode("utf-8")
+
+    doc = valid_v2_release_document(
+        sequence=1,
+        release_id="rel-0001",
+        channel=channel,
+        launcher_sha=_digest(launcher_bytes),
+        launcher_size=len(launcher_bytes),
+        updater_sha=_digest(updater_bytes),
+        updater_size=len(updater_bytes),
+        core_installed_sha=_digest(core_manifest_bytes),
+        core_sha=_digest(b"core-zip"),
+        core_size=1024,
+    )
+    env_dict = signed_envelope(doc, key_id=rel_key_id, private_key=rel_priv)
+    envelope_bytes = canonical_json_dumps(env_dict) + b"\n"
+    envelope_path = tmp_path / "release-v2.json"
+    envelope_path.write_bytes(envelope_bytes)
+
+    return profile_path, envelope_path, {auth_key_id: auth_pub}
+
+
+def test_builder_requires_signed_baseline_envelope(tmp_path: Path) -> None:
+    module = _load_builder()
+    parse_args, _ = _candidate_api(module)
+    stage = _stage(tmp_path)
+    argv = _argv(stage)
+    idx = argv.index("--baseline-envelope")
+    del argv[idx : idx + 2]
+    with pytest.raises(SystemExit):
+        parse_args(argv)
+
+
+def test_builder_requires_trust_profile(tmp_path: Path) -> None:
+    module = _load_builder()
+    parse_args, _ = _candidate_api(module)
+    stage = _stage(tmp_path)
+    argv = _argv(stage)
+    idx = argv.index("--trust-profile")
+    del argv[idx : idx + 2]
+    with pytest.raises(SystemExit):
+        parse_args(argv)
+
+
+def test_builder_stages_envelope_and_profile_byte_identical_and_records_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path)
+
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+
+    def mock_find_iscc() -> str:
+        return "mock_iscc.exe"
+
+    def mock_subprocess_run(args, **kwargs) -> Any:
+        if args and args[0] == "mock_iscc.exe":
+            out_dir = stage / "out"
+            out_dir.mkdir(exist_ok=True)
+            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", mock_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope",
+        str(envelope_path),
+        "--trust-profile",
+        str(profile_path),
+    ]
+
+    ret = build_candidate(parse_args(argv))
+    assert ret == 0
+
+    staged_envelope = stage / "payload" / "baseline" / "release-v2.json"
+    staged_profile = stage / "payload" / "trust" / "update-profile-v1.json"
+    assert staged_envelope.exists(), "baseline/release-v2.json must be staged"
+    assert staged_profile.exists(), "trust/update-profile-v1.json must be staged"
+
+    assert staged_envelope.read_bytes() == envelope_path.read_bytes(), "staged envelope must be byte-identical"
+    assert staged_profile.read_bytes() == profile_path.read_bytes(), "staged trust profile must be byte-identical"
+
+    record_path = stage / "out" / "build-record.json"
+    assert record_path.exists()
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+
+    assert record["embedded_envelope_sha256"] == _digest(envelope_path.read_bytes())
+    assert record["embedded_trust_profile_sha256"] == _digest(profile_path.read_bytes())
+    assert record["profile_id"] == "proof-v512"
+    assert "keyset_sha256" in record
+    assert len(record["keyset_sha256"]) == 64
+
+
+def test_builder_rejects_untrusted_profile_authority_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, _ = _make_keys_and_files(tmp_path)
+
+    other_priv = Ed25519PrivateKey.generate()
+    other_pub = other_priv.public_key().public_bytes_raw()
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", {"other-key": other_pub})
+
+    iscc_called = False
+
+    def forbidden_find_iscc() -> str:
+        nonlocal iscc_called
+        iscc_called = True
+        raise AssertionError("find_iscc reached on untrusted profile")
+
+    monkeypatch.setattr(module, "find_iscc", forbidden_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope",
+        str(envelope_path),
+        "--trust-profile",
+        str(profile_path),
+    ]
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called
+
+
+def test_builder_rejects_one_byte_tampered_trust_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path)
+
+    raw_prof = bytearray(profile_path.read_bytes())
+    raw_prof[len(raw_prof) // 2] ^= 0x01
+    profile_path.write_bytes(bytes(raw_prof))
+
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+
+    iscc_called = False
+
+    def forbidden_find_iscc() -> str:
+        nonlocal iscc_called
+        iscc_called = True
+        raise AssertionError("find_iscc reached on tampered profile")
+
+    monkeypatch.setattr(module, "find_iscc", forbidden_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope",
+        str(envelope_path),
+        "--trust-profile",
+        str(profile_path),
+    ]
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called
+
+
+def test_builder_rejects_one_byte_tampered_baseline_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path)
+
+    raw_env = bytearray(envelope_path.read_bytes())
+    raw_env[len(raw_env) // 2] ^= 0x01
+    envelope_path.write_bytes(bytes(raw_env))
+
+    if hasattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS"):
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+
+    iscc_called = False
+
+    def forbidden_find_iscc() -> str:
+        nonlocal iscc_called
+        iscc_called = True
+        raise AssertionError("find_iscc reached on tampered envelope")
+
+    monkeypatch.setattr(module, "find_iscc", forbidden_find_iscc)
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
+
+    argv = _argv(stage, _digest(b"launcher"), _digest(b"updater")) + [
+        "--baseline-envelope",
+        str(envelope_path),
+        "--trust-profile",
+        str(profile_path),
+    ]
+    with pytest.raises((getattr(module, "PrebuildGateError", ValueError), ValueError)):
+        build_candidate(parse_args(argv))
+    assert not iscc_called

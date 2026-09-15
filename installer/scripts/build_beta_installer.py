@@ -22,8 +22,18 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 REPO = str(Path(__file__).resolve().parents[2])
+LAUNCHER_SRC = os.path.join(REPO, "launcher", "src")
+if LAUNCHER_SRC not in sys.path:
+    sys.path.insert(0, LAUNCHER_SRC)
+
+from neko_launcher.updater.canonical_json import canonical_json_loads  # noqa: E402
+from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2  # noqa: E402
+from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS  # noqa: E402
+from neko_launcher.updater.trust_profile import verify_update_trust_profile  # noqa: E402
+
 STAGE = r"E:\Github\NekoBetaInstaller"
 ISS_PATH = os.path.join(REPO, "installer", "beta.iss")
 SETUP_NAME = "NekoFamilyProxy-Setup.exe"
@@ -88,6 +98,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--updater-sha256", required=True, type=canonical_sha256)
     parser.add_argument("--core-authority", required=True)
     parser.add_argument("--release-version", required=True)
+    parser.add_argument("--baseline-envelope", required=True)
+    parser.add_argument("--trust-profile", required=True)
     args = parser.parse_args(argv)
     if not re.match(r"^5\.1\.\d+$", args.release_version):
         parser.error("--release-version must be stable 5.1.x format (e.g., 5.1.3)")
@@ -157,6 +169,77 @@ def build_candidate(args: argparse.Namespace) -> int:
     if bad:
         fail(f"{len(bad)} core files bad; first: {bad[0]}")
     print(f"GATE core-manifest=PASS ({len(manifest['files'])} files)")
+
+    # ---- gate: trust profile & baseline envelope authority & staging --------
+    if not os.path.isfile(args.trust_profile):
+        fail(f"missing trust profile: {args.trust_profile}")
+    if not os.path.isfile(args.baseline_envelope):
+        fail(f"missing baseline envelope: {args.baseline_envelope}")
+
+    with open(args.trust_profile, "rb") as fh:
+        raw_trust_profile = fh.read()
+    with open(args.baseline_envelope, "rb") as fh:
+        raw_baseline_envelope = fh.read()
+
+    try:
+        verified_profile = verify_update_trust_profile(
+            raw_trust_profile,
+            profile_authority_public_keys=PROFILE_AUTHORITY_PUBLIC_KEYS,
+        )
+    except Exception as exc:
+        fail(f"trust profile verification failed: {exc}")
+
+    try:
+        envelope_doc = canonical_json_loads(raw_baseline_envelope.strip())
+    except Exception as exc:
+        fail(f"baseline envelope JSON parsing failed: {exc}")
+
+    try:
+        release_set, _ = verify_release_envelope_v2(
+            envelope_doc,
+            dict(verified_profile.release_public_keys),
+        )
+    except Exception as exc:
+        fail(f"baseline envelope verification failed: {exc}")
+
+    if release_set.channel != verified_profile.channel:
+        fail(
+            f"baseline envelope channel mismatch: {release_set.channel} != {verified_profile.channel}"
+        )
+
+    # Stage exact bytes at baseline\release-v2.json and trust\update-profile-v1.json
+    baseline_dir = os.path.join(payload, "baseline")
+    trust_dir = os.path.join(payload, "trust")
+    os.makedirs(baseline_dir, exist_ok=True)
+    os.makedirs(trust_dir, exist_ok=True)
+
+    staged_envelope_path = os.path.join(baseline_dir, "release-v2.json")
+    staged_profile_path = os.path.join(trust_dir, "update-profile-v1.json")
+
+    with open(staged_envelope_path, "wb") as fh:
+        fh.write(raw_baseline_envelope)
+    with open(staged_profile_path, "wb") as fh:
+        fh.write(raw_trust_profile)
+
+    # Hash after copy and require input/staged byte equality
+    input_envelope_sha256 = hashlib.sha256(raw_baseline_envelope).hexdigest()
+    staged_envelope_sha256 = sha256_file(staged_envelope_path)
+    if staged_envelope_sha256 != input_envelope_sha256:
+        fail("staged baseline envelope hash mismatch after copy")
+    with open(staged_envelope_path, "rb") as fh:
+        if fh.read() != raw_baseline_envelope:
+            fail("staged baseline envelope bytes mismatch after copy")
+
+    input_profile_sha256 = hashlib.sha256(raw_trust_profile).hexdigest()
+    staged_profile_sha256 = sha256_file(staged_profile_path)
+    if staged_profile_sha256 != input_profile_sha256:
+        fail("staged trust profile hash mismatch after copy")
+    with open(staged_profile_path, "rb") as fh:
+        if fh.read() != raw_trust_profile:
+            fail("staged trust profile bytes mismatch after copy")
+
+    print("GATE trust-profile=PASS")
+    print("GATE baseline-envelope=PASS")
 
     # Resolve the compiler only after all operator-supplied candidate authorities
     # have passed. Payload gates below still run before ISCC is invoked.
@@ -287,6 +370,10 @@ def build_candidate(args: argparse.Namespace) -> int:
             "version": DOTNET_RUNTIME_VERSION_PIN,
             "sha256": DOTNET_RUNTIME_SHA256_PIN,
         },
+        "embedded_envelope_sha256": staged_envelope_sha256,
+        "embedded_trust_profile_sha256": staged_profile_sha256,
+        "profile_id": verified_profile.profile_id,
+        "keyset_sha256": verified_profile.keyset_sha256,
     }
     record_path = os.path.join(out_dir, "build-record.json")
     with open(record_path, "w", encoding="utf-8") as fh:

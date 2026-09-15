@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 
 from neko_launcher.bootstrap.app_factory import build_window
+from neko_launcher.bootstrap.baseline_enrollment import (
+    enroll_baseline_from_signed_envelope,
+)
 from neko_launcher.bootstrap.pending_update_bootstrap import (
     PendingUpdateBootstrapResult,
     run_pending_update_bootstrap,
@@ -16,9 +19,35 @@ from neko_launcher.bootstrap.single_instance import (
     show_already_running_message,
 )
 from neko_launcher.updater.early_dispatch import maybe_dispatch_updater_entry
+from neko_launcher.updater import root_validator
+from neko_launcher.updater.trust_profile import load_installed_update_trust_profile
+
+
+def dispatch_baseline_enrollment(argv: list[str]) -> int:
+    """Handle internal --enroll-baseline command mode; returns process exit code."""
+    if len(argv) != 2 or argv[1] != "--enroll-baseline":
+        return 2
+
+    try:
+        install_root = root_validator.get_expected_install_root()
+        trust_profile = load_installed_update_trust_profile(install_root)
+        envelope_path = install_root / "baseline" / "release-v2.json"
+        result = enroll_baseline_from_signed_envelope(
+            install_root=install_root,
+            envelope_path=envelope_path,
+            trust_profile=trust_profile,
+        )
+        if result.enrolled:
+            return 0
+        return 1
+    except Exception:
+        return 1
 
 
 def main() -> None:
+    if any(arg == "--enroll-baseline" or arg.startswith("--enroll-baseline") for arg in sys.argv[1:]):
+        sys.exit(dispatch_baseline_enrollment(sys.argv))
+
     if maybe_dispatch_updater_entry(sys.argv):
         return
 
