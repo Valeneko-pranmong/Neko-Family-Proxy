@@ -27,16 +27,17 @@ LAST_VERIFIED:                  2026-09-12 +07:00 (Asia/Bangkok)
 
 ## 1. What is the 5.1.2 Architecture doing?
 
-The Neko Family 5.1.2 feature branch implements the **Deferred Update Lifecycle** and **Two-Repo Role Inversion**, designed to restore automated in-app updates upon post-merge release:
+The Neko Family 5.1.2 feature branch implements the **Deferred Update Lifecycle** and the **Production Updates & Canonical Main Repository Topology** (Revision 3.4), designed to restore automated in-app updates upon post-merge release:
 
-### 1.1 Two-Repository Role Inversion
-- **Machine-Update Channel**: The original repository `Valeneko-pranmong/Neko-Family-Proxy` is planned as the permanent machine-update channel. This ensures dormant and installed legacy clients (which discover updates via `Valeneko-pranmong/Neko-Family-Proxy/releases/latest`) continue to find valid signed releases.
+### 1.1 Repository Roles & Distribution Topology
+- **Machine-Update Channel**: The dedicated updates repository `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the permanent machine-update channel.
 - **Machine Assets**: Every machine release publishes four canonical signed assets:
   1. `release-v2.json` (canonical Ed25519-signed manifest)
   2. `NekoLauncher.exe`
   3. `NekoUpdater.exe`
   4. `NekoProxyCore.zip`
-- **Human-Facing Installer Surface**: Planned to be separated into a dedicated installer repository (e.g. `Valeneko-pranmong/Neko-Family-Proxy-Installer`). It is a distribution surface for user setup executables, not a machine trust root. (Neither the separate repository nor machine update endpoints exist publicly yet; public release remains v5.1.0 installer-only.)
+  *Note: Normal users must not be linked to the machine repository as a download surface.*
+- **Human-Facing Installer Surface**: The canonical main repository `Valeneko-pranmong/Neko-Family-Proxy` serves as the official human release surface. Standalone installer executables (`NekoFamilyProxy-Installer.exe`) are distributed directly from main repository releases (`Valeneko-pranmong/Neko-Family-Proxy/releases`). Any historical separate installer repository is retired.
 
 ### 1.2 Bounded Bootstrap Authority Override
 - Public `v5.1.0` was released installer-only and lacks public machine assets (`release-v2.json`, `NekoProxyCore.zip`, etc.).

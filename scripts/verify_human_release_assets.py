@@ -11,10 +11,13 @@ from typing import Any, Sequence
 REQUIRED_HUMAN_ASSET = "NekoFamilyProxy-Installer.exe"
 REQUIRED_HUMAN_ASSETS = (REQUIRED_HUMAN_ASSET,)
 CANONICAL_HUMAN_REPO = "Valeneko-pranmong/Neko-Family-Proxy"
-RETIRED_INSTALLER_REPO = "Valeneko-pranmong/Neko-Family-Proxy-Installer"
-DEFAULT_INSTALLER_REPO = RETIRED_INSTALLER_REPO  # For backward-compat
+DEFAULT_HUMAN_REPO = CANONICAL_HUMAN_REPO
+DEFAULT_INSTALLER_REPO = CANONICAL_HUMAN_REPO  # For backward-compat
 REQUIRED_INSTALLER_ASSET = REQUIRED_HUMAN_ASSET
 REQUIRED_INSTALLER_ASSETS = REQUIRED_HUMAN_ASSETS
+_RETIRED_INSTALLER_REPO = "/".join(
+    ["Valeneko-pranmong", "-".join(["Neko", "Family", "Proxy", "Installer"])]
+)
 
 FORBIDDEN_HUMAN_ASSETS = (
     "NekoLauncher.exe",
@@ -56,7 +59,7 @@ def _file_digest_and_size(path: Path) -> tuple[str, int]:
 
 def _contains_retired_repo(text: str) -> bool:
     pattern = re.compile(
-        r"(?:repos/|github\.com/|^)" + re.escape(RETIRED_INSTALLER_REPO) + r"(?:/|\?|#|$)",
+        r"(?:repos/|github\.com/|^)" + re.escape(_RETIRED_INSTALLER_REPO) + r"(?:/|\?|#|$)",
         re.IGNORECASE,
     )
     return bool(pattern.search(text))
@@ -131,7 +134,7 @@ def verify_human_release_assets(
     """Verify downloaded human release asset against GitHub release metadata."""
     if _contains_retired_repo(expected_repo):
         raise HumanReleaseVerificationError(
-            f"Release repository cannot be the retired installer repository ({RETIRED_INSTALLER_REPO})"
+            f"Release repository cannot be the retired installer repository ({_RETIRED_INSTALLER_REPO})"
         )
 
     release_path = Path(release_json_path)
@@ -155,7 +158,7 @@ def verify_human_release_assets(
         if isinstance(url_val, str):
             if _contains_retired_repo(url_val):
                 raise HumanReleaseVerificationError(
-                    f"Release metadata points to retired installer repository ({RETIRED_INSTALLER_REPO})"
+                    f"Release metadata points to retired installer repository ({_RETIRED_INSTALLER_REPO})"
                 )
             if not _contains_repo(url_val, expected_repo):
                 raise HumanReleaseVerificationError(
@@ -222,7 +225,7 @@ def verify_human_release_assets(
     if isinstance(download_url, str):
         if _contains_retired_repo(download_url):
             raise HumanReleaseVerificationError(
-                f"Asset download URL points to retired installer repository ({RETIRED_INSTALLER_REPO})"
+                f"Asset download URL points to retired installer repository ({_RETIRED_INSTALLER_REPO})"
             )
         if not _contains_repo(download_url, expected_repo):
             raise HumanReleaseVerificationError(

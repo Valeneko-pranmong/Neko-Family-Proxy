@@ -27,7 +27,7 @@ REQUIRED_MACHINE_ASSETS: tuple[str, ...] = (
     "NekoProxyCore.zip",
 )
 REQUIRED_STAGE_ASSETS: tuple[str, ...] = REQUIRED_MACHINE_ASSETS
-DEFAULT_INSTALLER_REPO = "Valeneko-pranmong/Neko-Family-Proxy-Installer"
+DEFAULT_INSTALLER_REPO = CANONICAL_REPO
 
 
 def build_machine_release_notes(
@@ -40,7 +40,7 @@ def build_machine_release_notes(
         f"## Neko Family Proxy {version}",
         "",
         "This release is the machine-update channel for existing installations.",
-        "For new installations or manual setup, download the installer from the dedicated installer repository:",
+        "For new installations or manual setup, download the installer from the official releases:",
         f"https://github.com/{installer_repo}/releases",
     ]
     if details:

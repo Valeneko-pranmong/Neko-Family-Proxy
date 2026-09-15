@@ -5,9 +5,9 @@ Updated: 2026-09-12 (Neko Family 5.1.2 Deferred Update Architecture)
 ## Current state
 - Active integration branch: `feature/neko-family-5.1.2`
 - Base commit: `ed82b885138015e194bbf45db61a7d6899640156` (`origin/main`)
-- Distribution Architecture: Two-Repo Role Inversion accepted under Owner standing technical delegation for planned 5.1.2 release.
-  - `Valeneko-pranmong/Neko-Family-Proxy` is planned as the permanent machine-update channel for dormant and active clients.
-  - Human installer surface is planned to be separated into a dedicated installer repository (e.g. `Valeneko-pranmong/Neko-Family-Proxy-Installer`).
+- Distribution Architecture: Production Updates & Canonical Main Separation under Revision 3.4.
+  - `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the production machine-update channel for machine assets.
+  - `Valeneko-pranmong/Neko-Family-Proxy` serves as the official human release surface for installer downloads (`NekoFamilyProxy-Installer.exe`). Any historical separate installer repository is retired; normal users must not be linked to the machine repository as a download surface.
 - Deferred Update Lifecycle: Implemented and tested on `feature/neko-family-5.1.2`:
   - Background staging (`SoftwareUpdateStageService`) downloads changed components while sessions remain active.
   - Durable pending store (`PendingUpdateStore`) verifies signed envelopes and reconstructs trust offline.
@@ -23,7 +23,7 @@ Updated: 2026-09-12 (Neko Family 5.1.2 Deferred Update Architecture)
 ## User-facing readiness
 - Public production release remains `v5.1.0` (installer-only). In-app automatic updates are NOT yet available for production users; public v5.1.0 users continue to use manual installer setup until post-merge release gates are executed.
 - Deferred update lifecycle and Two-Repo Role Inversion are implemented and tested strictly on `feature/neko-family-5.1.2` and await R10 review, Main Source Acceptance, merge to `main`, and future release engineering gates before public availability.
-- No production backend or release mutation has occurred. The dedicated installer repository and public machine-update backend do not exist publicly yet.
+- No production backend or release mutation has occurred. The dedicated installer repository plan is retired, and public machine-update assets do not exist publicly yet.
 
 ## Next work
 1. Complete R10 independent final architecture/security/regression review (card `t_6d0a2950`).

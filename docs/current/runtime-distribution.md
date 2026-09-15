@@ -4,12 +4,12 @@
 
 `NekoProxyCore` is a separately licensed external runtime. It is never committed as source to this repository or embedded inside the `NekoLauncher.exe` binary.
 
-## Distribution Architecture (Two-Repo Role Inversion)
+## Distribution Architecture (Production Updates & Canonical Main Separation)
 
-Under the accepted Neko Family 5.1.2 architecture (implemented and tested on `feature/neko-family-5.1.2`, pending R10 review, Main Source Acceptance, merge to `main`, and subsequent release engineering gates), distribution responsibilities are separated into distinct channels:
+Under the Neko Family 5.1.2 architecture (Revision 3.4), distribution responsibilities are separated into distinct repository roles:
 
-1. **Machine-Update Channel (`Valeneko-pranmong/Neko-Family-Proxy`)**:
-   - Planned as the permanent automated update channel for existing and dormant clients upon release.
+1. **Machine-Update Channel (`Valeneko-pranmong/Neko-Family-Proxy-Updates`)**:
+   - Production automated machine update channel for existing client installations.
    - Releases on this channel publish the four required signed machine assets:
      - `release-v2.json` (canonical Ed25519-signed manifest authority)
      - `NekoLauncher.exe` (client launcher binary)
@@ -17,10 +17,12 @@ Under the accepted Neko Family 5.1.2 architecture (implemented and tested on `fe
      - `NekoProxyCore.zip` (frozen Core runtime bundle payload)
    - Machine updates stage `NekoProxyCore.zip` in the background into durable `UPDATE_PENDING` storage without interrupting active game or proxy sessions.
    - Handoff to `NekoUpdater.exe` occurs only during safe apply (explicit action, normal exit, or next launch).
+   - Normal users must not be linked to the machine repository as a download surface.
 
-2. **Human-Facing Installer Surface**:
-   - Planned to be separated from the machine trust root and relocated to a dedicated installer repository (e.g. `Valeneko-pranmong/Neko-Family-Proxy-Installer`). (Neither the dedicated installer repository nor public machine assets exist publicly yet; public release remains v5.1.0 installer-only.)
-   - Distributes standalone Setup executables (`NekoFamilyProxy-Setup.exe` / `NekoFamilyProxy-Installer.exe`) for initial customer installation.
+2. **Human-Facing Installer Surface (`Valeneko-pranmong/Neko-Family-Proxy`)**:
+   - The canonical main repository serves as the official human release and download surface.
+   - Any historical plan for a separate installer repository is retired; human installer releases land directly on the main repository (`Valeneko-pranmong/Neko-Family-Proxy/releases`).
+   - Distributes the standalone setup executable (`NekoFamilyProxy-Installer.exe`) for initial customer installation and manual upgrades.
    - Post-install Core verification (`verify-core-install.ps1`) is dynamically parameterized by the build-approved `--core-authority` passed at compile time, eliminating stale hardcoded commit constants.
 
 ## Controlled Delivery and Verification Contract

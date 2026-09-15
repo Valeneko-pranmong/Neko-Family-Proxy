@@ -7,13 +7,14 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 
 ## Architecture Evolution (Neko Family 5.1.2 Feature Branch Implementation)
 
-### 1. Two-Repository Role Inversion
-- **Machine-Update Channel**: `Valeneko-pranmong/Neko-Family-Proxy` (this repository) is planned as the permanent machine-update channel because legacy and dormant clients discover updates at `Valeneko-pranmong/Neko-Family-Proxy/releases/latest`. Releases on this channel publish four signed machine assets:
+### 1. Repository Roles & Distribution Topology (Revision 3.4)
+- **Machine-Update Channel**: `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the permanent production machine-update channel. Releases on this channel publish four signed machine assets:
   - `release-v2.json`
   - `NekoLauncher.exe`
   - `NekoUpdater.exe`
   - `NekoProxyCore.zip`
-- **Dedicated Installer Surface**: Standalone customer setup executables are planned to relocate to a separate installer repository (e.g. `Valeneko-pranmong/Neko-Family-Proxy-Installer`).
+  *Note: Normal users must not be linked to the machine repository as a download surface.*
+- **Human Installer Surface**: `Valeneko-pranmong/Neko-Family-Proxy` (this repository) serves as the official human release surface for standalone installer executables (`NekoFamilyProxy-Installer.exe`). Any historical separate installer repository is retired.
 
 ### 2. Deferred Update Lifecycle
 - **Every-Open Discovery**: Launcher checks for newer releases in the background on startup.
@@ -32,7 +33,7 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - Historical/Current Production Release: `v5.1.0` (Release ID `387113854`, commit `0b71f03ee4ed69176da2682fdd1cfb4e5cce971c`). Public v5.1.0 remains strictly installer-only.
 - Active Feature Branch: `feature/neko-family-5.1.2`
 - Base Commit: `ed82b885138015e194bbf45db61a7d6899640156` (`origin/main`)
-- Readiness & Production Scope: Implemented and tested on `feature/neko-family-5.1.2` and pending R10, Main Source Acceptance, merge to `main`, and future release engineering gates. In-app automatic updates are NOT yet available for production users, the architecture is not yet declared production-ready, and no production backend or release mutation has occurred. The dedicated installer repository and public machine assets do not exist publicly yet.
+- Readiness & Production Scope: Implemented and tested on `feature/neko-family-5.1.2` and pending R10, Main Source Acceptance, merge to `main`, and future release engineering gates. In-app automatic updates are NOT yet available for production users, the architecture is not yet declared production-ready, and no production backend or release mutation has occurred. The dedicated installer repository plan is retired, and public machine assets do not exist publicly yet.
 
 ## Related Projects
 - `E:\Github\NekoProxyCore` — low-level Core/driver/runtime used by the Launcher.
