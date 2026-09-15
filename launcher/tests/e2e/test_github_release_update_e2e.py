@@ -266,6 +266,100 @@ def _build_simulation_fixtures(
     return env, store, updater_bytes, routes
 
 
+def _build_proof_channel_routes(
+    *,
+    owner: str = "Valeneko-pranmong",
+    repo: str = "Neko-Family-Proxy-Updates-Proof",
+    tag: str = "v5.1.3-proof",
+    manifest_bytes: bytes,
+    launcher_bytes: bytes,
+    updater_bytes: bytes,
+    core_bytes: bytes,
+    cdn_prefix: str = "https://objects.githubusercontent.com/proof-test-assets/",
+) -> dict[str, Any]:
+    api_release = {
+        "id": 200,
+        "tag_name": tag,
+        "draft": False,
+        "prerelease": False,
+        "assets": [
+            {
+                "id": 201,
+                "name": RELEASE_MANIFEST_ASSET_NAME,
+                "size": len(manifest_bytes),
+                "browser_download_url": (
+                    f"https://github.com/{owner}/{repo}/releases/download/{tag}/{RELEASE_MANIFEST_ASSET_NAME}"
+                ),
+            },
+            {
+                "id": 202,
+                "name": LAUNCHER_ASSET_NAME,
+                "size": len(launcher_bytes),
+                "browser_download_url": (
+                    f"https://github.com/{owner}/{repo}/releases/download/{tag}/{LAUNCHER_ASSET_NAME}"
+                ),
+            },
+            {
+                "id": 203,
+                "name": UPDATER_ASSET_NAME,
+                "size": len(updater_bytes),
+                "browser_download_url": (
+                    f"https://github.com/{owner}/{repo}/releases/download/{tag}/{UPDATER_ASSET_NAME}"
+                ),
+            },
+            {
+                "id": 204,
+                "name": CORE_ASSET_NAME,
+                "size": len(core_bytes),
+                "browser_download_url": (
+                    f"https://github.com/{owner}/{repo}/releases/download/{tag}/{CORE_ASSET_NAME}"
+                ),
+            },
+        ],
+    }
+
+    latest_api = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    routes: dict[str, Any] = {
+        latest_api: _SimulatedHttpResponse(
+            json.dumps(api_release).encode("utf-8"),
+            status=200,
+        ),
+        f"https://github.com/{owner}/{repo}/releases/download/{tag}/{RELEASE_MANIFEST_ASSET_NAME}": _SimulatedHttpResponse(
+            status=302,
+            headers={"Location": cdn_prefix + RELEASE_MANIFEST_ASSET_NAME},
+        ),
+        cdn_prefix + RELEASE_MANIFEST_ASSET_NAME: _SimulatedHttpResponse(
+            manifest_bytes,
+            status=200,
+        ),
+        f"https://github.com/{owner}/{repo}/releases/download/{tag}/{LAUNCHER_ASSET_NAME}": _SimulatedHttpResponse(
+            status=302,
+            headers={"Location": cdn_prefix + LAUNCHER_ASSET_NAME},
+        ),
+        cdn_prefix + LAUNCHER_ASSET_NAME: _SimulatedHttpResponse(
+            launcher_bytes,
+            status=200,
+        ),
+        f"https://github.com/{owner}/{repo}/releases/download/{tag}/{UPDATER_ASSET_NAME}": _SimulatedHttpResponse(
+            status=302,
+            headers={"Location": cdn_prefix + UPDATER_ASSET_NAME},
+        ),
+        cdn_prefix + UPDATER_ASSET_NAME: _SimulatedHttpResponse(
+            updater_bytes,
+            status=200,
+        ),
+        f"https://github.com/{owner}/{repo}/releases/download/{tag}/{CORE_ASSET_NAME}": _SimulatedHttpResponse(
+            status=302,
+            headers={"Location": cdn_prefix + CORE_ASSET_NAME},
+        ),
+        cdn_prefix + CORE_ASSET_NAME: _SimulatedHttpResponse(
+            core_bytes,
+            status=200,
+        ),
+    }
+    return routes
+
+
 def _run_full_update_pipeline(
     root: Path,
     env: BalancedLiveUpdateEnv,

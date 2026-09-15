@@ -39,6 +39,7 @@ from neko_launcher.infrastructure.software_update_apply import (
 )
 from neko_launcher.infrastructure.software_update_authority_admission import (
     AuthorityAdmissionResult,
+    SoftwareUpdateAuthorityAdmissionService,
 )
 from neko_launcher.infrastructure.software_update_pending_store import (
     PendingUpdateStore,
@@ -124,22 +125,30 @@ def _setup_coordinator_pipeline(
     local_identity: LocalReleaseIdentity,
     *,
     admission_service: Any | None = None,
+    channel_profile: Any | None = None,
+    local_identity_provider: Any | None = None,
 ) -> tuple[
     SoftwareUpdateCoordinator,
     SoftwareUpdateStageService,
     PendingUpdateStore,
     GitHubReleaseResolver,
 ]:
-    gw = GitHubLatestReleaseGateway()
+    gw = GitHubLatestReleaseGateway(channel_profile=channel_profile)
     gw._opener = opener
-    mdl = GitHubManifestDownloader(_opener=opener)
+    mdl = GitHubManifestDownloader(
+        _opener=opener,
+        channel_profile=channel_profile,
+    )
     resolver = GitHubReleaseResolver(
         release_gateway=gw,
         manifest_downloader=mdl,
         key_registry=env.keys,
         install_root=root,
     )
-    adl = GitHubAssetDownloader(_opener=opener)
+    adl = GitHubAssetDownloader(
+        _opener=opener,
+        channel_profile=channel_profile,
+    )
 
     pending_store = PendingUpdateStore(
         root_dir=root,
@@ -152,18 +161,65 @@ def _setup_coordinator_pipeline(
     )
     local_box = [local_identity]
     adm_service = admission_service or FakeAdmissionService(local_box, env.keys)
+    id_provider = local_identity_provider or (lambda: local_box[0])
     check_service = UpdateCheckService(
         release_gateway=resolver,
-        local_identity_provider=lambda: local_box[0],
+        local_identity_provider=id_provider,
     )
     coordinator = SoftwareUpdateCoordinator(
         check_service=check_service,
         stage_service=stage_service,
         pending_store=pending_store,
-        local_identity_provider=lambda: local_box[0],
+        local_identity_provider=id_provider,
         admission_service=adm_service,
     )
     return coordinator, stage_service, pending_store, resolver
+
+
+def _create_admission_runner(
+    root: Path,
+    keys: dict[str, bytes],
+    store: Any,
+) -> tuple[
+    SoftwareUpdateAuthorityAdmissionService,
+    list[ThreadHelperProcess],
+    list[int],
+    list[FramedIpcChannel],
+]:
+    created_channels: list[FramedIpcChannel] = []
+    helper_exit_codes: list[int] = []
+    proc_refs: list[ThreadHelperProcess] = []
+
+    def spawner(cmd: Any, **kwargs: Any) -> ThreadHelperProcess:
+        del cmd, kwargs
+        r1, w1 = os.pipe()
+        r2, w2 = os.pipe()
+        l_chan = FramedIpcChannel(read_handle=r2, write_handle=w1)
+        u_chan = FramedIpcChannel(read_handle=r1, write_handle=w2)
+        created_channels.append(l_chan)
+
+        def run_h() -> None:
+            rc = run_session(
+                root,
+                keys,
+                channel=u_chan,
+                slot_store=store,
+            )
+            helper_exit_codes.append(rc)
+            proc.exit_code = rc
+
+        t = threading.Thread(target=run_h, daemon=True)
+        t.start()
+        proc = ThreadHelperProcess(t, l_chan, u_chan)
+        proc_refs.append(proc)
+        return proc
+
+    service = SoftwareUpdateAuthorityAdmissionService(
+        root_dir=root,
+        spawner=spawner,
+        channel_factory=lambda: created_channels[-1],
+    )
+    return service, proc_refs, helper_exit_codes, created_channels
 
 
 def _create_helper_runner(
