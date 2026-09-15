@@ -780,12 +780,15 @@ def test_draft_readback_rejects_invalid_asset_id(tmp_path: Path) -> None:
         )
 
 
-def test_machine_release_notes_point_to_installer_repository() -> None:
+def test_machine_release_notes_point_to_canonical_human_repository() -> None:
     module = load_module()
     notes = module.build_machine_release_notes("v5.1.2")
-    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in notes
+    assert "Valeneko-pranmong/Neko-Family-Proxy" in notes
+    assert "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases" in notes
+    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" not in notes
     assert "v5.1.2" in notes
     assert "machine-update channel" in notes
+    assert "download the installer from the official releases:" in notes
 
 
 def test_build_release_payload_has_machine_notes() -> None:
@@ -795,7 +798,11 @@ def test_build_release_payload_has_machine_notes() -> None:
     assert payload["target_commitish"] == "sha_123"
     assert not payload["draft"]
     assert "body" in payload
-    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" in payload["body"]
+    assert "Valeneko-pranmong/Neko-Family-Proxy" in payload["body"]
+    assert "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases" in payload["body"]
+    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" not in payload["body"]
+    assert "machine-update channel" in payload["body"]
+    assert "download the installer from the official releases:" in payload["body"]
 
 
 def test_machine_publisher_targets_only_updates_repository() -> None:
