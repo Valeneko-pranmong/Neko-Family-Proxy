@@ -1016,12 +1016,12 @@ def test_internal_failure_diagnostics_do_not_clear_existing_pending() -> None:
 def test_startup_check_never_calls_prepare_automatically() -> None:
     prepare_calls = 0
 
-    def fake_prepare() -> Any:
+    def fake_prepare(*_args: Any, **_kwargs: Any) -> Any:
         nonlocal prepare_calls
         prepare_calls += 1
         return None
 
-    apply_service = SimpleNamespace(prepare=fake_prepare)
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare, prepare=fake_prepare)
     check_service = CachedUpdateService(make_result(state=UpdateState.AVAILABLE))
     window, root, _update_executor = build_window(
         check_service,
@@ -1040,12 +1040,12 @@ def test_manual_apply_click_submits_single_prepare_and_failed_prepare_keeps_laun
     secret = "secret-manifest-grant-token-leak"
     prepare_calls = 0
 
-    def failing_prepare() -> Any:
+    def failing_prepare(*_args: Any, **_kwargs: Any) -> Any:
         nonlocal prepare_calls
         prepare_calls += 1
         raise RuntimeError(secret)
 
-    apply_service = SimpleNamespace(prepare=failing_prepare)
+    apply_service = SimpleNamespace(prepare_pending=failing_prepare, prepare=failing_prepare)
     window, root, update_executor = build_window(None, apply_service=apply_service)
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
     window._last_lifecycle_snapshot = make_snapshot(pending=make_pending())
@@ -1085,12 +1085,12 @@ def test_closing_during_update_prepare_aborts_prepared_helper() -> None:
     prepared = FakePrepared()
     prepare_calls = 0
 
-    def fake_prepare() -> Any:
+    def fake_prepare(*_args: Any, **_kwargs: Any) -> Any:
         nonlocal prepare_calls
         prepare_calls += 1
         return prepared
 
-    apply_service = SimpleNamespace(prepare=fake_prepare)
+    apply_service = SimpleNamespace(prepare_pending=fake_prepare, prepare=fake_prepare)
     window, root, _update_executor = build_window(None, apply_service=apply_service)
     deferred_executor = DeferredExecutor()
     window._update_executor = deferred_executor  # type: ignore[assignment]
@@ -1131,7 +1131,9 @@ def test_successful_prepared_update_calls_perform_close_before_release_without_c
             call_order.append("prepared.release")
 
     prepared = FakePrepared()
-    apply_service = SimpleNamespace(prepare=lambda: prepared)
+    apply_service = SimpleNamespace(
+        prepare_pending=lambda p: prepared, prepare=lambda: prepared
+    )
     window, root, _update_executor = build_window(None, apply_service=apply_service)
     window._last_update_result = make_result(state=UpdateState.AVAILABLE)
     window._last_lifecycle_snapshot = make_snapshot(pending=make_pending())

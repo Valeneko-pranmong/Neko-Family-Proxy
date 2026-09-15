@@ -13,7 +13,10 @@ from neko_launcher.application.software_update_coordinator import (
     SoftwareUpdateCoordinator,
     UpdateLifecycleSnapshot,
 )
-from neko_launcher.application.software_update_models import LocalReleaseIdentity
+from neko_launcher.application.software_update_models import (
+    AuthenticatedReleaseBinding,
+    LocalReleaseIdentity,
+)
 from neko_launcher.application.software_update_pending import UpdateLifecycleState
 from neko_launcher.application.software_update_service import UpdateCheckService
 from neko_launcher.bootstrap.pending_update_bootstrap import (
@@ -34,6 +37,9 @@ from neko_launcher.infrastructure.github_release_binding import (
 from neko_launcher.infrastructure.software_update_apply import (
     SoftwareUpdateApplyService,
 )
+from neko_launcher.infrastructure.software_update_authority_admission import (
+    AuthorityAdmissionResult,
+)
 from neko_launcher.infrastructure.software_update_pending_store import (
     PendingUpdateStore,
 )
@@ -42,8 +48,10 @@ from neko_launcher.infrastructure.software_update_stage import (
 )
 from neko_launcher.updater.activation import activate_verified_generation
 from neko_launcher.updater.binary_frame import SlotFrame, pack_slot_frame
+from neko_launcher.updater.canonical_json import canonical_json_loads
 from neko_launcher.updater.ipc_channel import FramedIpcChannel
 from neko_launcher.updater.main import run_session
+from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
 from neko_launcher.updater.probation_runner import SelfTestResult
 from neko_launcher.updater.recovery_engine import RecoveryEngine
 from neko_launcher.updater.state_models import deserialize_state, serialize_state
@@ -68,12 +76,54 @@ class ReusableFakeTransportOpener(FakeTransportOpener):
         return res
 
 
+class FakeAdmissionService:
+    def __init__(
+        self,
+        local_box: list[LocalReleaseIdentity],
+        keys: dict[str, bytes],
+    ) -> None:
+        self.local_box = local_box
+        self.keys = keys
+        self.admit_calls: list[bytes] = []
+
+    def admit(self, envelope_bytes: bytes) -> AuthorityAdmissionResult:
+        self.admit_calls.append(envelope_bytes)
+        doc = canonical_json_loads(envelope_bytes)
+        rel_set, payload_sha = verify_release_envelope_v2(doc, self.keys)
+        binding = AuthenticatedReleaseBinding(
+            release_sequence=rel_set.release_sequence,
+            release_id=rel_set.release_id,
+            payload_sha256=payload_sha,
+        )
+        cur = self.local_box[0]
+        self.local_box[0] = LocalReleaseIdentity(
+            committed=cur.committed,
+            high_water=binding,
+            observed=binding,
+            failed=cur.failed,
+            launcher_version=cur.launcher_version,
+            launcher_installed_identity_sha256=cur.launcher_installed_identity_sha256,
+            updater_version=cur.updater_version,
+            updater_installed_identity_sha256=cur.updater_installed_identity_sha256,
+            core_version=cur.core_version,
+            core_installed_identity_sha256=cur.core_installed_identity_sha256,
+        )
+        return AuthorityAdmissionResult(
+            accepted=True,
+            binding=binding,
+            changed=True,
+            error=None,
+        )
+
+
 def _setup_coordinator_pipeline(
     root: Path,
     env: Any,
     store: Any,
     opener: FakeTransportOpener,
     local_identity: LocalReleaseIdentity,
+    *,
+    admission_service: Any | None = None,
 ) -> tuple[
     SoftwareUpdateCoordinator,
     SoftwareUpdateStageService,
@@ -100,15 +150,18 @@ def _setup_coordinator_pipeline(
         pending_store=pending_store,
         asset_downloader=adl,
     )
+    local_box = [local_identity]
+    adm_service = admission_service or FakeAdmissionService(local_box, env.keys)
     check_service = UpdateCheckService(
         release_gateway=resolver,
-        local_identity_provider=lambda: local_identity,
+        local_identity_provider=lambda: local_box[0],
     )
     coordinator = SoftwareUpdateCoordinator(
         check_service=check_service,
         stage_service=stage_service,
         pending_store=pending_store,
-        local_identity_provider=lambda: local_identity,
+        local_identity_provider=lambda: local_box[0],
+        admission_service=adm_service,
     )
     return coordinator, stage_service, pending_store, resolver
 
@@ -190,11 +243,17 @@ def test_deferred_update_e2e_session_active_staging_offline_apply_commit(
     )
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_identity_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
@@ -307,10 +366,14 @@ def test_deferred_update_e2e_session_active_staging_offline_apply_commit(
 
     # Local identity advances to N+1; stale pending update is cleared safely
     local_identity_v2 = LocalReleaseIdentity(
-        release_sequence=2,
-        release_id="rel-2",
+        committed=b2,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.new_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.new_core_id,
     )
@@ -335,11 +398,17 @@ def test_deferred_update_e2e_signed_n_plus_two_broken_candidate_rollback(
     )
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
@@ -396,15 +465,24 @@ def test_deferred_update_e2e_signed_n_plus_two_broken_candidate_rollback(
     env.store = store
 
     # 3. Create signed N+2 authority and stage it
-    local_v2 = LocalReleaseIdentity(
-        release_sequence=2,
-        release_id="rel-2",
-        launcher_version="1.0.0",
-        launcher_installed_identity_sha256=env.new_launcher_sha,
-        core_version="1.0.0",
-        core_installed_identity_sha256=env.new_core_id,
-    )
     n_plus_two = _retarget_as_launcher_only_n_plus_two(env, routes)
+    b3 = AuthenticatedReleaseBinding(
+        release_sequence=n_plus_two.binding.release_sequence,
+        release_id=n_plus_two.binding.release_id,
+        payload_sha256=n_plus_two.binding.payload_sha256,
+    )
+    local_v2 = LocalReleaseIdentity(
+        committed=b2,
+        high_water=b3,
+        observed=b3,
+        failed=None,
+        launcher_version="1.0.0",
+        launcher_installed_identity_sha256=n_plus_one.launcher_identity_sha256,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256=n_plus_one.core_identity_sha256,
+    )
     opener = ReusableFakeTransportOpener(routes)
     coordinator2, stage_service2, pending_store2, resolver2 = (
         _setup_coordinator_pipeline(
@@ -495,11 +573,17 @@ def test_deferred_update_partial_staging_crash_recovery(tmp_path: Path) -> None:
     env, store, updater_bytes, routes = _build_simulation_fixtures(tmp_path)
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
@@ -571,11 +655,17 @@ def test_deferred_update_completed_pending_restart(tmp_path: Path) -> None:
     env, store, updater_bytes, routes = _build_simulation_fixtures(tmp_path)
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
@@ -627,11 +717,17 @@ def test_deferred_update_duplicate_startup_callback(tmp_path: Path) -> None:
     env, store, updater_bytes, routes = _build_simulation_fixtures(tmp_path)
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
@@ -686,11 +782,17 @@ def test_deferred_update_higher_pending_supersession(tmp_path: Path) -> None:
     env, store, updater_bytes, routes = _build_simulation_fixtures(tmp_path)
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
@@ -714,6 +816,23 @@ def test_deferred_update_higher_pending_supersession(tmp_path: Path) -> None:
 
     # 2. Before applying N+1, N+2 becomes available online
     n_plus_two = _retarget_as_launcher_only_n_plus_two(env, routes)
+    b3 = AuthenticatedReleaseBinding(
+        n_plus_two.binding.release_sequence,
+        n_plus_two.binding.release_id,
+        n_plus_two.binding.payload_sha256,
+    )
+    local_v1_n2 = LocalReleaseIdentity(
+        committed=b1,
+        high_water=b3,
+        observed=b3,
+        failed=None,
+        launcher_version="1.0.0",
+        launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
+        core_version="1.0.0",
+        core_installed_identity_sha256=env.old_core_id,
+    )
     tag = "v1.0.1"
     release_base = f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag}/"
     cdn_base = "https://objects.githubusercontent.com/test-assets-n-plus-two/"
@@ -731,7 +850,7 @@ def test_deferred_update_higher_pending_supersession(tmp_path: Path) -> None:
             env,
             store,
             opener2,
-            local_v1,
+            local_v1_n2,
         )
     )
 
@@ -757,7 +876,7 @@ def test_deferred_update_higher_pending_supersession(tmp_path: Path) -> None:
         pending_store=pending_store2,
         apply_service=apply_service,
         game_active=lambda: False,
-        local_identity_provider=lambda: local_v1,
+        local_identity_provider=lambda: local_v1_n2,
     )
     assert res == PendingUpdateBootstrapResult.HANDOFF_STARTED
     proc_refs[0].thread.join(timeout=10.0)
@@ -780,11 +899,17 @@ def test_deferred_update_no_production_network_mutation(tmp_path: Path) -> None:
     env, store, updater_bytes, routes = _build_simulation_fixtures(tmp_path)
     opener = ReusableFakeTransportOpener(routes)
 
+    b1 = AuthenticatedReleaseBinding(1, "rel-1", env.old_payload_sha)
+    b2 = AuthenticatedReleaseBinding(2, "rel-2", env.payload_sha)
     local_v1 = LocalReleaseIdentity(
-        release_sequence=1,
-        release_id="rel-1",
+        committed=b1,
+        high_water=b2,
+        observed=b2,
+        failed=None,
         launcher_version="1.0.0",
         launcher_installed_identity_sha256=env.old_launcher_sha,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="0" * 64,
         core_version="1.0.0",
         core_installed_identity_sha256=env.old_core_id,
     )
