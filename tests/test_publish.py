@@ -1,3 +1,22 @@
+import pathlib
+import stat
+
+
+def _fake_stat(st_size: int = 100):
+    orig_stat = pathlib.Path.stat
+
+    def stat_fn(self, *a, **kw):
+        try:
+            res = orig_stat(self, *a, **kw)
+            if stat.S_ISDIR(res.st_mode):
+                return res
+        except OSError:
+            pass
+        return type("FakeStat", (), {"st_size": st_size, "st_mode": stat.S_IFREG | 0o644})()
+
+    return stat_fn
+
+
 def test_atomic_publish_payload():
     from scripts.publish_atomic_release import build_release_payload
     payload = build_release_payload("v5.1.5", "sha_123")
@@ -124,19 +143,25 @@ def test_execute_publish_hosted_verification_drift(monkeypatch):
     monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
     monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
 
+    def mock_download(executor, *, repo, asset_id, destination_file):
+        destination_file.write_bytes(b"fake")
+
+    monkeypatch.setattr("scripts.publish_atomic_release.download_github_release_asset", mock_download)
+
     def mock_stage(*args, **kwargs):
         return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"fake": 99}, "")
     monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
 
     import pytest
-    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.stat", _fake_stat(100))
     monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake")
 
     with pytest.raises(StageDraftReleaseError, match="mutated before promotion"):
         execute_publish("v5.1.5", "sha_123")
 
+
 def test_execute_publish_token_redaction_regression(monkeypatch):
-    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence
+    from scripts.publish_atomic_release import CANONICAL_MACHINE_REPO, execute_publish, StagedDraftEvidence
 
     run_calls = []
 
@@ -155,11 +180,24 @@ def test_execute_publish_token_redaction_regression(monkeypatch):
     monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
     monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
 
+    def mock_download(executor, *, repo, asset_id, destination_file):
+        cmd = [
+            "gh",
+            "api",
+            f"repos/{repo}/releases/assets/{asset_id}",
+            "-H",
+            "Accept: application/octet-stream",
+        ]
+        run_calls.append(cmd)
+        destination_file.write_bytes(b"fake_content")
+
+    monkeypatch.setattr("scripts.publish_atomic_release.download_github_release_asset", mock_download)
+
     def mock_stage(*args, **kwargs):
         return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"asset.zip": 99}, "")
     monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
 
-    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.stat", _fake_stat(100))
     monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake_content")
 
     # Needs a mock for writing release.json to avoid FileNotFoundError
@@ -167,16 +205,31 @@ def test_execute_publish_token_redaction_regression(monkeypatch):
 
     execute_publish("v5.1.5", "sha_123")
 
-    curl_args = [args for args in run_calls if args[0] == "curl"]
-    assert len(curl_args) == 1
+    # Assert current hosted-verification safety: token is never exposed in argv, no curl, no gh auth token
+    assert not any(args[0] == "curl" for args in run_calls), "Hosted verification must not use curl"
+    assert not any(args[0:3] == ["gh", "auth", "token"] for args in run_calls), "Hosted verification must not execute gh auth token"
+    for call in run_calls:
+        for arg in call:
+            assert "Authorization" not in arg, "argv must never contain Authorization header"
+            assert "***" not in arg, "argv must never contain literal ***"
 
-    assert "Authorization: Bearer gho_SENTINEL_TOKEN_12345" in curl_args[0], "Generated curl argv must contain exactly Authorization: Bearer <sentinel>"
+    # Assert hosted download command shape
+    download_calls = [
+        args for args in run_calls
+        if args[0:2] == ["gh", "api"] and "releases/assets/99" in args[2]
+    ]
+    assert len(download_calls) == 1
+    assert download_calls[0] == [
+        "gh",
+        "api",
+        f"repos/{CANONICAL_MACHINE_REPO}/releases/assets/99",
+        "-H",
+        "Accept: application/octet-stream",
+    ]
 
-    for arg in curl_args[0]:
-        assert "***" not in arg, "argv must never contain literal ***"
 
 def test_execute_publish_token_failure_before_promotion(monkeypatch):
-    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence
+    from scripts.publish_atomic_release import execute_publish, StagedDraftEvidence, StageDraftReleaseError
 
     run_calls = []
 
@@ -190,12 +243,17 @@ def test_execute_publish_token_failure_before_promotion(monkeypatch):
 
     monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
 
+    def mock_download(executor, *, repo, asset_id, destination_file):
+        raise StageDraftReleaseError(f"Asset download failed for {asset_id} from {repo}: exit code 1")
+
+    monkeypatch.setattr("scripts.publish_atomic_release.download_github_release_asset", mock_download)
+
     def mock_stage(*args, **kwargs):
         return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"asset.zip": 99}, "")
     monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
 
     import pytest
-    with pytest.raises(Exception, match="gh auth token failed"):
+    with pytest.raises(Exception, match="Asset download failed|gh auth token failed"):
         execute_publish("v5.1.5", "sha_123")
 
     # Ensure no curl or promote commands were issued
@@ -250,11 +308,16 @@ def test_execute_publish_rejects_extra_asset_before_promotion(monkeypatch):
     monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
     monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
 
+    def mock_download(executor, *, repo, asset_id, destination_file):
+        destination_file.write_bytes(b"fake")
+
+    monkeypatch.setattr("scripts.publish_atomic_release.download_github_release_asset", mock_download)
+
     def mock_stage(*args, **kwargs):
         return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"allowed.zip": 99}, "")
     monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
 
-    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.stat", _fake_stat(100))
     monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake")
 
     with pytest.raises(StageDraftReleaseError, match="mismatch|extra|unexpected"):
@@ -278,6 +341,11 @@ def test_execute_publish_gate3_rejects_extra_asset(monkeypatch):
     monkeypatch.setattr("scripts.publish_atomic_release._run", mock_run)
     monkeypatch.setattr("scripts.verify_github_release_assets.verify_github_release_assets", lambda **kwargs: None)
 
+    def mock_download(executor, *, repo, asset_id, destination_file):
+        destination_file.write_bytes(b"fake")
+
+    monkeypatch.setattr("scripts.publish_atomic_release.download_github_release_asset", mock_download)
+
     t = 0
     def fake_time():
         nonlocal t
@@ -290,7 +358,7 @@ def test_execute_publish_gate3_rejects_extra_asset(monkeypatch):
         return StagedDraftEvidence(123, "v5.1.5", "sha_123", {"allowed.zip": 99}, "")
     monkeypatch.setattr("scripts.publish_atomic_release.stage_draft_release", mock_stage)
 
-    monkeypatch.setattr("pathlib.Path.stat", lambda self: type("FakeStat", (), {"st_size": 100})())
+    monkeypatch.setattr("pathlib.Path.stat", _fake_stat(100))
     monkeypatch.setattr("pathlib.Path.read_bytes", lambda self: b"fake")
 
     with pytest.raises(StageDraftReleaseError, match="Gate3 failed"):
