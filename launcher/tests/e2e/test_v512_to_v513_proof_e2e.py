@@ -35,7 +35,9 @@ from neko_launcher.application.software_update_activity import (  # noqa: E402
 from neko_launcher.application.software_update_models import (  # noqa: E402
     AuthenticatedReleaseBinding,
     ComponentRelease,
+    LocalReleaseIdentity,
     ReleaseSet,
+    UpdateDiagnosticCode,
     UpdateInvocationReason,
     UpdateState,
 )
@@ -65,6 +67,10 @@ from neko_launcher.infrastructure.software_update_apply import (  # noqa: E402
 from neko_launcher.infrastructure.update_channel_profile import (  # noqa: E402
     UpdateChannelProfile,
 )
+from neko_launcher.updater.binary_frame import (  # noqa: E402
+    SlotFrame,
+    pack_slot_frame,
+)
 from neko_launcher.updater.canonical_json import (  # noqa: E402
     canonical_json_dumps,
 )
@@ -74,6 +80,20 @@ from neko_launcher.updater.core_manifest_verifier import (  # noqa: E402
 from neko_launcher.updater.enrollment import (  # noqa: E402
     load_selected_state,
     validate_enrollment_trust_binding,
+)
+from neko_launcher.updater.recovery_engine import (  # noqa: E402
+    RecoveryEngine,
+)
+from neko_launcher.updater.state_models import (  # noqa: E402
+    Binding,
+    Cleanup,
+    DirectoryIdentity,
+    Generation,
+    Mutation,
+    Rollback,
+    State,
+    Transaction,
+    serialize_state,
 )
 from neko_launcher.updater.trust_profile import (  # noqa: E402
     load_installed_update_trust_profile,
@@ -439,6 +459,47 @@ class ProofHarnessFixture:
             launcher_bytes=self.candidate_launcher_bytes,
             updater_bytes=self.updater_bytes,
             core_bytes=self.candidate_core_zip_bytes,
+        )
+
+    def make_release(
+        self,
+        *,
+        sequence: int,
+        release_id: str,
+        channel: str = "stable",
+        mandatory: bool = False,
+        minimum_supported_sequence: int = 1,
+        launcher_sha: str | None = None,
+        launcher_size: int | None = None,
+        launcher_version: str = "5.1.2",
+        updater_sha: str | None = None,
+        updater_size: int | None = None,
+        updater_version: str = "5.1.2",
+        core_sha: str | None = None,
+        core_size: int | None = None,
+        core_installed_sha: str | None = None,
+        core_version: str = "5.1.2",
+        key_id: str | None = None,
+        release_priv: Ed25519PrivateKey | None = None,
+    ) -> tuple[bytes, dict[str, Any], AuthenticatedReleaseBinding]:
+        return _make_signed_release_envelope(
+            release_priv=release_priv or self.proof_priv,
+            key_id=key_id or self.proof_key_id,
+            sequence=sequence,
+            release_id=release_id,
+            channel=channel,
+            mandatory=mandatory,
+            minimum_supported_sequence=minimum_supported_sequence,
+            launcher_sha=launcher_sha or self.launcher_sha,
+            launcher_size=launcher_size if launcher_size is not None else len(self.launcher_bytes),
+            launcher_version=launcher_version,
+            updater_sha=updater_sha or self.updater_sha,
+            updater_size=updater_size if updater_size is not None else len(self.updater_bytes),
+            updater_version=updater_version,
+            core_sha=core_sha or self.core_zip_sha,
+            core_size=core_size if core_size is not None else self.core_zip_size,
+            core_installed_sha=core_installed_sha or self.core_installed_sha,
+            core_version=core_version,
         )
 
     def _populate_package_tree(self, tree: Path, profile_raw: bytes) -> None:
@@ -1106,3 +1167,765 @@ def test_v512_to_v513_proof_offline_pending_apply_succeeds(
     assert state is not None
     assert state.committed.binding.release_sequence == 2
     assert state.committed.binding.release_id == "proof-k1-0002"
+
+
+def test_v512_to_v513_proof_same_sequence_exact_binding_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 1: Same-sequence exact-binding is a no-op / LATEST and does not stage an update."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+    enroll_baseline_from_signed_envelope(
+        install_root=harness.install_root,
+        envelope_path=harness.install_root / "baseline" / "release-v2.json",
+        trust_profile=harness.verified_proof_profile,
+    )
+
+    reader = AuthenticatedReleaseIdentityReader(harness.verified_proof_profile)
+    local_identity = reader.read(harness.install_root)
+    assert local_identity.committed == harness.baseline_binding
+
+    # Setup proof channel serving exact same baseline envelope
+    routes = _build_proof_channel_routes(
+        owner="Valeneko-pranmong",
+        repo="Neko-Family-Proxy-Updates-Proof",
+        tag="v5.1.2",
+        manifest_bytes=harness.baseline_envelope_bytes,
+        launcher_bytes=harness.launcher_bytes,
+        updater_bytes=harness.updater_bytes,
+        core_bytes=harness.core_zip_bytes,
+    )
+    opener = ReusableFakeTransportOpener(routes)
+    env = types.SimpleNamespace(
+        keys=dict(harness.verified_proof_profile.release_public_keys)
+    )
+
+    admission_service, _, _, _ = _create_admission_runner(
+        harness.install_root,
+        dict(harness.verified_proof_profile.release_public_keys),
+        None,
+    )
+    coordinator, _, pending_store, _ = _setup_coordinator_pipeline(
+        harness.install_root,
+        env,
+        None,
+        opener,
+        local_identity,
+        admission_service=admission_service,
+        channel_profile=harness.channel_profile,
+        local_identity_provider=lambda: reader.read(harness.install_root),
+    )
+
+    check_result, _ = coordinator._check_service.check_startup_with_resolved()
+    assert check_result.state == UpdateState.LATEST
+    assert check_result.diagnostic_code is None
+    assert check_result.changed_components == ()
+    assert check_result.retry_staging is False
+
+    snapshot = coordinator.startup()
+    assert snapshot.state == UpdateLifecycleState.IDLE
+    assert snapshot.pending is None
+
+    local_after = reader.read(harness.install_root)
+    assert local_after.committed == harness.baseline_binding
+    assert local_after.high_water == harness.baseline_binding
+    assert local_after.failed is None
+
+
+def test_v512_to_v513_proof_same_sequence_changed_identity_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 2: Same-sequence changed payload/release_id requires fail-closed identity conflict."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+    enroll_baseline_from_signed_envelope(
+        install_root=harness.install_root,
+        envelope_path=harness.install_root / "baseline" / "release-v2.json",
+        trust_profile=harness.verified_proof_profile,
+    )
+
+    reader = AuthenticatedReleaseIdentityReader(harness.verified_proof_profile)
+    local_identity = reader.read(harness.install_root)
+    assert local_identity.committed == harness.baseline_binding
+
+    # Mint conflicting envelope at same sequence (seq 1) with different release_id and altered payload
+    alt_bytes, alt_doc, alt_binding = harness.make_release(
+        sequence=1,
+        release_id="proof-k1-0001-conflict",
+        launcher_version="5.1.2",
+        core_version="5.1.2",
+    )
+    assert alt_binding.release_sequence == local_identity.committed.release_sequence
+    assert alt_binding != local_identity.committed
+
+    routes = _build_proof_channel_routes(
+        owner="Valeneko-pranmong",
+        repo="Neko-Family-Proxy-Updates-Proof",
+        tag="v5.1.2",
+        manifest_bytes=alt_bytes,
+        launcher_bytes=harness.launcher_bytes,
+        updater_bytes=harness.updater_bytes,
+        core_bytes=harness.core_zip_bytes,
+    )
+    opener = ReusableFakeTransportOpener(routes)
+    env = types.SimpleNamespace(
+        keys=dict(harness.verified_proof_profile.release_public_keys)
+    )
+
+    admission_service, _, _, _ = _create_admission_runner(
+        harness.install_root,
+        dict(harness.verified_proof_profile.release_public_keys),
+        None,
+    )
+    coordinator, _, pending_store, _ = _setup_coordinator_pipeline(
+        harness.install_root,
+        env,
+        None,
+        opener,
+        local_identity,
+        admission_service=admission_service,
+        channel_profile=harness.channel_profile,
+        local_identity_provider=lambda: reader.read(harness.install_root),
+    )
+
+    check_result, _ = coordinator._check_service.check_startup_with_resolved()
+    assert check_result.state == UpdateState.VERIFY_FAILED
+    assert (
+        check_result.diagnostic_code
+        == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
+    )
+    assert check_result.retry_staging is False
+
+    snapshot = coordinator.startup()
+    assert snapshot.state == UpdateLifecycleState.IDLE
+    assert snapshot.pending is None
+
+    # Local identity remains unmutated
+    local_after = reader.read(harness.install_root)
+    assert local_after.committed == harness.baseline_binding
+    assert local_after.high_water == harness.baseline_binding
+    assert local_after.failed is None
+
+
+def test_v512_to_v513_proof_lower_than_high_water_replay_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 3: Lower-than-high-water replay is rejected fail-closed with DOWNGRADE_REJECTED."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+    enroll_baseline_from_signed_envelope(
+        install_root=harness.install_root,
+        envelope_path=harness.install_root / "baseline" / "release-v2.json",
+        trust_profile=harness.verified_proof_profile,
+    )
+
+    baseline_components = (
+        ComponentRelease(
+            name="launcher",
+            version="5.1.2",
+            artifact_id="NekoLauncher.exe",
+            artifact_sha256=harness.launcher_sha,
+            artifact_size=len(harness.launcher_bytes),
+            installed_identity_sha256=harness.launcher_sha,
+        ),
+        ComponentRelease(
+            name="core",
+            version="5.1.2",
+            artifact_id="NekoProxyCore.zip",
+            artifact_sha256=harness.core_zip_sha,
+            artifact_size=harness.core_zip_size,
+            installed_identity_sha256=harness.core_installed_sha,
+        ),
+    )
+
+    # Local identity with high-water at seq 2
+    local_v2 = LocalReleaseIdentity(
+        committed=harness.candidate_binding,
+        high_water=harness.candidate_binding,
+        observed=harness.candidate_binding,
+        failed=None,
+        launcher_version="5.1.3",
+        launcher_installed_identity_sha256=harness.candidate_launcher_sha,
+        updater_version="5.1.2",
+        updater_installed_identity_sha256=harness.updater_sha,
+        core_version="5.1.3",
+        core_installed_identity_sha256=harness.candidate_core_installed_sha,
+    )
+
+    # Remote attempts to serve replayed seq 1 (baseline)
+    replayed_release = ReleaseSet(
+        schema_version=1,
+        channel="stable",
+        release_sequence=1,
+        release_id="proof-k1-0001",
+        mandatory=False,
+        minimum_supported_sequence=1,
+        components=baseline_components,
+        payload_sha256=harness.baseline_binding.payload_sha256,
+    )
+
+    check_res = evaluate_release(
+        local_v2,
+        replayed_release,
+        UpdateInvocationReason.STARTUP,
+    )
+    assert check_res.state == UpdateState.VERIFY_FAILED
+    assert check_res.diagnostic_code == UpdateDiagnosticCode.DOWNGRADE_REJECTED
+    assert check_res.retry_staging is False
+
+
+def test_v512_to_v513_proof_probation_failure_rolls_back_to_n(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 4: Broken candidate/probation failure rolls back to N; high-water & failed remain N+1."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+    enroll_baseline_from_signed_envelope(
+        install_root=harness.install_root,
+        envelope_path=harness.install_root / "baseline" / "release-v2.json",
+        trust_profile=harness.verified_proof_profile,
+    )
+
+    reader = AuthenticatedReleaseIdentityReader(harness.verified_proof_profile)
+    env = types.SimpleNamespace(
+        keys=dict(harness.verified_proof_profile.release_public_keys)
+    )
+    opener = ReusableFakeTransportOpener(harness.routes)
+
+    admission_service, _, _, _ = _create_admission_runner(
+        harness.install_root,
+        dict(harness.verified_proof_profile.release_public_keys),
+        None,
+    )
+    coordinator, _, pending_store, _ = _setup_coordinator_pipeline(
+        harness.install_root,
+        env,
+        None,
+        opener,
+        reader.read(harness.install_root),
+        admission_service=admission_service,
+        channel_profile=harness.channel_profile,
+        local_identity_provider=lambda: reader.read(harness.install_root),
+    )
+
+    # Stage candidate N+1
+    coordinator.startup()
+    assert pending_store.load_verified(reader.read(harness.install_root)) is not None
+
+    # Helper apply runs with broken candidate: self_test_pass=False
+    apply_service, proc_refs, exit_codes, _ = _create_helper_runner(
+        harness.install_root,
+        dict(harness.verified_proof_profile.release_public_keys),
+        None,
+        self_test_pass=False,
+    )
+
+    apply_result = try_apply_pending_on_launch(
+        pending_store=pending_store,
+        apply_service=apply_service,
+        game_active=lambda: False,
+        local_identity_provider=lambda: reader.read(harness.install_root),
+    )
+    assert apply_result == PendingUpdateBootstrapResult.HANDOFF_STARTED
+
+    proc_refs[0].thread.join(timeout=10.0)
+    assert exit_codes[0] != 0
+
+    # Verify state rolled back to baseline N, while high-water & failed record N+1
+    state = load_selected_state(
+        harness.install_root / "state",
+        harness.verified_proof_profile.release_public_keys,
+    )
+    assert state is not None
+    assert state.phase in ("CLEANING", "IDLE")
+    assert (
+        state.committed.binding.release_sequence
+        == harness.baseline_binding.release_sequence
+    )
+    assert (
+        state.committed.binding.release_id
+        == harness.baseline_binding.release_id
+    )
+    assert (
+        state.highwater.release_sequence
+        == harness.candidate_binding.release_sequence
+    )
+    assert state.failed is not None
+    assert (
+        state.failed.release_sequence
+        == harness.candidate_binding.release_sequence
+    )
+    assert state.last_error == "SELFTEST_FAILED"
+
+    # Recovery converges to OLD_FULLY_RESTORED / baseline N
+    rec = RecoveryEngine(
+        harness.install_root,
+        dict(harness.verified_proof_profile.release_public_keys),
+    ).run_recovery()
+    assert rec.converged is True
+    assert rec.status == "OLD_FULLY_RESTORED"
+    assert rec.final_state is not None
+    assert rec.final_state.phase == "IDLE"
+    assert (
+        rec.selected_generation.binding.release_sequence
+        == harness.baseline_binding.release_sequence
+    )
+
+    # Baseline N generation files remain intact and runnable
+    baseline_dir = (
+        harness.install_root
+        / "releases"
+        / f"g-{harness.baseline_binding.release_sequence:020d}-{harness.baseline_binding.payload_sha256}"
+    )
+    assert baseline_dir.is_dir()
+    assert (baseline_dir / "NekoLauncher.exe").is_file()
+    assert (baseline_dir / "ProxyCore").is_dir()
+
+    # Identity reader reflects committed=N, high_water=N+1, failed=N+1
+    local_after = reader.read(harness.install_root)
+    assert local_after.committed == harness.baseline_binding
+    assert local_after.high_water == harness.candidate_binding
+    assert local_after.failed == harness.candidate_binding
+
+
+def test_v512_to_v513_proof_rediscovery_after_failure_matrix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 5: Rediscovery matrix: exact failed N+1 is known/no-new-update; changed N+1 conflicts; N+2 is candidate."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+
+    candidate_components = (
+        ComponentRelease(
+            name="launcher",
+            version="5.1.3",
+            artifact_id="NekoLauncher.exe",
+            artifact_sha256=harness.candidate_launcher_sha,
+            artifact_size=len(harness.candidate_launcher_bytes),
+            installed_identity_sha256=harness.candidate_launcher_sha,
+        ),
+        ComponentRelease(
+            name="core",
+            version="5.1.3",
+            artifact_id="NekoProxyCore.zip",
+            artifact_sha256=harness.candidate_core_zip_sha,
+            artifact_size=harness.candidate_core_zip_size,
+            installed_identity_sha256=harness.candidate_core_installed_sha,
+        ),
+    )
+
+    # Post-probation-failure identity: committed=seq 1, high_water=seq 2, failed=seq 2
+    local_failed = LocalReleaseIdentity(
+        committed=harness.baseline_binding,
+        high_water=harness.candidate_binding,
+        observed=harness.candidate_binding,
+        failed=harness.candidate_binding,
+        launcher_version="5.1.2",
+        launcher_installed_identity_sha256=harness.launcher_sha,
+        updater_version="5.1.2",
+        updater_installed_identity_sha256=harness.updater_sha,
+        core_version="5.1.2",
+        core_installed_identity_sha256=harness.core_installed_sha,
+    )
+
+    # Case A: Exact failed N+1 is re-offered
+    exact_failed_release = ReleaseSet(
+        schema_version=1,
+        channel="stable",
+        release_sequence=2,
+        release_id="proof-k1-0002",
+        mandatory=True,
+        minimum_supported_sequence=1,
+        components=candidate_components,
+        payload_sha256=harness.candidate_binding.payload_sha256,
+    )
+    check_a = evaluate_release(
+        local_failed,
+        exact_failed_release,
+        UpdateInvocationReason.STARTUP,
+    )
+    assert check_a.state == UpdateState.LATEST
+    assert check_a.diagnostic_code is None
+    assert check_a.changed_components == ()
+    assert check_a.retry_staging is False
+
+    # Case B: Changed N+1 is offered (same sequence 2, different payload / release_id)
+    changed_n1_release = ReleaseSet(
+        schema_version=1,
+        channel="stable",
+        release_sequence=2,
+        release_id="proof-k1-0002-tampered",
+        mandatory=True,
+        minimum_supported_sequence=1,
+        components=candidate_components,
+        payload_sha256="f" * 64,
+    )
+    check_b = evaluate_release(
+        local_failed,
+        changed_n1_release,
+        UpdateInvocationReason.STARTUP,
+    )
+    assert check_b.state == UpdateState.VERIFY_FAILED
+    assert (
+        check_b.diagnostic_code
+        == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
+    )
+    assert check_b.retry_staging is False
+
+    # Case C: N+2 candidate is offered (seq 3 > high_water seq 2)
+    n2_components = (
+        ComponentRelease(
+            name="launcher",
+            version="5.1.4",
+            artifact_id="NekoLauncher.exe",
+            artifact_sha256="4" * 64,
+            artifact_size=len(harness.candidate_launcher_bytes),
+            installed_identity_sha256="4" * 64,
+        ),
+        ComponentRelease(
+            name="core",
+            version="5.1.4",
+            artifact_id="NekoProxyCore.zip",
+            artifact_sha256="5" * 64,
+            artifact_size=harness.candidate_core_zip_size,
+            installed_identity_sha256="5" * 64,
+        ),
+    )
+    n2_release = ReleaseSet(
+        schema_version=1,
+        channel="stable",
+        release_sequence=3,
+        release_id="proof-k1-0003",
+        mandatory=True,
+        minimum_supported_sequence=1,
+        components=n2_components,
+        payload_sha256="6" * 64,
+    )
+    check_c = evaluate_release(
+        local_failed,
+        n2_release,
+        UpdateInvocationReason.STARTUP,
+    )
+    assert check_c.state == UpdateState.MANDATORY
+    assert check_c.diagnostic_code is None
+    assert set(check_c.changed_components) == {"launcher", "core"}
+
+
+def test_v512_to_v513_proof_restart_crash_recovery_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 6: Restart/crash boundaries around PREPARING, QUIESCING, PROBATION, CLEANING, ROLLING_BACK; require only OLD_FULLY_RESTORED, NEW_FULLY_COMMITTED, or REPAIR_REQUIRED."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+    enroll_baseline_from_signed_envelope(
+        install_root=harness.install_root,
+        envelope_path=harness.install_root / "baseline" / "release-v2.json",
+        trust_profile=harness.verified_proof_profile,
+    )
+
+    b_gen1 = Binding(
+        release_sequence=harness.baseline_binding.release_sequence,
+        release_id=harness.baseline_binding.release_id,
+        payload_sha256=harness.baseline_binding.payload_sha256,
+    )
+    b_gen2 = Binding(
+        release_sequence=harness.candidate_binding.release_sequence,
+        release_id=harness.candidate_binding.release_id,
+        payload_sha256=harness.candidate_binding.payload_sha256,
+    )
+
+    gen1 = Generation(
+        binding=b_gen1,
+        launcher_identity_sha256=harness.launcher_sha,
+        core_identity_sha256=harness.core_installed_sha,
+    )
+    gen2 = Generation(
+        binding=b_gen2,
+        launcher_identity_sha256=harness.candidate_launcher_sha,
+        core_identity_sha256=harness.candidate_core_installed_sha,
+    )
+
+    keys = dict(harness.verified_proof_profile.release_public_keys)
+    state_dir = harness.install_root / "state"
+
+    def _write_slot(st: State) -> None:
+        for s in (state_dir / "slot-a.bin", state_dir / "slot-b.bin"):
+            s.unlink(missing_ok=True)
+        packed = pack_slot_frame(
+            SlotFrame(revision=st.revision, format_version=1, body_bytes=serialize_state(st))
+        )
+        (state_dir / "slot-a.bin").write_bytes(packed)
+
+    evidence_dict = {
+        harness.baseline_binding.payload_sha256: base64.b64encode(harness.baseline_envelope_bytes).decode("ascii"),
+        harness.candidate_binding.payload_sha256: base64.b64encode(harness.candidate_envelope_bytes).decode("ascii"),
+    }
+
+    allowed_terminal_statuses = {"OLD_FULLY_RESTORED", "NEW_FULLY_COMMITTED", "REPAIR_REQUIRED"}
+
+    # 1. PREPARING boundary
+    tx_prep = Transaction(
+        id="1" * 32,
+        request_id="2" * 32,
+        candidate=gen2,
+        old=gen1,
+        incoming=DirectoryIdentity(volume_serial="12345678abcdef01", file_id="0" * 32, parent_file_id="0" * 32),
+        staging=None,
+        stage="ADMITTED",
+        mutation=None,
+    )
+    s_prep = State(
+        schema_version=1,
+        revision=10,
+        installation_id="a" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="PREPARING",
+        committed=gen1,
+        previous=None,
+        highwater=b_gen1,
+        observed=b_gen2,
+        failed=None,
+        transaction=tx_prep,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence=evidence_dict,
+    )
+    _write_slot(s_prep)
+    rec = RecoveryEngine(harness.install_root, keys).run_recovery()
+    assert rec.status in allowed_terminal_statuses
+    assert rec.status == "OLD_FULLY_RESTORED"
+    assert rec.converged is True
+    assert rec.selected_generation == gen1
+
+    # 2. QUIESCING boundary
+    tx_quiesce = Transaction(
+        id="3" * 32,
+        request_id="4" * 32,
+        candidate=gen2,
+        old=gen1,
+        incoming=DirectoryIdentity(volume_serial="12345678abcdef01", file_id="0" * 32, parent_file_id="0" * 32),
+        staging=DirectoryIdentity(volume_serial="12345678abcdef01", file_id="1" * 32, parent_file_id="0" * 32),
+        stage="QUIESCING",
+        mutation=Mutation(kind="STOP_OLD", target="old_process_family", status="INTENT"),
+    )
+    s_quiesce = State(
+        schema_version=1,
+        revision=20,
+        installation_id="a" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="QUIESCING",
+        committed=gen1,
+        previous=None,
+        highwater=b_gen1,
+        observed=b_gen2,
+        failed=None,
+        transaction=tx_quiesce,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence=evidence_dict,
+    )
+    _write_slot(s_quiesce)
+    rec = RecoveryEngine(harness.install_root, keys).run_recovery()
+    assert rec.status in allowed_terminal_statuses
+    assert rec.status == "OLD_FULLY_RESTORED"
+    assert rec.converged is True
+    assert rec.selected_generation == gen1
+    assert rec.final_state is not None
+    assert rec.final_state.failed == b_gen2
+
+    # 3. PROBATION boundary
+    tx_prob = Transaction(
+        id="5" * 32,
+        request_id="6" * 32,
+        candidate=gen2,
+        old=gen1,
+        incoming=DirectoryIdentity(volume_serial="12345678abcdef01", file_id="0" * 32, parent_file_id="0" * 32),
+        staging=DirectoryIdentity(volume_serial="12345678abcdef01", file_id="1" * 32, parent_file_id="0" * 32),
+        stage="PROBATION",
+        mutation=Mutation(kind="START_PROBATION", target="candidate_process_family", status="INTENT"),
+    )
+    s_prob = State(
+        schema_version=1,
+        revision=30,
+        installation_id="a" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="PROBATION",
+        committed=gen1,
+        previous=None,
+        highwater=b_gen1,
+        observed=b_gen2,
+        failed=None,
+        transaction=tx_prob,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence=evidence_dict,
+    )
+    _write_slot(s_prob)
+    rec = RecoveryEngine(harness.install_root, keys).run_recovery()
+    assert rec.status in allowed_terminal_statuses
+    assert rec.status == "OLD_FULLY_RESTORED"
+    assert rec.converged is True
+    assert rec.selected_generation == gen1
+    assert rec.final_state is not None
+    assert rec.final_state.failed == b_gen2
+
+    # 4. CLEANING boundary
+    cleanup_item = Cleanup(
+        transaction_id="8" * 32,
+        request_id="9" * 32,
+        directory=DirectoryIdentity(volume_serial="12345678abcdef01", file_id="0" * 32, parent_file_id="0" * 32),
+        target="incoming",
+        status="INTENT",
+    )
+    s_clean = State(
+        schema_version=1,
+        revision=40,
+        installation_id="a" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="CLEANING",
+        committed=gen1,
+        previous=None,
+        highwater=b_gen1,
+        observed=b_gen2,
+        failed=None,
+        transaction=None,
+        cleanup=[cleanup_item],
+        rollback=None,
+        last_error=None,
+        evidence=evidence_dict,
+    )
+    _write_slot(s_clean)
+    rec = RecoveryEngine(harness.install_root, keys).run_recovery()
+    assert rec.status in allowed_terminal_statuses
+    assert rec.status == "OLD_FULLY_RESTORED"
+    assert rec.converged is True
+    assert rec.selected_generation == gen1
+
+    # 5. ROLLING_BACK boundary
+    s_rb = State(
+        schema_version=1,
+        revision=50,
+        installation_id="a" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="ROLLING_BACK",
+        committed=gen1,
+        previous=None,
+        highwater=b_gen1,
+        observed=b_gen2,
+        failed=b_gen2,
+        transaction=None,
+        cleanup=None,
+        rollback=Rollback(
+            mode="precommit",
+            target=gen1,
+            probation_id="7" * 32,
+            scratch=[],
+            step="RESTORE_INTENT",
+        ),
+        last_error="PREVIOUS_FAILURE",
+        evidence=evidence_dict,
+    )
+    _write_slot(s_rb)
+    rec = RecoveryEngine(harness.install_root, keys).run_recovery()
+    assert rec.status in allowed_terminal_statuses
+    assert rec.status == "OLD_FULLY_RESTORED"
+    assert rec.converged is True
+    assert rec.selected_generation == gen1
+
+    # 6. Explicit REPAIR_REQUIRED boundary (corrupt / missing committed on disk with no previous)
+    missing_binding = Binding(
+        release_sequence=99,
+        release_id="proof-nonexistent",
+        payload_sha256="0" * 64,
+    )
+    missing_gen = Generation(
+        binding=missing_binding,
+        launcher_identity_sha256="0" * 64,
+        core_identity_sha256="0" * 64,
+    )
+    s_repair = State(
+        schema_version=1,
+        revision=60,
+        installation_id="a" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=missing_gen,
+        previous=None,
+        highwater=missing_binding,
+        observed=missing_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={missing_binding.payload_sha256: "bm9wZQ=="},
+    )
+    _write_slot(s_repair)
+    rec = RecoveryEngine(harness.install_root, keys).run_recovery()
+    assert rec.status in allowed_terminal_statuses
+    assert rec.status == "REPAIR_REQUIRED"
+    assert rec.converged is False
+    assert rec.selected_generation is None
+
+
+def test_v512_to_v513_proof_discovery_outage_non_blocking_when_no_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RA9 Step 7: Discovery-outage while no mandatory pending: committed app remains runnable & update check is non-blocking."""
+    harness = ProofHarnessFixture(tmp_path, monkeypatch)
+    enroll_baseline_from_signed_envelope(
+        install_root=harness.install_root,
+        envelope_path=harness.install_root / "baseline" / "release-v2.json",
+        trust_profile=harness.verified_proof_profile,
+    )
+
+    reader = AuthenticatedReleaseIdentityReader(harness.verified_proof_profile)
+    local_identity = reader.read(harness.install_root)
+
+    # Completely dead network routes (outage)
+    offline_opener = ReusableFakeTransportOpener({})
+    env = types.SimpleNamespace(
+        keys=dict(harness.verified_proof_profile.release_public_keys)
+    )
+
+    admission_service, _, _, _ = _create_admission_runner(
+        harness.install_root,
+        dict(harness.verified_proof_profile.release_public_keys),
+        None,
+    )
+    coordinator, _, pending_store, _ = _setup_coordinator_pipeline(
+        harness.install_root,
+        env,
+        None,
+        offline_opener,
+        local_identity,
+        admission_service=admission_service,
+        channel_profile=harness.channel_profile,
+        local_identity_provider=lambda: reader.read(harness.install_root),
+    )
+
+    # Discovery check returns UNAVAILABLE
+    check_result, resolved = coordinator._check_service.check_startup_with_resolved()
+    assert check_result.state == UpdateState.UNAVAILABLE
+    assert resolved is None
+
+    # Coordinator startup succeeds without raising or hanging
+    snapshot = coordinator.startup()
+    assert snapshot.state == UpdateLifecycleState.IDLE
+    assert snapshot.pending is None
+
+    # App is runnable and local identity is uncorrupted
+    local_after = reader.read(harness.install_root)
+    assert local_after.committed == harness.baseline_binding
+    assert local_after.high_water == harness.baseline_binding
+    assert local_after.failed is None
