@@ -881,6 +881,28 @@ def test_app_factory_logo_and_icon_resolve_to_real_file_in_source_mode() -> None
         assert 'Asset" / "server.png"' not in SPEC_SOURCE
 
 
+def test_launcher_spec_static_asset_sources_exist() -> None:
+    """Every static file referenced by the Launcher spec must resolve from the
+    tracked Asset directory so a clean checkout can be packaged directly."""
+    asset_dir = REPO_ROOT / "Asset"
+    for name in (
+        "Sarabun-Regular.ttf",
+        "Sarabun-Bold.ttf",
+        "Sarabun-OFL.txt",
+    ):
+        assert f'Asset" / "{name}"' in SPEC_SOURCE, (
+            f"NekoLauncher.spec must source {name} from Asset/ after the repository reorganization"
+        )
+        assert (asset_dir / name).is_file(), (
+            f"NekoLauncher.spec references {name}, but Asset/{name} is missing from the checkout"
+        )
+
+    assert 'icon=[str(repository_root / "Asset" / "icon_app.ico")]' in SPEC_SOURCE, (
+        "NekoLauncher.spec EXE icon must resolve from Asset/icon_app.ico"
+    )
+    assert (asset_dir / "icon_app.ico").is_file()
+
+
 def test_launcher_spec_bundles_sarabun_thai_fonts() -> None:
     """B-2: theme.py loads Sarabun-Regular.ttf + Sarabun-Bold.ttf at startup
     via AddFontResourceExW. If the spec does not ship those files in datas,

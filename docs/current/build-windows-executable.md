@@ -17,9 +17,10 @@ Build บน Windows และใช้ Python `3.11` ขึ้นไป
 | source code | `launcher/src/neko_launcher/` | โค้ดโปรแกรม |
 | PyInstaller spec | `launcher/NekoLauncher.spec` | กำหนดวิธีสร้าง EXE |
 | package/dependencies | `launcher/pyproject.toml` | รายการ package ที่ต้องติดตั้ง |
-| ไอคอน | `icon_app.ico` | ไอคอนของ EXE |
-| โลโก้ | `image_11.png` | รูปที่แสดงในโปรแกรม |
-| ฟอนต์ภาษาไทย | `Sarabun-Regular.ttf`, `Sarabun-Bold.ttf` | ฟอนต์ Sarabun สำหรับแสดงผล UI |
+| ไอคอน | `Asset/icon_app.ico` | ไอคอนของ EXE |
+| โลโก้ | `Asset/logo.png` | รูปที่แสดงในโปรแกรม |
+| ฟอนต์ภาษาไทย | `Asset/Sarabun-Regular.ttf`, `Asset/Sarabun-Bold.ttf` | ฟอนต์ Sarabun สำหรับแสดงผล UI |
+| ใบอนุญาตฟอนต์ | `Asset/Sarabun-OFL.txt` | SIL Open Font License ที่ต้อง bundle ไปกับฟอนต์ |
 | ProxyCore ที่ได้รับอนุมัติ | `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\` | runtime ภายนอกที่ทีมจัดการและแจกเอง |
 | Supabase client configuration | `launcher/src/neko_launcher/infrastructure/defaults.py` | URL และ publishable key |
 
