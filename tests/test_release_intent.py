@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from launcher.tests.software_update_helpers import signed_envelope, valid_v2_release_document
+from neko_launcher.updater.canonical_json import canonical_json_dumps
 from scripts import derive_version
 from scripts.kanban_release_adapter import poll_github_and_create_tasks
 
@@ -166,7 +168,16 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
             pass
         if "build_software_release_v2.py" in str(args[0]):
             out_idx = args[0].index("--output") + 1
-            Path(args[0][out_idx]).write_text("fake_release_json")
+            release_payload = valid_v2_release_document(
+                sequence=8,
+                release_id="stable-0008",
+                launcher_version="5.1.2",
+                updater_version="5.1.2",
+                core_version="5.1.2",
+            )
+            Path(args[0][out_idx]).write_bytes(
+                canonical_json_dumps(signed_envelope(payload=release_payload))
+            )
         if "build_beta_installer.py" in str(args[0]):
             candidate_dir = Path(args[0][args[0].index("--candidate-dir") + 1])
             setup_out = candidate_dir / "out"
@@ -183,7 +194,26 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
 
     # Need to skip core verify
-    monkeypatch.setattr(release_controller, "verify_and_fetch_core", lambda *a, **k: (tmp_path/"core.zip", "hash", 100, "ident", {"stable_tag": "v5.1.0", "release_id": 123}))
+    monkeypatch.setattr(
+        release_controller,
+        "verify_and_fetch_core",
+        lambda *a, **k: (
+            tmp_path / "core.zip",
+            "hash",
+            100,
+            "ident",
+            {
+                "authority_version_tag": "v5.1.2",
+                "authority_release_sequence": 6,
+                "authority_release_id": "stable-0006",
+                "authority_payload_sha256": "p" * 64,
+                "authority_envelope_sha256": "e" * 64,
+                "authority_key_id": "neko-update-prod-1",
+                "core_source_commit": "sha_core",
+                "provenance_sha256": "r" * 64,
+            },
+        ),
+    )
     tmp_core = tmp_path / "core.zip"
     tmp_core.write_text("dummy")
 
@@ -244,5 +274,5 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     assert "target_version" in record
     assert "injected_files" in record
     assert "core_authority" in record
-    assert record["core_authority"]["stable_tag"] == "v5.1.0"
+    assert record["core_authority"]["authority_version_tag"] == "v5.1.2"
     assert len(record["injected_files"]) > 0

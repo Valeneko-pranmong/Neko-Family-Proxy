@@ -9,6 +9,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from scripts.derive_version import ReleaseTargetIntent
 from scripts.release_controller import process_accepted_commits
 
 
@@ -37,6 +38,8 @@ def create_fake_core_zip(path: Path):
 def test_release_controller_e2e(monkeypatch, tmp_path):
     sha = "1111111111111111111111111111111111111111"
     run_id = 12345
+    source_base = "v5.1.1"
+    target_version = "v5.1.2"
     import shutil
     shutil.rmtree(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}", ignore_errors=True)
 
@@ -46,7 +49,11 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "scripts.derive_version.get_armed_target_from_dir",
-        lambda *args, **kwargs: ("v5.1.0", "v5.1.1", 5, "stable-0005"),
+        lambda *args, **kwargs: ReleaseTargetIntent(
+            source_base=source_base,
+            target=target_version,
+            intent="user_bug",
+        ),
     )
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
     monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
@@ -89,7 +96,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         "updater_protocol": {"minimum": 1, "maximum": 1},
         "components": {
             "launcher": {
-                "version": "5.1.0",
+                "version": "5.1.1",
                 "artifact_id": "NekoLauncher.exe",
                 "artifact_format": "raw-pe-v1",
                 "artifact_size": 3,
@@ -97,7 +104,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
                 "installed_identity_sha256": hashlib.sha256(b"exe").hexdigest()
             },
             "updater": {
-                "version": "5.1.0",
+                "version": "5.1.1",
                 "artifact_id": "NekoUpdater.exe",
                 "artifact_format": "raw-pe-v1",
                 "artifact_size": 3,
@@ -105,7 +112,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
                 "installed_identity_sha256": hashlib.sha256(b"exe").hexdigest()
             },
             "core": {
-                "version": "5.1.0",
+                "version": "5.1.1",
                 "artifact_id": "NekoProxyCore.zip",
                 "artifact_format": "zip-core-v1",
                 "artifact_size": fake_core_path.stat().st_size,
@@ -170,7 +177,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "build_beta_installer.py" in str(args[1]):
             idx = args.index("--release-version")
-            assert args[idx+1] == "5.1.1"
+            assert args[idx+1] == target_version.removeprefix("v")
             setup_out = Path(args[3]) / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
             (setup_out / "NekoFamilyProxy-Setup.exe").write_bytes(b"setup_exe")
@@ -181,7 +188,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         executed_commands.append(args)
         if args[0:2] == ["gh", "api"] and "releases/tags" in args[2]:
             ret = json.dumps({
-                "id": 123, "tag_name": "v5.1.0", "target_commitish": "1111111111111111111111111111111111111111", "draft": False,
+                "id": 123, "tag_name": source_base, "target_commitish": "1111111111111111111111111111111111111111", "draft": False,
                 "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Setup.exe", "id": 5, "size": 9}]
             })
             return ret if kwargs.get("text") else ret.encode()
@@ -210,12 +217,12 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         if "__init__.py" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
-                self.write_text('__version__ = "5.1.0"', encoding="utf-8")
+                self.write_text('__version__ = "5.1.1"', encoding="utf-8")
             return True
         if "pyproject.toml" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
-                self.write_text('version = "5.1.0"', encoding="utf-8")
+                self.write_text('version = "5.1.1"', encoding="utf-8")
             return True
         if "NekoProxyCore.zip" in str(self) or "windowsdesktop-runtime" in str(self):
             return True
@@ -262,22 +269,22 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     process_accepted_commits(sha, run_id, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 
     assert len(publish_calls) == 1
-    assert publish_calls[0]["tag"] == "v5.1.1"
+    assert publish_calls[0]["tag"] == target_version
     assert publish_calls[0]["commit"] == sha
     assert publish_calls[0]["installer_repo"] == "Valeneko-pranmong/Neko-Family-Proxy-Installer"
 
-    metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.1/evidence/base-metadata.json")
+    metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.2/evidence/base-metadata.json")
     metadata_content = json.loads(metadata_path.read_text(encoding="utf-8"))
-    assert metadata_content["release_sequence"] == 5
-    assert metadata_content["release_id"] == "stable-0005"
-    assert metadata_content["components"]["core"]["version"] == "5.1.1"
+    assert metadata_content["release_sequence"] == 8
+    assert metadata_content["release_id"] == "stable-0008"
+    assert metadata_content["components"]["core"]["version"] == target_version.removeprefix("v")
 
     init_path = list(
-        Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.1/source/launcher/src/neko_launcher").rglob("__init__.py")
+        Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.2/source/launcher/src/neko_launcher").rglob("__init__.py")
     )
     if init_path:
         content = init_path[0].read_text(encoding="utf-8")
-        assert "5.1.1" in content
+        assert target_version.removeprefix("v") in content
 
     # Run 2 for idempotency test
     process_accepted_commits(sha, run_id, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
@@ -333,7 +340,9 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "scripts.derive_version.get_armed_target_from_dir",
-        lambda *args, **kwargs: ("v5.1.0", "v5.1.1", 5, "stable-0005"),
+        lambda *args, **kwargs: ReleaseTargetIntent(
+            source_base="v5.1.1", target="v5.1.2", intent="user_bug"
+        ),
     )
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
     monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
@@ -366,12 +375,12 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
         if "__init__.py" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
-                self.write_text('__version__ = "5.1.2"', encoding="utf-8")
+                self.write_text('__version__ = "5.1.3"', encoding="utf-8")
             return True
         if "pyproject.toml" in str(self) and "launcher" in str(self):
             self.parent.mkdir(parents=True, exist_ok=True)
             if not real_exists(self):
-                self.write_text('version = "5.1.2"', encoding="utf-8")
+                self.write_text('version = "5.1.3"', encoding="utf-8")
             return True
         return real_exists(self, *args, **kwargs)
     monkeypatch.setattr("scripts.release_controller.Path.exists", fake_exists)
