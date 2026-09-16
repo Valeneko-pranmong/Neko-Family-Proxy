@@ -58,10 +58,13 @@ from authenticated_production_history import (  # noqa: E402
 from build_software_release_v2 import UnsignedBaselineEvidence  # noqa: E402
 from derive_version import ReleaseAllocation  # noqa: E402
 from production_sequence_ledger import (  # noqa: E402
+    PreparedSupersessionResult,  # noqa: F401
     ReleaseAuthorityReconciliationRequired,
     SequenceAuthorityError,
     SequenceLedgerEvent,
+    SupersedeSignedReleaseRequest,  # noqa: F401
     open_authority_session,
+    prepare_signed_release_supersession,  # noqa: F401
     reconcile_ledger_with_authenticated_history,
 )
 from sign_software_release import (  # noqa: E402

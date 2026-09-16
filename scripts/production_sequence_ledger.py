@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import base64
 import hashlib
 import os
 from pathlib import Path
@@ -145,6 +147,54 @@ class ReconciledSequenceAuthority:
             object.__setattr__(self, "recovery_state", self.recovery_action)
         elif self.recovery_state is not None and self.recovery_action is None:
             object.__setattr__(self, "recovery_action", self.recovery_state)
+
+
+@dataclass(frozen=True)
+class SupersedeSignedReleaseRequest:
+    sequence: int
+    release_id: str
+    source_commit: str
+    component_set_sha256: str
+    payload_sha256: str
+    envelope_sha256: str
+    latest_ledger_entry_sha256: str
+    approved_spec_commit: str
+    reason_code: Literal["ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION"] = (
+        "ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION"
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sequence, int) or self.sequence <= 0:
+            raise ValueError(f"sequence must be positive int, got {self.sequence!r}")
+        if not isinstance(self.release_id, str) or not self.release_id:
+            raise ValueError("release_id must be non-empty str")
+        if not isinstance(self.source_commit, str) or len(self.source_commit) != 40:
+            raise ValueError(f"source_commit must be 40-char hex, got {self.source_commit!r}")
+        if not isinstance(self.component_set_sha256, str) or len(self.component_set_sha256) not in (32, 64):
+            raise ValueError(f"component_set_sha256 must be hex digest, got {self.component_set_sha256!r}")
+        if not isinstance(self.payload_sha256, str) or len(self.payload_sha256) != 64:
+            raise ValueError(f"payload_sha256 must be 64-char hex, got {self.payload_sha256!r}")
+        if not isinstance(self.envelope_sha256, str) or len(self.envelope_sha256) != 64:
+            raise ValueError(f"envelope_sha256 must be 64-char hex, got {self.envelope_sha256!r}")
+        if not isinstance(self.latest_ledger_entry_sha256, str) or len(self.latest_ledger_entry_sha256) != 64:
+            raise ValueError(f"latest_ledger_entry_sha256 must be 64-char hex, got {self.latest_ledger_entry_sha256!r}")
+        if not isinstance(self.approved_spec_commit, str) or not (7 <= len(self.approved_spec_commit) <= 40):
+            raise ValueError(f"approved_spec_commit must be commit SHA, got {self.approved_spec_commit!r}")
+        if self.reason_code != "ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION":
+            raise ValueError(
+                f"reason_code must be 'ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION', got {self.reason_code!r}"
+            )
+
+
+@dataclass(frozen=True)
+class PreparedSupersessionResult:
+    event: SequenceLedgerEvent
+    proposed_entry_sha256: str
+    current_ledger_head_sha256: str
+    next_unused_sequence: int
+    mutated: bool
+    reconciled_authority: ReconciledSequenceAuthority
+
 
 
 def _genesis_to_dict(genesis: SequenceLedgerGenesis) -> dict[str, Any]:
@@ -775,3 +825,285 @@ def reconcile_ledger_with_authenticated_history(
 def next_unused_sequence(authority: ReconciledSequenceAuthority) -> int:
     """Return next unused sequence from reconciled sequence authority."""
     return authority.next_unused_sequence
+
+
+def prepare_signed_release_supersession(
+    *,
+    request: SupersedeSignedReleaseRequest,
+    verified_ledger: VerifiedSequenceLedger | None = None,
+    custody: Path | AuthenticatedHistorySnapshot | Any = None,
+    ledger_path: Path | None = None,
+    custody_root: Path | None = None,
+    history_provider: Any = None,
+    mutate: bool = False,
+    timestamp: str | None = None,
+) -> PreparedSupersessionResult:
+    """Validate and prepare terminal FAILED supersession for a signed-but-unpublished release.
+
+    Semantics:
+    1. Validate request against verified ledger + custody under authority lock.
+    2. Require current exact sequence state == SIGNED and no PUBLISHED record.
+    3. Require every identity/hash in request matches current authority state.
+    4. Prepare exactly one FAILED event using existing append-only primitives.
+    5. Reconcile and prove next_unused_sequence > request.sequence.
+    6. When mutate=False, perform zero ledger mutations (read-only dry-run).
+    """
+    if not isinstance(request, SupersedeSignedReleaseRequest):
+        raise TypeError(f"request must be SupersedeSignedReleaseRequest, got {type(request)}")
+
+    session: SequenceAuthoritySession | None = None
+    session_cm: AbstractContextManager[Any]
+    if ledger_path is not None:
+        session = open_authority_session(ledger_path)
+        session_cm = session
+    else:
+        session_cm = nullcontext()
+
+    with session_cm:
+        if session is not None:
+            v_ledger = session.read_verified()
+        elif verified_ledger is not None:
+            v_ledger = verified_ledger
+        else:
+            raise SequenceAuthorityError("Either ledger_path or verified_ledger must be provided")
+
+        # 1. Validate latest ledger head against request
+        if v_ledger.latest_entry_sha256 != request.latest_ledger_entry_sha256:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Stale ledger head: ledger has {v_ledger.latest_entry_sha256}, request has {request.latest_ledger_entry_sha256}"
+            )
+
+        # 2. Find events for the request sequence
+        seq_events = [e for e in v_ledger.events if e.sequence == request.sequence]
+        if not seq_events:
+            raise SequenceAuthorityError(f"No ledger events found for sequence {request.sequence}")
+
+        # 3. Check latest event status
+        latest_event = seq_events[-1]
+        if latest_event.status == "PUBLISHED":
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Cannot supersede sequence {request.sequence}: release is already PUBLISHED"
+            )
+        if latest_event.status == "FAILED":
+            raise SequenceAuthorityError(
+                f"Cannot supersede sequence {request.sequence}: release is already in terminal FAILED state"
+            )
+        if latest_event.status == "RETIRED":
+            raise SequenceAuthorityError(
+                f"Cannot supersede sequence {request.sequence}: release is in terminal RETIRED state"
+            )
+        if latest_event.status != "SIGNED":
+            raise SequenceAuthorityError(
+                f"Cannot supersede sequence {request.sequence}: expected state SIGNED, got {latest_event.status}"
+            )
+
+        signed_event = next((e for e in reversed(seq_events) if e.status == "SIGNED"), None)
+        if signed_event is None:
+            raise SequenceAuthorityError(f"No SIGNED event found for sequence {request.sequence}")
+
+        # 4. Validate exact identity against ledger
+        if signed_event.release_id != request.release_id:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Sequence {request.sequence} release_id mismatch: request={request.release_id} vs ledger={signed_event.release_id}"
+            )
+        if signed_event.source_commit != request.source_commit:
+            raise ReleaseProvenanceReconciliationRequired(
+                f"Sequence {request.sequence} source_commit mismatch: request={request.source_commit} vs ledger={signed_event.source_commit}"
+            )
+        if signed_event.component_set_sha256 != request.component_set_sha256:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Sequence {request.sequence} component_set_sha256 mismatch: request={request.component_set_sha256} vs ledger={signed_event.component_set_sha256}"
+            )
+        if signed_event.payload_sha256 != request.payload_sha256:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Sequence {request.sequence} payload_sha256 mismatch: request={request.payload_sha256} vs ledger={signed_event.payload_sha256}"
+            )
+        if signed_event.envelope_sha256 != request.envelope_sha256:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Sequence {request.sequence} envelope_sha256 mismatch: request={request.envelope_sha256} vs ledger={signed_event.envelope_sha256}"
+            )
+
+        # 5. Resolve custody / snapshot
+        effective_custody = custody if custody is not None else custody_root
+        snapshot: AuthenticatedHistorySnapshot | None = None
+
+        if isinstance(effective_custody, AuthenticatedHistorySnapshot):
+            snapshot = effective_custody
+        elif hasattr(effective_custody, "load"):
+            snapshot = effective_custody.load()
+        elif history_provider is not None and hasattr(history_provider, "load"):
+            snapshot = history_provider.load()
+        elif isinstance(effective_custody, (str, Path)):
+            custody_path = Path(effective_custody)
+            index_path = custody_path / "history-index-v1.json"
+            if index_path.is_file():
+                from authenticated_production_history import load_custody_records
+
+                records = load_custody_records(custody_path)
+                bindings: dict[int, AuthenticatedProductionBinding] = {}
+                prov: dict[int, str] = {}
+                floor = v_ledger.genesis.floor_binding
+                bindings[floor.sequence] = floor
+                if v_ledger.genesis.floor_provenance_source_commit:
+                    prov[floor.sequence] = v_ledger.genesis.floor_provenance_source_commit
+
+                for rec in records:
+                    try:
+                        env_doc = canonical_json_loads(rec.envelope_bytes)
+                        payload_b64 = env_doc.get("payload_b64", "")
+                        payload_bytes = base64.b64decode(payload_b64)
+                        payload_doc = canonical_json_loads(payload_bytes)
+                        seq = int(payload_doc.get("sequence", 0))
+                        rel_id = str(payload_doc.get("release_id", ""))
+                        p_sha = hashlib.sha256(payload_bytes).hexdigest()
+                        e_sha = hashlib.sha256(rec.envelope_bytes).hexdigest()
+                        k_id = str(env_doc.get("key_id", ""))
+                        bindings[seq] = AuthenticatedProductionBinding(
+                            sequence=seq,
+                            release_id=rel_id,
+                            payload_sha256=p_sha,
+                            envelope_sha256=e_sha,
+                            key_id=k_id,
+                        )
+                        if rec.provenance_source_commit:
+                            prov[seq] = rec.provenance_source_commit
+                    except Exception:
+                        pass
+                bindings_data = [
+                    {
+                        "envelope_sha256": b.envelope_sha256,
+                        "key_id": b.key_id,
+                        "payload_sha256": b.payload_sha256,
+                        "release_id": b.release_id,
+                        "sequence": b.sequence,
+                    }
+                    for b in sorted(bindings.values(), key=lambda x: x.sequence)
+                ]
+                auth_sha = hashlib.sha256(canonical_json_dumps(bindings_data)).hexdigest()
+                snap_sha = hashlib.sha256(canonical_json_dumps({"bindings": bindings_data})).hexdigest()
+                snapshot = AuthenticatedHistorySnapshot(
+                    bindings_by_sequence=bindings,
+                    provenance_source_commit_by_sequence=prov,
+                    live_updates_sequences=frozenset(),
+                    highest_authenticated_sequence=max(bindings.keys()) if bindings else 0,
+                    authenticated_bindings_sha256=auth_sha,
+                    snapshot_sha256=snap_sha,
+                )
+
+        if snapshot is None:
+            # Fallback minimal snapshot constructed from ledger authority
+            floor = v_ledger.genesis.floor_binding
+            b8 = AuthenticatedProductionBinding(
+                sequence=request.sequence,
+                release_id=request.release_id,
+                payload_sha256=request.payload_sha256,
+                envelope_sha256=request.envelope_sha256,
+                key_id=signed_event.key_id or "unknown",
+            )
+            bindings_fallback = {floor.sequence: floor, request.sequence: b8}
+            prov_fallback = {
+                floor.sequence: v_ledger.genesis.floor_provenance_source_commit or "",
+                request.sequence: request.source_commit,
+            }
+            bindings_data = [
+                {
+                    "envelope_sha256": b.envelope_sha256,
+                    "key_id": b.key_id,
+                    "payload_sha256": b.payload_sha256,
+                    "release_id": b.release_id,
+                    "sequence": b.sequence,
+                }
+                for b in sorted(bindings_fallback.values(), key=lambda x: x.sequence)
+            ]
+            snapshot = AuthenticatedHistorySnapshot(
+                bindings_by_sequence=bindings_fallback,
+                provenance_source_commit_by_sequence=prov_fallback,
+                live_updates_sequences=frozenset(),
+                highest_authenticated_sequence=max(floor.sequence, request.sequence),
+                authenticated_bindings_sha256=hashlib.sha256(canonical_json_dumps(bindings_data)).hexdigest(),
+                snapshot_sha256=hashlib.sha256(canonical_json_dumps({"bindings": bindings_data})).hexdigest(),
+            )
+
+        # 6. Verify custody does not mark this sequence as live
+        if request.sequence in snapshot.live_updates_sequences:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Cannot supersede sequence {request.sequence}: present in live updates"
+            )
+
+        # 7. Check custody binding if present
+        if request.sequence in snapshot.bindings_by_sequence:
+            b = snapshot.bindings_by_sequence[request.sequence]
+            if b.release_id != request.release_id:
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Custody release_id mismatch: {b.release_id} vs {request.release_id}"
+                )
+            if b.payload_sha256 != request.payload_sha256:
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Custody payload_sha256 mismatch: {b.payload_sha256} vs {request.payload_sha256}"
+                )
+            if b.envelope_sha256 != request.envelope_sha256:
+                raise ReleaseAuthorityReconciliationRequired(
+                    f"Custody envelope_sha256 mismatch: {b.envelope_sha256} vs {request.envelope_sha256}"
+                )
+
+        # 8. Check custody envelope file on disk if path provided
+        if isinstance(effective_custody, (str, Path)):
+            custody_path = Path(effective_custody)
+            env_file = custody_path / "envelopes" / f"{request.envelope_sha256}.json"
+            if env_file.is_file():
+                env_bytes = env_file.read_bytes()
+                if hashlib.sha256(env_bytes).hexdigest() != request.envelope_sha256:
+                    raise ReleaseAuthorityReconciliationRequired("Custody envelope file hash mismatch")
+
+        # 9. Construct the terminal FAILED event
+        ts = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        failed_event = SequenceLedgerEvent(
+            record_type="EVENT",
+            sequence=request.sequence,
+            release_id=signed_event.release_id,
+            status="FAILED",
+            version=signed_event.version,
+            channel=signed_event.channel,
+            source_commit=signed_event.source_commit,
+            component_set_sha256=signed_event.component_set_sha256,
+            payload_sha256=signed_event.payload_sha256,
+            envelope_sha256=signed_event.envelope_sha256,
+            key_id=signed_event.key_id,
+            timestamp=ts,
+            previous_entry_sha256=v_ledger.latest_entry_sha256,
+        )
+
+        body_dict = _event_to_dict(failed_event)
+        body_bytes = canonical_json_dumps(body_dict)
+        proposed_entry_sha256 = hashlib.sha256(body_bytes).hexdigest()
+
+        # 10. Hypothetical ledger reconciliation
+        hypothetical_ledger = VerifiedSequenceLedger(
+            genesis=v_ledger.genesis,
+            events=v_ledger.events + (failed_event,),
+            latest_entry_sha256=proposed_entry_sha256,
+        )
+        reconciled = reconcile_ledger_with_authenticated_history(
+            ledger=hypothetical_ledger,
+            authenticated_history=snapshot,
+        )
+
+        if reconciled.next_unused_sequence <= request.sequence:
+            raise ReleaseAuthorityReconciliationRequired(
+                f"Reconciliation after FAILED failed to advance next_unused_sequence: {reconciled.next_unused_sequence} <= {request.sequence}"
+            )
+
+        # 11. Handle mutation
+        if mutate:
+            if session is None or not session.is_locked:
+                raise SequenceAuthorityError("Session lock must be held to mutate ledger")
+            session.append(failed_event, expected_previous_sha256=v_ledger.latest_entry_sha256)
+
+        return PreparedSupersessionResult(
+            event=failed_event,
+            proposed_entry_sha256=proposed_entry_sha256,
+            current_ledger_head_sha256=v_ledger.latest_entry_sha256,
+            next_unused_sequence=reconciled.next_unused_sequence,
+            mutated=bool(mutate),
+            reconciled_authority=reconciled,
+        )

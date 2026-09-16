@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from production_sequence_ledger import (
     AuthenticatedHistorySnapshot,
     AuthenticatedProductionBinding,
+    PreparedSupersessionResult,
     ReconciledSequenceAuthority,
     ReleaseAuthorityReconciliationRequired,
     ReleaseProvenanceReconciliationRequired,
@@ -18,12 +19,14 @@ from production_sequence_ledger import (
     SequenceAuthoritySession,
     SequenceLedgerEvent,
     SequenceLedgerGenesis,
+    SupersedeSignedReleaseRequest,
     VerifiedSequenceLedger,
     append_event,
     initialize_genesis,
     latest_sequence_state,
     next_unused_sequence,
     open_authority_session,
+    prepare_signed_release_supersession,
     reconcile_ledger_with_authenticated_history,
     verify_ledger,
 )
@@ -887,3 +890,274 @@ def test_multiple_simultaneous_pending_recovery_actions_raises(
             ledger=ledger_signed_both, authenticated_history=snapshot_dual_published
         )
     assert "RELEASE_AUTHORITY_RECONCILIATION_REQUIRED" in str(exc_info.value)
+
+
+def test_signed_to_failed_transition_and_terminality(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    genesis = _make_genesis(7)
+    with open_authority_session(ledger_path) as session:
+        genesis_sha = initialize_genesis(session, genesis)
+
+    ev_res = _make_event(8, "RESERVED", genesis_sha)
+    res_sha = append_event(ledger_path, ev_res, genesis_sha)
+
+    ev_signed = _make_event(
+        8,
+        "SIGNED",
+        res_sha,
+        payload_sha256="p" * 64,
+        envelope_sha256="e" * 64,
+        key_id="neko-update-prod-1",
+    )
+    signed_sha = append_event(ledger_path, ev_signed, res_sha)
+
+    # SIGNED -> FAILED is valid
+    ev_failed = _make_event(
+        8,
+        "FAILED",
+        signed_sha,
+        payload_sha256="p" * 64,
+        envelope_sha256="e" * 64,
+        key_id="neko-update-prod-1",
+    )
+    failed_sha = append_event(ledger_path, ev_failed, signed_sha)
+
+    # Verify ledger reflects terminal FAILED
+    verified = verify_ledger(ledger_path)
+    assert len(verified.events) == 3
+    assert verified.events[-1].status == "FAILED"
+    assert verified.latest_entry_sha256 == failed_sha
+
+    # FAILED is terminal: no transition allowed
+    for invalid_target in ("SIGNED", "PUBLISHED", "RETIRED", "FAILED", "RESERVED"):
+        invalid_ev = _make_event(
+            8,
+            invalid_target,
+            failed_sha,
+            payload_sha256="p" * 64,
+            envelope_sha256="e" * 64,
+            key_id="neko-update-prod-1",
+        )
+        with pytest.raises(SequenceAuthorityError):
+            append_event(ledger_path, invalid_ev, failed_sha)
+
+    # Reconciliation after terminal FAILED yields next_unused_sequence == 9
+    b8 = AuthenticatedProductionBinding(
+        sequence=8,
+        release_id="stable-0008",
+        payload_sha256="p" * 64,
+        envelope_sha256="e" * 64,
+        key_id="neko-update-prod-1",
+    )
+    snapshot = _make_snapshot(bindings={7: genesis.floor_binding, 8: b8})
+    reconciled = reconcile_ledger_with_authenticated_history(
+        ledger=verified, authenticated_history=snapshot
+    )
+    assert reconciled.highest_consumed_sequence == 8
+    assert reconciled.next_unused_sequence == 9
+    assert reconciled.recovery_action is None
+
+    # If terminal FAILED sequence appears in live_updates, reconciliation must reject
+    snapshot_live = _make_snapshot(
+        bindings={7: genesis.floor_binding, 8: b8},
+        live_updates={8},
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired, match="Terminal sequence 8.*present in live updates"):
+        reconcile_ledger_with_authenticated_history(
+            ledger=verified, authenticated_history=snapshot_live
+        )
+
+
+def test_prepare_signed_release_supersession_ledger_level(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    genesis = _make_genesis(7)
+    with open_authority_session(ledger_path) as session:
+        genesis_sha = initialize_genesis(session, genesis)
+
+    ev_res = _make_event(8, "RESERVED", genesis_sha)
+    res_sha = append_event(ledger_path, ev_res, genesis_sha)
+
+    ev_signed = _make_event(
+        8,
+        "SIGNED",
+        res_sha,
+        source_commit="1" * 40,
+        component_set_sha256="2" * 64,
+        payload_sha256="3" * 64,
+        envelope_sha256="4" * 64,
+        key_id="neko-update-prod-1",
+    )
+    signed_sha = append_event(ledger_path, ev_signed, res_sha)
+    verified = verify_ledger(ledger_path)
+
+    b8 = AuthenticatedProductionBinding(
+        sequence=8,
+        release_id="stable-0008",
+        payload_sha256="3" * 64,
+        envelope_sha256="4" * 64,
+        key_id="neko-update-prod-1",
+    )
+    snapshot = _make_snapshot(
+        bindings={7: genesis.floor_binding, 8: b8},
+        provenance={7: "fb0d2e734ee611d75933ccd90cb82347c0b578bd", 8: "1" * 40},
+    )
+
+    req = SupersedeSignedReleaseRequest(
+        sequence=8,
+        release_id="stable-0008",
+        source_commit="1" * 40,
+        component_set_sha256="2" * 64,
+        payload_sha256="3" * 64,
+        envelope_sha256="4" * 64,
+        latest_ledger_entry_sha256=signed_sha,
+        approved_spec_commit="a" * 40,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+
+    result = prepare_signed_release_supersession(
+        verified_ledger=verified,
+        custody=snapshot,
+        request=req,
+        mutate=False,
+    )
+
+    assert isinstance(result, PreparedSupersessionResult)
+    assert result.event.sequence == 8
+    assert result.event.status == "FAILED"
+    assert result.event.release_id == "stable-0008"
+    assert result.event.source_commit == "1" * 40
+    assert result.event.component_set_sha256 == "2" * 64
+    assert result.event.payload_sha256 == "3" * 64
+    assert result.event.envelope_sha256 == "4" * 64
+    assert result.event.key_id == "neko-update-prod-1"
+    assert result.event.previous_entry_sha256 == signed_sha
+    assert result.next_unused_sequence == 9
+    assert result.mutated is False
+    assert result.current_ledger_head_sha256 == signed_sha
+
+    # Ledger remains untouched
+    ledger_after = verify_ledger(ledger_path)
+    assert len(ledger_after.events) == 2
+    assert ledger_after.latest_entry_sha256 == signed_sha
+
+
+def test_prepare_signed_release_supersession_rejections(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "ledger.jsonl"
+    genesis = _make_genesis(7)
+    with open_authority_session(ledger_path) as session:
+        genesis_sha = initialize_genesis(session, genesis)
+
+    ev_res = _make_event(8, "RESERVED", genesis_sha)
+    res_sha = append_event(ledger_path, ev_res, genesis_sha)
+
+    ev_signed = _make_event(
+        8,
+        "SIGNED",
+        res_sha,
+        source_commit="1" * 40,
+        component_set_sha256="2" * 64,
+        payload_sha256="3" * 64,
+        envelope_sha256="4" * 64,
+        key_id="neko-update-prod-1",
+    )
+    signed_sha = append_event(ledger_path, ev_signed, res_sha)
+    verified = verify_ledger(ledger_path)
+
+    b8 = AuthenticatedProductionBinding(
+        sequence=8,
+        release_id="stable-0008",
+        payload_sha256="3" * 64,
+        envelope_sha256="4" * 64,
+        key_id="neko-update-prod-1",
+    )
+    snapshot = _make_snapshot(
+        bindings={7: genesis.floor_binding, 8: b8},
+        provenance={7: "fb0d2e734ee611d75933ccd90cb82347c0b578bd", 8: "1" * 40},
+    )
+
+    base_kwargs = {
+        "sequence": 8,
+        "release_id": "stable-0008",
+        "source_commit": "1" * 40,
+        "component_set_sha256": "2" * 64,
+        "payload_sha256": "3" * 64,
+        "envelope_sha256": "4" * 64,
+        "latest_ledger_entry_sha256": signed_sha,
+        "approved_spec_commit": "a" * 40,
+        "reason_code": "ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    }
+
+    # Wrong latest_ledger_entry_sha256
+    req_bad_head = SupersedeSignedReleaseRequest(**{**base_kwargs, "latest_ledger_entry_sha256": "f" * 64})
+    with pytest.raises((ReleaseAuthorityReconciliationRequired, SequenceAuthorityError)):
+        prepare_signed_release_supersession(
+            verified_ledger=verified,
+            custody=snapshot,
+            request=req_bad_head,
+        )
+
+    # Wrong release_id
+    req_bad_rel = SupersedeSignedReleaseRequest(**{**base_kwargs, "release_id": "stable-9999"})
+    with pytest.raises((ReleaseAuthorityReconciliationRequired, SequenceAuthorityError)):
+        prepare_signed_release_supersession(
+            verified_ledger=verified,
+            custody=snapshot,
+            request=req_bad_rel,
+        )
+
+    # Wrong source_commit
+    req_bad_commit = SupersedeSignedReleaseRequest(**{**base_kwargs, "source_commit": "9" * 40})
+    with pytest.raises((ReleaseProvenanceReconciliationRequired, ReleaseAuthorityReconciliationRequired, SequenceAuthorityError)):
+        prepare_signed_release_supersession(
+            verified_ledger=verified,
+            custody=snapshot,
+            request=req_bad_commit,
+        )
+
+    # Wrong component_set_sha256
+    req_bad_comp = SupersedeSignedReleaseRequest(**{**base_kwargs, "component_set_sha256": "9" * 64})
+    with pytest.raises((ReleaseAuthorityReconciliationRequired, SequenceAuthorityError)):
+        prepare_signed_release_supersession(
+            verified_ledger=verified,
+            custody=snapshot,
+            request=req_bad_comp,
+        )
+
+    # Wrong payload_sha256
+    req_bad_payload = SupersedeSignedReleaseRequest(**{**base_kwargs, "payload_sha256": "9" * 64})
+    with pytest.raises((ReleaseAuthorityReconciliationRequired, SequenceAuthorityError)):
+        prepare_signed_release_supersession(
+            verified_ledger=verified,
+            custody=snapshot,
+            request=req_bad_payload,
+        )
+
+    # Wrong envelope_sha256
+    req_bad_env = SupersedeSignedReleaseRequest(**{**base_kwargs, "envelope_sha256": "9" * 64})
+    with pytest.raises((ReleaseAuthorityReconciliationRequired, SequenceAuthorityError)):
+        prepare_signed_release_supersession(
+            verified_ledger=verified,
+            custody=snapshot,
+            request=req_bad_env,
+        )
+
+    # If sequence is already PUBLISHED
+    ev_pub = _make_event(
+        8,
+        "PUBLISHED",
+        signed_sha,
+        source_commit="1" * 40,
+        component_set_sha256="2" * 64,
+        payload_sha256="3" * 64,
+        envelope_sha256="4" * 64,
+        key_id="neko-update-prod-1",
+    )
+    pub_sha = append_event(ledger_path, ev_pub, signed_sha)
+    verified_pub = verify_ledger(ledger_path)
+    req_pub = SupersedeSignedReleaseRequest(**{**base_kwargs, "latest_ledger_entry_sha256": pub_sha})
+    with pytest.raises(ReleaseAuthorityReconciliationRequired, match="(?i)(published|cannot supersede)"):
+        prepare_signed_release_supersession(
+            verified_ledger=verified_pub,
+            custody=snapshot,
+            request=req_pub,
+        )

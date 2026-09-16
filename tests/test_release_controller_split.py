@@ -14,8 +14,11 @@ from scripts.publish_atomic_release import (
 )
 from scripts.release_controller import (
     InstallerPublishError,
+    PreparedSupersessionResult,
     REQUIRED_INSTALLER_ASSET,
     StagedInstallerDraftEvidence,
+    SupersedeSignedReleaseRequest,
+    prepare_signed_release_supersession,
     process_accepted_commits,
     publish_split_release,
     validate_installer_repo_configuration,
@@ -748,6 +751,8 @@ from production_sequence_ledger import (  # noqa: E402
     AuthenticatedHistorySnapshot,
     AuthenticatedProductionBinding,
     ReleaseAuthorityReconciliationRequired,
+    SequenceLedgerEvent,
+    append_event,
     open_authority_session,
 )
 
@@ -1305,3 +1310,280 @@ def test_sign_reserved_baseline_crash_recovery_after_custody_write_does_not_resi
         verified = session.read_verified()
         assert len(verified.events) == 2
         assert verified.events[1].status == "SIGNED"
+
+
+def _setup_seq8_signed_fixture(tmp_path: Path):
+    ledger_path, custody_root, _floor_snapshot, binding7, allocation, unsigned, doc8 = (
+        _setup_seq7_floor_and_seq8_reserved(tmp_path)
+    )
+    env8 = signed_envelope(doc8, key_id=TEST_KEY_ID)
+    env_bytes8 = canonical_json_dumps(env8)
+    env_sha8 = hashlib.sha256(env_bytes8).hexdigest()
+    rec8 = AuthenticatedEnvelopeRecord(
+        source_id="custody-0008",
+        source_kind="custody",
+        envelope_bytes=env_bytes8,
+        provenance_source_commit="a" * 40,
+    )
+    append_custody_record(custody_root, rec8, expected_index_sha256=None)
+
+    from scripts.release_controller import (
+        SignedBaselineEvidence,
+        sign_reserved_baseline,
+    )
+
+    sign_res = sign_reserved_baseline(
+        ledger_path=ledger_path,
+        custody_root=custody_root,
+        history_provider=_FakeHistoryProvider(
+            AuthenticatedHistorySnapshot(
+                bindings_by_sequence={
+                    7: binding7,
+                    8: AuthenticatedProductionBinding(
+                        sequence=8,
+                        release_id="stable-0008",
+                        payload_sha256=unsigned.payload_sha256,
+                        envelope_sha256=env_sha8,
+                        key_id=TEST_KEY_ID,
+                    ),
+                },
+                provenance_source_commit_by_sequence={7: "c" * 40, 8: "a" * 40},
+                live_updates_sequences=frozenset(),
+                highest_authenticated_sequence=8,
+                authenticated_bindings_sha256="b" * 64,
+                snapshot_sha256="s" * 64,
+            )
+        ),
+        production_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        allocation=allocation,
+        unsigned=unsigned,
+        signer=None,
+    )
+    assert isinstance(sign_res, SignedBaselineEvidence)
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+
+    request = SupersedeSignedReleaseRequest(
+        sequence=8,
+        release_id="stable-0008",
+        source_commit="a" * 40,
+        component_set_sha256="comp" * 16,
+        payload_sha256=unsigned.payload_sha256,
+        envelope_sha256=env_sha8,
+        latest_ledger_entry_sha256=verified.latest_entry_sha256,
+        approved_spec_commit="d" * 40,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+
+    return ledger_path, custody_root, verified, request
+
+
+def test_supersede_signed_unpublished_release_prepares_terminal_failed_event(tmp_path: Path):
+    ledger_path, custody_root, verified, request = _setup_seq8_signed_fixture(tmp_path)
+
+    result = prepare_signed_release_supersession(
+        verified_ledger=verified,
+        custody=custody_root,
+        request=request,
+    )
+    assert result.event.sequence == 8
+    assert result.event.status == "FAILED"
+    assert result.next_unused_sequence == 9
+
+
+def test_supersession_rejects_published_release_before_append(tmp_path: Path):
+    ledger_path, custody_root, verified, request = _setup_seq8_signed_fixture(tmp_path)
+
+    # Append a PUBLISHED event for seq 8
+    ev_pub = SequenceLedgerEvent(
+        record_type="EVENT",
+        sequence=8,
+        release_id="stable-0008",
+        status="PUBLISHED",
+        version="5.1.2",
+        channel="stable",
+        source_commit="a" * 40,
+        component_set_sha256="comp" * 16,
+        payload_sha256=request.payload_sha256,
+        envelope_sha256=request.envelope_sha256,
+        key_id=TEST_KEY_ID,
+        timestamp="2026-09-16T12:00:00Z",
+        previous_entry_sha256=verified.latest_entry_sha256,
+    )
+    pub_sha = append_event(ledger_path, ev_pub, verified.latest_entry_sha256)
+
+    with open_authority_session(ledger_path) as session:
+        verified_pub = session.read_verified()
+
+    req_pub = SupersedeSignedReleaseRequest(
+        sequence=8,
+        release_id="stable-0008",
+        source_commit="a" * 40,
+        component_set_sha256="comp" * 16,
+        payload_sha256=request.payload_sha256,
+        envelope_sha256=request.envelope_sha256,
+        latest_ledger_entry_sha256=pub_sha,
+        approved_spec_commit="d" * 40,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+
+    with pytest.raises(ReleaseAuthorityReconciliationRequired):
+        prepare_signed_release_supersession(
+            verified_ledger=verified_pub,
+            custody=custody_root,
+            request=req_pub,
+        )
+
+
+def test_supersession_dry_run_mutate_false_preserves_zero_writes(tmp_path: Path):
+    ledger_path, custody_root, verified, request = _setup_seq8_signed_fixture(tmp_path)
+    ledger_bytes_before = ledger_path.read_bytes()
+
+    result = prepare_signed_release_supersession(
+        ledger_path=ledger_path,
+        custody_root=custody_root,
+        request=request,
+        mutate=False,
+    )
+
+    assert isinstance(result, PreparedSupersessionResult)
+    assert result.mutated is False
+    assert result.event.sequence == 8
+    assert result.event.status == "FAILED"
+    assert result.event.previous_entry_sha256 == verified.latest_entry_sha256
+    assert result.current_ledger_head_sha256 == verified.latest_entry_sha256
+    assert result.next_unused_sequence == 9
+    assert len(result.proposed_entry_sha256) == 64
+
+    # File on disk is completely unchanged (zero writes)
+    assert ledger_path.read_bytes() == ledger_bytes_before
+
+    with open_authority_session(ledger_path) as session:
+        after_ledger = session.read_verified()
+        assert len(after_ledger.events) == 2
+        assert after_ledger.latest_entry_sha256 == verified.latest_entry_sha256
+
+
+def test_supersession_dry_run_real_authority_inputs_read_only():
+    prod_ledger = Path("E:/Github/authority/v512-production-sequence-authority/production-sequence-ledger-v1.jsonl")
+    prod_custody = Path("E:/Github/artifacts/v512-production-authority-custody")
+
+    if not prod_ledger.is_file() or not prod_custody.is_dir():
+        pytest.skip("Real authority inputs not present on this machine")
+
+    real_bytes_before = prod_ledger.read_bytes()
+    real_stat_before = prod_ledger.stat()
+
+    req = SupersedeSignedReleaseRequest(
+        sequence=8,
+        release_id="stable-0008",
+        source_commit="efb79a0b62d27437fd7ac0c7b2c4bfad8c4264ce",
+        component_set_sha256="4520cba9be1785155630992d75ebd11f7616a1256fdcd394abb9950ad6681f57",
+        payload_sha256="ed9d510fc3aca08b70ef1a78864fd1c632a4f87b0a285fc3360e2627359161f0",
+        envelope_sha256="0ee3134aaddffab345eddec669918fe3defc794f446b922d22d61f3b91be50b7",
+        latest_ledger_entry_sha256="ac89aea38c06ab62ab8c6fab1e99db6491a05d0a41a15eb8a041a4b83e4dca58",
+        approved_spec_commit="224eb9cb43df0ca0fa583fa41a0c219622392a56",
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+
+    result = prepare_signed_release_supersession(
+        ledger_path=prod_ledger,
+        custody_root=prod_custody,
+        request=req,
+        mutate=False,
+    )
+
+    assert result.event.sequence == 8
+    assert result.event.status == "FAILED"
+    assert result.event.release_id == "stable-0008"
+    assert result.event.source_commit == "efb79a0b62d27437fd7ac0c7b2c4bfad8c4264ce"
+    assert result.event.previous_entry_sha256 == "ac89aea38c06ab62ab8c6fab1e99db6491a05d0a41a15eb8a041a4b83e4dca58"
+    assert result.next_unused_sequence == 9
+    assert result.mutated is False
+    assert result.current_ledger_head_sha256 == "ac89aea38c06ab62ab8c6fab1e99db6491a05d0a41a15eb8a041a4b83e4dca58"
+
+    # Absolute proof that production ledger was NOT mutated
+    assert prod_ledger.read_bytes() == real_bytes_before
+    assert prod_ledger.stat().st_size == real_stat_before.st_size
+    assert prod_ledger.stat().st_mtime_ns == real_stat_before.st_mtime_ns
+
+
+def test_supersession_rejects_identity_mismatches_at_controller_level(tmp_path: Path):
+    ledger_path, custody_root, verified, request = _setup_seq8_signed_fixture(tmp_path)
+
+    # Wrong release id
+    req_bad_id = SupersedeSignedReleaseRequest(
+        sequence=request.sequence,
+        release_id="stable-9999",
+        source_commit=request.source_commit,
+        component_set_sha256=request.component_set_sha256,
+        payload_sha256=request.payload_sha256,
+        envelope_sha256=request.envelope_sha256,
+        latest_ledger_entry_sha256=request.latest_ledger_entry_sha256,
+        approved_spec_commit=request.approved_spec_commit,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired):
+        prepare_signed_release_supersession(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            request=req_bad_id,
+        )
+
+    # Wrong source commit
+    req_bad_src = SupersedeSignedReleaseRequest(
+        sequence=request.sequence,
+        release_id=request.release_id,
+        source_commit="b" * 40,
+        component_set_sha256=request.component_set_sha256,
+        payload_sha256=request.payload_sha256,
+        envelope_sha256=request.envelope_sha256,
+        latest_ledger_entry_sha256=request.latest_ledger_entry_sha256,
+        approved_spec_commit=request.approved_spec_commit,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+    with pytest.raises((ReleaseAuthorityReconciliationRequired, Exception)):
+        prepare_signed_release_supersession(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            request=req_bad_src,
+        )
+
+    # Wrong payload sha256
+    req_bad_payload = SupersedeSignedReleaseRequest(
+        sequence=request.sequence,
+        release_id=request.release_id,
+        source_commit=request.source_commit,
+        component_set_sha256=request.component_set_sha256,
+        payload_sha256="0" * 64,
+        envelope_sha256=request.envelope_sha256,
+        latest_ledger_entry_sha256=request.latest_ledger_entry_sha256,
+        approved_spec_commit=request.approved_spec_commit,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired):
+        prepare_signed_release_supersession(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            request=req_bad_payload,
+        )
+
+    # Stale latest ledger entry sha256
+    req_bad_head = SupersedeSignedReleaseRequest(
+        sequence=request.sequence,
+        release_id=request.release_id,
+        source_commit=request.source_commit,
+        component_set_sha256=request.component_set_sha256,
+        payload_sha256=request.payload_sha256,
+        envelope_sha256=request.envelope_sha256,
+        latest_ledger_entry_sha256="0" * 64,
+        approved_spec_commit=request.approved_spec_commit,
+        reason_code="ARCHITECTURE_SUPERSEDED_BEFORE_PUBLICATION",
+    )
+    with pytest.raises(ReleaseAuthorityReconciliationRequired):
+        prepare_signed_release_supersession(
+            ledger_path=ledger_path,
+            custody_root=custody_root,
+            request=req_bad_head,
+        )
