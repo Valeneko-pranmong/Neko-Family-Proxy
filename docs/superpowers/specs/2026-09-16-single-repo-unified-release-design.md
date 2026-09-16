@@ -198,7 +198,7 @@ High-risk existing production evidence must be preserved, not rewritten:
 - no `PUBLISHED` event may be appended for that old binding;
 - no controller may reinterpret the old Owner CR7/CR8 authorization text as permission to publish the new single-repo design.
 
-Before any new production signing/publication, the implementation plan must define a ledger-safe supersession path for signed-but-unpublished sequence 8. The old SIGNED bytes are immutable. If the current authority schema has no reviewed terminal/superseded representation for a signed-but-unpublished release, that is an explicit authority-design task. A new payload/signature must use a fresh authority state/sequence determined by that reviewed migration; sequence 8 must not simply be overwritten or re-signed with different repository/release bytes.
+Before any new production signing/publication, the implementation plan must define a ledger-safe supersession path for signed-but-unpublished sequence 8. The old SIGNED bytes are immutable. The current ledger schema explicitly allows `SIGNED -> FAILED`, and `FAILED` is terminal; therefore the implementation plan must evaluate and independently review whether appending a `FAILED` event is the correct supersession mechanism for this architecture change. It must not invent an overwrite/re-sign path. Because the current event schema has no dedicated failure-reason field, any such transition also needs durable external evidence tying the terminal event to this approved architecture supersession. A new payload/signature must use a fresh sequence determined by reconciliation after that terminal event; sequence 8 must not simply be overwritten or re-signed with different repository/release bytes.
 
 Any trust-profile immutability guard that currently binds production to `Neko-Family-Proxy-Updates` must be intentionally reopened through its normal acceptance/review process. Do not patch around the immutability guard.
 
@@ -219,6 +219,24 @@ The implementation plan is expected to touch, at minimum, these responsibility a
 - existing single-active-session and launch-permit regression coverage.
 
 Existing safety properties must be reused rather than replaced: canonical signed release envelopes, SHA-256 artifact verification, sequence/replay/downgrade checks, transactional staging/activation, rollback, Updater IPC admission, entitlement/session/heartbeat enforcement, and independent review gates.
+
+### 13.1 Gap inventory from the accepted implementation
+
+The accepted implementation already provides useful pieces that should be preserved rather than rebuilt:
+
+- default GitHub Release discovery already points to `Valeneko-pranmong/Neko-Family-Proxy`;
+- the authenticated release resolver already requires and verifies `release-v2.json`, Launcher, Updater, and Core assets;
+- staging already filters updates to Launcher/Core and never replaces Updater;
+- direct Updater execution is already restricted to self-check or validated IPC session mode;
+- transactional updater state already has internal `REPAIR_REQUIRED` outcomes for damaged updater state.
+
+The following are real gaps, not greenfield assumptions:
+
+- the installed production trust profile, K1 acceptance verifier, release controller, publisher tests, and several current docs still bind production routing to `Neko-Family-Proxy-Updates`; reopening that accepted trust contract is required;
+- the machine publisher and Human publisher are separate programs with contradictory asset/repository contracts, so unified one-Release publication requires an intentionally reviewed publisher contract rather than a constant-only edit;
+- existing `REPAIR_REQUIRED` behavior is updater-state recovery, not the new user-facing exact-release File Check/Repair workflow;
+- the current installation ID is generated and persisted in enrollment state, but no DPAPI/CNG machine-bound credential path was found in the accepted Launcher source; copied-folder rejection therefore needs a new machine-protected installation proof rather than relying on the existing installation ID alone;
+- production sequence authority already supports terminal `FAILED` after `SIGNED`, which is the candidate safe mechanism for consuming old sequence 8, subject to explicit TDD/review/evidence as described above.
 
 ## 14. Required test families
 
