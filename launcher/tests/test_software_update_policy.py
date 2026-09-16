@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,13 @@ from neko_launcher.application.software_update_models import (
     UpdateInvocationReason,
     UpdateState,
 )
-from neko_launcher.application.software_update_policy import evaluate_release
+from neko_launcher.application.software_update_policy import (
+    SoftwareUpdatePolicyError,
+    StartupUpdateDisposition,
+    classify_startup_release,
+    evaluate_release,
+)
+from neko_launcher.updater.manifest_v2 import UpdaterProtocol
 
 H_A = "a" * 64
 H_B = "b" * 64
@@ -760,3 +767,173 @@ def test_semantic_version_does_not_affect_ordering() -> None:
     assert result_conflict.state == UpdateState.VERIFY_FAILED
     assert result_conflict.diagnostic_code == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
 
+
+def local_release_identity(
+    version: str = "5.1.2",
+    sequence: int = 8,
+    *,
+    release_id: str | None = None,
+    payload_sha: str | None = None,
+    high_water_sequence: int | None = None,
+    high_water_release_id: str | None = None,
+    high_water_payload_sha: str | None = None,
+    failed: AuthenticatedReleaseBinding | None = None,
+    launcher_identity: str = H_A,
+    core_identity: str = H_B,
+    updater_identity: str = H_C,
+    updater_version: str = "5.0.0",
+    core_version: str = "1.1.0",
+) -> LocalReleaseIdentity:
+    eff_release_id = release_id or f"beta-{sequence}"
+    eff_payload_sha = payload_sha or f"{sequence:04x}".ljust(64, "0")
+    committed = AuthenticatedReleaseBinding(
+        release_sequence=sequence,
+        release_id=eff_release_id,
+        payload_sha256=eff_payload_sha,
+    )
+    if high_water_sequence is not None:
+        hw_id = high_water_release_id or f"beta-{high_water_sequence}"
+        hw_sha = high_water_payload_sha or f"{high_water_sequence:04x}".ljust(64, "0")
+        high_water = AuthenticatedReleaseBinding(
+            release_sequence=high_water_sequence,
+            release_id=hw_id,
+            payload_sha256=hw_sha,
+        )
+    else:
+        high_water = committed
+
+    return LocalReleaseIdentity(
+        committed=committed,
+        high_water=high_water,
+        observed=high_water,
+        failed=failed,
+        launcher_version=version,
+        launcher_installed_identity_sha256=launcher_identity,
+        updater_version=updater_version,
+        updater_installed_identity_sha256=updater_identity,
+        core_version=core_version,
+        core_installed_identity_sha256=core_identity,
+    )
+
+
+def bound_release(
+    version: str = "5.1.3",
+    sequence: int = 9,
+    *,
+    release_id: str | None = None,
+    mandatory: bool = True,
+    payload_sha: str | None = None,
+    updater_protocol: Any = None,
+    minimum_supported_sequence: int = 1,
+    launcher_identity: str = H_C,
+    core_identity: str = H_D,
+) -> ReleaseSet:
+    return release_set(
+        sequence,
+        release_id=release_id,
+        mandatory=mandatory,
+        minimum_supported_sequence=minimum_supported_sequence,
+        launcher_identity=launcher_identity,
+        core_identity=core_identity,
+        launcher_version=version,
+        core_version="1.2.0",
+        payload_sha256=payload_sha,
+    )
+
+
+def test_startup_classification_5_1_2_to_5_1_3_is_mandatory() -> None:
+    result = classify_startup_release(
+        local=local_release_identity(version="5.1.2", sequence=8),
+        remote=bound_release(version="5.1.3", sequence=9, mandatory=True),
+    )
+    assert result is StartupUpdateDisposition.MANDATORY_UPDATE
+
+
+def test_startup_classification_exact_same_release_is_current() -> None:
+    local = local_release_identity(version="5.1.2", sequence=8)
+    remote = bound_release(
+        version="5.1.2",
+        sequence=8,
+        release_id=local.committed.release_id,
+        payload_sha=local.committed.payload_sha256,
+        launcher_identity=local.launcher_installed_identity_sha256,
+        core_identity=local.core_installed_identity_sha256,
+    )
+    result = classify_startup_release(local=local, remote=remote)
+    assert result is StartupUpdateDisposition.CURRENT
+
+
+def test_newer_same_major_is_mandatory_even_if_manifest_flag_false() -> None:
+    result = classify_startup_release(
+        local=local_release_identity(version="5.1.2", sequence=8),
+        remote=bound_release(version="5.1.3", sequence=9, mandatory=False),
+    )
+    assert result is StartupUpdateDisposition.MANDATORY_UPDATE
+
+
+def test_next_major_requires_reinstall() -> None:
+    result = classify_startup_release(
+        local=local_release_identity(version="5.1.3", sequence=9),
+        remote=bound_release(version="6.0.0", sequence=10, mandatory=True),
+    )
+    assert result is StartupUpdateDisposition.REINSTALL_REQUIRED
+
+
+def test_startup_classification_incompatible_updater_protocol_requires_reinstall() -> None:
+    # If ReleaseSet doesn't have updater_protocol, we attach it as an attribute or pass stub
+    class BoundWithProto:
+        def __init__(self, base: Any, proto: Any) -> None:
+            self._base = base
+            self.updater_protocol = proto
+            self.version = getattr(base, "launcher_version", "5.1.3")
+            self.release_sequence = base.release_sequence
+            self.release_id = base.release_id
+            self.mandatory = base.mandatory
+            self.payload_sha256 = base.payload_sha256
+            self.components = base.components
+            self.minimum_supported_sequence = base.minimum_supported_sequence
+
+    stub = BoundWithProto(bound_release(version="5.1.3", sequence=9), UpdaterProtocol(minimum=2, maximum=2))
+    result = classify_startup_release(
+        local=local_release_identity(version="5.1.2", sequence=8),
+        remote=stub,
+    )
+    assert result is StartupUpdateDisposition.REINSTALL_REQUIRED
+
+    # Incompatible updater protocol across major boundary requires reinstall
+    stub_major = BoundWithProto(bound_release(version="6.0.0", sequence=10), UpdaterProtocol(minimum=2, maximum=3))
+    result_major = classify_startup_release(
+        local=local_release_identity(version="5.1.2", sequence=8),
+        remote=stub_major,
+    )
+    assert result_major is StartupUpdateDisposition.REINSTALL_REQUIRED
+
+
+def test_startup_classification_invalid_untrusted_conflicting_remote_fails_closed() -> None:
+    # Rollback / downgrade attempt
+    local = local_release_identity(version="5.1.3", sequence=9)
+    remote_downgrade = bound_release(version="5.1.2", sequence=8)
+    with pytest.raises((SoftwareUpdatePolicyError, ValueError)):
+        classify_startup_release(local=local, remote=remote_downgrade)
+
+    # Same sequence conflict (different release_id)
+    remote_conflict_id = bound_release(
+        version="5.1.3",
+        sequence=9,
+        release_id="beta-9-conflict",
+    )
+    with pytest.raises((SoftwareUpdatePolicyError, ValueError)):
+        classify_startup_release(local=local, remote=remote_conflict_id)
+
+    # Same sequence conflict (different payload_sha256)
+    remote_conflict_sha = bound_release(
+        version="5.1.3",
+        sequence=9,
+        payload_sha=H_5,
+    )
+    with pytest.raises((SoftwareUpdatePolicyError, ValueError)):
+        classify_startup_release(local=local, remote=remote_conflict_sha)
+
+    # Invalid local identity
+    with pytest.raises(TypeError, match="LocalReleaseIdentity"):
+        classify_startup_release(local=None, remote=bound_release(version="5.1.3", sequence=9))  # type: ignore[arg-type]

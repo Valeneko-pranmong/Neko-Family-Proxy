@@ -15,7 +15,11 @@ from neko_launcher.application.software_update_pending import (
     UpdateLifecycleState,
     VerifiedPendingUpdate,
 )
-from neko_launcher.application.software_update_policy import evaluate_release
+from neko_launcher.application.software_update_policy import (
+    StartupUpdateDisposition,
+    classify_startup_release,
+    evaluate_release,
+)
 from neko_launcher.infrastructure.software_update_stage import (
     SoftwareUpdateStageError,
 )
@@ -34,8 +38,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SoftwareUpdateCoordinator",
+    "SoftwareUpdateGateBlockedError",
     "UpdateLifecycleSnapshot",
 ]
+
+
+class SoftwareUpdateGateBlockedError(RuntimeError):
+    """Raised when normal login or service flow is attempted while blocked by the startup gate."""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        self.code = code
+        super().__init__(detail or code)
 
 
 @dataclass(frozen=True)
@@ -44,6 +57,7 @@ class UpdateLifecycleSnapshot:
     check_result: UpdateCheckResult | None
     pending: VerifiedPendingUpdate | None
     diagnostic_code: str | None
+    disposition: StartupUpdateDisposition | None = None
 
 
 class SoftwareUpdateCoordinator:
@@ -85,6 +99,7 @@ class SoftwareUpdateCoordinator:
         self._startup_done: bool = False
         self._startup_snapshot: UpdateLifecycleSnapshot | None = None
         self._current_snapshot: UpdateLifecycleSnapshot | None = None
+        self._startup_disposition: StartupUpdateDisposition | None = None
         self._startup_callbacks: list[
             Callable[[UpdateLifecycleSnapshot], None]
         ] = []
@@ -109,6 +124,11 @@ class SoftwareUpdateCoordinator:
             check_result=None,
             pending=pending,
             diagnostic_code=None,
+            disposition=(
+                StartupUpdateDisposition.MANDATORY_UPDATE
+                if pending is not None
+                else self._startup_disposition
+            ),
         )
         with self._lock:
             if self._current_snapshot is None:
@@ -163,11 +183,18 @@ class SoftwareUpdateCoordinator:
                 check_result=None,
                 pending=pending,
                 diagnostic_code="UPDATE_CHECK_INTERNAL_FAILURE",
+                disposition=(
+                    StartupUpdateDisposition.MANDATORY_UPDATE
+                    if pending is not None
+                    else self._startup_disposition
+                ),
             )
         finally:
             with self._lock:
                 self._startup_snapshot = snapshot
                 self._current_snapshot = snapshot
+                if snapshot is not None and snapshot.disposition is not None:
+                    self._startup_disposition = snapshot.disposition
                 self._startup_done = True
                 self._startup_checking = False
                 callbacks = list(self._startup_callbacks)
@@ -202,10 +229,17 @@ class SoftwareUpdateCoordinator:
                 check_result=None,
                 pending=pending,
                 diagnostic_code="UPDATE_CHECK_INTERNAL_FAILURE",
+                disposition=(
+                    StartupUpdateDisposition.MANDATORY_UPDATE
+                    if pending is not None
+                    else self._startup_disposition
+                ),
             )
 
         with self._lock:
             self._current_snapshot = snapshot
+            if snapshot is not None and snapshot.disposition is not None:
+                self._startup_disposition = snapshot.disposition
 
         if callback is not None:
             self._invoke_callback_safe(callback, snapshot)
@@ -232,6 +266,11 @@ class SoftwareUpdateCoordinator:
                 check_result=None,
                 pending=pending,
                 diagnostic_code=None,
+                disposition=(
+                    StartupUpdateDisposition.MANDATORY_UPDATE
+                    if pending is not None
+                    else self._startup_disposition
+                ),
             )
 
         check_result, resolved = (
@@ -271,12 +310,51 @@ class SoftwareUpdateCoordinator:
     ) -> tuple[UpdateLifecycleSnapshot, VerifiedPendingUpdate | None]:
         pending = existing_pending
 
+        disposition: StartupUpdateDisposition | None = None
+        if resolved is not None:
+            try:
+                disposition = classify_startup_release(local, resolved)
+            except Exception:
+                disposition = None
+        elif pending is not None:
+            disposition = StartupUpdateDisposition.MANDATORY_UPDATE
+        elif self._startup_disposition is not None:
+            disposition = self._startup_disposition
+
+        if disposition is StartupUpdateDisposition.REINSTALL_REQUIRED:
+            diag_code = (
+                check_result.diagnostic_code.value
+                if hasattr(check_result.diagnostic_code, "value")
+                else (
+                    str(check_result.diagnostic_code)
+                    if check_result.diagnostic_code is not None
+                    else "REINSTALL_REQUIRED"
+                )
+            )
+            state = (
+                UpdateLifecycleState.UPDATE_PENDING
+                if pending is not None
+                else UpdateLifecycleState.IDLE
+            )
+            return (
+                UpdateLifecycleSnapshot(
+                    state=state,
+                    check_result=check_result,
+                    pending=pending,
+                    diagnostic_code=diag_code,
+                    disposition=disposition,
+                ),
+                pending,
+            )
+
         should_admit_and_stage = (
             resolved is not None
             and (
                 check_result.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
                 or check_result.retry_staging
+                or disposition is StartupUpdateDisposition.MANDATORY_UPDATE
             )
+            and disposition is not StartupUpdateDisposition.CURRENT
         )
 
         if not should_admit_and_stage:
@@ -300,6 +378,7 @@ class SoftwareUpdateCoordinator:
                     check_result=check_result,
                     pending=pending,
                     diagnostic_code=diag_code,
+                    disposition=disposition,
                 ),
                 pending,
             )
@@ -318,6 +397,7 @@ class SoftwareUpdateCoordinator:
                     check_result=check_result,
                     pending=pending,
                     diagnostic_code=admit_res.error or "ADMISSION_FAILED",
+                    disposition=disposition,
                 ),
                 pending,
             )
@@ -332,6 +412,7 @@ class SoftwareUpdateCoordinator:
         if not (
             refreshed_check.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
             or refreshed_check.retry_staging
+            or disposition is StartupUpdateDisposition.MANDATORY_UPDATE
         ):
             state = (
                 UpdateLifecycleState.UPDATE_PENDING
@@ -344,6 +425,7 @@ class SoftwareUpdateCoordinator:
                     check_result=refreshed_check,
                     pending=pending,
                     diagnostic_code=None,
+                    disposition=disposition,
                 ),
                 pending,
             )
@@ -354,6 +436,7 @@ class SoftwareUpdateCoordinator:
                 check_result=refreshed_check,
                 pending=pending,
                 diagnostic_code=None,
+                disposition=disposition,
             )
 
         diag_code: str | None = None
@@ -377,9 +460,51 @@ class SoftwareUpdateCoordinator:
                 check_result=check_result,
                 pending=pending,
                 diagnostic_code=diag_code,
+                disposition=disposition,
             ),
             pending,
         )
+
+    def can_proceed_to_login(self) -> bool:
+        with self._lock:
+            if not self._startup_done or self._startup_snapshot is None:
+                return False
+            snap = self._current_snapshot or self._startup_snapshot
+            if snap.pending is not None:
+                return False
+            if snap.disposition != StartupUpdateDisposition.CURRENT:
+                return False
+            if snap.diagnostic_code is not None:
+                return False
+            return snap.state == UpdateLifecycleState.IDLE
+
+    def is_login_permitted(self) -> bool:
+        return self.can_proceed_to_login()
+
+    def gate_login(self, action: Callable[[], Any]) -> Any:
+        if not self.can_proceed_to_login():
+            snap = self.current()
+            if snap.disposition == StartupUpdateDisposition.REINSTALL_REQUIRED:
+                raise SoftwareUpdateGateBlockedError(
+                    "REINSTALL_REQUIRED",
+                    "Reinstall is required before login or service use.",
+                )
+            if (
+                snap.pending is not None
+                or snap.disposition == StartupUpdateDisposition.MANDATORY_UPDATE
+            ):
+                raise SoftwareUpdateGateBlockedError(
+                    "MANDATORY_UPDATE_PENDING",
+                    "Mandatory update must be applied before login or service use.",
+                )
+            raise SoftwareUpdateGateBlockedError(
+                "STARTUP_GATE_BLOCKED",
+                "Startup update gate blocked login or service use.",
+            )
+        return action()
+
+    def gate_service(self, action: Callable[[], Any]) -> Any:
+        return self.gate_login(action)
 
     def _safe_get_local_identity(self) -> LocalReleaseIdentity | None:
         try:

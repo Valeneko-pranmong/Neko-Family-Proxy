@@ -2368,3 +2368,133 @@ def test_app_window_safe_close_invokes_prepare_pending_exactly_once(
 
     window.close()
     service.prepare_pending.assert_called_once_with(pending)
+
+
+def test_app_window_login_blocked_when_mandatory_update_required() -> None:
+    from neko_launcher.application.software_update_coordinator import (
+        UpdateLifecycleSnapshot,
+    )
+    from neko_launcher.application.software_update_models import UpdateLifecycleState
+    from neko_launcher.application.software_update_policy import (
+        StartupUpdateDisposition,
+    )
+
+    window = object.__new__(AppWindow)
+    window._login_email = FakeVariable("user@example.com")
+    window._login_password = FakeVariable("password123")
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    service = FakeService()
+    window._service = service
+    window._submit = lambda action, on_success: action()
+
+    class FakeCoordinator:
+        def can_proceed_to_login(self) -> bool:
+            return False
+
+        def current(self) -> UpdateLifecycleSnapshot:
+            return UpdateLifecycleSnapshot(
+                state=UpdateLifecycleState.IDLE,
+                check_result=None,
+                pending=None,
+                diagnostic_code="UPDATE_REQUIRED",
+                disposition=StartupUpdateDisposition.MANDATORY_UPDATE,
+            )
+
+    window._update_coordinator = FakeCoordinator()
+
+    window._login()
+
+    assert service.sign_ins == []
+    assert window._login_password.get() == "password123"
+    assert "จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ" in window._error.get()
+
+
+def test_app_window_login_blocked_when_reinstall_required() -> None:
+    from neko_launcher.application.software_update_coordinator import (
+        UpdateLifecycleSnapshot,
+    )
+    from neko_launcher.application.software_update_models import UpdateLifecycleState
+    from neko_launcher.application.software_update_policy import (
+        StartupUpdateDisposition,
+    )
+
+    window = object.__new__(AppWindow)
+    window._login_email = FakeVariable("user@example.com")
+    window._login_password = FakeVariable("password123")
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    service = FakeService()
+    window._service = service
+    window._submit = lambda action, on_success: action()
+
+    class FakeCoordinator:
+        def can_proceed_to_login(self) -> bool:
+            return False
+
+        def current(self) -> UpdateLifecycleSnapshot:
+            return UpdateLifecycleSnapshot(
+                state=UpdateLifecycleState.IDLE,
+                check_result=None,
+                pending=None,
+                diagnostic_code="REINSTALL_REQUIRED",
+                disposition=StartupUpdateDisposition.REINSTALL_REQUIRED,
+            )
+
+    window._update_coordinator = FakeCoordinator()
+
+    window._login()
+
+    assert service.sign_ins == []
+    assert window._login_password.get() == "password123"
+    assert "จำเป็นต้องติดตั้งโปรแกรมใหม่" in window._error.get()
+
+
+def test_app_window_restore_and_route_blocked_when_gate_not_permitted() -> None:
+    window = object.__new__(AppWindow)
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    window._startup_routed_session_id = None
+    window._startup_route_generation = 0
+    window._startup_route_pending = False
+    window._startup_route_completed = False
+
+    class FakeCoordinator:
+        def can_proceed_to_login(self) -> bool:
+            return False
+
+    window._update_coordinator = FakeCoordinator()
+
+    routed = False
+
+    def route_action() -> None:
+        nonlocal routed
+        routed = True
+
+    window._route_after_authentication = route_action
+
+    window._restore_completed(True)
+    assert routed is False
+    assert window._notice.get() == ""
+
+
+def test_app_window_login_proceeds_when_gate_permitted() -> None:
+    window = object.__new__(AppWindow)
+    window._login_email = FakeVariable("user@example.com")
+    window._login_password = FakeVariable("password123")
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    service = FakeService()
+    window._service = service
+    window._submit = lambda action, on_success: action()
+
+    class FakeCoordinator:
+        def can_proceed_to_login(self) -> bool:
+            return True
+
+    window._update_coordinator = FakeCoordinator()
+
+    window._login()
+
+    assert service.sign_ins == [("user@example.com", "password123")]
+    assert window._login_password.get() == ""

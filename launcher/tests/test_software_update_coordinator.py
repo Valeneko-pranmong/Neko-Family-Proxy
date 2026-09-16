@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
-import threading
+
+import pytest
 
 from neko_launcher.application.software_update_coordinator import (
     SoftwareUpdateCoordinator,
+    SoftwareUpdateGateBlockedError,
     UpdateLifecycleSnapshot,
 )
 from neko_launcher.application.software_update_models import (
@@ -16,6 +19,9 @@ from neko_launcher.application.software_update_models import (
     LocalReleaseIdentity,
     UpdateLifecycleState,
     UpdateState,
+)
+from neko_launcher.application.software_update_policy import (
+    StartupUpdateDisposition,
 )
 from neko_launcher.application.software_update_service import UpdateCheckService
 from neko_launcher.infrastructure.github_asset_downloader import (
@@ -337,12 +343,14 @@ def _setup_coordinator(
 def test_coordinator_public_interfaces() -> None:
     # Verify UpdateLifecycleSnapshot signature
     snap_fields = {f.name for f in inspect.signature(UpdateLifecycleSnapshot).parameters.values()}
-    assert snap_fields == {"state", "check_result", "pending", "diagnostic_code"}
+    assert snap_fields == {"state", "check_result", "pending", "diagnostic_code", "disposition"}
 
     # Verify SoftwareUpdateCoordinator methods
     assert hasattr(SoftwareUpdateCoordinator, "startup")
     assert hasattr(SoftwareUpdateCoordinator, "manual_check")
     assert hasattr(SoftwareUpdateCoordinator, "current")
+    assert hasattr(SoftwareUpdateCoordinator, "can_proceed_to_login")
+    assert hasattr(SoftwareUpdateCoordinator, "gate_login")
 
 
 def test_current_idle_when_store_has_no_pending(tmp_path: Path) -> None:
@@ -945,3 +953,115 @@ def test_coordinator_admission_rejection_fails_closed_without_staging(
     assert stage_called is False
     assert snap.state == UpdateLifecycleState.IDLE
     assert snap.diagnostic_code == "DOWNGRADE_REJECTED"
+
+
+def test_login_composition_blocked_when_mandatory_update_is_pending(tmp_path: Path) -> None:
+    # When a newer compatible 5.x update is found, it stages and enters UPDATE_PENDING
+    resolved, payloads = _make_resolved_release(sequence=2, launcher_version="5.1.3")
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.startup()
+    assert snap.state == UpdateLifecycleState.UPDATE_PENDING
+    assert snap.disposition == StartupUpdateDisposition.MANDATORY_UPDATE
+    assert coordinator.can_proceed_to_login() is False
+
+    # Calling gate_login or gate_service raises SoftwareUpdateGateBlockedError
+    login_attempted = False
+
+    def do_login() -> str:
+        nonlocal login_attempted
+        login_attempted = True
+        return "logged_in"
+
+    with pytest.raises(SoftwareUpdateGateBlockedError):
+        coordinator.gate_login(do_login)
+
+    assert login_attempted is False
+
+
+def test_login_composition_blocked_when_reinstall_is_required(tmp_path: Path) -> None:
+    # 6.0.0 major release requires reinstall; staging must not occur and login is blocked
+    resolved, payloads = _make_resolved_release(sequence=2, launcher_version="6.0.0")
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.startup()
+    assert snap.disposition == StartupUpdateDisposition.REINSTALL_REQUIRED
+    assert snap.pending is None
+    assert len(downloader.download_calls) == 0
+    assert coordinator.can_proceed_to_login() is False
+
+    with pytest.raises(SoftwareUpdateGateBlockedError):
+        coordinator.gate_login(lambda: "blocked")
+
+
+def test_login_composition_blocked_when_mandatory_update_staging_failed(tmp_path: Path) -> None:
+    resolved, payloads = _make_resolved_release(sequence=2, launcher_version="5.1.3")
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads, default_error=GitHubAssetDownloadError("NETWORK_ERROR"))
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.startup()
+    assert snap.state == UpdateLifecycleState.IDLE
+    assert snap.diagnostic_code == "NETWORK_ERROR"
+    assert snap.disposition == StartupUpdateDisposition.MANDATORY_UPDATE
+    assert coordinator.can_proceed_to_login() is False
+
+    with pytest.raises(SoftwareUpdateGateBlockedError):
+        coordinator.gate_login(lambda: "blocked")
+
+
+def test_retry_after_failed_mandatory_update_does_not_bypass_gate(tmp_path: Path) -> None:
+    # First attempt fails staging
+    resolved, payloads = _make_resolved_release(sequence=2, launcher_version="5.1.3")
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads, default_error=GitHubAssetDownloadError("NETWORK_ERROR"))
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap1 = coordinator.startup()
+    assert snap1.disposition == StartupUpdateDisposition.MANDATORY_UPDATE
+    assert coordinator.can_proceed_to_login() is False
+
+    # Simulate network going offline / failing on retry
+    gateway.error = CodedError("MANIFEST_UNAVAILABLE")
+    snap2 = coordinator.manual_check()
+    assert snap2 is not None
+    # Retry failed, but mandatory disposition must persist so stale-use bypass is prevented
+    assert coordinator.can_proceed_to_login() is False
+
+    with pytest.raises(SoftwareUpdateGateBlockedError):
+        coordinator.gate_login(lambda: "blocked")
+
+
+def test_login_composition_allowed_when_release_is_current(tmp_path: Path) -> None:
+    # Exact same sequence and identity -> CURRENT, no pending update -> login allowed
+    resolved, payloads = _make_resolved_release(
+        sequence=1,
+        release_id="r1-stable",
+        launcher_version="5.1.0",
+        core_version="1.0.0",
+        updater_version="5.1.0",
+    )
+    local = _make_local_identity(
+        sequence=1,
+        release_id="r1-stable",
+        launcher_version="5.1.0",
+        payload_sha256=resolved.authenticated_release.payload_sha256,
+        launcher_sha=resolved.authenticated_release.components[0].installed_identity_sha256,
+        core_sha=resolved.authenticated_release.components[1].installed_identity_sha256,
+    )
+    gateway = TrackingGateway(resolved=resolved)
+    downloader = FakeAssetDownloader(payloads)
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader, local_id=local)
+
+    snap = coordinator.startup()
+    assert snap.state == UpdateLifecycleState.IDLE
+    assert snap.pending is None
+    assert snap.disposition == StartupUpdateDisposition.CURRENT
+    assert coordinator.can_proceed_to_login() is True
+
+    result = coordinator.gate_login(lambda: "login_ok")
+    assert result == "login_ok"

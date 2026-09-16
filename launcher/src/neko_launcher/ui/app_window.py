@@ -39,6 +39,9 @@ from neko_launcher.application.software_update_pending import (
     UpdateLifecycleState,
     VerifiedPendingUpdate,
 )
+from neko_launcher.application.software_update_policy import (
+    StartupUpdateDisposition,
+)
 from neko_launcher.domain.events import (
     GameProcessStateChanged,
     StateChanged,
@@ -865,6 +868,24 @@ class AppWindow:
     # Auth actions (callbacks → service via _submit)
     # ------------------------------------------------------------------
     def _login(self) -> None:
+        coordinator = getattr(self, "_update_coordinator", None)
+        if coordinator is not None and not coordinator.can_proceed_to_login():
+            snapshot = coordinator.current()
+            disposition = getattr(snapshot, "disposition", None)
+            err = getattr(self, "_error", None)
+            if disposition == StartupUpdateDisposition.REINSTALL_REQUIRED:
+                if err is not None:
+                    err.set("จำเป็นต้องติดตั้งโปรแกรมใหม่ (ตรวจพบเวอร์ชัน 6.x หรือตัวอัปเดตไม่รองรับ)")
+            elif (
+                getattr(snapshot, "pending", None) is not None
+                or disposition == StartupUpdateDisposition.MANDATORY_UPDATE
+            ):
+                if err is not None:
+                    err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ")
+            else:
+                if err is not None:
+                    err.set("ไม่สามารถเข้าสู่ระบบได้เนื่องจากติดสถานะการอัปเดต")
+            return
         username = self._login_email.get()
         password = self._login_password.get()
         self._login_password.set("")
@@ -932,6 +953,9 @@ class AppWindow:
                 variable.set("")
 
     def _restore_completed(self, restored: bool) -> None:
+        coordinator = getattr(self, "_update_coordinator", None)
+        if coordinator is not None and not coordinator.can_proceed_to_login():
+            return
         if restored:
             self._notice.set("กู้คืนการเข้าสู่ระบบสำเร็จ")
             self._route_after_authentication()
@@ -1077,6 +1101,9 @@ class AppWindow:
 
     def _route_after_authentication(self) -> None:
         """Observe PSO2 before choosing recovery or normal Tweaker launch."""
+        coordinator = getattr(self, "_update_coordinator", None)
+        if coordinator is not None and not coordinator.can_proceed_to_login():
+            return
         state = self._controller.state
         if state.session_id != self._startup_routed_session_id:
             self._startup_route_generation += 1
@@ -1507,6 +1534,14 @@ class AppWindow:
         if isinstance(result, UpdateLifecycleSnapshot):
             self._last_lifecycle_snapshot = result
             self._last_update_result = result.check_result
+            if result.disposition == StartupUpdateDisposition.REINSTALL_REQUIRED:
+                err = getattr(self, "_error", None)
+                if err is not None:
+                    err.set("จำเป็นต้องติดตั้งโปรแกรมใหม่ (ตรวจพบเวอร์ชัน 6.x หรือตัวอัปเดตไม่รองรับ)")
+            elif result.pending is not None or result.disposition == StartupUpdateDisposition.MANDATORY_UPDATE:
+                notice = getattr(self, "_notice", None)
+                if notice is not None:
+                    notice.set("มีอัปเดตสำคัญ — กรุณาคลิก 'อัปเดตทันที' เพื่อดำเนินการต่อ")
             self._record_debug_status(
                 "SOFTWARE_UPDATE_LIFECYCLE",
                 state=result.state.value,
