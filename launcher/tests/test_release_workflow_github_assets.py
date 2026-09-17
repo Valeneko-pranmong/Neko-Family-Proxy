@@ -9,7 +9,7 @@ import subprocess
 REPOSITORY_ROOT = Path(__file__).parents[2]
 WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
 REQUIRED_ASSETS = (
-    "NekoFamilyProxy-Setup.exe",
+    "NekoFamilyProxy-Installer.exe",
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",

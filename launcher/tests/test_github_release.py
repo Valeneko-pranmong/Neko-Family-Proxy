@@ -335,9 +335,9 @@ def test_parse_retains_four_update_assets_and_unique_setup() -> None:
         },
         {
             "id": 15,
-            "name": "NekoFamilyProxy-Setup.exe",
+            "name": "NekoFamilyProxy-Installer.exe",
             "size": 99999,
-            "browser_download_url": DOWNLOAD_PREFIX + "NekoFamilyProxy-Setup.exe",
+            "browser_download_url": DOWNLOAD_PREFIX + "NekoFamilyProxy-Installer.exe",
         },
     ]
 
@@ -350,7 +350,7 @@ def test_parse_retains_four_update_assets_and_unique_setup() -> None:
         "NekoLauncher.exe",
         "NekoUpdater.exe",
         "NekoProxyCore.zip",
-        "NekoFamilyProxy-Setup.exe",
+        "NekoFamilyProxy-Installer.exe",
     }
 
 

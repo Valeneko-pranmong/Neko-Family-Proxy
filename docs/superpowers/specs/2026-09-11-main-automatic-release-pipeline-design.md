@@ -37,7 +37,7 @@ The architecture abandons the "Remote Build -> Local Sign" model in favor of a *
 
 ## 4. Asset Contracts and Legacy 5.1.x Compatibility
 During the legacy compatibility phase, the unified release must contain exactly these 5 assets. A clean single-asset public page is deferred until a separately designed migration proves legacy clients cannot be stranded.
-1. `NekoFamilyProxy-Setup.exe`
+1. `NekoFamilyProxy-Installer.exe`
 2. `NekoLauncher.exe`
 3. `NekoUpdater.exe`
 4. `NekoProxyCore.zip`

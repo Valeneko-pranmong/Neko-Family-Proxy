@@ -70,7 +70,7 @@ Compression=lzma2
 SolidCompression=yes
 
 OutputDir={#BuildOutDir}
-OutputBaseFilename=NekoFamilyProxy-Setup
+OutputBaseFilename=NekoFamilyProxy-Installer
 
 SetupIconFile=..\icon_app.ico
 

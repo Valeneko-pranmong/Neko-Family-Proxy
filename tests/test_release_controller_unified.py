@@ -429,7 +429,7 @@ def test_process_accepted_commits_unified_build_and_provenance(monkeypatch, tmp_
             installer_builder_args.extend(args)
             out_dir = staging_base / "5.1.2" / "out"
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(fake_setup_bytes)
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(fake_setup_bytes)
             # simulate installer builder staging baseline envelope
             baseline_dir = staging_base / "5.1.2" / "payload" / "baseline"
             baseline_dir.mkdir(parents=True, exist_ok=True)

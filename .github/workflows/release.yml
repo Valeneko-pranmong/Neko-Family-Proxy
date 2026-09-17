@@ -147,7 +147,7 @@ jobs:
           if ($release.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target mismatch." }
           [System.IO.File]::WriteAllText("release/metadata/draft-release.json", $releaseJson, [System.Text.UTF8Encoding]::new($false))
 
-          $requiredAssetNames = @('NekoFamilyProxy-Setup.exe', 'NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
+          $requiredAssetNames = @('NekoFamilyProxy-Installer.exe', 'NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
           $initialAssetBindings = @{}
           foreach ($requiredName in $requiredAssetNames) {
             $matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })
@@ -238,7 +238,7 @@ jobs:
           if ($release.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target mismatch." }
 
           # Capture asset sizes/IDs to prevent drift
-          $requiredAssetNames = @('NekoFamilyProxy-Setup.exe', 'NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
+          $requiredAssetNames = @('NekoFamilyProxy-Installer.exe', 'NekoLauncher.exe', 'NekoUpdater.exe', 'NekoProxyCore.zip', 'release-v2.json')
           $preRolloutAssets = @{}
           foreach ($requiredName in $requiredAssetNames) {
             $matches = @($release.assets | Where-Object { $_.name -ceq $requiredName })

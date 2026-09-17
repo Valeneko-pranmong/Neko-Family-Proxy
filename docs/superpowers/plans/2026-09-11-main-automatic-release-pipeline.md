@@ -240,7 +240,7 @@ Create `tests/test_build_assets.py`:
 def test_expected_assets_list():
     from scripts.build_software_release_v2 import EXPECTED_ASSETS
     assert set(EXPECTED_ASSETS) == {
-        "NekoFamilyProxy-Setup.exe",
+        "NekoFamilyProxy-Installer.exe",
         "NekoLauncher.exe",
         "NekoUpdater.exe",
         "NekoProxyCore.zip",

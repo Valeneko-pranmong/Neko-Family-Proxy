@@ -36,7 +36,8 @@ from neko_launcher.updater.trust_profile import verify_update_trust_profile  # n
 
 STAGE = r"E:\Github\NekoBetaInstaller"
 ISS_PATH = os.path.join(REPO, "installer", "beta.iss")
-SETUP_NAME = "NekoFamilyProxy-Setup.exe"
+INSTALLER_NAME = "NekoFamilyProxy-Installer.exe"
+SETUP_NAME = INSTALLER_NAME
 
 APPROVED_V2RAY_SHA256 = (
     "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"

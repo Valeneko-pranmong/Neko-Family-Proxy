@@ -1529,19 +1529,23 @@ def process_accepted_commits(
     ]
     subprocess.run(installer_cmd, check=True)
 
-    setup_exe = setup_out / "NekoFamilyProxy-Setup.exe"
-    if not setup_exe.is_file():
-        raise RuntimeError("Setup binary was not produced by installer compiler")
+    installer_exe = setup_out / "NekoFamilyProxy-Installer.exe"
+    if not installer_exe.is_file():
+        setup_exe = setup_out / "NekoFamilyProxy-Setup.exe"
+        if setup_exe.is_file():
+            installer_exe = setup_exe
+        else:
+            raise RuntimeError("Installer binary was not produced by installer compiler")
 
     installer_dir = staging_base / "installer"
     installer_dir.mkdir(exist_ok=True)
     final_installer_exe = installer_dir / "NekoFamilyProxy-Installer.exe"
-    shutil.copy2(setup_exe, final_installer_exe)
+    shutil.copy2(installer_exe, final_installer_exe)
     shutil.copy2(final_installer_exe, publish_dir / "NekoFamilyProxy-Installer.exe")
 
     installer_hash = _get_sha256(final_installer_exe)
-    setup_hash = _get_sha256(setup_exe)
-    if installer_hash != setup_hash or final_installer_exe.stat().st_size != setup_exe.stat().st_size:
+    source_installer_hash = _get_sha256(installer_exe)
+    if installer_hash != source_installer_hash or final_installer_exe.stat().st_size != installer_exe.stat().st_size:
         raise RuntimeError("Installer binary byte copy verification mismatch")
 
     embedded_envelope_file = payload_dir / "baseline" / "release-v2.json"

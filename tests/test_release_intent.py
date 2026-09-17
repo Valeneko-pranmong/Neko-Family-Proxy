@@ -182,7 +182,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
             candidate_dir = Path(args[0][args[0].index("--candidate-dir") + 1])
             setup_out = candidate_dir / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
-            (setup_out / "NekoFamilyProxy-Setup.exe").write_text("fake_setup")
+            (setup_out / "NekoFamilyProxy-Installer.exe").write_text("fake_setup")
         return subprocess.CompletedProcess(args[0], 0, stdout=b"", stderr=b"")
     monkeypatch.setattr("subprocess.run", mock_run)
     monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b"file.txt\n" if "git" in a[0] else b'{"assets":[{"name":"release-v2.json","url":"http"}]}')

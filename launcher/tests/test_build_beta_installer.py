@@ -311,7 +311,7 @@ def test_core_manifest_list_schema_malformed(tmp_path: Path, monkeypatch: pytest
 def test_static_beta_iss_inspection() -> None:
     iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
     assert "g_CoreVerifyOK and g_DotnetOK and g_DriverOK" in iss_text, "LaunchAllowed must check driver"
-    assert "OutputBaseFilename=NekoFamilyProxy-Setup" in iss_text, "Output exactly NekoFamilyProxy-Setup.exe"
+    assert "OutputBaseFilename=NekoFamilyProxy-Installer" in iss_text, "Output exactly NekoFamilyProxy-Installer.exe"
     assert "#ifndef MyAppVersion" in iss_text, "MyAppVersion must be overrideable"
     assert "#ifndef MyAppDisplayVersion" in iss_text, "MyAppDisplayVersion must be overrideable"
     assert "#ifndef CoreAuthority" in iss_text, "CoreAuthority must be overrideable"
@@ -525,7 +525,7 @@ def test_candidate_build_record_and_post_install_verification_agree(
             iscc_invoked_args.extend(args)
             out_dir = stage / "out"
             out_dir.mkdir(exist_ok=True)
-            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
         if args and str(args[0]).endswith("NekoUpdater.exe"):
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
@@ -588,7 +588,7 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
             assert not any(a.startswith("/DAppVersion=") for a in args)
             out_dir = stage / "out"
             out_dir.mkdir(exist_ok=True)
-            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
         # Mock for updater --self-check
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
@@ -609,7 +609,7 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
     assert record["core_installed_identity"] == _digest(manifest_bytes)
     assert record["release_version"] == "5.1.3"
     assert "installer_version" not in record
-    assert record["installer_file"] == "NekoFamilyProxy-Setup.exe"
+    assert record["installer_file"] == "NekoFamilyProxy-Installer.exe"
 
 
 def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path, Path, dict[str, bytes]]:
@@ -713,7 +713,7 @@ def test_builder_stages_envelope_and_profile_byte_identical_and_records_hashes(
         if args and args[0] == "mock_iscc.exe":
             out_dir = stage / "out"
             out_dir.mkdir(exist_ok=True)
-            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
@@ -999,7 +999,7 @@ def test_builder_record_contains_exact_envelope_provenance_and_verifies_key_id(
         if args and args[0] == "mock_iscc.exe":
             out_dir = stage / "out"
             out_dir.mkdir(exist_ok=True)
-            (out_dir / "NekoFamilyProxy-Setup.exe").write_bytes(b"mock_installer")
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 

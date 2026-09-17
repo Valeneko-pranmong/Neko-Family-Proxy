@@ -2,7 +2,7 @@
 
 ## 1. Goals and Non-Goals
 ### Goals
-- Deliver a single, public `NekoFamilyProxy-Setup.exe` artifact for end users.
+- Deliver a single, public `NekoFamilyProxy-Installer.exe` artifact for end users.
 - Provide a zero-manual-prerequisite installation experience (silently install .NET 6 Desktop Runtime x64 if missing).
 - Reuse existing installer source (`installer/beta.iss` and `installer/scripts/build_beta_installer.py`); do not require renaming internal source files as a prerequisite.
 - Maintain the current 4-asset auto-updater contract and network behaviors untouched.
@@ -19,7 +19,7 @@
 - **Update Protocol**: The 4-asset update mechanism (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, `release-v2.json`).
 
 ## 3. User Experience
-- The user downloads only one file from GitHub Releases: `NekoFamilyProxy-Setup.exe`.
+- The user downloads only one file from GitHub Releases: `NekoFamilyProxy-Installer.exe`.
 - The user runs the executable. UAC is triggered only when Windows elevation is genuinely required (e.g., driver registration, prerequisite installation).
 - No manual network download of prerequisites; if missing, they are installed silently from the bundled bootstrapper.
 - After completion, standard shortcuts are available, and the application is ready.
@@ -39,18 +39,18 @@
 - **Uninstall**: Remove app files, shortcuts, and uninstall entry but intentionally preserve the shared netfilter2 machine driver, matching existing policy.
 
 ## 5. Prerequisite Policy
-- **Microsoft .NET Desktop Runtime 6 x64**: Pinned bootstrapper bundled *inside* `NekoFamilyProxy-Setup.exe`.
+- **Microsoft .NET Desktop Runtime 6 x64**: Pinned bootstrapper bundled *inside* `NekoFamilyProxy-Installer.exe`.
 - It installs silently if not detected. No install-time prerequisite network download.
 - The user is never instructed to download/install .NET manually.
 
 ## 6. Update and Release Contract
-- **Setup Asset**: `NekoFamilyProxy-Setup.exe` is exactly one additional distribution-only hosted asset; `release-v2` remains exactly the four existing update components (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, and `release-v2.json`).
-- **GitHub Release Body**: Public copy after v5.1.3 is published must say USERS download only `NekoFamilyProxy-Setup.exe`; the 4 update assets are automatic-update components and not user installation steps.
+- **Setup Asset**: `NekoFamilyProxy-Installer.exe` is exactly one additional distribution-only hosted asset; `release-v2` remains exactly the four existing update components (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`, and `release-v2.json`).
+- **GitHub Release Body**: Public copy after v5.1.3 is published must say USERS download only `NekoFamilyProxy-Installer.exe`; the 4 update assets are automatic-update components and not user installation steps.
 
 ## 7. Build Identity and Provenance
 - **Exact v5.1.3 release authority**: version 5.1.3, Git tag v5.1.3, release_sequence 7, release_id stable-0007, minimum_supported_sequence 1, channel stable, mandatory false, updater protocol min=1 max=1, key id neko-update-prod-1.
-- Specify Inno Setup application/display version 5.1.3 for this successor and public filename exactly `NekoFamilyProxy-Setup.exe`.
-- Build scripts will bind `NekoFamilyProxy-Setup.exe` to the exact frozen candidate bytes (Launcher/Updater/Core) used for that release.
+- Specify Inno Setup application/display version 5.1.3 for this successor and public filename exactly `NekoFamilyProxy-Installer.exe`.
+- Build scripts will bind `NekoFamilyProxy-Installer.exe` to the exact frozen candidate bytes (Launcher/Updater/Core) used for that release.
 - **Manifest**: Use/extend existing `build-record.json` specifically. Record release version, installer filename, installer SHA256/size, exact Launcher SHA256, Updater SHA256, Core authority/installed identity as already available, and pinned .NET bootstrapper version/SHA256. No second manifest.
 
 ## 8. Failure Handling
@@ -66,7 +66,7 @@
 - Core remains external and verified against `core-manifest.json`.
 
 ## 10. CI and Test Acceptance
-- **Acceptance Test Requirement**: Prove GitHubReleaseResolver/update verifier still accepts a stable release that has the required 4 assets PLUS `NekoFamilyProxy-Setup.exe` and ignores the extra distribution asset for update resolution. Do not weaken exact-one checks for the required four.
+- **Acceptance Test Requirement**: Prove GitHubReleaseResolver/update verifier still accepts a stable release that has the required 4 assets PLUS `NekoFamilyProxy-Installer.exe` and ignores the extra distribution asset for update resolution. Do not weaken exact-one checks for the required four.
 - **Clean Machine Proof**: Without preinstalled runtime, must verify no manual prerequisite download step and only expected UAC.
 - **Runtime-Present Path**: Must prove no unnecessary .NET bootstrapper execution/elevation.
 - **Driver-Ready Path**: Must prove no driver elevation.

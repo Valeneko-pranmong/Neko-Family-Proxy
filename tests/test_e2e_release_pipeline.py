@@ -180,7 +180,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
             assert args[idx+1] == target_version.removeprefix("v")
             setup_out = Path(args[3]) / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
-            (setup_out / "NekoFamilyProxy-Setup.exe").write_bytes(b"setup_exe")
+            (setup_out / "NekoFamilyProxy-Installer.exe").write_bytes(b"setup_exe")
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
@@ -189,7 +189,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         if args[0:2] == ["gh", "api"] and "releases/tags" in args[2]:
             ret = json.dumps({
                 "id": 123, "tag_name": source_base, "target_commitish": "1111111111111111111111111111111111111111", "draft": False,
-                "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Setup.exe", "id": 5, "size": 9}]
+                "assets": [{"name": "NekoProxyCore.zip", "id": 1, "size": 100}, {"name": "release-v2.json", "id": 2, "size": 100}, {"name": "NekoLauncher.exe", "id": 3, "size": 3}, {"name": "NekoUpdater.exe", "id": 4, "size": 3}, {"name": "NekoFamilyProxy-Installer.exe", "id": 5, "size": 9}]
             })
             return ret if kwargs.get("text") else ret.encode()
         if args[0:3] == ["gh", "release", "view"]:

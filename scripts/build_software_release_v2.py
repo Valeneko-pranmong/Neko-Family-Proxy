@@ -36,7 +36,7 @@ from scripts.core_authority_custody import (  # noqa: E402
 )
 
 EXPECTED_ASSETS = [
-    "NekoFamilyProxy-Setup.exe",
+    "NekoFamilyProxy-Installer.exe",
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",
@@ -403,8 +403,11 @@ def build_release_v2(
     key_id: str,
     public_key_file: Path | str,
     output: Path | str,
-    setup_artifact: Path | str = "NekoFamilyProxy-Setup.exe",
+    setup_artifact: Path | str = "NekoFamilyProxy-Installer.exe",
+    installer_artifact: Path | str | None = None,
 ) -> dict[str, object]:
+    if installer_artifact is not None:
+        setup_artifact = installer_artifact
     if not isinstance(key_id, str) or _KEY_ID_PATTERN.fullmatch(key_id) is None:
         raise ValueError("KEY_ID_INVALID")
 
