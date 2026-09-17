@@ -24,3 +24,35 @@
 - **Worktree Status**: Clean (Mutation-free proof verified; no untracked or modified files remaining).
 
 No production ledger mutation, signing, or public GitHub actions were performed.
+
+
+---
+
+## INT-SR2 Integration Details
+- **Base Commit**: `505f51edc7b6a800f79c1dd23ec0a0102345cef9` (INT-SR1 Head)
+- **Ordered Commits (Cherry-picked)**:
+  1. `cee99288ab2f111071c27af24062a7a002cd20bb` (Now: `adf33b2` feat: enforce mandatory compatible updates at startup)
+  2. `b4a003bca7820304d11989dd59a17ad07d0d0136` (Now: `2df6769` feat: fail closed on untrusted updater helper)
+  3. `3004cfd9d620e4a34765bc227e83ead77e98b142` (Now: `dce20bd` fix(launcher): remove spawner-coupled updater validation bypass)
+  4. `ffd21d0020228187ad0cd899c715885269447a11` (Now: `c4ec789` feat: retain exact installed release identity)
+  5. `2bfabdc1f827e4c7ee7945afdcff7f857e78acc7` (Now: `ed08f08` feat: add read-only installed file check)
+  6. `17e35ef16ca9e1e4276ad3ac7ecbb9b3b173ab3c` (Now: `230c5cb` feat: repair damaged installed release files)
+  7. `e8d3f185371dfff37e75b6d0b3985e9fc4d29066` (Now: `3fc6449` feat: bind installed client to provisioned machine credential)
+  8. `a28920071e7d51d55519109b0a9026d27e93801d` (Now: `3f3dc03` test: preserve single active session across reinstall)
+
+*(Note: `b4a003bc` and `3004cfd9` were cherry-picked consecutively as an inseparable remediation series. Tree equivalence proven against exact cherry-picked state.)*
+
+## INT-SR2 Final State
+- **Resulting Commit SHA**: `3f3dc03a6e866d3db3b1b212b9b4388476dd2ea3`
+- **Resulting Tree SHA**: `095d62b4c496be41d4dd6a5f01a5aa535e31ada1`
+
+## INT-SR2 Verification & Status
+- **Test Matrix**: Full Runtime acceptance matrix executed. Launcher/Runtime/Core tests (2555 passed, 2 skipped, 7 deselected).
+- **Executable Builds**: Canonical Launcher and Updater compiled via frozen PyInstaller toolchain.
+- **Self-Check**: Built `NekoUpdater.exe --self-check` exited 0 successfully.
+- **Ruff Linter**: Encountered pre-existing formatting drift in `launcher/tests/test_process_detector.py` (`E701`). Retained cleanly per integration guard.
+- **Repository Safety**: Clean.
+- **Git Diff Check**: Clean (`git diff --check` passed).
+- **Worktree Status**: Clean (no uncommitted tracked/untracked mutations).
+
+No production ledger mutation, signing, or public GitHub actions were performed.
