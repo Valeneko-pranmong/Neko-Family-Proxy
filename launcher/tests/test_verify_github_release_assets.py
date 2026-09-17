@@ -287,6 +287,56 @@ def test_verify_assets_fails_when_minimum_supported_sequence_is_not_one(tmp_path
         verify_bundle(verifier, bundle)
 
 
+def test_signed_baseline_accepts_minimum_sequence_equal_signed_sequence(
+    tmp_path: Path,
+) -> None:
+    verifier = load_verifier_module()
+    signed = type(
+        "SignedBinding",
+        (),
+        {
+            "sequence": 9,
+            "release_id": "stable-0009",
+            "key_id": TEST_KEY_ID,
+        },
+    )()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        sequence=9,
+        minimum_supported_sequence=9,
+        release_id="stable-0009",
+    )
+
+    verify_bundle(verifier, bundle, expected_signed=signed)
+
+
+def test_signed_baseline_rejects_legacy_minimum_sequence_one(
+    tmp_path: Path,
+) -> None:
+    verifier = load_verifier_module()
+    signed = type(
+        "SignedBinding",
+        (),
+        {
+            "sequence": 9,
+            "release_id": "stable-0009",
+            "key_id": TEST_KEY_ID,
+        },
+    )()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        sequence=9,
+        minimum_supported_sequence=1,
+        release_id="stable-0009",
+    )
+
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="minimum_supported_sequence",
+    ):
+        verify_bundle(verifier, bundle, expected_signed=signed)
+
+
 def test_cli_rejects_caller_selected_key_authority(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1281,6 +1331,58 @@ def test_hosted_verification_never_exposes_token_in_argv(
             "Accept: application/octet-stream",
         ]
         assert expected_cmd in fake_exec.commands
+
+
+def test_hosted_verification_binds_minimum_sequence_to_signed_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+    from scripts.publish_atomic_release import StagedDraftEvidence
+    from scripts.release_controller import _hosted_verify_unified_channel
+
+    monkeypatch.setitem(
+        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
+    )
+    bundle = create_test_release_bundle(
+        tmp_path / "signed-staging",
+        tag_name="v5.1.2",
+        target_commit="a" * 40,
+        launcher_version="5.1.2",
+        updater_version="5.1.2",
+        core_version="5.1.2",
+        sequence=9,
+        minimum_supported_sequence=9,
+        release_id="stable-0009",
+        key_id="neko-update-prod-1",
+    )
+    staging_dir = bundle["download_dir"]
+    executor = _FakeHostedVerifierExecutor(staging_dir)
+    evidence = StagedDraftEvidence(
+        release_id=901,
+        tag_name="v5.1.2",
+        target_commit="a" * 40,
+        assets=executor.assets,
+        dispatch_command="gh workflow run release.yml ...",
+    )
+    signed = type(
+        "SignedBinding",
+        (),
+        {
+            "sequence": 9,
+            "release_id": "stable-0009",
+            "key_id": "neko-update-prod-1",
+        },
+    )()
+
+    _hosted_verify_unified_channel(
+        evidence,
+        staging_dir=staging_dir,
+        expected_tag="v5.1.2",
+        expected_target="a" * 40,
+        runner=executor,
+        expected_signed=signed,
+    )
 
 
 def test_hosted_verification_tampered_asset_bytes_rehash_failure(

@@ -417,6 +417,63 @@ def test_recovery_minimum_sequence_two_fails_closed(tmp_path: Path) -> None:
     assert not any(call[0] == "gh" for call in executor.calls)
 
 
+def test_authority_bound_baseline_accepts_minimum_sequence_equal_allocation(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    allocation = type(
+        "Allocation",
+        (),
+        {"sequence": 9, "release_id": "stable-0009"},
+    )()
+    stage = make_stage(
+        tmp_path,
+        sequence=9,
+        minimum_supported_sequence=9,
+        release_id="stable-0009",
+    )
+
+    assets = module.validate_staging_preconditions(
+        staging_dir=stage,
+        tag=TAG,
+        target_commit=TARGET,
+        repo_root=SCRIPT.parents[1],
+        executor=executor,
+        expected_allocation=allocation,
+    )
+
+    assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)
+
+
+def test_authority_bound_baseline_rejects_legacy_minimum_sequence_one(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    allocation = type(
+        "Allocation",
+        (),
+        {"sequence": 9, "release_id": "stable-0009"},
+    )()
+    stage = make_stage(
+        tmp_path,
+        sequence=9,
+        minimum_supported_sequence=1,
+        release_id="stable-0009",
+    )
+
+    with pytest.raises(module.StageDraftReleaseError, match="Stable-release authority mismatch"):
+        module.validate_staging_preconditions(
+            staging_dir=stage,
+            tag=TAG,
+            target_commit=TARGET,
+            repo_root=SCRIPT.parents[1],
+            executor=executor,
+            expected_allocation=allocation,
+        )
+
+
 def test_core_installed_identity_mismatch_fails_before_github_mutation(
     tmp_path: Path,
 ) -> None:
@@ -836,7 +893,13 @@ def _setup_machine_publish_test_env(
 
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
-    make_stage(staging_dir, sequence=seq, release_id=rel_id, version=version)
+    make_stage(
+        staging_dir,
+        sequence=seq,
+        minimum_supported_sequence=seq,
+        release_id=rel_id,
+        version=version,
+    )
 
     manifest_bytes = (staging_dir / "release-v2.json").read_bytes()
     manifest_doc = json.loads(manifest_bytes.decode("utf-8"))

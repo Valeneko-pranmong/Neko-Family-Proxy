@@ -165,6 +165,8 @@ def _hosted_verify_unified_channel(
     expected_tag: str,
     expected_target: str,
     runner: CommandExecutor,
+    *,
+    expected_signed: Any | None = None,
 ) -> None:
     from scripts.verify_github_release_assets import verify_github_release_assets
 
@@ -206,6 +208,7 @@ def _hosted_verify_unified_channel(
                 expected_tag=expected_tag,
                 expected_target=expected_target,
                 require_draft=True,
+                expected_signed=expected_signed,
             )
         except Exception as e:
             raise StageDraftReleaseError(
@@ -315,17 +318,20 @@ def _validate_manifest(
     if expected_allocation is not None:
         target_seq = expected_allocation.sequence
         target_rel_id = expected_allocation.release_id
+        target_min_seq = target_seq
     elif expected_sequence is not None:
         target_seq = expected_sequence
         target_rel_id = expected_release_id or f"stable-{target_seq:04d}"
+        target_min_seq = 1
     else:
         target_seq = release_set.release_sequence
         target_rel_id = release_set.release_id
+        target_min_seq = 1
 
     if (
         release_set.channel != "stable"
         or release_set.release_sequence != target_seq
-        or release_set.minimum_supported_sequence != 1
+        or release_set.minimum_supported_sequence != target_min_seq
         or release_set.release_id != target_rel_id
     ):
         raise StageDraftReleaseError("Stable-release authority mismatch")
@@ -1029,6 +1035,7 @@ def publish_unified_release(
             expected_tag=tag,
             expected_target=target_commit,
             runner=executor,
+            expected_signed=authority_binding,
         )
 
         _run(

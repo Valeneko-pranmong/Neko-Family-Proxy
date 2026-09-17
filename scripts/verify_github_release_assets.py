@@ -324,13 +324,16 @@ def verify_unified_release_assets(
     except Exception as err:
         raise GitHubReleaseAssetsVerificationError("Envelope cryptographic verification failed") from err
 
+    expected_minimum_sequence = STABLE_RELEASE_EXPECTED_MIN_SEQUENCE
     if expected_signed is not None:
         expected_sequence = expected_signed.sequence
         expected_release_id = expected_signed.release_id
         expected_key_id = expected_signed.key_id
+        expected_minimum_sequence = expected_signed.sequence
     elif expected_allocation is not None:
         expected_sequence = expected_allocation.sequence
         expected_release_id = expected_allocation.release_id
+        expected_minimum_sequence = expected_allocation.sequence
     elif expected_binding is not None:
         expected_sequence = expected_binding.sequence
         expected_release_id = expected_binding.release_id
@@ -347,7 +350,7 @@ def verify_unified_release_assets(
             (release_set_v2.channel == STABLE_RELEASE_EXPECTED_CHANNEL, "channel"),
             (release_set_v2.release_sequence == expected_sequence, "release_sequence"),
             (
-                release_set_v2.minimum_supported_sequence == STABLE_RELEASE_EXPECTED_MIN_SEQUENCE,
+                release_set_v2.minimum_supported_sequence == expected_minimum_sequence,
                 "minimum_supported_sequence",
             ),
             (release_set_v2.release_id == expected_release_id, "release_id"),
