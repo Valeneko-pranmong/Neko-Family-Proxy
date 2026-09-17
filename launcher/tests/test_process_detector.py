@@ -33,7 +33,9 @@ def test_exact_detector_returns_only_pso2_target() -> None:
 
 
 def test_observe_exact_pso2_returns_exact_single_target(monkeypatch) -> None:
-    class FakeOs: name = "posix"
+    class FakeOs:
+        name = "posix"
+
     monkeypatch.setattr("neko_launcher.infrastructure.process.process_detector.os", FakeOs)
     expected = TargetProcess(2, "pso2.exe", 20)
     detector = ExactPso2TargetDetector(
@@ -198,7 +200,9 @@ def test_exact_snapshot_preserves_nonzero_process_command_exit(monkeypatch) -> N
 def test_exact_snapshot_preserves_pso2_creation_identity_lookup_failure(
     monkeypatch,
 ) -> None:
-    class FakeOs: name = "nt"
+    class FakeOs:
+        name = "nt"
+
     monkeypatch.setattr("neko_launcher.infrastructure.process.process_detector.os", FakeOs)
     monkeypatch.setattr(
         "neko_launcher.infrastructure.process.process_detector.subprocess.run",
