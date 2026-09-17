@@ -257,8 +257,7 @@ def test_cleanup_failed_spawn_closes_lifetime_job(tmp_path, fake_job) -> None:
 
 
 def test_create_lifetime_job_selects_noop_off_windows(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "neko_launcher.infrastructure.core.core_process.os.name",
-        "posix",
-    )
+    class FakeOs:
+        name = "posix"
+    monkeypatch.setattr("neko_launcher.infrastructure.core.core_process.os", FakeOs)
     assert isinstance(_create_lifetime_job(), _NoopLifetimeJob)

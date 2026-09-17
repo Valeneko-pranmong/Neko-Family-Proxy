@@ -1257,9 +1257,9 @@ def test_hosted_verification_never_exposes_token_in_argv(
     machine_draft_evidence: Any,
     machine_staging_dir: Path,
 ) -> None:
-    from scripts.release_controller import _hosted_verify_machine_channel
+    from scripts.release_controller import _hosted_verify_unified_channel
 
-    _hosted_verify_machine_channel(
+    _hosted_verify_unified_channel(
         machine_draft_evidence,
         staging_dir=machine_staging_dir,
         expected_tag="v5.1.2",
@@ -1276,7 +1276,7 @@ def test_hosted_verification_never_exposes_token_in_argv(
         expected_cmd = [
             "gh",
             "api",
-            f"repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases/assets/{aid}",
+            f"repos/Valeneko-pranmong/Neko-Family-Proxy/releases/assets/{aid}",
             "-H",
             "Accept: application/octet-stream",
         ]
@@ -1289,7 +1289,7 @@ def test_hosted_verification_tampered_asset_bytes_rehash_failure(
     machine_staging_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.release_controller import _hosted_verify_machine_channel
+    from scripts.release_controller import _hosted_verify_unified_channel
 
     orig_run = fake_exec.run
     local_launcher_size = (machine_staging_dir / "NekoLauncher.exe").stat().st_size
@@ -1305,7 +1305,7 @@ def test_hosted_verification_tampered_asset_bytes_rehash_failure(
 
     monkeypatch.setattr(fake_exec, "run", tampered_run)
     with pytest.raises(Exception, match="digest mismatch"):
-        _hosted_verify_machine_channel(
+        _hosted_verify_unified_channel(
             machine_draft_evidence,
             staging_dir=machine_staging_dir,
             expected_tag="v5.1.2",
@@ -1320,7 +1320,7 @@ def test_hosted_verification_size_mismatch_failure(
     machine_staging_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.release_controller import _hosted_verify_machine_channel
+    from scripts.release_controller import _hosted_verify_unified_channel
 
     orig_run = fake_exec.run
 
@@ -1335,7 +1335,7 @@ def test_hosted_verification_size_mismatch_failure(
 
     monkeypatch.setattr(fake_exec, "run", size_mismatch_run)
     with pytest.raises(Exception, match="size mismatch"):
-        _hosted_verify_machine_channel(
+        _hosted_verify_unified_channel(
             machine_draft_evidence,
             staging_dir=machine_staging_dir,
             expected_tag="v5.1.2",
