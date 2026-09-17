@@ -117,3 +117,26 @@ def test_lite_migration_retires_two_argument_s0_permit_rpc_and_keeps_index() -> 
     assert "where (revoked_at is null)" in sql
     assert "grant execute on function launcher.authorize_launch_permit(text) to authenticated" in sql
     assert "revoke all on function launcher.authorize_launch_permit(text) from public, anon" in sql
+
+
+def test_reinstall_claim_does_not_require_manual_admin_approval() -> None:
+    claim = claim_definition(migration_sql())
+
+    assert "if v_installation.id is null then" in claim
+    assert "insert into public.installations(user_id, installation_key_hash, display_name)" in claim
+    assert "admin_approval" not in claim
+    assert "admin_revoked" not in claim
+    assert "is_approved" not in claim
+    assert "with revoked_sessions as (" in claim
+    assert "update public.launcher_sessions" in claim
+    assert "set revoked_at = now()" in claim
+    assert "where user_id = v_user_id" in claim
+    assert "and revoked_at is null" in claim
+
+
+def test_reinstall_preserves_single_active_session_and_fails_closed_on_permit() -> None:
+    permit = permit_definition(migration_sql())
+
+    assert "s.auth_session_id = v_auth_session_id" in permit
+    assert "s.revoked_at is null" in permit
+    assert "sessioninactive" in permit

@@ -483,3 +483,71 @@ test("missing bearer, invalid caller, malformed challenge, and unavailable signe
   assert.equal(unavailable.result.status, 500);
   assert.deepEqual(unavailable.body, { error: "AuthorizationUnavailable" });
 });
+
+test("Across reinstall: earlier auth session receives 403 SessionInactive while new session succeeds", async () => {
+  const authSessionA = "22222222-2222-4222-8222-222222222222";
+  const authSessionB = "33333333-3333-4333-8333-333333333333";
+  let activeAuthSessionId = authSessionA;
+
+  const { result: resA1, body: bodyA1 } = await request(validBody, undefined, {
+    authenticate: async () => ({
+      userId: USER_ID,
+      authSessionId: authSessionA,
+    }),
+    authorize: async (caller) =>
+      caller.authSessionId === activeAuthSessionId
+        ? activeState
+        : {
+            userId: USER_ID,
+            authSessionId: caller.authSessionId,
+            launcherSessionId: "",
+            product: "",
+            error: "SessionInactive",
+          },
+  });
+  assert.equal(resA1.status, 200);
+  assert.equal(bodyA1.succeeded, true);
+
+  // User reinstalls / logs in on Machine B -> activeAuthSessionId becomes authSessionB
+  activeAuthSessionId = authSessionB;
+
+  // Machine B can issue permit
+  const { result: resB, body: bodyB } = await request(validBody, undefined, {
+    authenticate: async () => ({
+      userId: USER_ID,
+      authSessionId: authSessionB,
+    }),
+    authorize: async (caller) =>
+      caller.authSessionId === activeAuthSessionId
+        ? { ...activeState, authSessionId: authSessionB }
+        : {
+            userId: USER_ID,
+            authSessionId: caller.authSessionId,
+            launcherSessionId: "",
+            product: "",
+            error: "SessionInactive",
+          },
+  });
+  assert.equal(resB.status, 200);
+  assert.equal(bodyB.succeeded, true);
+
+  // Machine A now attempts to issue a launch permit -> rejected with 403 SessionInactive
+  const { result: resA2, body: bodyA2 } = await request(validBody, undefined, {
+    authenticate: async () => ({
+      userId: USER_ID,
+      authSessionId: authSessionA,
+    }),
+    authorize: async (caller) =>
+      caller.authSessionId === activeAuthSessionId
+        ? activeState
+        : {
+            userId: USER_ID,
+            authSessionId: caller.authSessionId,
+            launcherSessionId: "",
+            product: "",
+            error: "SessionInactive",
+          },
+  });
+  assert.equal(resA2.status, 403);
+  assert.deepEqual(bodyA2, { error: "SessionInactive" });
+});

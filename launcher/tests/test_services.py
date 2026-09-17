@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -812,3 +813,197 @@ def test_credentials_are_validated_before_network_calls(
 
     with pytest.raises(Exception):
         service.sign_in(username, password)
+
+
+def test_reinstall_new_machine_identity_preserves_single_active_session_without_admin_approval() -> None:
+    backend_state = SimpleNamespace(
+        active_session_id=None,
+        claimed_installations=[],
+        installations_recorded=set(),
+    )
+
+    class SharedReinstallGateway(FakeGateway):
+        def __init__(self, machine_label: str) -> None:
+            super().__init__()
+            self.machine_label = machine_label
+            self.has_access = True
+
+        def claim_session(
+            self,
+            product_code: str,
+            installation_key_hash: str,
+            display_name: str,
+        ) -> SessionClaim:
+            backend_state.claimed_installations.append(installation_key_hash)
+            backend_state.installations_recorded.add(installation_key_hash)
+            session_id = f"session-{self.machine_label}"
+            backend_state.active_session_id = session_id
+            return SessionClaim(
+                session_id,
+                Entitlement(
+                    product_code,
+                    EntitlementStatus.ACTIVE,
+                    datetime.now(UTC) + timedelta(days=30),
+                ),
+                installation_id=f"inst-{self.machine_label}",
+                license_id="lic-1",
+            )
+
+        def heartbeat_session(self, session_id: str) -> bool:
+            return backend_state.active_session_id == session_id
+
+        def session_termination_reason(
+            self, session_id: str
+        ) -> SessionTerminationReason:
+            if (
+                backend_state.active_session_id is not None
+                and backend_state.active_session_id != session_id
+            ):
+                return SessionTerminationReason.REPLACED
+            return SessionTerminationReason.REVOKED
+
+    # Machine A active
+    gateway_a = SharedReinstallGateway("a")
+    controller_a = ApplicationController(EventBus(), proxy_gateway=gateway_a)
+
+    class InstallationA:
+        key_hash = "a" * 64
+        display_name = "Original Machine A"
+
+    service_a = LauncherService(
+        controller_a, gateway_a, gateway_a, InstallationA(), "neko-family-proxy"
+    )
+    service_a.sign_in("testuser", "password123")
+
+    assert controller_a.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller_a.state.session_id == "session-a"
+    assert service_a.heartbeat() is True
+
+    # Reinstall on Machine B with fresh machine identity
+    gateway_b = SharedReinstallGateway("b")
+    controller_b = ApplicationController(EventBus(), proxy_gateway=gateway_b)
+
+    class InstallationB:
+        key_hash = "b" * 64
+        display_name = "Reinstalled Machine B"
+
+    service_b = LauncherService(
+        controller_b, gateway_b, gateway_b, InstallationB(), "neko-family-proxy"
+    )
+    # Machine B logs in without manual admin approval
+    service_b.sign_in("testuser", "password123")
+
+    # Machine B is now active
+    assert controller_b.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller_b.state.session_id == "session-b"
+    assert service_b.heartbeat() is True
+
+    # Historical installation A remains recorded alongside B
+    assert backend_state.installations_recorded == {"a" * 64, "b" * 64}
+
+    # Machine A heartbeat now fails closed and recognizes it was replaced
+    assert service_a.heartbeat() is False
+    assert controller_a.state.auth_status is AuthStatus.SIGNED_OUT
+    assert controller_a.state.session_id is None
+    assert "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น" in (
+        controller_a.state.last_error or ""
+    )
+
+    # Machine B remains active and unaffected
+    assert service_b.heartbeat() is True
+    assert controller_b.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller_b.state.session_id == "session-b"
+
+
+def test_reinstall_historical_installation_can_reclaim_and_supersedes_earlier_session() -> None:
+    backend_state = SimpleNamespace(
+        active_session_id=None,
+        claimed_installations=[],
+        installations_recorded=set(),
+    )
+
+    class SharedReinstallGateway(FakeGateway):
+        def __init__(self, machine_label: str) -> None:
+            super().__init__()
+            self.machine_label = machine_label
+            self.has_access = True
+            self.claim_count = 0
+
+        def claim_session(
+            self,
+            product_code: str,
+            installation_key_hash: str,
+            display_name: str,
+        ) -> SessionClaim:
+            self.claim_count += 1
+            backend_state.claimed_installations.append(installation_key_hash)
+            backend_state.installations_recorded.add(installation_key_hash)
+            session_id = f"session-{self.machine_label}-{self.claim_count}"
+            backend_state.active_session_id = session_id
+            return SessionClaim(
+                session_id,
+                Entitlement(
+                    product_code,
+                    EntitlementStatus.ACTIVE,
+                    datetime.now(UTC) + timedelta(days=30),
+                ),
+                installation_id=f"inst-{self.machine_label}",
+                license_id="lic-1",
+            )
+
+        def heartbeat_session(self, session_id: str) -> bool:
+            return backend_state.active_session_id == session_id
+
+        def session_termination_reason(
+            self, session_id: str
+        ) -> SessionTerminationReason:
+            if (
+                backend_state.active_session_id is not None
+                and backend_state.active_session_id != session_id
+            ):
+                return SessionTerminationReason.REPLACED
+            return SessionTerminationReason.REVOKED
+
+    gateway_a = SharedReinstallGateway("a")
+    controller_a = ApplicationController(EventBus(), proxy_gateway=gateway_a)
+
+    class InstallationA:
+        key_hash = "a" * 64
+        display_name = "Original Machine A"
+
+    service_a = LauncherService(
+        controller_a, gateway_a, gateway_a, InstallationA(), "neko-family-proxy"
+    )
+
+    gateway_b = SharedReinstallGateway("b")
+    controller_b = ApplicationController(EventBus(), proxy_gateway=gateway_b)
+
+    class InstallationB:
+        key_hash = "b" * 64
+        display_name = "Reinstalled Machine B"
+
+    service_b = LauncherService(
+        controller_b, gateway_b, gateway_b, InstallationB(), "neko-family-proxy"
+    )
+
+    # 1. Machine A active
+    service_a.sign_in("testuser", "password123")
+    assert controller_a.state.session_id == "session-a-1"
+    assert service_a.heartbeat() is True
+
+    # 2. Machine B logs in -> B active, A superseded
+    service_b.sign_in("testuser", "password123")
+    assert controller_b.state.session_id == "session-b-1"
+    assert service_b.heartbeat() is True
+    assert service_a.heartbeat() is False
+    assert controller_a.state.auth_status is AuthStatus.SIGNED_OUT
+
+    # 3. Machine A logs in again -> A active, B superseded
+    service_a.sign_in("testuser", "password123")
+    assert controller_a.state.session_id == "session-a-2"
+    assert service_a.heartbeat() is True
+    assert service_b.heartbeat() is False
+    assert controller_b.state.auth_status is AuthStatus.SIGNED_OUT
+    assert "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น" in (
+        controller_b.state.last_error or ""
+    )

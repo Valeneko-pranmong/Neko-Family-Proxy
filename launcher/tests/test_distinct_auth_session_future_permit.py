@@ -12,6 +12,7 @@ import pytest
 from neko_launcher.application.authorized_core import (
     AuthorizedCoreError,
     AuthorizedCoreErrorCode,
+    CoreChallenge,
     PermitDiagnosticCode,
 )
 from neko_launcher.e2e.distinct_auth_session_future_permit import (
@@ -306,3 +307,56 @@ def test_preparation_cli_is_offline_and_writes_only_safe_requirements(
     assert "access_token" not in rendered
     assert "refresh_token" not in rendered
     assert "00000000-0000-4000-8000-000000000001" not in rendered
+
+
+def test_reinstall_new_machine_identity_preserves_single_active_session_and_invalidates_future_permits() -> None:
+    """Test machine A active -> fresh reinstall B logs in -> B active -> A cannot obtain future permits."""
+    state = FakeState()
+    gateway_a = FakeGateway(
+        "machine-a", "00000000-0000-4000-8000-000000000001", "same-user", state
+    )
+    gateway_b = FakeGateway(
+        "machine-b", "00000000-0000-4000-8000-000000000002", "same-user", state
+    )
+    requester = FakePermitRequester(
+        state, diagnostic=PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
+    )
+
+    # 1. Machine A authenticates and claims session A -> active
+    gateway_a.sign_in("user", "pass")
+    claim_a = gateway_a.claim_session("neko-family-proxy", "a" * 64, "Machine A")
+    assert gateway_a.heartbeat_session(claim_a.session_id) is True
+
+    # Machine A successfully obtains a launch permit
+    permit_a = requester.issue_launch_permit(
+        gateway_a._client, "c" * 32, CoreChallenge("a" * 43), 10.0
+    )
+    assert permit_a is not None
+
+    # 2. User reinstalls on Machine B -> B authenticates and claims session B without admin approval
+    gateway_b.sign_in("user", "pass")
+    claim_b = gateway_b.claim_session("neko-family-proxy", "b" * 64, "Machine B")
+    assert gateway_b.heartbeat_session(claim_b.session_id) is True
+
+    # Machine B successfully obtains a launch permit
+    permit_b = requester.issue_launch_permit(
+        gateway_b._client, "d" * 32, CoreChallenge("b" * 43), 10.0
+    )
+    assert permit_b is not None
+
+    # 3. Machine A's previous session is now inactive
+    assert gateway_a.heartbeat_session(claim_a.session_id) is False
+
+    # Machine A cannot obtain future launch permits: denied with BACKEND_EDGE_SESSION_INACTIVE
+    with pytest.raises(AuthorizedCoreError) as exc_info:
+        requester.issue_launch_permit(
+            gateway_a._client, "e" * 32, CoreChallenge("c" * 43), 10.0
+        )
+    assert exc_info.value.code is AuthorizedCoreErrorCode.PERMIT_UNAVAILABLE
+    assert exc_info.value.diagnostic_code is PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
+    assert exc_info.value.diagnostic_context.get("http_status") == 403
+    assert exc_info.value.diagnostic_context.get("function") == "issue_launch_permit"
+    assert exc_info.value.diagnostic_context.get("stage") == "PERMIT_REQUEST"
+
+    # Historical installations A and B remain recorded in state
+    assert state.claim_history == ["machine-a", "machine-b"]

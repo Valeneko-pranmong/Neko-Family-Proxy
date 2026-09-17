@@ -276,6 +276,23 @@ def test_gateway_classifies_only_the_fixed_edge_session_inactive_response() -> N
     assert raised.value.diagnostic_context["http_status"] == 403
 
 
+def test_gateway_denies_future_permit_when_session_superseded_by_reinstall() -> None:
+    functions = FakeFunctions(None)
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise FunctionFailure(403, "SessionInactive")
+
+    functions.invoke = fail  # type: ignore[method-assign]
+
+    with pytest.raises(AuthorizedCoreError) as raised:
+        issue(transport_for(functions))
+
+    assert raised.value.diagnostic_code is PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
+    assert raised.value.diagnostic_context["http_status"] == 403
+    assert raised.value.diagnostic_context["function"] == "issue_launch_permit"
+    assert raised.value.diagnostic_context["stage"] == "PERMIT_REQUEST"
+
+
 def test_gateway_does_not_misclassify_another_403_as_session_inactive() -> None:
     functions = FakeFunctions(None)
 
