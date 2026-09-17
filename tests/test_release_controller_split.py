@@ -7,7 +7,8 @@ import subprocess
 import pytest
 
 from scripts.publish_atomic_release import (
-    CANONICAL_MACHINE_REPO,
+    CANONICAL_REPO,
+    
     REQUIRED_STAGE_ASSETS,
     StageDraftReleaseError,
     StagedDraftEvidence,
@@ -52,8 +53,8 @@ def test_validate_installer_repo_rejects_none_and_empty():
         validate_installer_repo_configuration("   ")
 
 
-def test_validate_installer_repo_rejects_canonical_machine_repo():
-    canonical = CANONICAL_MACHINE_REPO
+def test_validate_installer_repo_rejects_canonical_repo():
+    canonical = CANONICAL_REPO
     with pytest.raises(ValueError, match="[Cc]annot be the canonical machine repository"):
         validate_installer_repo_configuration(canonical)
 
@@ -187,7 +188,7 @@ def test_publish_split_release_order_and_cutover(monkeypatch, tmp_path):
     def mock_verify_installer_hosted(evidence, staging_dir, expected_tag, expected_target, repo, runner):
         events.append("verify_installer_hosted")
 
-    monkeypatch.setattr("scripts.release_controller._hosted_verify_machine_channel", mock_verify_machine_hosted)
+    monkeypatch.setattr("scripts.release_controller._hosted_verify_unified_channel", mock_verify_machine_hosted)
     monkeypatch.setattr("scripts.release_controller._hosted_verify_installer_channel", mock_verify_installer_hosted)
 
     executed_cmds: list[list[str]] = []
@@ -198,7 +199,7 @@ def test_publish_split_release_order_and_cutover(monkeypatch, tmp_path):
             if installer_repo in args:
                 events.append("promote_installer_first")
                 return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-            elif CANONICAL_MACHINE_REPO in args:
+            elif CANONICAL_REPO in args:
                 events.append("promote_machine_second")
                 return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "releases/latest" in "".join(args):
@@ -214,7 +215,7 @@ def test_publish_split_release_order_and_cutover(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps(latest_data), stderr="")
         if "api" in args and f"repos/{installer_repo}/releases/202" in "".join(args):
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"draft": False}), stderr="")
-        if "api" in args and f"repos/{CANONICAL_MACHINE_REPO}/releases/101" in "".join(args):
+        if "api" in args and f"repos/{CANONICAL_REPO}/releases/101" in "".join(args):
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"draft": False}), stderr="")
         return None
 
@@ -315,7 +316,7 @@ def test_publish_split_release_installer_verify_failure_stops_cutover(monkeypatc
         "scripts.release_controller.stage_installer_draft_release",
         lambda *a, **kw: StagedInstallerDraftEvidence(202, tag, sha, installer_repo, 999, 10, "sha", "cmd"),
     )
-    monkeypatch.setattr("scripts.release_controller._hosted_verify_machine_channel", lambda *a, **kw: None)
+    monkeypatch.setattr("scripts.release_controller._hosted_verify_unified_channel", lambda *a, **kw: None)
 
     def failing_installer_verify(*a, **kw):
         events.append("installer_verify_failed")
@@ -360,7 +361,7 @@ def test_process_accepted_commits_requires_installer_repo(monkeypatch, tmp_path)
 
     # When installer_repo is canonical machine repo
     with pytest.raises((ValueError, SystemExit)):
-        process_accepted_commits("a" * 40, 1, installer_repo=CANONICAL_MACHINE_REPO)
+        process_accepted_commits("a" * 40, 1, installer_repo=CANONICAL_REPO)
 
 
 def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_path):
@@ -493,7 +494,7 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
     machine_files = sorted([f.name for f in m_dir.iterdir()])
     assert machine_files == sorted(list(REQUIRED_STAGE_ASSETS))
     assert "NekoFamilyProxy-Setup.exe" not in machine_files
-    assert "NekoFamilyProxy-Installer.exe" not in machine_files
+    assert "NekoFamilyProxy-Installer.exe" in machine_files
 
     i_dir = Path(call["installer_staging_dir"])
     installer_files = [f.name for f in i_dir.iterdir()]
@@ -546,7 +547,7 @@ def test_process_accepted_commits_split_build_and_provenance(monkeypatch, tmp_pa
     assert record["installer_asset"]["sha256"] == hashlib.sha256(fake_setup_bytes).hexdigest()
     assert record["installer_asset"]["size"] == len(fake_setup_bytes)
 
-    assert record["destination_repositories"]["machine"] == CANONICAL_MACHINE_REPO
+    assert record["destination_repositories"]["machine"] == CANONICAL_REPO
     assert record["destination_repositories"]["installer"] == installer_repo
 
     assert "--release-version" in installer_builder_args

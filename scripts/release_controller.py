@@ -28,12 +28,12 @@ from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: 
 from scripts.ci_change_classifier import should_trigger  # noqa: E402
 from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
 from scripts.publish_atomic_release import (  # noqa: E402
-    CANONICAL_MACHINE_REPO,
+    
     CANONICAL_REPO,
     CommandExecutor,
     StageDraftReleaseError,
     _SubprocessExecutor,
-    _hosted_verify_machine_channel,
+    _hosted_verify_unified_channel,
     _run,
     build_machine_release_notes,
     download_github_release_asset,
@@ -358,7 +358,7 @@ def sign_reserved_baseline(
 
 def _contains_machine_repo(text: str) -> bool:
     pattern = re.compile(
-        r"(?:repos/|github\.com/|^)" + re.escape(CANONICAL_MACHINE_REPO) + r"(?:/|\?|#|$)",
+        r"(?:repos/|github\.com/|^)" + re.escape(CANONICAL_REPO) + r"(?:/|\?|#|$)",
         re.IGNORECASE,
     )
     return bool(pattern.search(text))
@@ -386,11 +386,11 @@ def validate_installer_repo_configuration(repo: str | None) -> str:
     if (
         _contains_machine_repo(cleaned)
         or _contains_machine_repo(normalized)
-        or cleaned.lower() == CANONICAL_MACHINE_REPO.lower()
-        or normalized.lower() == CANONICAL_MACHINE_REPO.lower()
+        or cleaned.lower() == CANONICAL_REPO.lower()
+        or normalized.lower() == CANONICAL_REPO.lower()
     ):
         raise ValueError(
-            f"Installer repository cannot be the canonical machine repository ({CANONICAL_MACHINE_REPO})"
+            f"Installer repository cannot be the canonical machine repository ({CANONICAL_REPO})"
         )
     return cleaned
 
@@ -1034,7 +1034,7 @@ def publish_split_release(
         raise InstallerPublishError("Installer draft staging failed to return evidence")
 
     # 5. Hosted-verify machine draft byte-for-byte
-    _hosted_verify_machine_channel(
+    _hosted_verify_unified_channel(
         machine_evidence,
         staging_dir=m_dir,
         expected_tag=tag,
@@ -1061,9 +1061,9 @@ def publish_split_release(
         raise InstallerPublishError("Installer release promotion failed: still draft")
 
     # 8. Promote machine channel SECOND
-    _run(runner, ["gh", "release", "edit", tag, "--draft=false", "--repo", CANONICAL_MACHINE_REPO])
+    _run(runner, ["gh", "release", "edit", tag, "--draft=false", "--repo", CANONICAL_REPO])
     post_promote_machine = json.loads(
-        _run(runner, ["gh", "api", f"repos/{CANONICAL_MACHINE_REPO}/releases/{machine_evidence.release_id}"])
+        _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/{machine_evidence.release_id}"])
     )
     if post_promote_machine.get("draft") is not False:
         raise StageDraftReleaseError("Machine release promotion failed: still draft")
@@ -1074,7 +1074,7 @@ def publish_split_release(
     latest_error = None
     while time.time() < timeout:
         try:
-            latest_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_MACHINE_REPO}/releases/latest"])
+            latest_raw = _run(runner, ["gh", "api", f"repos/{CANONICAL_REPO}/releases/latest"])
             latest = json.loads(latest_raw)
             if latest.get("id") == machine_evidence.release_id and latest.get("tag_name") == tag:
                 latest_assets = {
@@ -1504,6 +1504,7 @@ def process_accepted_commits(
     installer_dir.mkdir(exist_ok=True)
     final_installer_exe = installer_dir / "NekoFamilyProxy-Installer.exe"
     shutil.copy2(setup_exe, final_installer_exe)
+    shutil.copy2(final_installer_exe, publish_dir / "NekoFamilyProxy-Installer.exe")
 
     installer_hash = _get_sha256(final_installer_exe)
     setup_hash = _get_sha256(setup_exe)
@@ -1575,7 +1576,7 @@ def process_accepted_commits(
             "size": final_installer_exe.stat().st_size,
         },
         "destination_repositories": {
-            "machine": CANONICAL_MACHINE_REPO,
+            "machine": CANONICAL_REPO,
             "installer": installer_repo,
         },
         "assets": {

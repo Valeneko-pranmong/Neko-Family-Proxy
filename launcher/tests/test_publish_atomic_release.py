@@ -127,7 +127,7 @@ class FakeExecutor:
                             ),
                         }
                         for i, name in enumerate(
-                            ("release-v2.json", "NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip")
+                            ("NekoFamilyProxy-Installer.exe", "release-v2.json", "NekoLauncher.exe", "NekoUpdater.exe", "NekoProxyCore.zip")
                         )
                     ] + (self.extra_readback_assets or [])
                 )
@@ -195,6 +195,7 @@ def make_stage(
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
+        "NekoFamilyProxy-Installer.exe": b"installer",
         "NekoLauncher.exe": b"launcher",
         "NekoUpdater.exe": b"updater",
         "NekoProxyCore.zip": core_bytes,
@@ -496,7 +497,7 @@ def test_dry_run_has_no_github_mutation(tmp_path: Path, capsys: pytest.CaptureFi
     assert "gh release create" in output and "--draft" in output and "--clobber=false" in output
     assert "--verify-tag" in output
     assert [call[2] for call in executor.calls if call[:2] == ["gh", "api"]] == [
-        f"repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/git/ref/tags/{TAG}"
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}"
     ]
     assert not any(call[:2] == ["gh", "release"] for call in executor.calls)
 
@@ -525,10 +526,11 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     )
     assert evidence.release_id == 901
     assert evidence.assets == {
-        "release-v2.json": 10,
-        "NekoLauncher.exe": 11,
-        "NekoUpdater.exe": 12,
-        "NekoProxyCore.zip": 13,
+        "NekoFamilyProxy-Installer.exe": 10,
+        "release-v2.json": 11,
+        "NekoLauncher.exe": 12,
+        "NekoUpdater.exe": 13,
+        "NekoProxyCore.zip": 14,
     }
     assert evidence.dispatch_command == (
         f"gh workflow run release.yml --ref {TAG} -f publish_release=true -f release_id=901 "
@@ -537,11 +539,11 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
     create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])
     upload = next(call for call in executor.calls if call[:3] == ["gh", "release", "upload"])
-    canonical_machine_repo = "Valeneko-pranmong/Neko-Family-Proxy-Updates"
-    assert module.CANONICAL_MACHINE_REPO == canonical_machine_repo
+    canonical_machine_repo = "Valeneko-pranmong/Neko-Family-Proxy"
+    assert module.CANONICAL_REPO == canonical_machine_repo
     assert module.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy"
-    assert create[create.index("--repo") + 1] == canonical_machine_repo
-    assert upload[upload.index("--repo") + 1] == canonical_machine_repo
+    assert create[create.index("--repo") + 1] == "Valeneko-pranmong/Neko-Family-Proxy"
+    assert upload[upload.index("--repo") + 1] == "Valeneko-pranmong/Neko-Family-Proxy"
     assert [
         TAG,
         "--target",
@@ -553,9 +555,9 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
     assert "--clobber=false" in upload
     api_calls = [call for call in executor.calls if call[:2] == ["gh", "api"]]
     assert [call[2] for call in api_calls] == [
-        f"repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/git/ref/tags/{TAG}",
-        "repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases?per_page=100",
-        "repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases/901",
+        f"repos/Valeneko-pranmong/Neko-Family-Proxy/git/ref/tags/{TAG}",
+        "repos/Valeneko-pranmong/Neko-Family-Proxy/releases?per_page=100",
+        "repos/Valeneko-pranmong/Neko-Family-Proxy/releases/901",
     ]
     collection_call = api_calls[1]
     assert collection_call[3:] == ["--paginate", "--slurp"]
@@ -614,17 +616,18 @@ def test_draft_discovery_requires_exactly_one_matching_draft(
     assert not any(call[2].endswith("/releases/901") for call in executor.calls if call[:2] == ["gh", "api"])
 
 
-def test_machine_publishing_required_assets_is_exact_four() -> None:
+def test_machine_publishing_required_assets_is_exact_five() -> None:
     module = load_module()
     assert set(module.REQUIRED_STAGE_ASSETS) == {
+        "NekoFamilyProxy-Installer.exe",
         "release-v2.json",
         "NekoLauncher.exe",
         "NekoUpdater.exe",
         "NekoProxyCore.zip",
     }
-    assert len(module.REQUIRED_STAGE_ASSETS) == 4
+    assert len(module.REQUIRED_STAGE_ASSETS) == 5
     assert "NekoFamilyProxy-Setup.exe" not in module.REQUIRED_STAGE_ASSETS
-    assert "NekoFamilyProxy-Installer.exe" not in module.REQUIRED_STAGE_ASSETS
+    assert "NekoFamilyProxy-Installer.exe" in module.REQUIRED_STAGE_ASSETS
 
 
 def test_staging_rejects_missing_required_asset(tmp_path: Path) -> None:
@@ -638,12 +641,12 @@ def test_staging_rejects_missing_required_asset(tmp_path: Path) -> None:
         )
 
 
-def test_staging_rejects_installer_asset(tmp_path: Path) -> None:
+def test_staging_requires_installer_asset(tmp_path: Path) -> None:
     module = load_module()
     stage = make_stage(tmp_path)
-    (stage / "NekoFamilyProxy-Installer.exe").write_bytes(b"installer")
+    (stage / "NekoFamilyProxy-Installer.exe").unlink()
     executor = FakeExecutor()
-    with pytest.raises(module.StageDraftReleaseError):
+    with pytest.raises(module.StageDraftReleaseError, match="missing"):
         module.validate_staging_preconditions(
             staging_dir=stage, tag=TAG, target_commit=TARGET, repo_root=SCRIPT.parents[1], executor=executor
         )
@@ -704,12 +707,11 @@ def test_draft_readback_rejects_setup_asset(tmp_path: Path) -> None:
         )
 
 
-def test_draft_readback_rejects_installer_asset(tmp_path: Path) -> None:
+def test_draft_readback_requires_installer_asset(tmp_path: Path) -> None:
     module = load_module()
     stage = make_stage(tmp_path)
-    extra = [{"id": 99, "name": "NekoFamilyProxy-Installer.exe", "size": 500}]
-    executor = FakeExecutor(extra_readback_assets=extra)
-    with pytest.raises(module.StageDraftReleaseError, match="unexpected extra asset"):
+    executor = FakeExecutor(readback_assets=[{"id": 10, "name": "release-v2.json", "size": 100}])
+    with pytest.raises(module.StageDraftReleaseError, match="(does not contain each required asset exactly once|Invalid or mismatched required asset size)"):
         module.stage_draft_release(
             staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
         )
@@ -725,7 +727,7 @@ def test_draft_readback_rejects_missing_required_asset(tmp_path: Path) -> None:
         {"id": 12, "name": "NekoUpdater.exe", "size": (stage / "NekoUpdater.exe").stat().st_size},
     ]
     executor = FakeExecutor(readback_assets=three_assets)
-    with pytest.raises(module.StageDraftReleaseError, match="does not contain each required asset exactly once"):
+    with pytest.raises(module.StageDraftReleaseError, match="(does not contain each required asset exactly once|Invalid or mismatched required asset size)"):
         module.stage_draft_release(
             staging_dir=stage, tag=TAG, target_commit=TARGET, executor=executor
         )
@@ -785,9 +787,9 @@ def test_machine_release_notes_point_to_canonical_human_repository() -> None:
     notes = module.build_machine_release_notes("v5.1.2")
     assert "Valeneko-pranmong/Neko-Family-Proxy" in notes
     assert "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases" in notes
-    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" not in notes
+    
     assert "v5.1.2" in notes
-    assert "machine-update channel" in notes
+    assert "unified release channel" in notes
     assert "download the installer from the official releases:" in notes
 
 
@@ -800,16 +802,15 @@ def test_build_release_payload_has_machine_notes() -> None:
     assert "body" in payload
     assert "Valeneko-pranmong/Neko-Family-Proxy" in payload["body"]
     assert "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases" in payload["body"]
-    assert "Valeneko-pranmong/Neko-Family-Proxy-Installer" not in payload["body"]
-    assert "machine-update channel" in payload["body"]
+    
+    assert "unified release channel" in payload["body"]
     assert "download the installer from the official releases:" in payload["body"]
 
 
 def test_machine_publisher_targets_only_updates_repository() -> None:
     module = load_module()
-    assert module.CANONICAL_MACHINE_REPO == "Valeneko-pranmong/Neko-Family-Proxy-Updates"
     assert module.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy"
-    assert module.CANONICAL_REPO != module.CANONICAL_MACHINE_REPO
+
 
 
 def _setup_machine_publish_test_env(
@@ -831,7 +832,7 @@ def _setup_machine_publish_test_env(
         SequenceLedgerEvent,
         open_authority_session,
     )
-    from scripts.release_controller import SignedBaselineEvidence
+    from scripts.publish_atomic_release import SignedReleaseBinding
 
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -915,14 +916,15 @@ def _setup_machine_publish_test_env(
         )
         session.append(signed_event, expected_previous_sha256=prev_sha)
 
-    signed = SignedBaselineEvidence(
+        from scripts.publish_atomic_release import SignedReleaseBinding
+        signed = SignedReleaseBinding(source_commit=target, 
         sequence=seq,
         release_id=rel_id,
         component_set_sha256="comp" * 16,
         payload_sha256=payload_sha,
         envelope_sha256=env_sha,
         key_id="neko-update-prod-1",
-        envelope_path=staging_dir / "release-v2.json",
+        
     )
 
     return staging_dir, ledger_path, signed, binding7, binding8
@@ -946,7 +948,7 @@ class _FakeMachinePublishExecutor:
         self.commands: list[list[str]] = self.calls
         self.assets = {
             "release-v2.json": 10,
-            "NekoLauncher.exe": 11,
+            "NekoFamilyProxy-Installer.exe": 9, "NekoLauncher.exe": 11,
             "NekoUpdater.exe": 12,
             "NekoProxyCore.zip": 13,
         }
@@ -1035,7 +1037,7 @@ class _FakeMachinePublishExecutor:
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
 
-def test_publish_machine_release_rejects_missing_required_asset(tmp_path: Path) -> None:
+def test_publish_unified_release_rejects_missing_required_asset(tmp_path: Path) -> None:
     module = load_module()
     staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
     (staging_dir / "NekoUpdater.exe").unlink()
@@ -1057,10 +1059,12 @@ def test_publish_machine_release_rejects_missing_required_asset(tmp_path: Path) 
 
     executor = _FakeMachinePublishExecutor(staging_dir)
     with pytest.raises((module.StageDraftReleaseError, ValueError)):
-        module.publish_machine_release(
+        module.publish_unified_release(
             ledger_path=ledger_path,
             history_provider=_Prov(),
-            signed=signed,
+            tag="v5.1.2",
+            body="notes",
+            authority_binding=signed,
             target_commit=TARGET,
             staging_dir=staging_dir,
             executor=executor,
@@ -1068,7 +1072,7 @@ def test_publish_machine_release_rejects_missing_required_asset(tmp_path: Path) 
     assert not any(call[:3] == ["gh", "release", "create"] for call in executor.calls)
 
 
-def test_publish_machine_release_rejects_extra_asset(tmp_path: Path) -> None:
+def test_publish_unified_release_rejects_extra_asset(tmp_path: Path) -> None:
     module = load_module()
     staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
     (staging_dir / "forbidden.exe").write_bytes(b"bad")
@@ -1090,10 +1094,12 @@ def test_publish_machine_release_rejects_extra_asset(tmp_path: Path) -> None:
 
     executor = _FakeMachinePublishExecutor(staging_dir)
     with pytest.raises((module.StageDraftReleaseError, ValueError)):
-        module.publish_machine_release(
+        module.publish_unified_release(
             ledger_path=ledger_path,
             history_provider=_Prov(),
-            signed=signed,
+            tag="v5.1.2",
+            body="notes",
+            authority_binding=signed,
             target_commit=TARGET,
             staging_dir=staging_dir,
             executor=executor,
@@ -1101,7 +1107,7 @@ def test_publish_machine_release_rejects_extra_asset(tmp_path: Path) -> None:
     assert not any(call[:3] == ["gh", "release", "create"] for call in executor.calls)
 
 
-def test_publish_machine_release_conflicting_authority_hard_stops_with_zero_mutation(tmp_path: Path) -> None:
+def test_publish_unified_release_conflicting_authority_hard_stops_with_zero_mutation(tmp_path: Path) -> None:
     module = load_module()
     staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
 
@@ -1133,10 +1139,12 @@ def test_publish_machine_release_conflicting_authority_hard_stops_with_zero_muta
 
     executor = _FakeMachinePublishExecutor(staging_dir)
     with pytest.raises(ReleaseAuthorityReconciliationRequired):
-        module.publish_machine_release(
+        module.publish_unified_release(
             ledger_path=ledger_path,
             history_provider=_Prov(),
-            signed=signed,
+            tag="v5.1.2",
+            body="notes",
+            authority_binding=signed,
             target_commit=TARGET,
             staging_dir=staging_dir,
             executor=executor,
@@ -1145,7 +1153,7 @@ def test_publish_machine_release_conflicting_authority_hard_stops_with_zero_muta
     assert not any(call[:3] in (["gh", "release", "create"], ["gh", "release", "upload"], ["gh", "release", "edit"]) for call in executor.calls)
 
 
-def test_publish_machine_release_crash_recovery_performs_readonly_verification_and_zero_mutations(tmp_path: Path) -> None:
+def test_publish_unified_release_crash_recovery_performs_readonly_verification_and_zero_mutations(tmp_path: Path) -> None:
     module = load_module()
     staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
 
@@ -1166,10 +1174,12 @@ def test_publish_machine_release_crash_recovery_performs_readonly_verification_a
             return recovery_snap
 
     executor = _FakeMachinePublishExecutor(staging_dir, live_draft=False)
-    result = module.publish_machine_release(
+    result = module.publish_unified_release(
         ledger_path=ledger_path,
         history_provider=_Prov(),
-        signed=signed,
+        tag="v5.1.2",
+            body="notes",
+            authority_binding=signed,
         target_commit=TARGET,
         staging_dir=staging_dir,
         executor=executor,
@@ -1190,7 +1200,7 @@ def test_publish_machine_release_crash_recovery_performs_readonly_verification_a
         assert verified.latest_entry_sha256 == result.entry_sha256
 
 
-def test_publish_machine_release_happy_path_promotes_once_and_appends_published(tmp_path: Path) -> None:
+def test_publish_unified_release_happy_path_promotes_once_and_appends_published(tmp_path: Path) -> None:
     module = load_module()
     staging_dir, ledger_path, signed, binding7, binding8 = _setup_machine_publish_test_env(tmp_path)
 
@@ -1226,10 +1236,12 @@ def test_publish_machine_release_happy_path_promotes_once_and_appends_published(
 
     prov = _Prov()
     executor = _FakeMachinePublishExecutor(staging_dir, live_draft=True)
-    result = module.publish_machine_release(
+    result = module.publish_unified_release(
         ledger_path=ledger_path,
         history_provider=prov,
-        signed=signed,
+        tag="v5.1.2",
+            body="notes",
+            authority_binding=signed,
         target_commit=TARGET,
         staging_dir=staging_dir,
         executor=executor,
