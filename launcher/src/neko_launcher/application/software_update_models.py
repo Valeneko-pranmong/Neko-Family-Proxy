@@ -75,6 +75,29 @@ class AuthenticatedReleaseBinding:
 
 
 @dataclass(frozen=True)
+class InstalledReleaseSelector:
+    sequence: int
+    release_id: str
+    version: str
+    tag_name: str
+    target_commit: str
+
+    def __post_init__(self) -> None:
+        if type(self.sequence) is not int or isinstance(self.sequence, bool):
+            raise ValueError("sequence must be an int")
+        if self.sequence <= 0:
+            raise ValueError("sequence must be positive")
+        if type(self.release_id) is not str or not self.release_id.strip():
+            raise ValueError("release_id must be a non-empty string")
+        if type(self.version) is not str or not self.version.strip():
+            raise ValueError("version must be a non-empty string")
+        if type(self.tag_name) is not str or not self.tag_name.strip():
+            raise ValueError("tag_name must be a non-empty string")
+        if type(self.target_commit) is not str or not self.target_commit.strip():
+            raise ValueError("target_commit must be a non-empty string")
+
+
+@dataclass(frozen=True)
 class LocalReleaseIdentity:
     committed: AuthenticatedReleaseBinding
     high_water: AuthenticatedReleaseBinding
@@ -86,6 +109,11 @@ class LocalReleaseIdentity:
     updater_installed_identity_sha256: str
     core_version: str
     core_installed_identity_sha256: str
+    installed_selector: InstalledReleaseSelector | None = None
+
+    @property
+    def selector(self) -> InstalledReleaseSelector | None:
+        return self.installed_selector
 
     @property
     def release_sequence(self) -> int:
@@ -104,6 +132,25 @@ class LocalReleaseIdentity:
             raise ValueError("observed must be an AuthenticatedReleaseBinding")
         if self.failed is not None and not isinstance(self.failed, AuthenticatedReleaseBinding):
             raise ValueError("failed must be None or an AuthenticatedReleaseBinding")
+
+        if self.installed_selector is not None:
+            if not isinstance(self.installed_selector, InstalledReleaseSelector):
+                raise ValueError("installed_selector must be an InstalledReleaseSelector or None")
+            if self.installed_selector.sequence != self.committed.release_sequence:
+                raise ValueError(
+                    f"installed_selector.sequence ({self.installed_selector.sequence}) "
+                    f"does not match committed.release_sequence ({self.committed.release_sequence})"
+                )
+            if self.installed_selector.release_id != self.committed.release_id:
+                raise ValueError(
+                    f"installed_selector.release_id ({self.installed_selector.release_id!r}) "
+                    f"does not match committed.release_id ({self.committed.release_id!r})"
+                )
+            if self.installed_selector.version != self.launcher_version:
+                raise ValueError(
+                    f"installed_selector.version ({self.installed_selector.version!r}) "
+                    f"does not match launcher_version ({self.launcher_version!r})"
+                )
 
         if self.committed.release_sequence > self.high_water.release_sequence:
             raise ValueError("committed release_sequence cannot exceed high_water release_sequence")

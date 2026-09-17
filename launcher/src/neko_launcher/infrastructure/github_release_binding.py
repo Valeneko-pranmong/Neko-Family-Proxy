@@ -4,9 +4,12 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from neko_launcher.application.software_update_models import ReleaseSet
+from neko_launcher.application.software_update_models import (
+    InstalledReleaseSelector,
+    ReleaseSet,
+)
 from neko_launcher.infrastructure.github_asset_downloader import (
     DownloadedManifest,
     GitHubAssetDownloadError,
@@ -48,6 +51,7 @@ __all__ = [
     "GitHubReleaseResolver",
     "InstalledUpdaterVerification",
     "verify_installed_updater",
+    "resolve_exact_release",
 ]
 
 
@@ -225,6 +229,7 @@ class ResolvedGitHubRelease:
 
 class AuthenticatedReleaseGateway(Protocol):
     def resolve(self) -> ResolvedGitHubRelease | None: ...
+    def resolve_exact(self, selector: InstalledReleaseSelector) -> ResolvedGitHubRelease | None: ...
 
 
 class GitHubReleaseResolverError(ValueError):
@@ -269,6 +274,33 @@ class GitHubReleaseResolver:
         if release is None:
             return None
 
+        return self._process_release(release)
+
+    def resolve_exact(
+        self,
+        selector: InstalledReleaseSelector,
+    ) -> ResolvedGitHubRelease | None:
+        if not isinstance(selector, InstalledReleaseSelector):
+            raise ValueError("selector must be an InstalledReleaseSelector")
+        try:
+            release = self._release_gateway.fetch_by_tag(selector.tag_name)
+        except GitHubReleaseDiscoveryError as err:
+            if err.code == "GITHUB_RELEASE_UNAVAILABLE":
+                raise GitHubReleaseResolverError("GITHUB_RELEASE_UNAVAILABLE") from None
+            raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED") from None
+        except Exception:
+            raise GitHubReleaseResolverError("GITHUB_RELEASE_UNAVAILABLE") from None
+
+        if release is None:
+            return None
+
+        return self._process_release(release, expected_selector=selector)
+
+    def _process_release(
+        self,
+        release: GitHubRelease,
+        expected_selector: InstalledReleaseSelector | None = None,
+    ) -> ResolvedGitHubRelease:
         if release.draft or release.prerelease:
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
 
@@ -328,9 +360,21 @@ class GitHubReleaseResolver:
         if launcher_comp is None or updater_comp is None or core_comp is None:
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
 
+        if expected_selector is not None:
+            if release_set_v2.release_sequence != expected_selector.sequence:
+                raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
+            if release_set_v2.release_id != expected_selector.release_id:
+                raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
+            if release.tag_name != expected_selector.tag_name:
+                raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
+
         expected_tag = f"v{launcher_comp.version}"
         if release.tag_name != expected_tag:
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
+
+        if expected_selector is not None:
+            if launcher_comp.version != expected_selector.version:
+                raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
 
         if launcher_comp.artifact_id != LAUNCHER_ASSET_NAME:
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
@@ -383,3 +427,30 @@ class GitHubReleaseResolver:
             updater_asset=updater_asset,
             core_asset=core_asset,
         )
+
+
+def resolve_exact_release(
+    selector_or_client: Any = None,
+    maybe_selector: InstalledReleaseSelector | None = None,
+    *,
+    client: Any = None,
+    resolver: GitHubReleaseResolver | None = None,
+    selector: InstalledReleaseSelector | None = None,
+) -> Any:
+    target_selector = selector or maybe_selector
+    target = client or resolver
+    if isinstance(selector_or_client, InstalledReleaseSelector):
+        target_selector = selector_or_client
+    elif selector_or_client is not None and target is None:
+        target = selector_or_client
+
+    if target_selector is None:
+        raise ValueError("selector is required")
+    if target is None:
+        raise ValueError("client or resolver is required")
+
+    if hasattr(target, "resolve_exact"):
+        return target.resolve_exact(target_selector)
+    if hasattr(target, "fetch_by_tag"):
+        return target.fetch_by_tag(target_selector.tag_name)
+    raise ValueError(f"Unsupported client or resolver: {type(target)!r}")

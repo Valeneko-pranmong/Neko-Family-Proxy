@@ -394,3 +394,38 @@ def test_gateway_routes_to_verified_channel_profile(monkeypatch: pytest.MonkeyPa
     assert rel is not None
     assert opener.requests[0][0].full_url == profile.latest_release_api
 
+
+def test_gateway_fetch_by_tag_requests_exact_tag_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    document = _valid_document()
+    document["tag_name"] = "v5.1.3"
+    body = json.dumps(document).encode("utf-8")
+    response = FakeResponse(body)
+    module, gateway, opener = _gateway(monkeypatch, response)
+
+    release = gateway.fetch_by_tag("v5.1.3")
+
+    assert release is not None
+    assert release.tag_name == "v5.1.3"
+    assert len(opener.requests) == 1
+    request, _ = opener.requests[0]
+    expected_url = (
+        "https://api.github.com/repos/Valeneko-pranmong/"
+        "Neko-Family-Proxy/releases/tags/v5.1.3"
+    )
+    assert request.full_url == expected_url
+
+
+def test_gateway_fetch_by_tag_rejects_invalid_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    module, gateway, _ = _gateway(monkeypatch, FakeResponse(b"{}"))
+    with pytest.raises(ValueError, match="GITHUB_RELEASE_RESPONSE_INVALID"):
+        gateway.fetch_by_tag("not-a-valid-tag")
+
+
+def test_gateway_fetch_by_tag_returns_none_on_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module()
+    opener = FakeOpener(urllib.error.HTTPError("url", 404, "Not Found", None, None))  # type: ignore[arg-type]
+    monkeypatch.setattr(module.urllib.request, "build_opener", lambda *_: opener)
+    gateway = module.GitHubLatestReleaseGateway()
+
+    assert gateway.fetch_by_tag("v5.1.3") is None
+

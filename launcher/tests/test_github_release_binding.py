@@ -42,9 +42,19 @@ class FakeReleaseGateway:
         self.release = release
         self.error = error
         self.calls = 0
+        self.requested_tag: str | None = None
+        self.latest_requested: bool = False
 
     def fetch(self) -> GitHubRelease | None:
         self.calls += 1
+        self.latest_requested = True
+        if self.error:
+            raise self.error
+        return self.release
+
+    def fetch_by_tag(self, tag: str) -> GitHubRelease | None:
+        self.calls += 1
+        self.requested_tag = tag
         if self.error:
             raise self.error
         return self.release
@@ -71,6 +81,8 @@ class FakeManifestDownloader:
 def _setup_resolver_environment(
     tmp_path: Path,
     *,
+    sequence: int = 10,
+    release_id: str = "rel-10",
     launcher_version: str = "5.1.0",
     launcher_size: int = 1000,
     updater_size: int = 2000,
@@ -92,8 +104,8 @@ def _setup_resolver_environment(
     helper_sha = hashlib.sha256(helper_bytes).hexdigest()
 
     doc = valid_v2_release_document(
-        sequence=10,
-        release_id="rel-10",
+        sequence=sequence,
+        release_id=release_id,
         channel="stable",
         launcher_version=launcher_version,
         launcher_sha="1" * 64,
@@ -589,3 +601,143 @@ def test_resolver_raises_updater_incompatible_on_helper_size_mismatch(tmp_path: 
         resolver.resolve()
 
     assert exc_info.value.code == "UPDATER_INCOMPATIBLE"
+
+
+def test_file_check_resolves_exact_committed_tag_not_latest() -> None:
+    from neko_launcher.application.software_update_models import InstalledReleaseSelector
+    from neko_launcher.infrastructure.github_release_binding import resolve_exact_release
+
+    class FakeGitHub:
+        def __init__(self) -> None:
+            self.requested_tag: str | None = None
+            self.latest_requested: bool = False
+
+        def fetch_by_tag(self, tag: str) -> Any:
+            self.requested_tag = tag
+            return None
+
+        def fetch(self) -> Any:
+            self.latest_requested = True
+            return None
+
+    fake_github = FakeGitHub()
+    selector = InstalledReleaseSelector(
+        sequence=9,
+        release_id="stable-0009",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="a" * 40,
+    )
+    resolve_exact_release(client=fake_github, selector=selector)
+    assert fake_github.requested_tag == "v5.1.3"
+    assert fake_github.latest_requested is False
+
+
+def test_resolve_exact_release_via_resolver(tmp_path: Path) -> None:
+    from neko_launcher.application.software_update_models import InstalledReleaseSelector
+    from neko_launcher.infrastructure.github_release_binding import resolve_exact_release
+
+    env_data = _setup_resolver_environment(
+        tmp_path,
+        sequence=9,
+        release_id="stable-0009",
+        launcher_version="5.1.3",
+        tag_name="v5.1.3",
+    )
+    resolver = env_data["resolver"]
+    gateway = env_data["gateway"]
+
+    selector = InstalledReleaseSelector(
+        sequence=9,
+        release_id="stable-0009",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="a" * 40,
+    )
+    resolved = resolve_exact_release(resolver=resolver, selector=selector)
+    assert resolved is not None
+    assert resolved.authenticated_release.channel == "stable"
+    assert resolved.authenticated_release_v2.release_sequence == 9
+    assert gateway.requested_tag == "v5.1.3"
+    assert gateway.latest_requested is False
+
+
+def test_resolve_exact_mismatched_sequence_fails_closed(tmp_path: Path) -> None:
+    from neko_launcher.application.software_update_models import InstalledReleaseSelector
+    from neko_launcher.infrastructure.github_release_binding import (
+        GitHubReleaseResolverError,
+        resolve_exact_release,
+    )
+
+    env_data = _setup_resolver_environment(
+        tmp_path,
+        sequence=9,
+        release_id="stable-0009",
+        launcher_version="5.1.3",
+        tag_name="v5.1.3",
+    )
+    resolver = env_data["resolver"]
+
+    mismatched_selector = InstalledReleaseSelector(
+        sequence=10,
+        release_id="stable-0009",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="a" * 40,
+    )
+    with pytest.raises(GitHubReleaseResolverError, match="RELEASE_MANIFEST_REJECTED"):
+        resolve_exact_release(resolver=resolver, selector=mismatched_selector)
+
+
+def test_resolve_exact_mismatched_release_id_fails_closed(tmp_path: Path) -> None:
+    from neko_launcher.application.software_update_models import InstalledReleaseSelector
+    from neko_launcher.infrastructure.github_release_binding import (
+        GitHubReleaseResolverError,
+        resolve_exact_release,
+    )
+
+    env_data = _setup_resolver_environment(
+        tmp_path,
+        sequence=9,
+        release_id="stable-0009",
+        launcher_version="5.1.3",
+        tag_name="v5.1.3",
+    )
+    resolver = env_data["resolver"]
+
+    mismatched_selector = InstalledReleaseSelector(
+        sequence=9,
+        release_id="wrong-id",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="a" * 40,
+    )
+    with pytest.raises(GitHubReleaseResolverError, match="RELEASE_MANIFEST_REJECTED"):
+        resolve_exact_release(resolver=resolver, selector=mismatched_selector)
+
+
+def test_resolve_exact_mismatched_version_fails_closed(tmp_path: Path) -> None:
+    from neko_launcher.application.software_update_models import InstalledReleaseSelector
+    from neko_launcher.infrastructure.github_release_binding import (
+        GitHubReleaseResolverError,
+        resolve_exact_release,
+    )
+
+    env_data = _setup_resolver_environment(
+        tmp_path,
+        sequence=9,
+        release_id="stable-0009",
+        launcher_version="5.1.3",
+        tag_name="v5.1.3",
+    )
+    resolver = env_data["resolver"]
+
+    mismatched_selector = InstalledReleaseSelector(
+        sequence=9,
+        release_id="stable-0009",
+        version="5.1.4",
+        tag_name="v5.1.3",
+        target_commit="a" * 40,
+    )
+    with pytest.raises(GitHubReleaseResolverError, match="RELEASE_MANIFEST_REJECTED"):
+        resolve_exact_release(resolver=resolver, selector=mismatched_selector)

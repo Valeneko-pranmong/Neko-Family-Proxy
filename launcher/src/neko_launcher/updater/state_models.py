@@ -1,11 +1,15 @@
 """Domain models, schema validation, and serialization for updater state and enrollment marker."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import base64
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, replace
 import re
 from typing import Any, Literal
 
+from neko_launcher.application.software_update_models import InstalledReleaseSelector
 from neko_launcher.updater.canonical_json import canonical_json_dumps, canonical_json_loads
+from neko_launcher.updater.manifest_v2 import parse_release_v2, verify_release_envelope_v2
 
 Phase = Literal[
     "ENROLLING",
@@ -144,12 +148,24 @@ class Generation:
     binding: Binding
     launcher_identity_sha256: str
     core_identity_sha256: str
+    selector: InstalledReleaseSelector | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.binding, Binding):
             raise ValueError("binding must be a Binding instance")
         _assert_hex(self.launcher_identity_sha256, 64, "launcher_identity_sha256")
         _assert_hex(self.core_identity_sha256, 64, "core_identity_sha256")
+        if self.selector is not None:
+            if not isinstance(self.selector, InstalledReleaseSelector):
+                raise ValueError("selector must be an InstalledReleaseSelector or None")
+            if self.selector.sequence != self.binding.release_sequence:
+                raise ValueError(
+                    f"selector.sequence {self.selector.sequence} does not match binding.release_sequence {self.binding.release_sequence}"
+                )
+            if self.selector.release_id != self.binding.release_id:
+                raise ValueError(
+                    f"selector.release_id {self.selector.release_id!r} does not match binding.release_id {self.binding.release_id!r}"
+                )
 
 
 @dataclass(frozen=True)
@@ -357,7 +373,8 @@ STATE_ALLOWED_KEYS = {
 }
 
 BINDING_ALLOWED_KEYS = {"release_sequence", "release_id", "payload_sha256"}
-GENERATION_ALLOWED_KEYS = {"binding", "launcher_identity_sha256", "core_identity_sha256"}
+GENERATION_REQUIRED_KEYS = {"binding", "launcher_identity_sha256", "core_identity_sha256"}
+GENERATION_ALLOWED_KEYS = GENERATION_REQUIRED_KEYS | {"selector"}
 DIRECTORY_ID_ALLOWED_KEYS = {"volume_serial", "file_id", "parent_file_id"}
 MUTATION_ALLOWED_KEYS = {"kind", "target", "status"}
 TRANSACTION_ALLOWED_KEYS = {
@@ -386,6 +403,26 @@ MARKER_ALLOWED_KEYS = {
     "enrollment_status",
 }
 ROOT_ID_ALLOWED_KEYS = {"volume_serial", "file_id"}
+SELECTOR_ALLOWED_KEYS = {
+    "sequence",
+    "release_id",
+    "version",
+    "tag_name",
+    "target_commit",
+}
+
+
+def _parse_installed_release_selector(data: dict[str, Any]) -> InstalledReleaseSelector:
+    if not isinstance(data, dict):
+        raise ValueError("InstalledReleaseSelector payload must be a JSON object")
+    _assert_closed_keys(data, SELECTOR_ALLOWED_KEYS, "InstalledReleaseSelector")
+    return InstalledReleaseSelector(
+        sequence=data["sequence"],
+        release_id=data["release_id"],
+        version=data["version"],
+        tag_name=data["tag_name"],
+        target_commit=data["target_commit"],
+    )
 
 
 def _parse_binding(data: dict[str, Any]) -> Binding:
@@ -394,12 +431,25 @@ def _parse_binding(data: dict[str, Any]) -> Binding:
 
 
 def _parse_generation(data: dict[str, Any]) -> Generation:
-    _assert_closed_keys(data, GENERATION_ALLOWED_KEYS, "Generation")
+    keys = set(data.keys())
+    extra = keys - GENERATION_ALLOWED_KEYS
+    if extra:
+        raise ValueError(f"Unknown field: {next(iter(extra))} in Generation")
+    missing = GENERATION_REQUIRED_KEYS - keys
+    if missing:
+        raise ValueError(f"Missing required field: {next(iter(missing))} in Generation")
     binding = _parse_binding(data["binding"])
+    raw_sel = data.get("selector")
+    selector = (
+        _parse_installed_release_selector(raw_sel)
+        if raw_sel is not None
+        else None
+    )
     return Generation(
         binding=binding,
         launcher_identity_sha256=data["launcher_identity_sha256"],
         core_identity_sha256=data["core_identity_sha256"],
+        selector=selector,
     )
 
 
@@ -497,6 +547,93 @@ def deserialize_state(raw: bytes | str) -> State:
         rollback=rollback,
         last_error=data["last_error"],
         evidence=dict(data["evidence"]),
+    )
+
+
+def migrate_state(
+    state: State,
+    *,
+    deterministic_selector: InstalledReleaseSelector | None = None,
+    deterministic_commit: str | None = None,
+    key_registry: Mapping[str, bytes] | None = None,
+) -> State:
+    """Migrate durable state to include exact installed release selector fail-closed."""
+    if state.committed is None:
+        return state
+
+    if state.committed.selector is not None:
+        return state
+
+    if deterministic_selector is not None:
+        if not isinstance(deterministic_selector, InstalledReleaseSelector):
+            raise ValueError("deterministic_selector must be an InstalledReleaseSelector")
+        if deterministic_selector.sequence != state.committed.binding.release_sequence:
+            raise ValueError(
+                f"Migration sequence mismatch: selector sequence {deterministic_selector.sequence} "
+                f"!= committed sequence {state.committed.binding.release_sequence}"
+            )
+        if deterministic_selector.release_id != state.committed.binding.release_id:
+            raise ValueError(
+                f"Migration release_id mismatch: selector release_id {deterministic_selector.release_id!r} "
+                f"!= committed release_id {state.committed.binding.release_id!r}"
+            )
+        migrated_gen = replace(state.committed, selector=deterministic_selector)
+        return replace(state, committed=migrated_gen)
+
+    if deterministic_commit is not None:
+        if not isinstance(deterministic_commit, str) or not deterministic_commit.strip():
+            raise ValueError("deterministic_commit must be a non-empty string")
+        payload_sha = state.committed.binding.payload_sha256
+        if payload_sha not in state.evidence:
+            raise ValueError("Migration failed: missing signed envelope evidence for committed payload")
+
+        try:
+            envelope_bytes = base64.b64decode(state.evidence[payload_sha], validate=True)
+            envelope_doc = canonical_json_loads(envelope_bytes)
+        except Exception as exc:
+            raise ValueError(f"Migration failed to decode envelope evidence: {exc}") from exc
+
+        if key_registry is not None:
+            try:
+                release_set_v2, verified_payload_sha = verify_release_envelope_v2(
+                    envelope_doc,
+                    key_registry,
+                )
+                if verified_payload_sha != payload_sha:
+                    raise ValueError("Migration failed: verified payload SHA mismatch")
+            except Exception as exc:
+                raise ValueError(f"Migration envelope verification failed: {exc}") from exc
+        else:
+            raw_payload = envelope_doc.get("payload", envelope_doc)
+            if not isinstance(raw_payload, dict):
+                raise ValueError("Migration envelope missing payload dictionary")
+            release_set_v2 = parse_release_v2(raw_payload)
+
+        if release_set_v2.release_sequence != state.committed.binding.release_sequence:
+            raise ValueError("Migration failed: evidence release_sequence mismatch")
+        if release_set_v2.release_id != state.committed.binding.release_id:
+            raise ValueError("Migration failed: evidence release_id mismatch")
+
+        launcher_comp = release_set_v2.components.get("launcher")
+        if launcher_comp is None:
+            raise ValueError("Migration failed: evidence missing launcher component")
+
+        version = launcher_comp.version
+        tag_name = f"v{version}"
+
+        selector = InstalledReleaseSelector(
+            sequence=state.committed.binding.release_sequence,
+            release_id=state.committed.binding.release_id,
+            version=version,
+            tag_name=tag_name,
+            target_commit=deterministic_commit,
+        )
+        migrated_gen = replace(state.committed, selector=selector)
+        return replace(state, committed=migrated_gen)
+
+    raise ValueError(
+        "Migration failed: ambiguous historical state without deterministic selector or target_commit; "
+        "cannot guess installed release identity"
     )
 
 

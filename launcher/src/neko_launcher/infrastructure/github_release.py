@@ -251,3 +251,18 @@ class GitHubLatestReleaseGateway:
                 f"{GITHUB_RELEASE_REPOSITORY}/releases/{release_id}"
             )
         return self._execute_request(url, allow_prerelease=True)
+
+    def fetch_by_tag(self, tag: str) -> GitHubRelease | None:
+        if not isinstance(tag, str) or _TAG_PATTERN.fullmatch(tag) is None:
+            raise _invalid()
+        if self._channel_profile is not None:
+            url = (
+                f"https://api.github.com/repos/{self._channel_profile.owner}/"
+                f"{self._channel_profile.repository}/releases/tags/{tag}"
+            )
+        else:
+            url = (
+                f"https://api.github.com/repos/{GITHUB_RELEASE_OWNER}/"
+                f"{GITHUB_RELEASE_REPOSITORY}/releases/tags/{tag}"
+            )
+        return self._execute_request(url, allow_prerelease=True)

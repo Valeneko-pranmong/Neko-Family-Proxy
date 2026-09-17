@@ -349,7 +349,7 @@ def test_dataclasses_exact_fields():
     ]
 
     assert [f.name for f in dataclasses.fields(LocalReleaseIdentity)] == [
-        "committed", "high_water", "observed", "failed", "launcher_version", "launcher_installed_identity_sha256", "updater_version", "updater_installed_identity_sha256", "core_version", "core_installed_identity_sha256"
+        "committed", "high_water", "observed", "failed", "launcher_version", "launcher_installed_identity_sha256", "updater_version", "updater_installed_identity_sha256", "core_version", "core_installed_identity_sha256", "installed_selector"
     ]
 
     assert [f.name for f in dataclasses.fields(UpdateCheckResult)] == [
@@ -400,3 +400,109 @@ def test_update_check_result_diagnostic_acceptance():
     UpdateCheckResult(UpdateState.VERIFY_FAILED, UpdateInvocationReason.STARTUP, "r1", 1, ("launcher",), "1.0", "1.0", False, None)
     UpdateCheckResult(UpdateState.VERIFY_FAILED, UpdateInvocationReason.STARTUP, "r1", 1, ("launcher",), "1.0", "1.0", False, UpdateDiagnosticCode.DOWNGRADE_REJECTED)
     UpdateCheckResult(UpdateState.VERIFY_FAILED, UpdateInvocationReason.STARTUP, "r1", 1, ("launcher",), "1.0", "1.0", False, UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT)
+
+
+def test_local_release_identity_installed_selector_validation():
+    from neko_launcher.application.software_update_models import (
+        AuthenticatedReleaseBinding,
+        InstalledReleaseSelector,
+        LocalReleaseIdentity,
+    )
+
+    binding = AuthenticatedReleaseBinding(
+        release_sequence=9,
+        release_id="rel-9",
+        payload_sha256="a" * 64,
+    )
+    selector = InstalledReleaseSelector(
+        sequence=9,
+        release_id="rel-9",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="b" * 40,
+    )
+
+    identity = LocalReleaseIdentity(
+        committed=binding,
+        high_water=binding,
+        observed=binding,
+        failed=None,
+        launcher_version="5.1.3",
+        launcher_installed_identity_sha256="1" * 64,
+        updater_version="1.0.0",
+        updater_installed_identity_sha256="2" * 64,
+        core_version="2.0.0",
+        core_installed_identity_sha256="3" * 64,
+        installed_selector=selector,
+    )
+    assert identity.selector == selector
+    assert identity.release_sequence == 9
+
+    # Mismatched sequence
+    bad_seq_sel = InstalledReleaseSelector(
+        sequence=8,
+        release_id="rel-9",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="b" * 40,
+    )
+    with pytest.raises(ValueError, match="sequence"):
+        LocalReleaseIdentity(
+            committed=binding,
+            high_water=binding,
+            observed=binding,
+            failed=None,
+            launcher_version="5.1.3",
+            launcher_installed_identity_sha256="1" * 64,
+            updater_version="1.0.0",
+            updater_installed_identity_sha256="2" * 64,
+            core_version="2.0.0",
+            core_installed_identity_sha256="3" * 64,
+            installed_selector=bad_seq_sel,
+        )
+
+    # Mismatched release_id
+    bad_id_sel = InstalledReleaseSelector(
+        sequence=9,
+        release_id="other-rel",
+        version="5.1.3",
+        tag_name="v5.1.3",
+        target_commit="b" * 40,
+    )
+    with pytest.raises(ValueError, match="release_id"):
+        LocalReleaseIdentity(
+            committed=binding,
+            high_water=binding,
+            observed=binding,
+            failed=None,
+            launcher_version="5.1.3",
+            launcher_installed_identity_sha256="1" * 64,
+            updater_version="1.0.0",
+            updater_installed_identity_sha256="2" * 64,
+            core_version="2.0.0",
+            core_installed_identity_sha256="3" * 64,
+            installed_selector=bad_id_sel,
+        )
+
+    # Mismatched version
+    bad_ver_sel = InstalledReleaseSelector(
+        sequence=9,
+        release_id="rel-9",
+        version="5.1.4",
+        tag_name="v5.1.3",
+        target_commit="b" * 40,
+    )
+    with pytest.raises(ValueError, match="version"):
+        LocalReleaseIdentity(
+            committed=binding,
+            high_water=binding,
+            observed=binding,
+            failed=None,
+            launcher_version="5.1.3",
+            launcher_installed_identity_sha256="1" * 64,
+            updater_version="1.0.0",
+            updater_installed_identity_sha256="2" * 64,
+            core_version="2.0.0",
+            core_installed_identity_sha256="3" * 64,
+            installed_selector=bad_ver_sel,
+        )
