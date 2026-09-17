@@ -264,7 +264,12 @@ def test_verify_v512_k1_acceptance_verifier_cli_has_no_signer_inputs():
                 assert "sign" not in opt.lower()
 
 
-def _setup_mock_k1_fixture(tmp_path: Path):
+def _setup_mock_k1_fixture(
+    tmp_path: Path,
+    *,
+    prod_owner: str = "Valeneko-pranmong",
+    prod_repository: str = "Neko-Family-Proxy",
+):
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True)
 
@@ -332,10 +337,10 @@ def _setup_mock_k1_fixture(tmp_path: Path):
     # Create profiles
     prod_payload = {
         "channel": "stable",
-        "owner": "Valeneko-pranmong",
+        "owner": prod_owner,
         "profile_id": "production",
         "release_keys": [{"key_id": prod_key_id, "public_key_hex": prod_pub.hex()}],
-        "repository": "Neko-Family-Proxy-Updates",
+        "repository": prod_repository,
     }
     prod_payload_bytes = canonical_json_dumps(prod_payload)
     prod_payload_sha256 = hashlib.sha256(prod_payload_bytes).hexdigest()
@@ -883,6 +888,55 @@ def test_verify_k1_acceptance_rejects_profile_routing_mismatch(tmp_path, monkeyp
             evidence_path=fix["evidence_path"],
             k1b_custody_path=fix["k1b_custody_path"],
         )
+
+
+def test_verify_k1_acceptance_rejects_superseded_updates_repository(tmp_path, monkeypatch):
+    import verify_v512_k1_acceptance
+
+    fix = _setup_mock_k1_fixture(tmp_path, prod_repository="Neko-Family-Proxy-Updates")
+    monkeypatch.setattr(verify_v512_k1_acceptance, "_PROFILE_AUTHORITY_CUSTODY_PATH", fix["prof_custody_file"])
+    monkeypatch.setattr(verify_v512_k1_acceptance, "_PROOF_RELEASE_AUTHORITY_CUSTODY_PATH", fix["proof_custody_file"])
+
+    with pytest.raises(ValueError, match="superseded|repository mismatch"):
+        verify_v512_k1_acceptance.verify_k1_acceptance(
+            repo_root=fix["repo_root"],
+            acceptance_record_path=fix["acceptance_path"],
+            evidence_path=fix["evidence_path"],
+            k1b_custody_path=fix["k1b_custody_path"],
+        )
+
+
+def test_verify_k1_acceptance_rejects_arbitrary_production_repository(tmp_path, monkeypatch):
+    import verify_v512_k1_acceptance
+
+    fix = _setup_mock_k1_fixture(tmp_path, prod_repository="ArbitraryRepo")
+    monkeypatch.setattr(verify_v512_k1_acceptance, "_PROFILE_AUTHORITY_CUSTODY_PATH", fix["prof_custody_file"])
+    monkeypatch.setattr(verify_v512_k1_acceptance, "_PROOF_RELEASE_AUTHORITY_CUSTODY_PATH", fix["proof_custody_file"])
+
+    with pytest.raises(ValueError, match="repository mismatch"):
+        verify_v512_k1_acceptance.verify_k1_acceptance(
+            repo_root=fix["repo_root"],
+            acceptance_record_path=fix["acceptance_path"],
+            evidence_path=fix["evidence_path"],
+            k1b_custody_path=fix["k1b_custody_path"],
+        )
+
+
+def test_verify_k1_acceptance_rejects_arbitrary_production_owner(tmp_path, monkeypatch):
+    import verify_v512_k1_acceptance
+
+    fix = _setup_mock_k1_fixture(tmp_path, prod_owner="ArbitraryOwner")
+    monkeypatch.setattr(verify_v512_k1_acceptance, "_PROFILE_AUTHORITY_CUSTODY_PATH", fix["prof_custody_file"])
+    monkeypatch.setattr(verify_v512_k1_acceptance, "_PROOF_RELEASE_AUTHORITY_CUSTODY_PATH", fix["proof_custody_file"])
+
+    with pytest.raises(ValueError, match="repository mismatch|owner"):
+        verify_v512_k1_acceptance.verify_k1_acceptance(
+            repo_root=fix["repo_root"],
+            acceptance_record_path=fix["acceptance_path"],
+            evidence_path=fix["evidence_path"],
+            k1b_custody_path=fix["k1b_custody_path"],
+        )
+
 
 
 def test_verify_k1_acceptance_rejects_updater_not_byte_identical(tmp_path, monkeypatch):

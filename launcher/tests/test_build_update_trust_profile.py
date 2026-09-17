@@ -79,10 +79,87 @@ def test_canonicalize_profile_payload_negative():
                 profile_id="production",
                 channel="stable",
                 owner="Valeneko-pranmong",
-                repository="Neko-Family-Proxy-Updates",
+                repository="Neko-Family-Proxy",
                 release_keys=[{"key_id": "neko-update-proof-1", "public_key_hex": pub.hex()}],
             )
         )
+
+
+def test_canonicalize_profile_payload_production_accepts_canonical_repository():
+    from build_update_trust_profile import (
+        UpdateTrustProfileSpec,
+        canonicalize_profile_payload,
+    )
+    from neko_launcher.updater.canonical_json import canonical_json_loads
+
+    _, pub = _make_keypair()
+    spec = UpdateTrustProfileSpec(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_keys=[{"key_id": "neko-update-prod-1", "public_key_hex": pub.hex()}],
+    )
+    payload_bytes = canonicalize_profile_payload(spec)
+    decoded = canonical_json_loads(payload_bytes)
+    assert decoded["profile_id"] == "production"
+    assert decoded["owner"] == "Valeneko-pranmong"
+    assert decoded["repository"] == "Neko-Family-Proxy"
+
+
+def test_canonicalize_profile_payload_production_rejects_superseded_updates_repository():
+    from build_update_trust_profile import (
+        UpdateTrustProfileSpec,
+        canonicalize_profile_payload,
+    )
+
+    _, pub = _make_keypair()
+    spec = UpdateTrustProfileSpec(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy-Updates",
+        release_keys=[{"key_id": "neko-update-prod-1", "public_key_hex": pub.hex()}],
+    )
+    with pytest.raises(ValueError, match="superseded|Neko-Family-Proxy-Updates"):
+        canonicalize_profile_payload(spec)
+
+
+def test_canonicalize_profile_payload_production_rejects_arbitrary_repository():
+    from build_update_trust_profile import (
+        UpdateTrustProfileSpec,
+        canonicalize_profile_payload,
+    )
+
+    _, pub = _make_keypair()
+    spec = UpdateTrustProfileSpec(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="ArbitraryRepo",
+        release_keys=[{"key_id": "neko-update-prod-1", "public_key_hex": pub.hex()}],
+    )
+    with pytest.raises(ValueError, match="repository mismatch|expected"):
+        canonicalize_profile_payload(spec)
+
+
+def test_canonicalize_profile_payload_production_rejects_arbitrary_owner():
+    from build_update_trust_profile import (
+        UpdateTrustProfileSpec,
+        canonicalize_profile_payload,
+    )
+
+    _, pub = _make_keypair()
+    spec = UpdateTrustProfileSpec(
+        profile_id="production",
+        channel="stable",
+        owner="ArbitraryOwner",
+        repository="Neko-Family-Proxy",
+        release_keys=[{"key_id": "neko-update-prod-1", "public_key_hex": pub.hex()}],
+    )
+    with pytest.raises(ValueError, match="repository mismatch|owner|expected"):
+        canonicalize_profile_payload(spec)
+
 
 
 def test_assemble_verified_profile_envelope_happy_path():

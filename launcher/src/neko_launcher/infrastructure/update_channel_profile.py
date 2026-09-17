@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
 
+CANONICAL_PRODUCTION_OWNER = "Valeneko-pranmong"
+CANONICAL_PRODUCTION_REPO = "Neko-Family-Proxy"
+SUPERSEDED_PRODUCTION_REPO = "Neko-Family-Proxy-Updates"
+
 
 @dataclass(frozen=True)
 class UpdateChannelProfile:
@@ -23,6 +27,12 @@ class UpdateChannelProfile:
     def from_verified(cls, profile: VerifiedUpdateTrustProfile) -> UpdateChannelProfile:
         owner = profile.owner
         repo = profile.repository
+        if profile.profile_id == "production" and repo == SUPERSEDED_PRODUCTION_REPO:
+            raise ValueError(
+                f"Production trust profile repository '{SUPERSEDED_PRODUCTION_REPO}' is superseded; "
+                f"expected canonical repository '{CANONICAL_PRODUCTION_REPO}'"
+            )
+
         return cls(
             profile_id=profile.profile_id,
             channel=profile.channel,

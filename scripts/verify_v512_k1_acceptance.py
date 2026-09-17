@@ -475,7 +475,9 @@ def verify_k1_acceptance(
     )
     if prod_prof.profile_id != "production" or prod_prof.channel != "stable":
         raise ValueError("Production profile routing mismatch")
-    if prod_prof.owner != "Valeneko-pranmong" or prod_prof.repository != "Neko-Family-Proxy-Updates":
+    if prod_prof.repository == "Neko-Family-Proxy-Updates":
+        raise ValueError("Production profile references superseded Updates repository")
+    if prod_prof.owner != "Valeneko-pranmong" or prod_prof.repository != "Neko-Family-Proxy":
         raise ValueError("Production profile repository mismatch")
     if prod_prof.release_public_keys != {"neko-update-prod-1": prod_pub_bytes}:
         raise ValueError("Production profile release registry mismatch")

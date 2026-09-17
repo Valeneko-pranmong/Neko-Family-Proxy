@@ -62,8 +62,19 @@ def canonicalize_profile_payload(spec: UpdateTrustProfileSpec) -> bytes:
     if seen_ids != sorted(seen_ids):
         raise ValueError("release_keys must be strictly sorted by key_id")
 
-    if spec.profile_id == "production" and any("proof" in k.lower() for k in seen_ids):
-        raise ValueError("Production profile must not contain proof keys")
+    if spec.profile_id == "production":
+        if any("proof" in k.lower() for k in seen_ids):
+            raise ValueError("Production profile must not contain proof keys")
+        if spec.repository == "Neko-Family-Proxy-Updates":
+            raise ValueError(
+                "Production profile repository 'Neko-Family-Proxy-Updates' is superseded; "
+                "expected canonical repository 'Neko-Family-Proxy'"
+            )
+        if spec.owner != "Valeneko-pranmong" or spec.repository != "Neko-Family-Proxy":
+            raise ValueError(
+                f"Production profile repository mismatch: expected 'Valeneko-pranmong/Neko-Family-Proxy', "
+                f"got '{spec.owner}/{spec.repository}'"
+            )
 
     payload = {
         "channel": spec.channel,
