@@ -9,22 +9,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 VERIFY_SCRIPT = REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1"
 EXPECTED_COMMIT = "6ab94bb"
 APPROVED_V2RAY_HASH = "a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff"
-
-
-def _get_approved_v2ray_bytes() -> bytes:
-    candidates = [
-        Path(r"E:\Github\NekoProxyCore\Storage\v2ray-sn.exe"),
-        Path(
-            r"E:\Github\artifacts\main-auto-release\34735305323-f4afa51878ccea590c33f758c9da70eb3ddbd43b\5.1.2\payload\CoreBundle\bin\v2ray-sn.exe"
-        ),
-        Path(r"E:\Github\archive\release-history\candidate-5.1.0-stable\core\bin\v2ray-sn.exe"),
-    ]
-    for c in candidates:
-        if c.is_file():
-            content = c.read_bytes()
-            if hashlib.sha256(content).hexdigest().lower() == APPROVED_V2RAY_HASH:
-                return content
-    raise RuntimeError("Approved v2ray-sn.exe binary not found on test environment")
+TEST_V2RAY_BYTES = b"deterministic-v2ray-test-fixture"
+TEST_V2RAY_HASH = hashlib.sha256(TEST_V2RAY_BYTES).hexdigest()
 
 
 def make_core_fixture_with_array_manifest(tmp_path: Path) -> Path:
@@ -33,7 +19,7 @@ def make_core_fixture_with_array_manifest(tmp_path: Path) -> Path:
     bin_dir = core / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
 
-    v2ray_bytes = _get_approved_v2ray_bytes()
+    v2ray_bytes = TEST_V2RAY_BYTES
     (bin_dir / "v2ray-sn.exe").write_bytes(v2ray_bytes)
     (core / "dummy.dll").write_bytes(b"dummy-content")
     (core / "runtime-settings.nkps").write_bytes(b"protected-payload")
@@ -44,7 +30,7 @@ def make_core_fixture_with_array_manifest(tmp_path: Path) -> Path:
             {
                 "path": "bin/v2ray-sn.exe",
                 "size": len(v2ray_bytes),
-                "sha256": APPROVED_V2RAY_HASH,
+                "sha256": TEST_V2RAY_HASH,
             },
             {
                 "path": "dummy.dll",
@@ -62,13 +48,20 @@ def _run_verify(
     expected_commit: str = EXPECTED_COMMIT,
     extra_args: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    script_text = VERIFY_SCRIPT.read_text(encoding="utf-8")
+    assert script_text.count(APPROVED_V2RAY_HASH) == 1
+    test_script = core_dir.parent / "verify-core-install.test.ps1"
+    test_script.write_text(
+        script_text.replace(APPROVED_V2RAY_HASH, TEST_V2RAY_HASH),
+        encoding="utf-8",
+    )
     cmd = [
         "powershell.exe",
         "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        str(VERIFY_SCRIPT),
+        str(test_script),
         "-CoreDir",
         str(core_dir),
         "-ExpectedCommit",
@@ -77,6 +70,12 @@ def _run_verify(
     if extra_args:
         cmd.extend(extra_args)
     return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def test_production_verifier_retains_approved_v2ray_pin() -> None:
+    script_text = VERIFY_SCRIPT.read_text(encoding="utf-8")
+    assert script_text.count(APPROVED_V2RAY_HASH) == 1
+    assert TEST_V2RAY_HASH not in script_text
 
 
 def test_real_array_manifest_verifies_successfully(tmp_path: Path) -> None:

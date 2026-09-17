@@ -31,10 +31,19 @@ from verify_v512_proof_evidence import (  # noqa: E402
     verify_proof_evidence,
 )
 
-_K1_ACCEPTANCE_PATH = _REPO_ROOT / "docs" / "superpowers" / "evidence" / "v512-k1-acceptance.json"
-_K1B_CUSTODY_PATH = Path("E:/Github/artifacts/v512-k1-proof-fixtures/k1b-custody-v1.json")
-_BASELINE_ENVELOPE_PATH = Path("E:/Github/artifacts/v512-k1-proof-fixtures/baseline/release-v2.json")
-_CANDIDATE_ENVELOPE_PATH = Path("E:/Github/artifacts/v512-k1-proof-fixtures/candidate/release-v2.json")
+_K1_ACCEPTANCE_PATH = _REPO_ROOT / "docs" / "superpowers" / "evidence" / "v512-k1-acceptance-r2.json"
+_K1_PROOF_FIXTURES = _REPO_ROOT / "launcher" / "tests" / "fixtures" / "v512-k1-proof"
+_K1B_CUSTODY_PATH = _K1_PROOF_FIXTURES / "k1b-custody-v1.json"
+_BASELINE_ENVELOPE_PATH = _K1_PROOF_FIXTURES / "baseline" / "release-v2.json"
+_CANDIDATE_ENVELOPE_PATH = _K1_PROOF_FIXTURES / "candidate" / "release-v2.json"
+
+
+def _write_test_k1_acceptance(tmp_path: Path) -> Path:
+    doc = json.loads(_K1_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    doc["k1b_custody_path"] = str(_K1B_CUSTODY_PATH.resolve())
+    path = tmp_path / "v512-k1-acceptance-test.json"
+    path.write_bytes(canonical_json_dumps(doc) + b"\n")
+    return path
 
 
 @pytest.fixture
@@ -445,13 +454,14 @@ def test_verify_proof_evidence_file_paths_and_acceptance(
     ev_bytes = _encode_doc(valid_evidence_setup)
     ev_path = tmp_path / "v512-v513-proof-evidence.json"
     ev_path.write_bytes(ev_bytes)
+    test_acceptance = _write_test_k1_acceptance(tmp_path)
 
     # 1. Missing files
     with pytest.raises(FileNotFoundError):
         verify_proof_evidence(
             repo_root=_REPO_ROOT,
             evidence_path=tmp_path / "missing.json",
-            k1_acceptance_record_path=_K1_ACCEPTANCE_PATH,
+            k1_acceptance_record_path=test_acceptance,
             k1b_custody_path=_K1B_CUSTODY_PATH,
         )
 
@@ -462,7 +472,7 @@ def test_verify_proof_evidence_file_paths_and_acceptance(
         verify_proof_evidence(
             repo_root=_REPO_ROOT,
             evidence_path=ev_path,
-            k1_acceptance_record_path=_K1_ACCEPTANCE_PATH,
+            k1_acceptance_record_path=test_acceptance,
             k1b_custody_path=bad_custody,
         )
 
@@ -473,7 +483,7 @@ def test_verify_proof_evidence_file_paths_and_acceptance(
         verify_proof_evidence(
             repo_root=_REPO_ROOT,
             evidence_path=ev_path,
-            k1_acceptance_record_path=_K1_ACCEPTANCE_PATH,
+            k1_acceptance_record_path=test_acceptance,
             k1b_custody_path=k1b_copy,
         )
 
@@ -481,7 +491,7 @@ def test_verify_proof_evidence_file_paths_and_acceptance(
     res = verify_proof_evidence(
         repo_root=_REPO_ROOT,
         evidence_path=ev_path,
-        k1_acceptance_record_path=_K1_ACCEPTANCE_PATH,
+        k1_acceptance_record_path=test_acceptance,
         k1b_custody_path=_K1B_CUSTODY_PATH,
     )
     assert res["schema_version"] == 1
@@ -514,11 +524,12 @@ def test_cli_main(tmp_path: Path, valid_evidence_setup: dict[str, Any]) -> None:
     ev_bytes = _encode_doc(valid_evidence_setup)
     ev_path = tmp_path / "v512-v513-proof-evidence.json"
     ev_path.write_bytes(ev_bytes)
+    test_acceptance = _write_test_k1_acceptance(tmp_path)
 
     ret = main([
         "--repo-root", str(_REPO_ROOT),
         "--evidence", str(ev_path),
-        "--k1-acceptance-record", str(_K1_ACCEPTANCE_PATH),
+        "--k1-acceptance-record", str(test_acceptance),
         "--k1b-custody", str(_K1B_CUSTODY_PATH),
     ])
     assert ret == 0

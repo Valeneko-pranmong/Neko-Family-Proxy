@@ -797,7 +797,7 @@ def test_custody_rejects_malformed_or_duplicate_entries(tmp_path: Path):
 
 
 def test_seq7_bootstrap_evidence_verification():
-    seq7_path = Path(r"E:\Github\artifacts\main-auto-release\34601286641-fb0d2e734ee611d75933ccd90cb82347c0b578bd\5.1.3\publish\release-v2.json")
+    seq7_path = _REPO_ROOT / "launcher" / "tests" / "fixtures" / "production-history" / "seq7-release-v2.json"
     assert seq7_path.is_file()
     data = seq7_path.read_bytes()
     assert len(data) == 1632
