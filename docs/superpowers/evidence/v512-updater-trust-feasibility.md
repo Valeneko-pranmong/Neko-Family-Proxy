@@ -2,9 +2,9 @@
 
 - **Task**: `RT1-K1` (Runtime Step 12)
 - **Status**: `CONFORMANCE_VERIFIED`
-- **Evaluated Commit (RT1_CODE_HEAD)**: `45c28c3f42e1117dc810617480894dd21d9c7a75`
+- **Evaluated Commit (RT1_CODE_HEAD)**: `3867e6569ab534304a7cdd7ca52b2fcaabd1fbc0`
 - **Custody Chain Reference**: `E:\Github\artifacts\v512-k1-proof-fixtures\k1b-custody-v1.json`
-- **K1B_CUSTODY_SHA256**: `4edb816634bf6fc24a9a28f42b10dd4599c1338f39defeda64acfce283c8c3a9`
+- **K1B_CUSTODY_SHA256**: `d060b7162f8a11a67c7312661a6963066b964f3dfeda9b0d5b56c0c32b47a013`
 
 ---
 
@@ -35,9 +35,9 @@
 - **Path**: `E:\Github\artifacts\v512-update-trust-profiles\production\update-profile-v1.json`
 - **Profile ID**: `production`
 - **Channel**: `stable`
-- **Repository**: `Valeneko-pranmong/Neko-Family-Proxy-Updates`
-- **Envelope SHA-256**: `e3c6e3f61c468db3f026dbca7ea93fb3e784f1f427268c912c79f960d6f63f5f`
-- **Payload SHA-256**: `788781a6df021c52045a431ac6f530cf36fef242f5efd42aeb2303329640f395`
+- **Repository**: `Valeneko-pranmong/Neko-Family-Proxy`
+- **Envelope SHA-256**: `601df858e2355775f48edd3264b576878395feb98a7487537e807bb17caec83b`
+- **Payload SHA-256**: `4866b4af6bce458df2c277967a864e3e03d06f69946daefe06d090f996c7830c`
 - **Keyset SHA-256**: `263740da84b4e12d7761a0585fbfa20d543900fd739f2533b22f3bb9b287b0c1`
 - **Release Keys**: `neko-update-prod-1`
 
@@ -191,3 +191,20 @@ The packaged helper boundary conformance test exercised the real helper boundary
 - **Zero Secret Paths**: No paths to controller private key stores or signing enclaves are recorded.
 - **Fail-Closed Verification**: All negative tests fail closed before state modification or artifact execution.
 - **Single-Purpose Scope**: Conformance executed strictly within Step 12 boundary; no production sequence consumed, no production signatures created, and no downstream RT2+/RA/RH tasks begun.
+
+---
+
+## 10. 2026-09-17 Canonical-Repository Reseal Addendum
+
+RA-SR2 intentionally changed the production update-trust routing from the superseded split repository to the single canonical repository `Valeneko-pranmong/Neko-Family-Proxy`. This change touched closed RT1 security paths and therefore reopened K1 acceptance rather than bypassing the immutability guard.
+
+- **New RT1_CODE_HEAD**: `3867e6569ab534304a7cdd7ca52b2fcaabd1fbc0`
+- **Production profile routing**: `production/stable/Valeneko-pranmong/Neko-Family-Proxy`
+- **Production profile envelope SHA-256**: `601df858e2355775f48edd3264b576878395feb98a7487537e807bb17caec83b`
+- **Production profile payload SHA-256**: `4866b4af6bce458df2c277967a864e3e03d06f69946daefe06d090f996c7830c`
+- **Production release keyset SHA-256**: `263740da84b4e12d7761a0585fbfa20d543900fd739f2533b22f3bb9b287b0c1` (unchanged)
+- **K1B custody SHA-256 after reseal**: `d060b7162f8a11a67c7312661a6963066b964f3dfeda9b0d5b56c0c32b47a013`
+- **Profile Authority**: unchanged `neko-update-profile-v512-1`; the replacement profile was signed with the existing controller-private authority and verified against the existing K1A public custody before installation into production profile custody.
+- **Proof profile, proof release envelopes, and proof component artifacts**: byte identities unchanged. The shared release-envelope assembler and proof release authority were not changed by RA-SR2; existing proof artifacts remain bound to the same proof key and exact hashes recorded above.
+- **Public GitHub / tag / ref mutation**: none performed by this reseal.
+- **Production release sequence mutation**: none performed by this reseal; sequence 8 remains terminal `FAILED` pending the separately authorized replacement-signing gate.
