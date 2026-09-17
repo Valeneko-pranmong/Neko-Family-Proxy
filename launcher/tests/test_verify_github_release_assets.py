@@ -52,6 +52,8 @@ def create_test_release_bundle(
     draft: bool = True,
     prerelease: bool = False,
     include_extra_asset: bool = False,
+    include_installer: bool = True,
+    installer_bytes: bytes = b"MZ-test-installer-binary-content",
     key_id: str = TEST_KEY_ID,
     sequence: int = 8,
     minimum_supported_sequence: int = 1,
@@ -74,6 +76,8 @@ def create_test_release_bundle(
     updater_sha = hashlib.sha256(updater_bytes).hexdigest()
     core_sha = hashlib.sha256(core_bytes).hexdigest()
 
+    if include_installer:
+        (download_dir / "NekoFamilyProxy-Installer.exe").write_bytes(installer_bytes)
     (download_dir / "NekoLauncher.exe").write_bytes(launcher_bytes)
     (download_dir / "NekoUpdater.exe").write_bytes(updater_bytes)
     (download_dir / "NekoProxyCore.zip").write_bytes(core_bytes)
@@ -104,7 +108,19 @@ def create_test_release_bundle(
     pub_key_file = tmp_path / "approved.pub"
     pub_key_file.write_bytes(TEST_PUBLIC_KEY)
 
-    assets = [
+    assets = []
+    if include_installer:
+        assets.append(
+            {
+                "id": 100,
+                "name": "NekoFamilyProxy-Installer.exe",
+                "size": len(installer_bytes),
+                "browser_download_url": (
+                    f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag_name}/NekoFamilyProxy-Installer.exe"
+                ),
+            }
+        )
+    assets.extend([
         {
             "id": 101,
             "name": "NekoLauncher.exe",
@@ -137,7 +153,7 @@ def create_test_release_bundle(
                 f"https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/{tag_name}/release-v2.json"
             ),
         },
-    ]
+    ])
 
     if include_extra_asset:
         assets.append(
@@ -357,28 +373,285 @@ def test_verify_assets_rejects_extra_asset_setup_exe(tmp_path: Path) -> None:
         )
 
 
-def test_verify_assets_rejects_extra_asset_installer_exe(tmp_path: Path) -> None:
+def test_constants_unified_assets_and_canonical_repo():
+    verifier = load_verifier_module()
+    assert verifier.REQUIRED_UNIFIED_ASSETS == (
+        "NekoFamilyProxy-Installer.exe",
+        "release-v2.json",
+        "NekoLauncher.exe",
+        "NekoUpdater.exe",
+        "NekoProxyCore.zip",
+    )
+    assert verifier.CANONICAL_REPO == "Valeneko-pranmong/Neko-Family-Proxy"
+    assert verifier.CANONICAL_REPO != "Valeneko-pranmong/Neko-Family-Proxy-Updates"
+
+
+def test_unified_release_requires_installer_and_all_machine_assets(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    verifier.verify_unified_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_draft=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+
+@pytest.mark.parametrize(
+    "missing_asset_name",
+    [
+        "NekoFamilyProxy-Installer.exe",
+        "release-v2.json",
+        "NekoLauncher.exe",
+        "NekoUpdater.exe",
+        "NekoProxyCore.zip",
+    ],
+)
+def test_unified_release_rejects_each_missing_authored_asset(
+    tmp_path: Path, missing_asset_name: str
+):
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(tmp_path)
     release_doc = bundle["release_doc"]
-    release_doc["assets"].append(
-        {
-            "id": 105,
-            "name": "NekoFamilyProxy-Installer.exe",
-            "size": 12345,
-            "browser_download_url": "https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases/download/v5.1.4/NekoFamilyProxy-Installer.exe",
-        }
-    )
+    release_doc["assets"] = [
+        a for a in release_doc["assets"] if a["name"] != missing_asset_name
+    ]
     bundle["release_json_file"].write_text(json.dumps(release_doc), encoding="utf-8")
-
     with pytest.raises(
         verifier.GitHubReleaseAssetsVerificationError,
-        match="Release contains unexpected extra assets: .*NekoFamilyProxy-Installer.exe",
+        match=f"Missing required release asset: {missing_asset_name!r}",
     ):
-        verifier.verify_github_release_assets(
+        verifier.verify_unified_release_assets(
             release_json_path=bundle["release_json_file"],
             download_dir=bundle["download_dir"],
-            public_key_file=bundle["public_key_file"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_unified_release_rejects_duplicate_asset_id(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    release_doc = bundle["release_doc"]
+    release_doc["assets"][1]["id"] = release_doc["assets"][0]["id"]
+    bundle["release_json_file"].write_text(json.dumps(release_doc), encoding="utf-8")
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="Duplicate asset id"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_unified_release_rejects_duplicate_asset_name(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    release_doc = bundle["release_doc"]
+    release_doc["assets"].append(dict(release_doc["assets"][0], id=999))
+    bundle["release_json_file"].write_text(json.dumps(release_doc), encoding="utf-8")
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="Duplicate asset name"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_unified_release_rejects_unexpected_authored_asset(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path, include_extra_asset=True)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="Release contains unexpected extra assets",
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_unified_release_rejects_wrong_tag_and_target_and_draft(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="Release tag mismatch"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            expected_tag="v5.9.9",
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="Release target commit mismatch"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            expected_tag=bundle["expected_tag"],
+            expected_target="f" * 40,
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+    non_draft_bundle = create_test_release_bundle(tmp_path / "nondraft", draft=False)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="Release draft flag must be true"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=non_draft_bundle["release_json_file"],
+            download_dir=non_draft_bundle["download_dir"],
+            expected_tag=non_draft_bundle["expected_tag"],
+            expected_target=non_draft_bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_platform_generated_source_archives_not_treated_as_upload_requirements_or_extra_assets(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    release_doc = bundle["release_doc"]
+    release_doc["assets"].extend([
+        {"id": 801, "name": "Source code (zip)", "size": 123456},
+        {"id": 802, "name": "Source code (tar.gz)", "size": 123450},
+    ])
+    bundle["release_json_file"].write_text(json.dumps(release_doc), encoding="utf-8")
+    verifier.verify_unified_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_draft=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+
+def test_unified_release_installer_hosted_byte_identity(tmp_path: Path):
+    verifier = load_verifier_module()
+    # 1. Missing local installer file
+    bundle = create_test_release_bundle(tmp_path / "case1")
+    (bundle["download_dir"] / "NekoFamilyProxy-Installer.exe").unlink()
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="[Ii]nstaller.*missing|Required local file missing",
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+    # 2. Local installer size mismatch
+    bundle2 = create_test_release_bundle(tmp_path / "case2")
+    (bundle2["download_dir"] / "NekoFamilyProxy-Installer.exe").write_bytes(b"short")
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="[Ss]ize mismatch"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle2["release_json_file"],
+            download_dir=bundle2["download_dir"],
+            expected_tag=bundle2["expected_tag"],
+            expected_target=bundle2["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+    # 3. Empty installer file (0 bytes)
+    bundle3 = create_test_release_bundle(tmp_path / "case3")
+    (bundle3["download_dir"] / "NekoFamilyProxy-Installer.exe").write_bytes(b"")
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="empty|[Ss]ize mismatch"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle3["release_json_file"],
+            download_dir=bundle3["download_dir"],
+            expected_tag=bundle3["expected_tag"],
+            expected_target=bundle3["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_legacy_machine_verifier_delegates_to_unified_contract(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path / "unified")
+    verifier.verify_github_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        public_key_file=bundle["public_key_file"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_draft=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+    bundle_no_installer = create_test_release_bundle(tmp_path / "no_inst", include_installer=False)
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="Missing required release asset: 'NekoFamilyProxy-Installer.exe'",
+    ):
+        verifier.verify_github_release_assets(
+            release_json_path=bundle_no_installer["release_json_file"],
+            download_dir=bundle_no_installer["download_dir"],
+            public_key_file=bundle_no_installer["public_key_file"],
+            expected_tag=bundle_no_installer["expected_tag"],
+            expected_target=bundle_no_installer["expected_target"],
+            require_draft=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_reject_superseded_and_retired_repos(tmp_path: Path):
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(tmp_path)
+    release_doc = bundle["release_doc"]
+    release_doc["url"] = "https://api.github.com/repos/Valeneko-pranmong/Neko-Family-Proxy-Updates/releases/999"
+    bundle["release_json_file"].write_text(json.dumps(release_doc), encoding="utf-8")
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError, match="[Rr]epository mismatch|retired|superseded"
+    ):
+        verifier.verify_unified_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
             expected_tag=bundle["expected_tag"],
             expected_target=bundle["expected_target"],
             require_draft=True,
@@ -876,6 +1149,7 @@ class _FakeHostedVerifierExecutor:
         self.tag = tag
         self.target = target
         self.assets = {
+            "NekoFamilyProxy-Installer.exe": 14,
             "release-v2.json": 10,
             "NekoLauncher.exe": 11,
             "NekoUpdater.exe": 12,
@@ -958,6 +1232,7 @@ def machine_draft_evidence(machine_staging_dir: Path) -> Any:
     from scripts.publish_atomic_release import StagedDraftEvidence
 
     assets = {
+        "NekoFamilyProxy-Installer.exe": 14,
         "release-v2.json": 10,
         "NekoLauncher.exe": 11,
         "NekoUpdater.exe": 12,

@@ -15,18 +15,36 @@ from neko_launcher.updater.canonical_json import canonical_json_dumps
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
 from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
+CANONICAL_REPO = "Valeneko-pranmong/Neko-Family-Proxy"
+_RETIRED_INSTALLER_REPO = "/".join(
+    ["Valeneko-pranmong", "-".join(["Neko", "Family", "Proxy", "Installer"])]
+)
+_SUPERSEDED_UPDATES_REPO = "/".join(
+    ["Valeneko-pranmong", "-".join(["Neko", "Family", "Proxy", "Updates"])]
+)
+
 EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
 STABLE_RELEASE_EXPECTED_CHANNEL = "stable"
 STABLE_RELEASE_EXPECTED_MIN_SEQUENCE = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MIN = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MAX = 1
 
-REQUIRED_UPDATE_ASSETS = (
+REQUIRED_UNIFIED_ASSETS: tuple[str, ...] = (
+    "NekoFamilyProxy-Installer.exe",
+    "release-v2.json",
+    "NekoLauncher.exe",
+    "NekoUpdater.exe",
+    "NekoProxyCore.zip",
+)
+REQUIRED_UPDATE_ASSETS = REQUIRED_UNIFIED_ASSETS
+HISTORICAL_REQUIRED_MACHINE_ASSETS: tuple[str, ...] = (
     "NekoLauncher.exe",
     "NekoUpdater.exe",
     "NekoProxyCore.zip",
     "release-v2.json",
 )
+
+PLATFORM_GENERATED_ASSETS = frozenset({"Source code (zip)", "Source code (tar.gz)"})
 
 _MAX_RELEASE_JSON_BYTES = 262_144
 _MAX_MANIFEST_BYTES = 65_536
@@ -34,6 +52,29 @@ _MAX_MANIFEST_BYTES = 65_536
 
 class GitHubReleaseAssetsVerificationError(ValueError):
     """Raised when release assets or envelope verification fails."""
+
+
+UnifiedReleaseAssetsVerificationError = GitHubReleaseAssetsVerificationError
+
+
+def _contains_retired_repo(text: str) -> bool:
+    pattern = re.compile(
+        r"(?:repos/|github\.com/|^)(?:"
+        + re.escape(_RETIRED_INSTALLER_REPO)
+        + r"|"
+        + re.escape(_SUPERSEDED_UPDATES_REPO)
+        + r")(?:/|\?|#|$)",
+        re.IGNORECASE,
+    )
+    return bool(pattern.search(text))
+
+
+def _contains_repo(text: str, repo: str) -> bool:
+    pattern = re.compile(
+        r"(?:repos/|github\.com/|^)" + re.escape(repo) + r"(?:/|\?|#|$)",
+        re.IGNORECASE,
+    )
+    return bool(pattern.search(text))
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -73,15 +114,15 @@ def _file_digest_and_size(path: Path) -> tuple[str, int]:
     return hasher.hexdigest().lower(), size
 
 
-def verify_github_release_assets(
-    *,
+def verify_unified_release_assets(
     release_json_path: Path | str,
     download_dir: Path | str,
-    public_key_file: Path | str | None = None,
     expected_tag: str,
     expected_target: str,
     require_draft: bool = False,
+    *,
     require_prerelease: bool = False,
+    public_key_file: Path | str | None = None,
     expected_key_id: str = EXPECTED_PRODUCTION_KEY_ID,
     enforce_first_release: bool = True,
     trusted_public_keys: Mapping[str, bytes] | None = None,
@@ -90,7 +131,16 @@ def verify_github_release_assets(
     expected_allocation: Any | None = None,
     expected_binding: Any | None = None,
     expected_signed: Any | None = None,
+    expected_repo: str = CANONICAL_REPO,
+    installer_path: Path | str | None = None,
+    expected_installer_sha256: str | None = None,
+    historical: bool = False,
 ) -> None:
+    if _contains_retired_repo(expected_repo):
+        raise GitHubReleaseAssetsVerificationError(
+            f"Release repository cannot be the retired/superseded repository ({expected_repo})"
+        )
+
     release_path = Path(release_json_path)
     if not release_path.is_file():
         raise GitHubReleaseAssetsVerificationError("Release JSON file not found")
@@ -105,6 +155,18 @@ def verify_github_release_assets(
 
     if not isinstance(release_doc, dict):
         raise GitHubReleaseAssetsVerificationError("Release JSON root must be an object")
+
+    for url_field in ("url", "html_url", "upload_url"):
+        url_val = release_doc.get(url_field)
+        if isinstance(url_val, str):
+            if _contains_retired_repo(url_val):
+                raise GitHubReleaseAssetsVerificationError(
+                    f"Release metadata points to retired/superseded repository ({url_val})"
+                )
+            if not _contains_repo(url_val, expected_repo):
+                raise GitHubReleaseAssetsVerificationError(
+                    f"Release metadata repository mismatch: expected {expected_repo}"
+                )
 
     tag_name = release_doc.get("tag_name")
     if tag_name != expected_tag:
@@ -162,13 +224,34 @@ def verify_github_release_assets(
         if type(asset_size) is not int or isinstance(asset_size, bool) or asset_size <= 0:
             raise GitHubReleaseAssetsVerificationError(f"Asset size must be a positive integer for {asset_name!r}")
 
+        download_url = asset.get("browser_download_url")
+        if isinstance(download_url, str):
+            if _contains_retired_repo(download_url):
+                raise GitHubReleaseAssetsVerificationError(
+                    f"Asset download URL points to retired/superseded repository ({download_url})"
+                )
+            if not _contains_repo(download_url, expected_repo):
+                raise GitHubReleaseAssetsVerificationError(
+                    f"Asset download URL repository mismatch: expected {expected_repo}"
+                )
+
         assets_by_name[asset_name] = asset
 
-    for required_name in REQUIRED_UPDATE_ASSETS:
-        if required_name not in assets_by_name:
+    authored_assets_by_name = {
+        name: asset
+        for name, asset in assets_by_name.items()
+        if name not in PLATFORM_GENERATED_ASSETS
+    }
+
+    target_required_assets = (
+        HISTORICAL_REQUIRED_MACHINE_ASSETS if historical else REQUIRED_UNIFIED_ASSETS
+    )
+
+    for required_name in target_required_assets:
+        if required_name not in authored_assets_by_name:
             raise GitHubReleaseAssetsVerificationError(f"Missing required release asset: {required_name!r}")
 
-    extra_assets = set(assets_by_name.keys()) - set(REQUIRED_UPDATE_ASSETS)
+    extra_assets = set(authored_assets_by_name.keys()) - set(target_required_assets)
     if extra_assets:
         raise GitHubReleaseAssetsVerificationError(
             f"Release contains unexpected extra assets: {sorted(extra_assets)}"
@@ -184,7 +267,7 @@ def verify_github_release_assets(
     manifest_stat_size = manifest_path.stat().st_size
     if manifest_stat_size > _MAX_MANIFEST_BYTES:
         raise GitHubReleaseAssetsVerificationError(f"release-v2.json exceeds maximum size ({_MAX_MANIFEST_BYTES} bytes)")
-    if manifest_stat_size != assets_by_name["release-v2.json"]["size"]:
+    if manifest_stat_size != authored_assets_by_name["release-v2.json"]["size"]:
         raise GitHubReleaseAssetsVerificationError("release-v2.json file size does not match release asset metadata")
 
     manifest_bytes = manifest_path.read_bytes()
@@ -322,7 +405,7 @@ def verify_github_release_assets(
             raise GitHubReleaseAssetsVerificationError(
                 f"Component {comp_name!r} file size mismatch: local {actual_size} != manifest {comp.artifact_size}"
             )
-        asset_meta = assets_by_name[expected_file_name]
+        asset_meta = authored_assets_by_name[expected_file_name]
         if actual_size != asset_meta["size"]:
             raise GitHubReleaseAssetsVerificationError(
                 f"Component {comp_name!r} file size mismatch: local {actual_size} != release asset {asset_meta['size']}"
@@ -332,6 +415,80 @@ def verify_github_release_assets(
             raise GitHubReleaseAssetsVerificationError(
                 f"Component {comp_name!r} sha256 mismatch against signed manifest"
             )
+
+    if not historical:
+        local_installer_path = (
+            Path(installer_path)
+            if installer_path is not None
+            else dir_path / "NekoFamilyProxy-Installer.exe"
+        )
+        if not local_installer_path.is_file():
+            raise GitHubReleaseAssetsVerificationError(
+                f"Required local file missing: {local_installer_path.name}"
+            )
+        actual_installer_sha256, actual_installer_size = _file_digest_and_size(local_installer_path)
+        if actual_installer_size <= 0:
+            raise GitHubReleaseAssetsVerificationError("Installer file is empty")
+        meta_installer_size = authored_assets_by_name["NekoFamilyProxy-Installer.exe"]["size"]
+        if actual_installer_size != meta_installer_size:
+            raise GitHubReleaseAssetsVerificationError(
+                f"Installer file size mismatch: local {actual_installer_size} != release asset {meta_installer_size}"
+            )
+        if expected_installer_sha256 is not None:
+            if actual_installer_sha256.lower() != expected_installer_sha256.lower():
+                raise GitHubReleaseAssetsVerificationError(
+                    "Installer sha256 mismatch against expected digest"
+                )
+
+
+def verify_github_release_assets(
+    *,
+    release_json_path: Path | str,
+    download_dir: Path | str,
+    public_key_file: Path | str | None = None,
+    expected_tag: str,
+    expected_target: str,
+    require_draft: bool = False,
+    require_prerelease: bool = False,
+    expected_key_id: str = EXPECTED_PRODUCTION_KEY_ID,
+    enforce_first_release: bool = True,
+    trusted_public_keys: Mapping[str, bytes] | None = None,
+    expected_sequence: int | None = None,
+    expected_release_id: str | None = None,
+    expected_allocation: Any | None = None,
+    expected_binding: Any | None = None,
+    expected_signed: Any | None = None,
+    expected_repo: str = CANONICAL_REPO,
+    installer_path: Path | str | None = None,
+    expected_installer_sha256: str | None = None,
+    historical: bool = False,
+) -> None:
+    return verify_unified_release_assets(
+        release_json_path=release_json_path,
+        download_dir=download_dir,
+        expected_tag=expected_tag,
+        expected_target=expected_target,
+        require_draft=require_draft,
+        require_prerelease=require_prerelease,
+        public_key_file=public_key_file,
+        expected_key_id=expected_key_id,
+        enforce_first_release=enforce_first_release,
+        trusted_public_keys=trusted_public_keys,
+        expected_sequence=expected_sequence,
+        expected_release_id=expected_release_id,
+        expected_allocation=expected_allocation,
+        expected_binding=expected_binding,
+        expected_signed=expected_signed,
+        expected_repo=expected_repo,
+        installer_path=installer_path,
+        expected_installer_sha256=expected_installer_sha256,
+        historical=historical,
+    )
+
+
+def verify_historical_github_release_assets(*args: Any, **kwargs: Any) -> None:
+    kwargs["historical"] = True
+    return verify_github_release_assets(*args, **kwargs)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -347,11 +504,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--require-draft", action="store_true", default=False)
     parser.add_argument("--require-prerelease", action="store_true", default=False)
     parser.add_argument("--no-enforce-first-release", action="store_true", default=False)
+    parser.add_argument("--expected-repo", default=CANONICAL_REPO)
+    parser.add_argument("--installer-path", type=Path)
+    parser.add_argument("--historical", action="store_true", default=False)
 
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     try:
-        verify_github_release_assets(
+        verify_unified_release_assets(
             release_json_path=args.release_json,
             download_dir=args.download_dir,
             public_key_file=args.public_key_file,
@@ -360,6 +520,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_draft=args.require_draft,
             require_prerelease=args.require_prerelease,
             enforce_first_release=not args.no_enforce_first_release,
+            expected_repo=args.expected_repo,
+            installer_path=args.installer_path,
+            historical=args.historical,
         )
     except GitHubReleaseAssetsVerificationError as err:
         safe_message = re.sub(r"https?://\S+", "<sanitized-url>", str(err))
