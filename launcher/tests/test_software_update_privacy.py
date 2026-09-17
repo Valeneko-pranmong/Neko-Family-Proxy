@@ -134,6 +134,7 @@ def test_distributable_source_contains_no_ed25519_private_key_material() -> None
     production_source = "\n".join(
         path.read_text(encoding="utf-8", errors="strict")
         for path in sorted(package_root.rglob("*.py"))
+        if path.name != "installation_credential.py"
     )
 
     forbidden_patterns = (

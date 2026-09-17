@@ -30,11 +30,20 @@ const validBody = {
   contractRevision: "runtime-config-v1",
   correlationId: CORRELATION_ID,
   challenge: CHALLENGE,
+  machineProof: {
+    credentialId: "11111111-1111-4111-8111-111111111111",
+    algorithm: "ed25519",
+    publicKeyB64: "AAAA",
+    keyHash: "0000",
+    signatureB64: "BBBB",
+  },
 };
 
 const validLiteBody = {
-  ...validBody,
+  version: 1,
   contractRevision: "lite-v1",
+  correlationId: CORRELATION_ID,
+  challenge: CHALLENGE,
 };
 
 const activeState: AuthorizationState = {
@@ -215,73 +224,10 @@ test("Valid request produces exact success response with runtime-config-v1, 120s
   assert.equal(logs.join("\n").includes(SENTINEL_SECRET), false);
 });
 
-test("lite-v1 preserves exact legacy response and JWT claim contracts without loading runtime config", async () => {
-  const keys = await keyPair();
-  let loaderCalls = 0;
-  const { result, body } = await request(validLiteBody, undefined, {
-    privateKeyPem: keys.privateKeyPem,
-    loadRuntimeConfig: async () => {
-      loaderCalls += 1;
-      throw new Error("runtime config provider unavailable");
-    },
-  });
-
-  assert.equal(result.status, 200);
-  assert.deepEqual(Object.keys(body).sort(), [
-    "contractRevision",
-    "correlationId",
-    "expiresInSeconds",
-    "permit",
-    "succeeded",
-    "version",
-  ]);
-  assert.deepEqual(
-    Object.fromEntries(
-      Object.entries(body).filter(([key]) => key !== "permit"),
-    ),
-    {
-      version: 1,
-      contractRevision: "lite-v1",
-      correlationId: CORRELATION_ID,
-      succeeded: true,
-      expiresInSeconds: 30,
-    },
-  );
-  assert.equal(loaderCalls, 0);
-
-  assert.deepEqual(jwtPart(body.permit as string, 0), {
-    alg: "RS256",
-    typ: "neko-launch+jwt",
-    kid: "neko-prod-key-2",
-  });
-  assert.equal(await verifyPermit(keys.publicKey, body.permit as string), true);
-  const claims = payload(body.permit as string);
-  assert.deepEqual(Object.keys(claims).sort(), [
-    "aud",
-    "challenge",
-    "exp",
-    "iat",
-    "iss",
-    "jti",
-    "nbf",
-    "product",
-    "scope",
-    "sub",
-  ]);
-  assert.deepEqual(claims, {
-    iss: "neko-backend",
-    aud: "neko-proxy-core",
-    sub: USER_ID,
-    product: "neko-family-proxy",
-    scope: "proxy:start",
-    challenge: CHALLENGE,
-    iat: 1000,
-    nbf: 1000,
-    exp: 1030,
-    jti: "33333333-3333-4333-8333-333333333333",
-  });
-  assert.equal("runtime_config_version" in claims, false);
-  assert.equal("runtime_config_sha256" in claims, false);
+test("legacy lite-v1 revision is rejected as a blocking downgrade path with 400 ProtocolInvalid", async () => {
+  const { result, body } = await request(validLiteBody);
+  assert.equal(result.status, 400);
+  assert.deepEqual(body, { error: "ProtocolInvalid" });
 });
 
 test("Runtime config loader returns null / missing active config fails closed with safe 503", async () => {

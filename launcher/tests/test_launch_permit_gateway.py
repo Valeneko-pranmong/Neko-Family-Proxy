@@ -90,7 +90,9 @@ def success_response(
         "succeeded": True,
         "permit": permit,
         "expiresInSeconds": 30,
-        "runtimeConfig": valid_runtime_config_dict() if runtime_config is _DEFAULT else runtime_config,
+        "runtimeConfig": valid_runtime_config_dict()
+        if runtime_config is _DEFAULT
+        else runtime_config,
     }
     response.update(overrides)
     return response
@@ -102,6 +104,70 @@ def issue(transport: object, timeout: float = 10.0) -> LaunchAuthorizationBundle
         "0123456789abcdef0123456789abcdef",
         CoreChallenge("a" * 43),
         timeout,
+    )
+
+
+def test_gateway_includes_machine_proof_when_credential_provider_is_present() -> None:
+    from neko_launcher.infrastructure.installation_credential import (
+        InstallationPublicIdentity,
+        InstallationProof,
+    )
+
+    class FakeProvider:
+        def load_public_identity(self) -> InstallationPublicIdentity:
+            import hashlib
+            import base64
+
+            pub = b"B" * 32
+            b64 = base64.urlsafe_b64encode(pub).rstrip(b"=").decode("ascii")
+            h = hashlib.sha256(pub).hexdigest()
+            return InstallationPublicIdentity(
+                credential_id="cred-id-1",
+                algorithm="ed25519",
+                public_key_b64=b64,
+                key_hash=h,
+            )
+
+        def prove(self, challenge: bytes) -> InstallationProof:
+            import hashlib
+            import base64
+
+            pub = b"B" * 32
+            h = hashlib.sha256(pub).hexdigest()
+            sig = b"S" * 64
+            sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode("ascii")
+            return InstallationProof(
+                credential_id="cred-id-1",
+                algorithm="ed25519",
+                key_hash=h,
+                signature_b64=sig_b64,
+            )
+
+    functions = FakeFunctions(success_response())
+    transport = transport_for(functions=functions)
+
+    gateway = IssueLaunchPermitGateway(credential_provider=FakeProvider())
+    bundle = gateway.issue_launch_authorization(
+        transport,
+        "0123456789abcdef0123456789abcdef",
+        CoreChallenge("Z" * 43),
+        15.0,
+    )
+
+    assert bundle.permit.reveal_for_transport() == "header.payload.signature"
+    assert "machineProof" in functions.invoke_options["body"]
+    proof_body = functions.invoke_options["body"]["machineProof"]
+    assert proof_body["credentialId"] == "cred-id-1"
+    assert proof_body["algorithm"] == "ed25519"
+    import hashlib
+    import base64
+
+    pub = b"B" * 32
+    h = hashlib.sha256(pub).hexdigest()
+    assert proof_body["publicKeyB64"] == base64.urlsafe_b64encode(pub).rstrip(b"=").decode("ascii")
+    assert proof_body["keyHash"] == h
+    assert proof_body["signatureB64"] == base64.urlsafe_b64encode(b"S" * 64).rstrip(b"=").decode(
+        "ascii"
     )
 
 
@@ -156,7 +222,9 @@ def test_gateway_rejects_malformed_or_missing_permit_or_config(
 
 
 class FunctionFailure(RuntimeError):
-    def __init__(self, status: int, message: str = "sensitive backend response must not be logged") -> None:
+    def __init__(
+        self, status: int, message: str = "sensitive backend response must not be logged"
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status = status
@@ -204,10 +272,7 @@ def test_gateway_classifies_only_the_fixed_edge_session_inactive_response() -> N
     with pytest.raises(AuthorizedCoreError) as raised:
         issue(transport_for(functions))
 
-    assert (
-        raised.value.diagnostic_code
-        is PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
-    )
+    assert raised.value.diagnostic_code is PermitDiagnosticCode.BACKEND_EDGE_SESSION_INACTIVE
     assert raised.value.diagnostic_context["http_status"] == 403
 
 

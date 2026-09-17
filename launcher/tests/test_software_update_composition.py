@@ -452,7 +452,7 @@ def test_build_window_wires_coordinator_with_admission_and_apply_service_without
         "EventBus",
         "GameProcessManager",
         "KeyringSecureStore",
-        "LocalInstallationIdentity",
+        "BoundInstallationIdentity",
         "ApplicationController",
         "LauncherService",
         "NamedPipeCoreTelemetryClient",
@@ -462,6 +462,12 @@ def test_build_window_wires_coordinator_with_admission_and_apply_service_without
             name,
             lambda *args, **kwargs: SimpleNamespace(),
         )
+
+    monkeypatch.setattr(
+        app_factory,
+        "create_installation_credential_provider",
+        lambda *args, **kwargs: SimpleNamespace(load_public_identity=lambda: None),
+    )
 
     monkeypatch.setattr(
         app_factory,

@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 
+from types import SimpleNamespace
 from neko_launcher.application.production_authorization import (
     CURRENT_PRODUCTION_AUTHORIZATION,
     ProductionAuthorizationBlocker,
@@ -15,7 +16,7 @@ def test_lite_release_gate_is_ready_after_accepted_integration_evidence() -> Non
     gate = CURRENT_PRODUCTION_AUTHORIZATION
 
     assert gate.contract_id == "NEKO-AUTH-LITE"
-    assert gate.contract_revision == "lite-v1"
+    assert gate.contract_revision == "runtime-config-v1"
     assert gate.contract_package_sha256 == ""
     assert gate.blockers == ()
     assert gate.is_ready is True
@@ -24,7 +25,7 @@ def test_lite_release_gate_is_ready_after_accepted_integration_evidence() -> Non
 def test_production_authorization_gate_preserves_fail_closed_semantics() -> None:
     synthetic_gate = ProductionAuthorizationGate(
         contract_id="NEKO-AUTH-LITE",
-        contract_revision="lite-v1",
+        contract_revision="runtime-config-v1",
         contract_package_sha256="",
         blockers=(ProductionAuthorizationBlocker.LITE_E2E_UNVERIFIED,),
     )
@@ -54,6 +55,12 @@ def test_app_factory_composes_authorized_proxy_gateway(
 
     monkeypatch.setenv("NEKO_SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("NEKO_SUPABASE_ANON_KEY", "dummy.jwt.token")
+
+    monkeypatch.setattr(
+        app_factory,
+        "create_installation_credential_provider",
+        lambda *args: SimpleNamespace(load_public_identity=lambda: None)
+    )
 
     (tmp_path / "image_11.png").write_bytes(b"")
     (tmp_path / "icon_app.ico").write_bytes(b"")

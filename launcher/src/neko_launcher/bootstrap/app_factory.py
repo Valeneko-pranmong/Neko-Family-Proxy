@@ -72,8 +72,11 @@ from neko_launcher.updater.trust_profile import (
     VerifiedUpdateTrustProfile,
     load_installed_update_trust_profile,
 )
-from neko_launcher.infrastructure.storage.installation import LocalInstallationIdentity
+from neko_launcher.infrastructure.storage.installation import BoundInstallationIdentity
 from neko_launcher.infrastructure.storage.secure_store import KeyringSecureStore
+from neko_launcher.infrastructure.installation_credential import (
+    create_installation_credential_provider,
+)
 from neko_launcher.ui.app_window import AppWindow
 
 
@@ -127,7 +130,9 @@ def compose_update_check_service(
 
     profile = verified_profile
     if profile is None:
-        reader_prof = getattr(identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None))
+        reader_prof = getattr(
+            identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None)
+        )
         if reader_prof is not None:
             profile = reader_prof
         else:
@@ -143,9 +148,13 @@ def compose_update_check_service(
         raise TypeError("verified_profile must be a VerifiedUpdateTrustProfile")
 
     if identity_reader is not None:
-        reader_prof = getattr(identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None))
+        reader_prof = getattr(
+            identity_reader, "trust_profile", getattr(identity_reader, "_trust_profile", None)
+        )
         if reader_prof is not None and not _profiles_match(reader_prof, profile):
-            raise ValueError(f"Trust profile mismatch between verified profile and identity reader: {reader_prof} != {profile}")
+            raise ValueError(
+                f"Trust profile mismatch between verified profile and identity reader: {reader_prof} != {profile}"
+            )
 
     if resolver is None:
         channel_profile = UpdateChannelProfile.from_verified(profile)
@@ -157,9 +166,13 @@ def compose_update_check_service(
             updater_protocol=UPDATER_PROTOCOL_VERSION,
         )
     else:
-        resolver_prof = getattr(resolver, "channel_profile", getattr(resolver, "_channel_profile", None))
+        resolver_prof = getattr(
+            resolver, "channel_profile", getattr(resolver, "_channel_profile", None)
+        )
         if resolver_prof is not None and not _profiles_match(resolver_prof, profile):
-            raise ValueError(f"Trust profile mismatch between gateway and profile/identity reader: {resolver_prof} != {profile}")
+            raise ValueError(
+                f"Trust profile mismatch between gateway and profile/identity reader: {resolver_prof} != {profile}"
+            )
         release_resolver = resolver
 
     if identity_reader is None:
@@ -187,9 +200,7 @@ def compose_development_update_check_service(
         raise ValueError("resolver must be provided for development update check service")
 
     launcher_executable = (
-        Path(sys.executable)
-        if getattr(sys, "frozen", False)
-        else Path(__file__).resolve()
+        Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__).resolve()
     )
     core_manifest = config.proxy_core_path.with_name("canonical-core-manifest.json")
 
@@ -237,9 +248,7 @@ def compose_update_coordinator(
 ) -> SoftwareUpdateCoordinator:
     install_root = root_dir or get_expected_install_root()
     shared_downloader = (
-        asset_downloader
-        if asset_downloader is not None
-        else GitHubAssetDownloader()
+        asset_downloader if asset_downloader is not None else GitHubAssetDownloader()
     )
     if verified_profile is None and pending_store is None:
         try:
@@ -253,9 +262,7 @@ def compose_update_coordinator(
         else PendingUpdateStore(
             root_dir=install_root,
             key_registry=(
-                verified_profile.release_public_keys
-                if verified_profile is not None
-                else {}
+                verified_profile.release_public_keys if verified_profile is not None else {}
             ),
             updater_protocol=UPDATER_PROTOCOL_VERSION,
         )
@@ -282,6 +289,7 @@ def compose_update_coordinator(
     from neko_launcher.infrastructure.software_update_authority_admission import (
         SoftwareUpdateAuthorityAdmissionService,
     )
+
     admission = (
         admission_service
         if admission_service is not None
@@ -343,6 +351,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     from neko_launcher.infrastructure.software_update_authority_admission import (
         SoftwareUpdateAuthorityAdmissionService,
     )
+
     admission_service = SoftwareUpdateAuthorityAdmissionService(root_dir=install_root)
     update_coordinator = SoftwareUpdateCoordinator(
         check_service=update_check_service,
@@ -358,11 +367,17 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     event_bus = EventBus()
     game_manager = GameProcessManager()
     secure_store = KeyringSecureStore()
-    installation = LocalInstallationIdentity(secure_store)
+
+    credential_provider = create_installation_credential_provider(install_root)
+    # Direct downloaded Launcher without credential fails before login
+    credential_provider.load_public_identity()
+
+    installation = BoundInstallationIdentity(credential_provider)
     gateway = SupabaseGateway(
         config.supabase_url,
         config.supabase_publishable_key,
         secure_store,
+        credential_provider=credential_provider,
     )
     recovery_gateway = HttpAccountRecoveryGateway(config.account_recovery_api_url)
     proxy_status_client = PublicProxyStatusClient(config.proxy_status_api_url)

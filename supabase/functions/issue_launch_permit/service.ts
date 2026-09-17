@@ -31,7 +31,7 @@ export type Dependencies = {
   authenticate: (accessToken: string) => Promise<AuthenticatedCaller | null>;
   authorize: (
     caller: AuthenticatedCaller,
-    challenge: string,
+    body: Record<string, unknown>,
   ) => Promise<AuthorizationState | null>;
   loadRuntimeConfig?: () => Promise<RuntimeProxyConfigRecord | null>;
   privateKeyPem?: string;
@@ -57,6 +57,7 @@ const REQUEST_FIELDS = new Set([
   "contractRevision",
   "correlationId",
   "challenge",
+  "machineProof",
 ]);
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -86,14 +87,14 @@ function parseRequest(value: unknown): Record<string, unknown> | null {
   }
   const body = value as Record<string, unknown>;
   if (
-    Object.keys(body).some((key) => !REQUEST_FIELDS.has(key)) ||
-    Object.keys(body).length !== REQUEST_FIELDS.size
+    body.version !== 1 ||
+    (body.contractRevision !== "runtime-config-v1")
   ) return null;
   if (
-    body.version !== 1 ||
-    (body.contractRevision !== "lite-v1" &&
-      body.contractRevision !== "runtime-config-v1")
+    Object.keys(body).some((key) => !REQUEST_FIELDS.has(key)) ||
+    Object.keys(body).length !== 5
   ) return null;
+  if (!body.machineProof) return null;
   if (
     typeof body.correlationId !== "string" ||
     !CORRELATION.test(body.correlationId)
@@ -224,40 +225,7 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   );
 }
 
-async function signLegacyPermit(
-  body: Record<string, unknown>,
-  state: AuthorizationState,
-  deps: Dependencies,
-): Promise<string> {
-  if (!deps.privateKeyPem || deps.kid !== PRODUCTION_KID) {
-    throw new Error("missing signing configuration");
-  }
-  const key = await importPrivateKey(deps.privateKeyPem);
-  const now = (deps.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-  const jti = (deps.randomUUID ?? (() => crypto.randomUUID()))();
-  const header = { alg: "RS256", typ: "neko-launch+jwt", kid: deps.kid };
-  const payload = {
-    iss: "neko-backend",
-    aud: "neko-proxy-core",
-    sub: state.userId,
-    product: state.product,
-    scope: "proxy:start",
-    challenge: body.challenge,
-    iat: now,
-    nbf: now,
-    exp: now + PERMIT_SECONDS,
-    jti,
-  };
-  const signingInput = `${base64Url(JSON.stringify(header))}.${
-    base64Url(JSON.stringify(payload))
-  }`;
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    key,
-    new TextEncoder().encode(signingInput),
-  );
-  return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
-}
+
 
 async function signPermit(
   body: Record<string, unknown>,
@@ -331,7 +299,7 @@ export function createIssueLaunchPermitHandler(deps: Dependencies) {
     try {
       state = await deps.authorize(
         caller,
-        body.challenge as string,
+        body,
       );
     } catch {
       return json(503, { error: "AuthorizationUnavailable" });
@@ -346,20 +314,7 @@ export function createIssueLaunchPermitHandler(deps: Dependencies) {
     }
 
     if (body.contractRevision === "lite-v1") {
-      try {
-        const permit = await signLegacyPermit(body, state, deps);
-        return json(200, {
-          version: 1,
-          contractRevision: "lite-v1",
-          correlationId: body.correlationId,
-          succeeded: true,
-          permit,
-          expiresInSeconds: PERMIT_SECONDS,
-        });
-      } catch {
-        deps.log?.("issue_launch_permit signing configuration unavailable");
-        return json(500, { error: "AuthorizationUnavailable" });
-      }
+      return json(400, { error: "ProtocolInvalid" });
     }
 
     let rawConfig: RuntimeProxyConfigRecord | null;

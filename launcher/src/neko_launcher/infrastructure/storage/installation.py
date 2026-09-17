@@ -3,8 +3,28 @@ from __future__ import annotations
 import hashlib
 import secrets
 import socket
+from typing import Protocol, Any
 
 from neko_launcher.application.ports import SecureStore
+
+
+class _CredentialProvider(Protocol):
+    def load_public_identity(self) -> Any: ...
+
+
+class BoundInstallationIdentity:
+    """Uses the Installer-provisioned machine credential for identity."""
+
+    def __init__(self, provider: _CredentialProvider) -> None:
+        self._provider = provider
+
+    @property
+    def key_hash(self) -> str:
+        return self._provider.load_public_identity().key_hash
+
+    @property
+    def display_name(self) -> str:
+        return socket.gethostname()[:120] or "Windows PC"
 
 
 class LocalInstallationIdentity:

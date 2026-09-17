@@ -336,9 +336,12 @@ def test_metadata_only_valid_candidate(tmp_path: Path, monkeypatch: pytest.Monke
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
             return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
-        def publish_generation(self, staging_dir: Path, gen_id: str):
+        def publish_generation(self, staging_dir: Path, gen_id: str, repair: bool = False):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
+            (dest / "NekoLauncher.exe").write_bytes(b"launcher")
+            (dest / "ProxyCore").mkdir(parents=True, exist_ok=True)
+            (dest / "ProxyCore" / "canonical-core-manifest.json").write_text('{"hash":"sha256","files":{}}')
             return dest
 
     monkeypatch.setattr(broker, "GenerationPublisher", MockPublisher)
@@ -453,9 +456,12 @@ def test_successful_apply_ordering(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
             return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
-        def publish_generation(self, staging_dir: Path, gen_id: str):
+        def publish_generation(self, staging_dir: Path, gen_id: str, repair: bool = False):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
+            (dest / "NekoLauncher.exe").write_bytes(b"launcher")
+            (dest / "ProxyCore").mkdir(parents=True, exist_ok=True)
+            (dest / "ProxyCore" / "canonical-core-manifest.json").write_text('{"hash":"sha256","files":{}}')
             return dest
 
     monkeypatch.setattr(broker, "GenerationPublisher", MockPublisher)
@@ -509,9 +515,12 @@ def test_staging_handle_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
             return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
-        def publish_generation(self, staging_dir: Path, gen_id: str):
+        def publish_generation(self, staging_dir: Path, gen_id: str, repair: bool = False):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
+            (dest / "NekoLauncher.exe").write_bytes(b"launcher")
+            (dest / "ProxyCore").mkdir(parents=True, exist_ok=True)
+            (dest / "ProxyCore" / "canonical-core-manifest.json").write_text('{"hash":"sha256","files":{}}')
             return dest
 
     monkeypatch.setattr(broker, "GenerationPublisher", MockPublisher)
@@ -545,7 +554,7 @@ def test_build_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
             return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
-        def publish_generation(self, staging_dir: Path, gen_id: str):
+        def publish_generation(self, staging_dir: Path, gen_id: str, repair: bool = False):
             raise AssertionError("publish_generation must not be called on build failure")
 
     monkeypatch.setattr(broker, "GenerationPublisher", MockPublisher)
@@ -598,7 +607,7 @@ def test_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
             return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
-        def publish_generation(self, staging_dir: Path, gen_id: str):
+        def publish_generation(self, staging_dir: Path, gen_id: str, repair: bool = False):
             raise OSError("publish failed")
 
     monkeypatch.setattr(broker, "GenerationPublisher", FailingPublisher)
@@ -659,9 +668,12 @@ def test_verifier_failure_inert_unselected_orphan(
             stage = self.root_dir / "staging" / txid
             stage.mkdir(parents=True, exist_ok=True)
             return 999, DirectoryIdentity('0' * 16, '0' * 32, '0' * 32), stage
-        def publish_generation(self, staging_dir: Path, gen_id: str):
+        def publish_generation(self, staging_dir: Path, gen_id: str, repair: bool = False):
             dest = self.root_dir / "releases" / gen_id
             dest.mkdir(parents=True, exist_ok=True)
+            (dest / "NekoLauncher.exe").write_bytes(b"launcher")
+            (dest / "ProxyCore").mkdir(parents=True, exist_ok=True)
+            (dest / "ProxyCore" / "canonical-core-manifest.json").write_text('{"hash":"sha256","files":{}}')
             return dest
 
     monkeypatch.setattr(broker, "GenerationPublisher", FakePublisher)

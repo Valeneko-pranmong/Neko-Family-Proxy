@@ -26,6 +26,9 @@ _CONTRACT_REVISION = "runtime-config-v1"
 class IssueLaunchPermitGateway:
     """Authenticated adapter for the canonical launch-permit Edge Function."""
 
+    def __init__(self, credential_provider: Any = None):
+        self._credential_provider = credential_provider
+
     def issue_launch_authorization(
         self,
         authenticated_transport: object,
@@ -55,15 +58,35 @@ class IssueLaunchPermitGateway:
                 )
             set_auth = getattr(functions, "set_auth")
             set_auth(access_token)
+
+            body = {
+                "version": 1,
+                "contractRevision": _CONTRACT_REVISION,
+                "correlationId": correlation_id,
+                "challenge": challenge.value,
+            }
+            if getattr(self, "_credential_provider", None) is not None:
+                try:
+                    identity = self._credential_provider.load_public_identity()
+                    proof = self._credential_provider.prove(challenge.value.encode("ascii"))
+                    body["machineProof"] = {
+                        "credentialId": identity.credential_id,
+                        "algorithm": identity.algorithm,
+                        "publicKeyB64": identity.public_key_b64,
+                        "keyHash": identity.key_hash,
+                        "signatureB64": proof.signature_b64,
+                    }
+                except Exception as exc:
+                    raise self._failure_for_exception(
+                        exc,
+                        correlation_id,
+                        started_at,
+                    ) from None
+
             response: Any = functions.invoke(
                 _FUNCTION_NAME,
                 {
-                    "body": {
-                        "version": 1,
-                        "contractRevision": _CONTRACT_REVISION,
-                        "correlationId": correlation_id,
-                        "challenge": challenge.value,
-                    },
+                    "body": body,
                     "responseType": "json",
                 },
             )
@@ -160,9 +183,7 @@ class IssueLaunchPermitGateway:
             getattr(configured, "pool", None),
         )
         return all(
-            isinstance(value, (int, float))
-            and isfinite(value)
-            and 0 < value <= deadline
+            isinstance(value, (int, float)) and isfinite(value) and 0 < value <= deadline
             for value in values
         )
 
@@ -203,9 +224,7 @@ class IssueLaunchPermitGateway:
         The Supabase Functions SDK exposes the JSON ``error`` value as the
         exception message.  Do not retain or surface arbitrary response text.
         """
-        return getattr(exc, "message", None) == "SessionInactive" or str(exc) == (
-            "SessionInactive"
-        )
+        return getattr(exc, "message", None) == "SessionInactive" or str(exc) == ("SessionInactive")
 
     @staticmethod
     def _failure(

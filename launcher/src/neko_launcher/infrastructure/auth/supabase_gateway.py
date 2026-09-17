@@ -44,6 +44,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         publishable_key: str,
         secure_store: SecureStore,
         client: Client | None = None,
+        credential_provider: Any = None,
     ) -> None:
         if not url or not publishable_key:
             raise ValueError("Supabase URL and publishable key are required")
@@ -52,6 +53,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             raise ValueError("Supabase URL must include a hostname")
         self._auth_identifier_domain = hostname.lower()
         self._auth_storage = SupabaseAuthStorage(secure_store)
+        self._credential_provider = credential_provider
         self._client = client or create_client(
             url,
             publishable_key,
@@ -91,9 +93,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         user = self._to_user(response.user) if response.user else None
         return RegistrationResult(
             email=username,
-            requires_email_confirmation=(
-                response.user is not None and response.session is None
-            ),
+            requires_email_confirmation=(response.user is not None and response.session is None),
             user=user if response.session is not None else None,
         )
 
@@ -150,9 +150,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if callable(remover):
             remover()
             return
-        storage_key = str(
-            getattr(self._client.auth, "_storage_key", "supabase.auth.token")
-        )
+        storage_key = str(getattr(self._client.auth, "_storage_key", "supabase.auth.token"))
         self._auth_storage.remove_item(storage_key)
 
     def claim_session(
@@ -181,8 +179,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 raise SessionAlreadyActive("SESSION_ALREADY_ACTIVE") from exc
             if self._contains_error(exc, "license_invalid"):
                 raise EntitlementUnavailable(
-                    "สิทธิ์ใช้งานไม่พร้อม ถูกยกเลิก หรือหมดอายุ "
-                    "กรุณาติดต่อฝ่ายบริการ"
+                    "สิทธิ์ใช้งานไม่พร้อม ถูกยกเลิก หรือหมดอายุ กรุณาติดต่อฝ่ายบริการ"
                 ) from exc
             raise self._rpc_error(exc, "ตรวจสอบวันใช้งานไม่ได้ กรุณาลองใหม่")
 
@@ -209,9 +206,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                 return response.data is True
             except Exception as exc:
                 if self._heartbeat_auth_is_invalid(exc):
-                    raise HeartbeatAuthInvalid(
-                        "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่"
-                    ) from exc
+                    raise HeartbeatAuthInvalid("การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่") from exc
                 if attempt == 0:
                     continue
                 raise self._rpc_error(exc, "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
@@ -225,14 +220,10 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         postgrest = getattr(self._client, "postgrest", None)
         http_client = getattr(postgrest, "session", None)
         if not IssueLaunchPermitGateway.timeout_is_bounded(http_client, timeout):
-            raise LauncherServiceError(
-                "ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่"
-            )
+            raise LauncherServiceError("ตรวจสอบการเชื่อมต่อไม่ได้ กรุณาลองใหม่")
         return self.heartbeat_session(session_id)
 
-    def session_termination_reason(
-        self, session_id: str
-    ) -> SessionTerminationReason:
+    def session_termination_reason(self, session_id: str) -> SessionTerminationReason:
         """Resolve a customer-safe reason from rows visible through RLS."""
         session = self._first_public_row(
             "launcher_sessions",
@@ -242,9 +233,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if session is None:
             return SessionTerminationReason.REVOKED
 
-        profile = self._first_public_row(
-            "profiles", "status", id=str(session["user_id"])
-        )
+        profile = self._first_public_row("profiles", "status", id=str(session["user_id"]))
         if profile is not None and profile.get("status") != "active":
             return SessionTerminationReason.ACCOUNT_RESTRICTED
 
@@ -255,11 +244,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             valid_from = self._parse_datetime(license_row.get("valid_from"))
             valid_until = self._parse_datetime(license_row.get("valid_until"))
             now = datetime.now(valid_until.tzinfo)
-            if (
-                license_row.get("status") != "active"
-                or valid_from > now
-                or valid_until <= now
-            ):
+            if license_row.get("status") != "active" or valid_from > now or valid_until <= now:
                 return SessionTerminationReason.LICENSE_UNAVAILABLE
 
         active = (
@@ -285,9 +270,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
             return SessionTerminationReason.INSTALLATION_REVOKED
         return SessionTerminationReason.REVOKED
 
-    def _first_public_row(
-        self, table: str, columns: str, **filters: str
-    ) -> dict[str, Any] | None:
+    def _first_public_row(self, table: str, columns: str, **filters: str) -> dict[str, Any] | None:
         query = self._client.schema("public").table(table).select(columns)
         for key, value in filters.items():
             query = query.eq(key, value)
@@ -336,7 +319,9 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                     "correlation_id": correlation_id,
                 },
             )
-        return IssueLaunchPermitGateway().issue_launch_authorization(
+        return IssueLaunchPermitGateway(
+            credential_provider=self._credential_provider
+        ).issue_launch_authorization(
             self._client,
             correlation_id,
             challenge,
@@ -346,9 +331,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     def redeem_coupon(self, code: str) -> CouponRedemption:
         try:
             response = (
-                self._client.schema("launcher")
-                .rpc("redeem_coupon", {"p_code": code})
-                .execute()
+                self._client.schema("launcher").rpc("redeem_coupon", {"p_code": code}).execute()
             )
         except Exception as exc:
             raise self._rpc_error(exc, "ใช้คูปองไม่สำเร็จ")
@@ -360,9 +343,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
                     "invalid_coupon": "คูปองไม่ถูกต้องหรือใช้งานไม่ได้",
                     "already_redeemed": "คูปองนี้ถูกใช้กับบัญชีนี้แล้ว",
                     "rate_limited": "ลองใช้คูปองบ่อยเกินไป กรุณารอ 10 นาที",
-                    "account_restricted": (
-                        "บัญชีนี้ยังไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ"
-                    ),
+                    "account_restricted": ("บัญชีนี้ยังไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ"),
                 }.get(str(data.get("error")), "ใช้คูปองไม่สำเร็จ")
             )
         return CouponRedemption(
@@ -401,9 +382,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         try:
             return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         except (TypeError, ValueError) as exc:
-            raise LauncherServiceError(
-                "แสดงวันคงเหลือไม่ได้ชั่วคราว กรุณาลองใหม่"
-            ) from exc
+            raise LauncherServiceError("แสดงวันคงเหลือไม่ได้ชั่วคราว กรุณาลองใหม่") from exc
 
     @staticmethod
     def _contains_error(exc: Exception, code: str) -> bool:
@@ -433,9 +412,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if "invalid login credentials" in text:
             return LauncherServiceError("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
         if "user already registered" in text:
-            return LauncherServiceError(
-                "ชื่อผู้ใช้นี้มีบัญชีอยู่แล้ว กรุณาไปที่แท็บเข้าสู่ระบบ"
-            )
+            return LauncherServiceError("ชื่อผู้ใช้นี้มีบัญชีอยู่แล้ว กรุณาไปที่แท็บเข้าสู่ระบบ")
         return LauncherServiceError(fallback)
 
     @classmethod
@@ -443,9 +420,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         text = str(exc).lower()
         mapping = {
             "not_authenticated": "การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่",
-            "account_restricted": (
-                "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"
-            ),
+            "account_restricted": ("บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อฝ่ายบริการ"),
         }
         for code, message in mapping.items():
             if code in text:

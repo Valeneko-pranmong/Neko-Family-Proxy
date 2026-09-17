@@ -96,11 +96,56 @@ const handler = createIssueLaunchPermitHandler({
   },
   authorize: async (
     caller,
-    challenge,
+    body,
   ): Promise<AuthorizationState | null> => {
     const accessToken = caller.accessToken;
     if (!accessToken) throw new Error("authenticated context unavailable");
     const client = clientFor(accessToken);
+    const challenge = typeof body.challenge === "string" ? body.challenge : "";
+
+    if (body.contractRevision === "runtime-config-v1" && body.machineProof) {
+      const proof = body.machineProof as Record<string, unknown>;
+      const pubB64 = typeof proof.publicKeyB64 === "string" ? proof.publicKeyB64 : "";
+      const sigB64 = typeof proof.signatureB64 === "string" ? proof.signatureB64 : "";
+      if (!pubB64 || !sigB64) return null;
+
+      const paddedPub = pubB64 + "=".repeat((4 - (pubB64.length % 4)) % 4);
+      const paddedSig = sigB64 + "=".repeat((4 - (sigB64.length % 4)) % 4);
+
+      const rawPub = new Uint8Array(atob(paddedPub.replace(/-/g, "+").replace(/_/g, "/")).split("").map(c => c.charCodeAt(0)));
+      const rawSig = new Uint8Array(atob(paddedSig.replace(/-/g, "+").replace(/_/g, "/")).split("").map(c => c.charCodeAt(0)));
+      const msgBytes = new TextEncoder().encode(challenge);
+
+      try {
+        const cryptoKey = await crypto.subtle.importKey(
+          "raw",
+          rawPub,
+          { name: "Ed25519" },
+          false,
+          ["verify"]
+        );
+        const isValid = await crypto.subtle.verify(
+          "Ed25519",
+          cryptoKey,
+          rawSig,
+          msgBytes
+        );
+        if (!isValid) return null;
+      } catch (e) {
+        return null;
+      }
+
+      const pubHashBuf = await crypto.subtle.digest("SHA-256", rawPub);
+      const pubHash = Array.from(new Uint8Array(pubHashBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+      const providedHash = typeof proof.keyHash === "string" ? proof.keyHash : "";
+      if (pubHash !== providedHash) return null;
+
+      // We will check the database matches this hash after getting the state
+      // by injecting it into the state so we don't do an extra query if authorization fails
+      // Actually, we can just verify it below using the returned session_id!
+    }
+
     const { data, error } = await client
       .schema("launcher")
       .rpc("authorize_launch_permit", {
@@ -130,6 +175,21 @@ const handler = createIssueLaunchPermitHandler({
       launcherSessionId: String(row.session_id ?? ""),
       product: String(row.product_code ?? ""),
     };
+
+    if (body.contractRevision === "runtime-config-v1" && body.machineProof) {
+      const proof = body.machineProof as Record<string, unknown>;
+      const providedHash = typeof proof.keyHash === "string" ? proof.keyHash : "";
+      const { data: sessionData, error: sessionError } = await client
+        .from("launcher_sessions")
+        .select("installation_id, installations(installation_key_hash)")
+        .eq("id", state.launcherSessionId)
+        .single();
+      if (sessionError || !sessionData || !sessionData.installations) return null;
+      // @ts-ignore
+      const dbHash = sessionData.installations.installation_key_hash;
+      if (providedHash !== dbHash) return null;
+    }
+
     return state.userId === caller.userId &&
         state.authSessionId === caller.authSessionId
       ? state

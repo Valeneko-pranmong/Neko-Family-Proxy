@@ -37,7 +37,7 @@ class ProductionAuthorizationGate:
 
 CURRENT_PRODUCTION_AUTHORIZATION = ProductionAuthorizationGate(
     contract_id="NEKO-AUTH-LITE",
-    contract_revision="lite-v1",
+    contract_revision="runtime-config-v1",
     contract_package_sha256="",
     blockers=(),
 )
