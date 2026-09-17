@@ -258,7 +258,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.copy", fake_copy)
 
     monkeypatch.setattr("scripts.publish_atomic_release.execute_publish", lambda *a, **k: None)
-    monkeypatch.setattr("scripts.release_controller.publish_split_release", lambda *a, **k: None)
+    monkeypatch.setattr("scripts.publish_atomic_release.publish_unified_release", lambda *a, **k: None)
 
     # Also bypass the _get_sha256 on dotnet
     def fake_sha256(path):

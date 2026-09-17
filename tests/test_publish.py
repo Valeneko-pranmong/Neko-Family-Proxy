@@ -161,7 +161,7 @@ def test_execute_publish_hosted_verification_drift(monkeypatch):
 
 
 def test_execute_publish_token_redaction_regression(monkeypatch):
-    from scripts.publish_atomic_release import CANONICAL_MACHINE_REPO, execute_publish, StagedDraftEvidence
+    from scripts.publish_atomic_release import CANONICAL_REPO, execute_publish, StagedDraftEvidence
 
     run_calls = []
 
@@ -222,7 +222,7 @@ def test_execute_publish_token_redaction_regression(monkeypatch):
     assert download_calls[0] == [
         "gh",
         "api",
-        f"repos/{CANONICAL_MACHINE_REPO}/releases/assets/99",
+        f"repos/{CANONICAL_REPO}/releases/assets/99",
         "-H",
         "Accept: application/octet-stream",
     ]

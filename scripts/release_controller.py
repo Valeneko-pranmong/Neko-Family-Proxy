@@ -28,7 +28,7 @@ from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: 
 from scripts.ci_change_classifier import should_trigger  # noqa: E402
 from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
 from scripts.publish_atomic_release import (  # noqa: E402
-    
+
     CANONICAL_REPO,
     CommandExecutor,
     StageDraftReleaseError,
@@ -982,6 +982,12 @@ def publish_split_release(
     installer_repo: str,
     executor: CommandExecutor | None = None,
 ) -> None:
+    """
+    LEGACY / AUDIT ONLY: Split release publisher.
+    This function orchestrates two drafts and two promotions across machine/installer repos.
+    It is unreachable from the normal 5.x production path which uses publish_unified_release.
+    Retained solely for historical testing and auditability of older release topologies.
+    """
     repo = validate_installer_repo_configuration(installer_repo)
     runner = executor or _SubprocessExecutor()
 
@@ -1224,13 +1230,39 @@ def process_accepted_commits(
     if build_record_file.exists():
         print(f"Build already completed for {version_tag}. Resuming split publish...")
         publish_dir = staging_base / "publish"
-        installer_dir = staging_base / "installer"
-        publish_split_release(
+        print("Publishing unified release (resumed)...")
+        from scripts.publish_atomic_release import publish_unified_release, SignedReleaseBinding, build_machine_release_notes
+
+        release_json_out = publish_dir / "release-v2.json"
+        manifest_data = json.loads(release_json_out.read_text(encoding="utf-8"))
+        import base64
+        metadata = json.loads(base64.b64decode(manifest_data["payload_b64"]).decode("utf-8"))
+        from neko_launcher.updater.canonical_json import canonical_json_dumps
+        import hashlib
+        comp_sha = hashlib.sha256(canonical_json_dumps(metadata["components"])).hexdigest()
+        # build_record has core_authority
+        build_record = json.loads(build_record_file.read_text(encoding="utf-8"))
+        core_source_commit = build_record.get("core_authority", {}).get("core_source_commit", "unknown")
+
+        manifest_hash = _get_sha256(release_json_out)
+        binding = SignedReleaseBinding(
+            sequence=metadata["release_sequence"],
+            release_id=metadata["release_id"],
+            source_commit=core_source_commit,
+            component_set_sha256=comp_sha,
+            payload_sha256=hashlib.sha256(base64.b64decode(manifest_data["payload_b64"])).hexdigest(),
+            envelope_sha256=manifest_hash,
+            key_id=manifest_data.get("signature", {}).get("key_id") or manifest_data.get("key_id"),
+        )
+        notes = build_machine_release_notes(version_tag)
+
+        publish_unified_release(
             tag=version_tag,
-            commit=commit,
-            machine_staging_dir=publish_dir,
-            installer_staging_dir=installer_dir,
-            installer_repo=installer_repo,
+            target_commit=commit,
+            staging_dir=publish_dir,
+            body=notes,
+            authority_binding=binding,
+            ledger_path=repo_root / "authority" / "production_sequence_ledger.jsonl",
         )
         return
 
@@ -1405,6 +1437,7 @@ def process_accepted_commits(
     envelope_doc = canonical_json_loads(release_json_out.read_bytes().strip())
     signed_key_id = envelope_doc.get("key_id", prod_key_id)
     import base64
+    import hashlib
     payload_bytes = base64.b64decode(envelope_doc["payload_b64"])
     payload_sha = hashlib.sha256(payload_bytes).hexdigest()
 
@@ -1589,13 +1622,29 @@ def process_accepted_commits(
     }
     (evidence_dir / "build-record.json").write_text(json.dumps(build_record, indent=2))
 
-    print("Publishing split release...")
-    publish_split_release(
+    print("Publishing unified release...")
+    from scripts.publish_atomic_release import publish_unified_release, SignedReleaseBinding, build_machine_release_notes
+
+    from neko_launcher.updater.canonical_json import canonical_json_dumps
+    comp_sha = hashlib.sha256(canonical_json_dumps(metadata["components"])).hexdigest()
+    binding = SignedReleaseBinding(
+        sequence=sequence,
+        release_id=release_id,
+        source_commit=commit,
+        component_set_sha256=comp_sha,
+        payload_sha256=payload_sha,
+        envelope_sha256=manifest_hash,
+        key_id=signed_key_id,
+    )
+    notes = build_machine_release_notes(version_tag)
+
+    publish_unified_release(
         tag=version_tag,
-        commit=commit,
-        machine_staging_dir=publish_dir,
-        installer_staging_dir=installer_dir,
-        installer_repo=installer_repo,
+        target_commit=commit,
+        staging_dir=publish_dir,
+        body=notes,
+        authority_binding=binding,
+        ledger_path=repo_root / "authority" / "production_sequence_ledger.jsonl",
     )
 
 

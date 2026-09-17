@@ -26,7 +26,7 @@ def create_fake_core_zip(path: Path):
         manifest = {
             "rid": "win-x64",
             "executable": "NekoProxyCore.exe",
-            "source_commit": "abcdef",
+            "source_commit": "1111111111111111111111111111111111111111",
             "files": files_list
         }
         (tdp / "core-manifest.json").write_text(json.dumps(manifest))
@@ -207,7 +207,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     publish_calls = []
     monkeypatch.setattr(
-        "scripts.release_controller.publish_split_release",
+        "scripts.publish_atomic_release.publish_unified_release",
         lambda **kwargs: publish_calls.append(kwargs),
     )
 
@@ -241,12 +241,17 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
         return real_stat(self, *args, **kwargs)
     monkeypatch.setattr("scripts.release_controller.Path.stat", fake_stat)
 
-    monkeypatch.setattr(
-        "scripts.release_controller._get_sha256",
-        lambda path: hashlib.sha256(fake_core_path.read_bytes()).hexdigest() if "NekoProxyCore.zip" in str(path)
-        else "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941" if "windowsdesktop" in str(path)
-        else hashlib.sha256(b"exe").hexdigest()
-    )
+    def dynamic_sha256(path):
+        sp = str(path)
+        if "NekoProxyCore.zip" in sp:
+            return hashlib.sha256(fake_core_path.read_bytes()).hexdigest()
+        if "windowsdesktop" in sp:
+            return "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
+        if "release-v2.json" in sp:
+            return hashlib.sha256(Path(sp).read_bytes()).hexdigest()
+        return hashlib.sha256(b"exe").hexdigest()
+
+    monkeypatch.setattr("scripts.release_controller._get_sha256", dynamic_sha256)
 
     real_zipfile = zipfile.ZipFile
     def fake_zipfile(path, *args, **kwargs):
@@ -270,8 +275,8 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
 
     assert len(publish_calls) == 1
     assert publish_calls[0]["tag"] == target_version
-    assert publish_calls[0]["commit"] == sha
-    assert publish_calls[0]["installer_repo"] == "Valeneko-pranmong/Neko-Family-Proxy-Installer"
+    assert publish_calls[0]["target_commit"] == sha
+    assert publish_calls[0]["staging_dir"].name == "publish"
 
     metadata_path = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}/5.1.2/evidence/base-metadata.json")
     metadata_content = json.loads(metadata_path.read_text(encoding="utf-8"))
