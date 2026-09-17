@@ -1,4 +1,5 @@
 """Build a complete, verified immutable release generation in owned staging."""
+
 from __future__ import annotations
 
 import base64
@@ -23,21 +24,27 @@ from neko_launcher.updater.win32_directory import get_directory_identity, open_d
 from neko_launcher.updater.zip_extractor import extract_core_bundle
 
 _PROHIBITED_ATTRIBUTES = (
-    0x2 |          # FILE_ATTRIBUTE_HIDDEN
-    0x200 |        # FILE_ATTRIBUTE_SPARSE_FILE
-    0x1000 |       # FILE_ATTRIBUTE_OFFLINE
-    0x4000 |       # FILE_ATTRIBUTE_ENCRYPTED
-    0x00400000 |   # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
-    0x00040000 |   # FILE_ATTRIBUTE_RECALL_ON_OPEN
-    0x00080000 |   # FILE_ATTRIBUTE_PINNED
-    0x00100000     # FILE_ATTRIBUTE_UNPINNED
+    0x2  # FILE_ATTRIBUTE_HIDDEN
+    | 0x200  # FILE_ATTRIBUTE_SPARSE_FILE
+    | 0x1000  # FILE_ATTRIBUTE_OFFLINE
+    | 0x4000  # FILE_ATTRIBUTE_ENCRYPTED
+    | 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    | 0x00040000  # FILE_ATTRIBUTE_RECALL_ON_OPEN
+    | 0x00080000  # FILE_ATTRIBUTE_PINNED
+    | 0x00100000  # FILE_ATTRIBUTE_UNPINNED
 )
 
 
 def _has_ads_by_handle(handle: int) -> bool:
     import struct
+
     GetFileInformationByHandleEx = ctypes.windll.kernel32.GetFileInformationByHandleEx
-    GetFileInformationByHandleEx.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+    GetFileInformationByHandleEx.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
     GetFileInformationByHandleEx.restype = ctypes.c_int
 
     buf_size = 65536
@@ -46,7 +53,7 @@ def _has_ads_by_handle(handle: int) -> bool:
 
     if not GetFileInformationByHandleEx(handle, FileStreamInfo, buf, buf_size):
         err = ctypes.GetLastError()
-        if err == 38: # ERROR_HANDLE_EOF
+        if err == 38:  # ERROR_HANDLE_EOF
             return False
         raise OSError()
 
@@ -85,6 +92,7 @@ def _has_ads_by_handle(handle: int) -> bool:
 
     return has_alternate
 
+
 @contextlib.contextmanager
 def _open_incoming_guarded(path: Path):
     GENERIC_READ = 0x80000000
@@ -93,11 +101,27 @@ def _open_incoming_guarded(path: Path):
     FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
 
     CreateFileW = ctypes.windll.kernel32.CreateFileW
-    CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    CreateFileW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
     CreateFileW.restype = ctypes.c_void_p
 
-    handle = CreateFileW(str(path), GENERIC_READ, FILE_SHARE_READ, None, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, None)
-    if not handle or handle == -1 or handle == 0xffffffffffffffff:
+    handle = CreateFileW(
+        str(path),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if not handle or handle == -1 or handle == 0xFFFFFFFFFFFFFFFF:
         err = ctypes.GetLastError()
         if err in (2, 3):
             _fail("ARTIFACT_MISSING")
@@ -119,6 +143,7 @@ def _open_incoming_guarded(path: Path):
         else:
             os.close(fd)
 
+
 @contextlib.contextmanager
 def _open_final_guarded(path: Path):
     GENERIC_READ = 0x80000000
@@ -128,11 +153,27 @@ def _open_final_guarded(path: Path):
     FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
 
     CreateFileW = ctypes.windll.kernel32.CreateFileW
-    CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    CreateFileW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
     CreateFileW.restype = ctypes.c_void_p
 
-    handle = CreateFileW(str(path), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, None, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, None)
-    if not handle or handle == -1 or handle == 0xffffffffffffffff:
+    handle = CreateFileW(
+        str(path),
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if not handle or handle == -1 or handle == 0xFFFFFFFFFFFFFFFF:
         err = ctypes.GetLastError()
         if err in (2, 3):
             _fail("ARTIFACT_MISSING")
@@ -153,6 +194,7 @@ def _open_final_guarded(path: Path):
             f.close()
         else:
             os.close(fd)
+
 
 def _verify_guarded_stream(f: io.BufferedReader, expected_size: int, expected_sha: str) -> None:
     try:
@@ -183,15 +225,19 @@ def _verify_guarded_stream(f: io.BufferedReader, expected_size: int, expected_sh
     except OSError:
         _fail("IO_FAILED")
 
+
 class _WIN32_FIND_STREAM_DATA(ctypes.Structure):
-    _fields_ = [
-        ("StreamSize", ctypes.c_longlong),
-        ("cStreamName", ctypes.c_wchar * 296)
-    ]
+    _fields_ = [("StreamSize", ctypes.c_longlong), ("cStreamName", ctypes.c_wchar * 296)]
+
 
 def _has_ads(path: Path) -> bool:
     FindFirstStreamW = ctypes.windll.kernel32.FindFirstStreamW
-    FindFirstStreamW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.POINTER(_WIN32_FIND_STREAM_DATA), ctypes.c_uint32]
+    FindFirstStreamW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(_WIN32_FIND_STREAM_DATA),
+        ctypes.c_uint32,
+    ]
     FindFirstStreamW.restype = ctypes.c_void_p
 
     FindNextStreamW = ctypes.windll.kernel32.FindNextStreamW
@@ -205,7 +251,7 @@ def _has_ads(path: Path) -> bool:
     data = _WIN32_FIND_STREAM_DATA()
     handle = FindFirstStreamW(str(path), 0, ctypes.byref(data), 0)
     # -1 is INVALID_HANDLE_VALUE, which in 64-bit c_void_p is often just None or 0xffffffffffffffff
-    if not handle or handle == -1 or handle == 0xffffffffffffffff:
+    if not handle or handle == -1 or handle == 0xFFFFFFFFFFFFFFFF:
         if ctypes.GetLastError() == 38:
             return False
         raise OSError()
@@ -223,6 +269,7 @@ def _has_ads(path: Path) -> bool:
     finally:
         FindClose(handle)
     return has_alternate
+
 
 _REPARSE_ATTRIBUTE = stat.FILE_ATTRIBUTE_REPARSE_POINT
 
@@ -304,8 +351,7 @@ def _matches_generation(release: ReleaseSetV2, payload_sha: str, generation: Gen
         and release.release_id == generation.binding.release_id
         and release.components["launcher"].installed_identity_sha256
         == generation.launcher_identity_sha256
-        and release.components["core"].installed_identity_sha256
-        == generation.core_identity_sha256
+        and release.components["core"].installed_identity_sha256 == generation.core_identity_sha256
     )
 
 
@@ -336,11 +382,19 @@ def _validate_authority(
     ):
         _fail("STATE_CORRUPT")
 
-    if not (state.committed.binding.release_sequence <= state.highwater.release_sequence <= state.observed.release_sequence):
+    if not (
+        state.committed.binding.release_sequence
+        <= state.highwater.release_sequence
+        <= state.observed.release_sequence
+    ):
         _fail("STATE_CORRUPT")
 
-    if candidate.binding.release_sequence <= state.highwater.release_sequence:
-        _fail("STATE_CORRUPT")
+    if transaction.repair_components is not None:
+        if candidate.binding.release_sequence != state.highwater.release_sequence:
+            _fail("STATE_CORRUPT")
+    else:
+        if candidate.binding.release_sequence <= state.highwater.release_sequence:
+            _fail("STATE_CORRUPT")
 
     required = {
         state.committed.binding.payload_sha256,
@@ -426,6 +480,7 @@ def _validate_source_file(path: Path) -> None:
     if has_ads:
         _fail("LINK_OR_ADS_REJECTED")
 
+
 def _guard_old_core(old_core_path: Path, stack: contextlib.ExitStack) -> tuple[dict, dict]:
     dir_identities = {}
     file_objects = {}
@@ -486,7 +541,10 @@ def _guard_old_core(old_core_path: Path, stack: contextlib.ExitStack) -> tuple[d
     _scan_dir(old_core_path)
     return dir_identities, file_objects
 
-def _verify_old_core_inventory_second_pass(old_core_path: Path, dir_identities: dict, file_objects: dict):
+
+def _verify_old_core_inventory_second_pass(
+    old_core_path: Path, dir_identities: dict, file_objects: dict
+):
     seen_dirs = set()
     seen_files = set()
 
@@ -567,7 +625,9 @@ def build_generation(
     """Build and verify the transaction candidate under its owned stage."""
     release, envelope, old_release = _validate_authority(state, public_keys)
     transaction = state.transaction
-    assert transaction is not None and transaction.old is not None and transaction.staging is not None
+    assert (
+        transaction is not None and transaction.old is not None and transaction.staging is not None
+    )
 
     incoming = root / "incoming" / transaction.request_id
     staging = root / "staging" / transaction.id
@@ -580,8 +640,12 @@ def build_generation(
 
         old = transaction.old
         candidate = transaction.candidate
-        launcher_changed = candidate.launcher_identity_sha256 != old.launcher_identity_sha256
-        core_changed = candidate.core_identity_sha256 != old.core_identity_sha256
+        if transaction.repair_components is not None:
+            launcher_changed = "launcher" in transaction.repair_components
+            core_changed = "core" in transaction.repair_components
+        else:
+            launcher_changed = candidate.launcher_identity_sha256 != old.launcher_identity_sha256
+            core_changed = candidate.core_identity_sha256 != old.core_identity_sha256
         expected_names = set()
         if launcher_changed:
             expected_names.add("launcher.artifact")
@@ -618,21 +682,37 @@ def build_generation(
             (generation_dir / "release-envelope.json").write_bytes(envelope)
 
             with contextlib.ExitStack() as stack:
-                old_launcher_f = stack.enter_context(_open_incoming_guarded(old_launcher))
-                _verify_guarded_stream(old_launcher_f, old_release.components["launcher"].artifact_size, old.launcher_identity_sha256)
+                if (
+                    transaction.repair_components is None
+                    or "launcher" not in transaction.repair_components
+                ):
+                    old_launcher_f = stack.enter_context(_open_incoming_guarded(old_launcher))
+                    _verify_guarded_stream(
+                        old_launcher_f,
+                        old_release.components["launcher"].artifact_size,
+                        old.launcher_identity_sha256,
+                    )
 
-                if not old_core.is_dir() or not (old_core / "NekoProxyCore.exe").is_file():
-                    _fail("ARTIFACT_MISSING")
+                if (
+                    transaction.repair_components is None
+                    or "core" not in transaction.repair_components
+                ):
+                    if not old_core.is_dir() or not (old_core / "NekoProxyCore.exe").is_file():
+                        _fail("ARTIFACT_MISSING")
 
-                dir_identities, file_objects = _guard_old_core(old_core, stack)
+                    dir_identities, file_objects = _guard_old_core(old_core, stack)
 
-                _verify_core(old_core, old.core_identity_sha256)
+                    _verify_core(old_core, old.core_identity_sha256)
 
-                _verify_old_core_inventory_second_pass(old_core, dir_identities, file_objects)
+                    _verify_old_core_inventory_second_pass(old_core, dir_identities, file_objects)
 
                 if launcher_changed:
                     launcher_f = stack.enter_context(_open_incoming_guarded(launcher_source))
-                    _verify_guarded_stream(launcher_f, launcher_component.artifact_size, launcher_component.artifact_sha256)
+                    _verify_guarded_stream(
+                        launcher_f,
+                        launcher_component.artifact_size,
+                        launcher_component.artifact_sha256,
+                    )
 
                     dest_launcher = generation_dir / "NekoLauncher.exe"
                     with dest_launcher.open("xb") as outgoing:
@@ -646,7 +726,9 @@ def build_generation(
                 destination_core = generation_dir / "ProxyCore"
                 if core_changed:
                     core_f = stack.enter_context(_open_incoming_guarded(core_source))
-                    _verify_guarded_stream(core_f, core_component.artifact_size, core_component.artifact_sha256)
+                    _verify_guarded_stream(
+                        core_f, core_component.artifact_size, core_component.artifact_sha256
+                    )
 
                     temp_archive = staging / "core_temp.zip"
                     try:
@@ -658,25 +740,35 @@ def build_generation(
                         _fail("IO_FAILED")
 
                     class _TempCleaner:
-                        def __enter__(self): pass
+                        def __enter__(self):
+                            pass
+
                         def __exit__(self, exc_type, exc_val, exc_tb):
                             try:
                                 temp_archive.unlink()
                             except FileNotFoundError:
                                 pass
                             except OSError:
-                                if exc_type is None or not issubclass(exc_type, GenerationBuildError):
+                                if exc_type is None or not issubclass(
+                                    exc_type, GenerationBuildError
+                                ):
                                     _fail("IO_FAILED")
 
                     with _TempCleaner(), _open_incoming_guarded(temp_archive) as temp_f:
-                        _verify_guarded_stream(temp_f, core_component.artifact_size, core_component.artifact_sha256)
+                        _verify_guarded_stream(
+                            temp_f, core_component.artifact_size, core_component.artifact_sha256
+                        )
 
                         try:
                             import zipfile
+
                             temp_f.seek(0)
                             with zipfile.ZipFile(temp_f, "r") as zf:
                                 for info in zf.infolist():
-                                    if info.is_dir() or (info.external_attr >> 16) & stat.S_IFLNK == stat.S_IFLNK:
+                                    if (
+                                        info.is_dir()
+                                        or (info.external_attr >> 16) & stat.S_IFLNK == stat.S_IFLNK
+                                    ):
                                         _fail("PACKAGE_INVALID")
                             extract_core_bundle(temp_archive, destination_core)
                         except OSError:
@@ -720,7 +812,9 @@ def build_generation(
                         d_handle = open_directory_guarded(current_dir)
                     except OSError:
                         _fail("PATH_REJECTED")
-                    final_stack.callback(ctypes.windll.kernel32.CloseHandle, ctypes.c_void_p(d_handle))
+                    final_stack.callback(
+                        ctypes.windll.kernel32.CloseHandle, ctypes.c_void_p(d_handle)
+                    )
                     try:
                         identity = get_directory_identity(d_handle)
                     except OSError:
@@ -774,7 +868,10 @@ def build_generation(
                 expected_root_dirs = {"ProxyCore"}
                 actual_root_files = {p.name for p in final_files if p.parent == generation_dir}
                 actual_root_dirs = {p.name for p in final_dirs if p.parent == generation_dir}
-                if actual_root_files != expected_root_files or actual_root_dirs != expected_root_dirs:
+                if (
+                    actual_root_files != expected_root_files
+                    or actual_root_dirs != expected_root_dirs
+                ):
                     _fail("PATH_REJECTED")
 
                 for entry, (f, st_dev, st_ino) in final_files.items():
@@ -801,7 +898,10 @@ def build_generation(
                 launcher_path = generation_dir / "NekoLauncher.exe"
                 launcher_f = final_files[launcher_path][0]
                 launcher_f.seek(0)
-                if hashlib.sha256(launcher_f.read()).hexdigest() != candidate.launcher_identity_sha256:
+                if (
+                    hashlib.sha256(launcher_f.read()).hexdigest()
+                    != candidate.launcher_identity_sha256
+                ):
                     _fail("HASH_MISMATCH")
 
                 launcher_f.seek(0)
@@ -815,9 +915,7 @@ def build_generation(
                 _verify_core(destination_core, candidate.core_identity_sha256)
                 _verify_old_core_inventory_second_pass(generation_dir, final_dirs, final_files)
 
-                generation_id = (
-                    f"g-{candidate.binding.release_sequence:020d}-{candidate.binding.payload_sha256}"
-                )
+                generation_id = f"g-{candidate.binding.release_sequence:020d}-{candidate.binding.payload_sha256}"
                 return GenerationBuildResult(
                     changed={"launcher": launcher_changed, "core": core_changed},
                     generation_id=generation_id,

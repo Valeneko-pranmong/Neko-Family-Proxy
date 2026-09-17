@@ -60,10 +60,7 @@ class SoftwareUpdateStageService:
 
         if check_result.diagnostic_code == UpdateDiagnosticCode.DOWNGRADE_REJECTED:
             raise SoftwareUpdateStageError("DOWNGRADE_REJECTED")
-        if (
-            check_result.diagnostic_code
-            == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT
-        ):
+        if check_result.diagnostic_code == UpdateDiagnosticCode.SAME_SEQUENCE_IDENTITY_CONFLICT:
             raise SoftwareUpdateStageError("SAME_SEQUENCE_IDENTITY_CONFLICT")
         if check_result.diagnostic_code is not None:
             raise SoftwareUpdateStageError(check_result.diagnostic_code.value)
@@ -85,9 +82,8 @@ class SoftwareUpdateStageService:
             raise SoftwareUpdateStageError("AUTHORITY_NOT_ADMITTED")
 
         if (
-            (check_result.state == UpdateState.LATEST and not check_result.retry_staging)
-            or not check_result.changed_components
-        ):
+            check_result.state == UpdateState.LATEST and not check_result.retry_staging
+        ) or not check_result.changed_components:
             return None
 
         # Check supersession against existing valid pending update or active pointer
@@ -104,19 +100,10 @@ class SoftwareUpdateStageService:
 
         existing_pending = self._pending_store.load_verified(local)
         if existing_pending is not None:
-            if (
-                resolved.authenticated_release.release_sequence
-                < existing_pending.release_sequence
-            ):
+            if resolved.authenticated_release.release_sequence < existing_pending.release_sequence:
                 raise SoftwareUpdateStageError("DOWNGRADE_REJECTED")
-            if (
-                resolved.authenticated_release.release_sequence
-                == existing_pending.release_sequence
-            ):
-                if (
-                    resolved.authenticated_release.release_id
-                    != existing_pending.release_id
-                ):
+            if resolved.authenticated_release.release_sequence == existing_pending.release_sequence:
+                if resolved.authenticated_release.release_id != existing_pending.release_id:
                     raise SoftwareUpdateStageError("SAME_SEQUENCE_IDENTITY_CONFLICT")
                 return existing_pending
 
@@ -177,9 +164,79 @@ class SoftwareUpdateStageService:
                 if "Downgrade rejected" in msg:
                     raise SoftwareUpdateStageError("DOWNGRADE_REJECTED") from err
                 if "Same-sequence identity conflict" in msg:
+                    raise SoftwareUpdateStageError("SAME_SEQUENCE_IDENTITY_CONFLICT") from err
+                raise SoftwareUpdateStageError("STAGE_PROMOTION_FAILED") from err
+            except Exception as err:
+                raise SoftwareUpdateStageError("STAGE_PROMOTION_FAILED") from err
+
+            return promoted
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    def stage_repair(
+        self,
+        resolved: ResolvedGitHubRelease,
+        components: tuple[str, ...],
+    ) -> VerifiedPendingUpdate:
+        if not components:
+            raise SoftwareUpdateStageError("REPAIR_COMPONENTS_EMPTY")
+        for comp in components:
+            if comp not in ("launcher", "core"):
+                raise SoftwareUpdateStageError(
+                    f"Component {comp!r} cannot be repaired; only launcher and core are allowed"
+                )
+
+        staging_dir = self._pending_store.base_dir / f"tmp_stage_repair_{uuid.uuid4().hex}"
+        self._pending_store.base_dir.mkdir(parents=True, exist_ok=True)
+        staging_dir.mkdir(parents=True, exist_ok=False)
+
+        staged_files: dict[str, Path] = {}
+        try:
+            for comp_name in components:
+                if comp_name == "launcher":
+                    asset = resolved.launcher_asset
+                    comp_v2 = resolved.authenticated_release_v2.components.get("launcher")
+                    dest_path = staging_dir / "launcher.artifact"
+                elif comp_name == "core":
+                    asset = resolved.core_asset
+                    comp_v2 = resolved.authenticated_release_v2.components.get("core")
+                    dest_path = staging_dir / "core.artifact.zip"
+                else:
+                    continue
+
+                if comp_v2 is None:
                     raise SoftwareUpdateStageError(
-                        "SAME_SEQUENCE_IDENTITY_CONFLICT"
-                    ) from err
+                        "RELEASE_MANIFEST_REJECTED",
+                        f"Component {comp_name} missing from release manifest",
+                    )
+
+                try:
+                    self._asset_downloader.download(
+                        initial_url=asset.browser_download_url,
+                        destination=dest_path,
+                        expected_size=comp_v2.artifact_size,
+                        expected_sha256=comp_v2.artifact_sha256,
+                    )
+                except GitHubAssetDownloadError as err:
+                    raise SoftwareUpdateStageError(err.code) from err
+                except Exception as err:
+                    raise SoftwareUpdateStageError("DOWNLOAD_FAILED") from err
+
+                staged_files[comp_name] = dest_path
+
+            try:
+                promoted = self._pending_store.promote(
+                    envelope_bytes=resolved.envelope_bytes,
+                    release=resolved.authenticated_release_v2,
+                    changed_components=components,
+                    staged_files=staged_files,
+                )
+            except ValueError as err:
+                msg = str(err)
+                if "Downgrade rejected" in msg:
+                    raise SoftwareUpdateStageError("DOWNGRADE_REJECTED") from err
+                if "Same-sequence identity conflict" in msg:
+                    raise SoftwareUpdateStageError("SAME_SEQUENCE_IDENTITY_CONFLICT") from err
                 raise SoftwareUpdateStageError("STAGE_PROMOTION_FAILED") from err
             except Exception as err:
                 raise SoftwareUpdateStageError("STAGE_PROMOTION_FAILED") from err

@@ -18,6 +18,7 @@ from neko_launcher.updater.canonical_json import canonical_json_loads
 from neko_launcher.updater.ipc_channel import FramedIpcChannel
 from neko_launcher.updater.manifest_v2 import parse_release_v2
 
+
 class SoftwareUpdateApplyError(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
@@ -120,7 +121,13 @@ class SoftwareUpdateApplyService:
     def prepare(self) -> PreparedUpdate:
         raise SoftwareUpdateApplyError("PENDING_UPDATE_REQUIRED")
 
-    def prepare_pending(self, pending: VerifiedPendingUpdate) -> PreparedUpdate:
+    def prepare_pending(
+        self,
+        pending: VerifiedPendingUpdate,
+        *,
+        intent: str = "update",
+        repair_components: tuple[str, ...] | list[str] | None = None,
+    ) -> PreparedUpdate:
         if pending is None or not isinstance(pending, VerifiedPendingUpdate):
             raise SoftwareUpdateApplyError("INVALID_PENDING_UPDATE")
 
@@ -151,9 +158,16 @@ class SoftwareUpdateApplyService:
 
         try:
             # Send BEGIN
+            begin_body: dict[str, Any] = {"envelope_b64": envelope_b64}
+            if intent == "repair":
+                begin_body["intent"] = "repair"
+                begin_body["repair_components"] = list(
+                    repair_components or pending.changed_components
+                )
+
             msg_id = channel.send_message(
                 "BEGIN",
-                body={"envelope_b64": envelope_b64},
+                body=begin_body,
             )
 
             # Wait for REQUEST_READY
@@ -177,9 +191,7 @@ class SoftwareUpdateApplyService:
             tx_id = body["transaction_id"]
             changed = body["changed"]
             error = body["error"]
-            if type(accepted) is not bool or (
-                error is not None and type(error) is not str
-            ):
+            if type(accepted) is not bool or (error is not None and type(error) is not str):
                 raise SoftwareUpdateApplyError("INVALID_REQUEST_READY")
 
             if not accepted:
@@ -232,9 +244,7 @@ class SoftwareUpdateApplyService:
             for comp_name in ("launcher", "core"):
                 if changed[comp_name]:
                     filename = (
-                        "launcher.artifact"
-                        if comp_name == "launcher"
-                        else "core.artifact.zip"
+                        "launcher.artifact" if comp_name == "launcher" else "core.artifact.zip"
                     )
                     src = pending.generation_dir / filename
                     dest = incoming_dir / filename
@@ -300,3 +310,14 @@ class SoftwareUpdateApplyService:
                 raise
             raise SoftwareUpdateApplyError("PREPARE_FAILED") from None
 
+    def prepare_repair(
+        self,
+        pending: VerifiedPendingUpdate,
+        repair_components: tuple[str, ...] | list[str] | None = None,
+    ) -> PreparedUpdate:
+        comps = repair_components or pending.changed_components
+        return self.prepare_pending(
+            pending,
+            intent="repair",
+            repair_components=comps,
+        )

@@ -1,9 +1,11 @@
 """Staging area creation and atomic generation publication."""
+
 from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
 from pathlib import Path
+import secrets
 
 from neko_launcher.updater.state_models import DirectoryIdentity
 from neko_launcher.updater.win32_directory import get_directory_identity, open_directory_guarded
@@ -36,14 +38,26 @@ class GenerationPublisher:
             ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(handle))
             raise
 
-    def publish_generation(self, staging_generation_dir: Path, generation_id: str) -> Path:
+    def publish_generation(
+        self, staging_generation_dir: Path, generation_id: str, repair: bool = False
+    ) -> Path:
         """Atomically rename staging_generation_dir into releases/<generation-id>."""
         releases_parent = self.root_dir / "releases"
         releases_parent.mkdir(parents=True, exist_ok=True)
         dest_dir = releases_parent / generation_id
 
         if dest_dir.exists():
-            raise OSError(f"Destination generation directory '{dest_dir}' already exists")
+            if repair:
+                import shutil
+
+                retired_dir = releases_parent / f"{generation_id}-repaired-{secrets.token_hex(8)}"
+                try:
+                    dest_dir.rename(retired_dir)
+                    shutil.rmtree(retired_dir, ignore_errors=True)
+                except Exception:
+                    shutil.rmtree(dest_dir, ignore_errors=True)
+            else:
+                raise OSError(f"Destination generation directory '{dest_dir}' already exists")
 
         src_str = str(staging_generation_dir.resolve())
         dst_str = str(dest_dir.resolve())
@@ -51,6 +65,8 @@ class GenerationPublisher:
         ok = _MoveFileExW(src_str, dst_str, MOVEFILE_WRITE_THROUGH)
         if not ok:
             err = ctypes.GetLastError()
-            raise OSError(f"MoveFileExW failed to publish generation to '{dst_str}' (WinError {err})")
+            raise OSError(
+                f"MoveFileExW failed to publish generation to '{dst_str}' (WinError {err})"
+            )
 
         return dest_dir

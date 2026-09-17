@@ -67,13 +67,38 @@ def serve_session(channel, coordinator) -> SessionDisposition:
                 return SessionDisposition.FAILED
 
         elif msg.type == "BEGIN":
-            if not isinstance(msg.body, dict) or set(msg.body.keys()) != {"envelope_b64"}:
+            if not isinstance(msg.body, dict):
                 return SessionDisposition.FAILED
+            keys = set(msg.body.keys())
+            if keys == {"envelope_b64"}:
+                intent = "update"
+                repair_components = None
+            elif keys == {"envelope_b64", "intent", "repair_components"}:
+                intent = msg.body.get("intent")
+                repair_components = msg.body.get("repair_components")
+                if intent not in ("update", "repair"):
+                    return SessionDisposition.FAILED
+                if intent == "repair":
+                    if not isinstance(repair_components, (list, tuple)) or not repair_components:
+                        return SessionDisposition.FAILED
+                    for c in repair_components:
+                        if c not in ("launcher", "core"):
+                            return SessionDisposition.FAILED
+            else:
+                return SessionDisposition.FAILED
+
             envelope_b64 = msg.body["envelope_b64"]
             if not isinstance(envelope_b64, str) or not envelope_b64:
                 return SessionDisposition.FAILED
 
-            begin_res = coordinator.begin(envelope_b64)
+            if intent == "update" and repair_components is None:
+                begin_res = coordinator.begin(envelope_b64)
+            else:
+                begin_res = coordinator.begin(
+                    envelope_b64,
+                    intent=intent,
+                    repair_components=repair_components,
+                )
             channel.send_message(
                 "REQUEST_READY",
                 message_id=msg.message_id,
@@ -91,7 +116,10 @@ def serve_session(channel, coordinator) -> SessionDisposition:
             msg2 = channel.receive_message(timeout_s=5.0)
             if msg2.type != "APPLY":
                 return SessionDisposition.FAILED
-            if not isinstance(msg2.body, dict) or set(msg2.body.keys()) != {"transaction_id", "request_id"}:
+            if not isinstance(msg2.body, dict) or set(msg2.body.keys()) != {
+                "transaction_id",
+                "request_id",
+            }:
                 return SessionDisposition.FAILED
             tx_id = msg2.body["transaction_id"]
             req_id = msg2.body["request_id"]
@@ -189,7 +217,6 @@ def run_session(
                 slot_store.close()
             except Exception:
                 pass
-
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,4 +1,5 @@
 """Domain models, schema validation, and serialization for updater state and enrollment marker."""
+
 from __future__ import annotations
 
 import base64
@@ -205,6 +206,7 @@ class Transaction:
     staging: DirectoryIdentity | None
     stage: TransactionStage
     mutation: Mutation | None
+    repair_components: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         _assert_hex(self.id, 32, "transaction id")
@@ -221,6 +223,13 @@ class Transaction:
             raise ValueError(f"Invalid transaction stage: {self.stage}")
         if self.mutation is not None and not isinstance(self.mutation, Mutation):
             raise ValueError("mutation must be a Mutation instance or None")
+        if self.repair_components is not None:
+            if not isinstance(self.repair_components, (tuple, list)) or not self.repair_components:
+                raise ValueError("repair_components must be a non-empty tuple of component names")
+            for c in self.repair_components:
+                if c not in ("launcher", "core"):
+                    raise ValueError(f"Invalid repair component: {c}")
+            object.__setattr__(self, "repair_components", tuple(self.repair_components))
 
 
 @dataclass(frozen=True)
@@ -386,6 +395,7 @@ TRANSACTION_ALLOWED_KEYS = {
     "staging",
     "stage",
     "mutation",
+    "repair_components",
 }
 CLEANUP_ALLOWED_KEYS = {"transaction_id", "request_id", "directory", "target", "status"}
 ROLLBACK_ALLOWED_KEYS = {"mode", "target", "probation_id", "scratch", "step"}
@@ -440,11 +450,7 @@ def _parse_generation(data: dict[str, Any]) -> Generation:
         raise ValueError(f"Missing required field: {next(iter(missing))} in Generation")
     binding = _parse_binding(data["binding"])
     raw_sel = data.get("selector")
-    selector = (
-        _parse_installed_release_selector(raw_sel)
-        if raw_sel is not None
-        else None
-    )
+    selector = _parse_installed_release_selector(raw_sel) if raw_sel is not None else None
     return Generation(
         binding=binding,
         launcher_identity_sha256=data["launcher_identity_sha256"],
@@ -470,6 +476,8 @@ def _parse_transaction(data: dict[str, Any]) -> Transaction:
     incoming = _parse_directory_identity(data["incoming"])
     staging = _parse_directory_identity(data["staging"]) if data["staging"] is not None else None
     mutation = _parse_mutation(data["mutation"]) if data["mutation"] is not None else None
+    repair_raw = data.get("repair_components")
+    repair_components = tuple(repair_raw) if repair_raw is not None else None
     return Transaction(
         id=data["id"],
         request_id=data["request_id"],
@@ -479,6 +487,7 @@ def _parse_transaction(data: dict[str, Any]) -> Transaction:
         staging=staging,
         stage=data["stage"],
         mutation=mutation,
+        repair_components=repair_components,
     )
 
 
@@ -526,7 +535,9 @@ def deserialize_state(raw: bytes | str) -> State:
     highwater = _parse_binding(data["highwater"]) if data["highwater"] is not None else None
     observed = _parse_binding(data["observed"]) if data["observed"] is not None else None
     failed = _parse_binding(data["failed"]) if data["failed"] is not None else None
-    transaction = _parse_transaction(data["transaction"]) if data["transaction"] is not None else None
+    transaction = (
+        _parse_transaction(data["transaction"]) if data["transaction"] is not None else None
+    )
     cleanup = [_parse_cleanup(c) for c in data["cleanup"]] if data["cleanup"] is not None else None
     rollback = _parse_rollback(data["rollback"]) if data["rollback"] is not None else None
 
@@ -585,7 +596,9 @@ def migrate_state(
             raise ValueError("deterministic_commit must be a non-empty string")
         payload_sha = state.committed.binding.payload_sha256
         if payload_sha not in state.evidence:
-            raise ValueError("Migration failed: missing signed envelope evidence for committed payload")
+            raise ValueError(
+                "Migration failed: missing signed envelope evidence for committed payload"
+            )
 
         try:
             envelope_bytes = base64.b64decode(state.evidence[payload_sha], validate=True)

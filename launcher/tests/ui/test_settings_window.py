@@ -92,18 +92,12 @@ def test_account_page_binds_shared_username_and_existing_actions_once() -> None:
             root,
             account_var=account_var,
             account_status_var=account_status_var,
-            on_change_password=lambda: calls.__setitem__(
-                "password", calls["password"] + 1
-            ),
-            on_sign_out=lambda: calls.__setitem__(
-                "sign_out", calls["sign_out"] + 1
-            ),
+            on_change_password=lambda: calls.__setitem__("password", calls["password"] + 1),
+            on_sign_out=lambda: calls.__setitem__("sign_out", calls["sign_out"] + 1),
         )
 
         assert str(window._account_label.cget("textvariable")) == str(account_var)
-        assert str(window._account_status_label.cget("textvariable")) == str(
-            account_status_var
-        )
+        assert str(window._account_status_label.cget("textvariable")) == str(account_status_var)
         assert account_var.get() == "neko-user"
 
         window._change_password_button.invoke()
@@ -144,9 +138,7 @@ def test_repeated_settings_password_action_reuses_existing_app_dialog(
         created += 1
         return FakeDialog()
 
-    monkeypatch.setattr(
-        "neko_launcher.ui.app_window.open_password_dialog", create_dialog
-    )
+    monkeypatch.setattr("neko_launcher.ui.app_window.open_password_dialog", create_dialog)
 
     window._open_password_dialog()
     window._open_password_dialog()
@@ -208,9 +200,7 @@ def test_pso2_page_is_detection_only_and_tweaker_uses_shared_path_actions() -> N
         pytest.skip("Tkinter display not available")
 
     try:
-        game_status_var = ctk.StringVar(
-            master=root, value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)"
-        )
+        game_status_var = ctk.StringVar(master=root, value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)")
         tweaker_path_var = ctk.StringVar(master=root, value=r"C:\PSO2\Tweaker.exe")
         calls = {"browse": 0, "launch": 0}
         window = SettingsWindow(
@@ -222,19 +212,18 @@ def test_pso2_page_is_detection_only_and_tweaker_uses_shared_path_actions() -> N
         )
 
         assert window._customer_game_status_var.get() == "กำลังรอเปิด PSO2"
-        assert str(window._tweaker_path_entry.cget("textvariable")) == str(
-            tweaker_path_var
-        )
+        assert str(window._tweaker_path_entry.cget("textvariable")) == str(tweaker_path_var)
         window._choose_tweaker_button.invoke()
         window._launch_tweaker_button.invoke()
         assert calls == {"browse": 1, "launch": 1}
 
-        source = Path(__file__).parents[2].joinpath(
-            "src", "neko_launcher", "ui", "settings_window.py"
-        ).read_text(encoding="utf-8")
-        pso2_page = source.split("def _create_pso2_page")[1].split(
-            "def _create_tweaker_page"
-        )[0]
+        source = (
+            Path(__file__)
+            .parents[2]
+            .joinpath("src", "neko_launcher", "ui", "settings_window.py")
+            .read_text(encoding="utf-8")
+        )
+        pso2_page = source.split("def _create_pso2_page")[1].split("def _create_tweaker_page")[0]
         assert "_game_path_var" not in pso2_page
         assert "ตำแหน่งไฟล์เกม" not in pso2_page
     finally:
@@ -308,18 +297,17 @@ def test_diagnostics_uses_existing_local_tools_with_debug_gate(
 
 def test_connection_page_security_contract() -> None:
     source = (
-        Path(__file__).parents[2]
-        / "src"
-        / "neko_launcher"
-        / "ui"
-        / "settings_window.py"
+        Path(__file__).parents[2] / "src" / "neko_launcher" / "ui" / "settings_window.py"
     ).read_text(encoding="utf-8")
 
     # Strictly verify NO secrets or internal endpoints in Settings UI source
     assert "18.178.140.8" not in source
     assert "8388" not in source
     assert "aes-128-gcm" not in source
-    assert "Shadowsocks" not in source.split("_create_connection_page")[1].split("def _create_appearance_page")[0]
+    assert (
+        "Shadowsocks"
+        not in source.split("_create_connection_page")[1].split("def _create_appearance_page")[0]
+    )
     # Verify no raw vendor/infrastructure marketing terms in customer UI
     assert "AWS" not in source
     assert "Lightsail" not in source
@@ -328,11 +316,7 @@ def test_connection_page_security_contract() -> None:
 
 def test_settings_window_has_no_phase_or_developer_language() -> None:
     source = (
-        Path(__file__).parents[2]
-        / "src"
-        / "neko_launcher"
-        / "ui"
-        / "settings_window.py"
+        Path(__file__).parents[2] / "src" / "neko_launcher" / "ui" / "settings_window.py"
     ).read_text(encoding="utf-8")
 
     forbidden_tokens = [
@@ -350,11 +334,7 @@ def test_settings_window_has_no_phase_or_developer_language() -> None:
 
 def test_settings_search_placeholder_and_no_duplicate_close() -> None:
     source = (
-        Path(__file__).parents[2]
-        / "src"
-        / "neko_launcher"
-        / "ui"
-        / "settings_window.py"
+        Path(__file__).parents[2] / "src" / "neko_launcher" / "ui" / "settings_window.py"
     ).read_text(encoding="utf-8")
 
     assert "ค้นหาการตั้งค่า..." in source
@@ -366,11 +346,7 @@ def test_settings_search_placeholder_and_no_duplicate_close() -> None:
 
 def test_settings_search_placeholder_uses_native_empty_entry_behavior() -> None:
     source = (
-        Path(__file__).parents[2]
-        / "src"
-        / "neko_launcher"
-        / "ui"
-        / "settings_window.py"
+        Path(__file__).parents[2] / "src" / "neko_launcher" / "ui" / "settings_window.py"
     ).read_text(encoding="utf-8")
 
     entry_section = source.split("self._search_entry = ctk.CTkEntry(")[1].split(")\n", 1)[0]
@@ -392,10 +368,7 @@ def test_diagnostics_maps_technical_state_to_customer_safe_copy() -> None:
         assert customer_connection_status(technical_state) == customer_state
         assert "ProxyCore" not in customer_connection_status(technical_state)
 
-
-    assert customer_connection_status("unexpected internal state") == (
-        "ไม่สามารถเชื่อมต่อได้"
-    )
+    assert customer_connection_status("unexpected internal state") == ("ไม่สามารถเชื่อมต่อได้")
 
 
 def test_settings_destroy_removes_shared_connection_trace() -> None:
@@ -421,15 +394,9 @@ def test_settings_destroy_removes_shared_connection_trace() -> None:
 
 def test_diagnostics_and_about_copy_is_customer_safe() -> None:
     source = (
-        Path(__file__).parents[2]
-        / "src"
-        / "neko_launcher"
-        / "ui"
-        / "settings_window.py"
+        Path(__file__).parents[2] / "src" / "neko_launcher" / "ui" / "settings_window.py"
     ).read_text(encoding="utf-8")
-    diagnostics = source.split("def _create_diagnostics_page")[1].split(
-        "def _create_about_page"
-    )[0]
+    diagnostics = source.split("def _create_diagnostics_page")[1].split("def _create_about_page")[0]
     about = source.split("def _create_about_page")[1].split("# Lifecycle")[0]
 
     assert "ProxyCore" not in diagnostics
@@ -501,9 +468,7 @@ def test_app_window_does_not_open_settings_while_unauthenticated(
         created += 1
         return object()
 
-    monkeypatch.setattr(
-        "neko_launcher.ui.app_window.SettingsWindow", create_settings
-    )
+    monkeypatch.setattr("neko_launcher.ui.app_window.SettingsWindow", create_settings)
 
     window._open_settings_window()
 
@@ -583,11 +548,7 @@ def test_app_window_close_cleans_settings_window() -> None:
 
 def test_app_window_source_uses_approved_asset_for_settings_control() -> None:
     source = (
-        Path(__file__).parents[2]
-        / "src"
-        / "neko_launcher"
-        / "ui"
-        / "app_window.py"
+        Path(__file__).parents[2] / "src" / "neko_launcher" / "ui" / "app_window.py"
     ).read_text(encoding="utf-8")
 
     assert "self._settings_control_image" in source
@@ -596,7 +557,9 @@ def test_app_window_source_uses_approved_asset_for_settings_control() -> None:
     assert "self._open_settings_window" in source
     assert "self._settings_window" in source
     # Verify no duplicate internal minimize / close buttons in _build_window_controls
-    controls_section = source.split("def _build_window_controls")[1].split("def _open_settings_window")[0]
+    controls_section = source.split("def _build_window_controls")[1].split(
+        "def _open_settings_window"
+    )[0]
     assert '"—"' not in controls_section
     assert '"×"' not in controls_section
 
@@ -733,9 +696,7 @@ def test_normal_settings_widgets_hide_customer_forbidden_terms() -> None:
         pytest.skip("Tkinter display not available")
 
     try:
-        game_status = ctk.StringVar(
-            master=root, value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)"
-        )
+        game_status = ctk.StringVar(master=root, value="สถานะเกม: ยังไม่เข้าเกม (รอ pso2.exe)")
         connection_status = ctk.StringVar(master=root, value="ProxyCore: ยังไม่ทำงาน")
         window = SettingsWindow(
             root,
@@ -816,12 +777,10 @@ LAUNCHER_ROOT = REPO_ROOT / "launcher"
 APP_FACTORY_SOURCE = (
     LAUNCHER_ROOT / "src" / "neko_launcher" / "bootstrap" / "app_factory.py"
 ).read_text(encoding="utf-8")
-APP_WINDOW_SOURCE = (
-    LAUNCHER_ROOT / "src" / "neko_launcher" / "ui" / "app_window.py"
-).read_text(encoding="utf-8")
-SPEC_SOURCE = (
-    LAUNCHER_ROOT / "NekoLauncher.spec"
-).read_text(encoding="utf-8")
+APP_WINDOW_SOURCE = (LAUNCHER_ROOT / "src" / "neko_launcher" / "ui" / "app_window.py").read_text(
+    encoding="utf-8"
+)
+SPEC_SOURCE = (LAUNCHER_ROOT / "NekoLauncher.spec").read_text(encoding="utf-8")
 
 
 def test_app_factory_resolves_asset_path_without_double_parent() -> None:
@@ -872,7 +831,14 @@ def test_app_factory_logo_and_icon_resolve_to_real_file_in_source_mode() -> None
             f"Repo Asset dir must be a direct child of repo root: {asset_dir}"
         )
         # Source mode keeps the three UI assets separate and explicit.
-        for name in ("logo.png", "icon_app.ico", "setting.png", "computer.png", "internet.png", "server.png"):
+        for name in (
+            "logo.png",
+            "icon_app.ico",
+            "setting.png",
+            "computer.png",
+            "internet.png",
+            "server.png",
+        ):
             candidate = asset_dir / name
             assert candidate.is_file(), (
                 f"Asset/{name} must exist for source-mode Launcher: {candidate}"
@@ -928,11 +894,7 @@ def test_app_window_hide_button_binds_to_a_real_method() -> None:
     import ast
 
     tree = ast.parse(APP_WINDOW_SOURCE)
-    method_names = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-    }
+    method_names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
     # Find the Hide button call and extract its command argument
     hide_call_match = False
     for node in ast.walk(tree):
@@ -960,9 +922,9 @@ def test_app_window_controls_have_no_emoji_fallback_paths() -> None:
     paths (⚙ / 🔧). The contract enforced by
     test_app_window_source_uses_approved_asset_for_settings_control is that
     the Settings control is always rendered from the approved project asset."""
-    controls_section = APP_WINDOW_SOURCE.split(
-        "def _build_window_controls"
-    )[1].split("def _open_settings_window")[0]
+    controls_section = APP_WINDOW_SOURCE.split("def _build_window_controls")[1].split(
+        "def _open_settings_window"
+    )[0]
     assert "⚙" not in controls_section, (
         "_build_window_controls must not contain gear-emoji fallback paths"
     )
@@ -975,9 +937,9 @@ def test_app_window_settings_button_uses_image_open_for_icon() -> None:
     """H-1: the Settings button must load its icon via Image.open(self._icon_path).
     This is the happy-path contract; if the icon file is missing the button
     renders with image=None rather than substituting glyphs."""
-    controls_section = APP_WINDOW_SOURCE.split(
-        "def _build_window_controls"
-    )[1].split("def _open_settings_window")[0]
+    controls_section = APP_WINDOW_SOURCE.split("def _build_window_controls")[1].split(
+        "def _open_settings_window"
+    )[0]
     assert "Image.open(self._settings_icon_path)" in controls_section
     assert "self._settings_control_image" in controls_section
 
@@ -990,19 +952,29 @@ def test_app_window_no_hardcoded_path_in_app_factory_comment() -> None:
 
 # A18_HIDE_TO_TRAY_SETTINGS
 
+
 def test_a18_program_settings_exposes_hide_to_tray_switch() -> None:
-    source = Path(__file__).parents[2].joinpath("src", "neko_launcher", "ui", "settings_window.py").read_text(encoding="utf-8")
+    source = (
+        Path(__file__)
+        .parents[2]
+        .joinpath("src", "neko_launcher", "ui", "settings_window.py")
+        .read_text(encoding="utf-8")
+    )
     assert 'text="Hide to tray"' in source
-    assert 'variable=self._hide_to_tray_var' in source
-    assert 'command=self._on_hide_to_tray_changed' in source
+    assert "variable=self._hide_to_tray_var" in source
+    assert "command=self._on_hide_to_tray_changed" in source
 
 
 # A19_SETTINGS_TASKBAR_ICON
 
+
 def test_a19_settings_reapplies_product_icon_after_ctk_delayed_icon() -> None:
-    source = Path(__file__).parents[2].joinpath(
-        "src", "neko_launcher", "ui", "settings_window.py"
-    ).read_text(encoding="utf-8")
+    source = (
+        Path(__file__)
+        .parents[2]
+        .joinpath("src", "neko_launcher", "ui", "settings_window.py")
+        .read_text(encoding="utf-8")
+    )
     assert "self._icon_path = icon_path" in source
     assert "self._apply_window_icon()" in source
     assert "self.after(300, self._apply_window_icon)" in source
@@ -1016,6 +988,7 @@ def test_a19_settings_reapplies_product_icon_after_ctk_delayed_icon() -> None:
 # ----------------------------------------------------------------------
 # RT-SR4: File Check & Repair UI Controller
 # ----------------------------------------------------------------------
+
 
 def _make_dummy_report(
     *,
@@ -1140,7 +1113,10 @@ def test_file_check_renders_per_file_results() -> None:
 
         assert "OK" in window._file_check_launcher_var.get()
         assert "OK" in window._file_check_updater_var.get()
-        assert "HASH_MISMATCH" in window._file_check_core_var.get() or "ไม่ตรง" in window._file_check_core_var.get()
+        assert (
+            "HASH_MISMATCH" in window._file_check_core_var.get()
+            or "ไม่ตรง" in window._file_check_core_var.get()
+        )
     finally:
         try:
             root.destroy()
@@ -1148,7 +1124,9 @@ def test_file_check_renders_per_file_results() -> None:
             pass
 
 
-def test_file_check_repair_control_appears_only_for_repairable_findings_with_trusted_updater() -> None:
+def test_file_check_repair_control_appears_only_for_repairable_findings_with_trusted_updater() -> (
+    None
+):
     try:
         root = ctk.CTk()
         root.withdraw()
@@ -1242,6 +1220,50 @@ def test_file_check_completion_never_starts_repair_automatically() -> None:
         # Only clicking repair button calls repair
         window._repair_button.invoke()
         assert calls["repair"] == 1
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_settings_window_repair_callback_creates_valid_repair_request() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        from neko_launcher.application.file_repair import (
+            create_repair_request_from_report,
+        )
+
+        repairable_report = _make_dummy_report(
+            launcher_status=IntegrityStatus.MISSING,
+            updater_status=IntegrityStatus.OK,
+            core_status=IntegrityStatus.OK,
+        )
+        captured_requests = []
+
+        def on_repair_cb(report: FileIntegrityReport) -> None:
+            req = create_repair_request_from_report(report)
+            captured_requests.append(req)
+
+        window = SettingsWindow(
+            root,
+            on_file_check=lambda: repairable_report,
+            on_repair=on_repair_cb,
+        )
+
+        window._file_check_button.invoke()
+        assert len(captured_requests) == 0
+
+        window._repair_button.invoke()
+        assert len(captured_requests) == 1
+        req = captured_requests[0]
+        assert req.components == ("launcher",)
+        assert req.explicit_action is True
     finally:
         try:
             root.destroy()

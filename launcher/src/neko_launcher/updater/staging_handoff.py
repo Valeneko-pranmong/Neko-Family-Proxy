@@ -1,4 +1,5 @@
 """Broker staging and download handoff protocol coordinator."""
+
 from __future__ import annotations
 
 import base64
@@ -50,23 +51,33 @@ def handle_authority_admission_request(
 ) -> tuple[AuthorityAdmissionResponse, State | None]:
     """Handle ADMIT_AUTHORITY from Launcher, authenticate envelope, and formulate next State without creating an update transaction or incoming directory."""
     if current_state.phase != "IDLE":
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="LOCK_BUSY"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="LOCK_BUSY"
+        ), None
 
     if not current_state.enrollment_complete:
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="STATE_CORRUPT"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="STATE_CORRUPT"
+        ), None
 
     try:
         raw_envelope_bytes = base64.b64decode(envelope_b64, validate=True)
         envelope_doc = canonical_json_loads(raw_envelope_bytes)
         if not isinstance(envelope_doc, dict):
-            return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="SCHEMA_INVALID"), None
+            return AuthorityAdmissionResponse(
+                accepted=False, binding=None, changed=False, error="SCHEMA_INVALID"
+            ), None
         release_set_v2, payload_sha = verify_release_envelope_v2(envelope_doc, public_keys)
     except Exception:
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="SIGNATURE_INVALID"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="SIGNATURE_INVALID"
+        ), None
 
     proto = release_set_v2.updater_protocol
     if not (proto.minimum <= current_state.helper_protocol <= proto.maximum):
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="PROTOCOL_UNSUPPORTED"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="PROTOCOL_UNSUPPORTED"
+        ), None
 
     cand_seq = release_set_v2.release_sequence
     candidate_binding = Binding(
@@ -76,11 +87,15 @@ def handle_authority_admission_request(
     )
 
     if current_state.failed is not None and current_state.failed == candidate_binding:
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="CANDIDATE_SUPPRESSED"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="CANDIDATE_SUPPRESSED"
+        ), None
 
     highwater_seq = current_state.highwater.release_sequence if current_state.highwater else 0
     observed_seq = current_state.observed.release_sequence if current_state.observed else 0
-    committed_seq = current_state.committed.binding.release_sequence if current_state.committed else 0
+    committed_seq = (
+        current_state.committed.binding.release_sequence if current_state.committed else 0
+    )
     floor = max(highwater_seq, observed_seq, committed_seq)
 
     if (
@@ -88,17 +103,28 @@ def handle_authority_admission_request(
         and current_state.highwater == candidate_binding
         and current_state.observed == candidate_binding
     ):
-        return AuthorityAdmissionResponse(accepted=True, binding=candidate_binding, changed=False, error=None), None
+        return AuthorityAdmissionResponse(
+            accepted=True, binding=candidate_binding, changed=False, error=None
+        ), None
 
     if cand_seq < floor:
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="DOWNGRADE_REJECTED"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="DOWNGRADE_REJECTED"
+        ), None
 
     if cand_seq == floor:
         if current_state.observed is not None:
-            if current_state.observed.payload_sha256 != payload_sha or current_state.observed.release_id != release_set_v2.release_id:
-                return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="SAME_SEQUENCE_CONFLICT"), None
+            if (
+                current_state.observed.payload_sha256 != payload_sha
+                or current_state.observed.release_id != release_set_v2.release_id
+            ):
+                return AuthorityAdmissionResponse(
+                    accepted=False, binding=None, changed=False, error="SAME_SEQUENCE_CONFLICT"
+                ), None
             if current_state.failed == current_state.observed:
-                return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="CANDIDATE_SUPPRESSED"), None
+                return AuthorityAdmissionResponse(
+                    accepted=False, binding=None, changed=False, error="CANDIDATE_SUPPRESSED"
+                ), None
 
     next_evidence = dict(current_state.evidence)
     next_evidence[payload_sha] = envelope_b64
@@ -125,10 +151,13 @@ def handle_authority_admission_request(
     try:
         validate_transition(current_state, next_state)
     except Exception:
-        return AuthorityAdmissionResponse(accepted=False, binding=None, changed=False, error="STATE_CORRUPT"), None
+        return AuthorityAdmissionResponse(
+            accepted=False, binding=None, changed=False, error="STATE_CORRUPT"
+        ), None
 
-    return AuthorityAdmissionResponse(accepted=True, binding=candidate_binding, changed=True, error=None), next_state
-
+    return AuthorityAdmissionResponse(
+        accepted=True, binding=candidate_binding, changed=True, error=None
+    ), next_state
 
 
 def handle_begin_request(
@@ -136,10 +165,22 @@ def handle_begin_request(
     current_state: State,
     envelope_b64: str,
     public_keys: Mapping[str, bytes],
+    intent: str = "update",
+    repair_components: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[RequestReadyResult, State | None]:
     """Handle BEGIN from Launcher, authenticate envelope, create incoming dir, and formulate next State."""
     if current_state.phase != "IDLE":
         return RequestReadyResult(accepted=False, error="LOCK_BUSY"), None
+
+    if intent not in ("update", "repair"):
+        return RequestReadyResult(accepted=False, error="INVALID_INTENT"), None
+
+    if intent == "repair":
+        if not repair_components:
+            return RequestReadyResult(accepted=False, error="INVALID_REPAIR_COMPONENTS"), None
+        for c in repair_components:
+            if c not in ("launcher", "core"):
+                return RequestReadyResult(accepted=False, error="INVALID_REPAIR_COMPONENTS"), None
 
     try:
         raw_envelope_bytes = base64.b64decode(envelope_b64, validate=True)
@@ -158,32 +199,53 @@ def handle_begin_request(
     # Anti-downgrade & conflict checks
     highwater_seq = current_state.highwater.release_sequence if current_state.highwater else 0
     observed_seq = current_state.observed.release_sequence if current_state.observed else 0
-    committed_seq = current_state.committed.binding.release_sequence if current_state.committed else 0
+    committed_seq = (
+        current_state.committed.binding.release_sequence if current_state.committed else 0
+    )
     floor = max(highwater_seq, observed_seq, committed_seq)
 
     cand_seq = release_set_v2.release_sequence
-    if cand_seq < floor:
-        return RequestReadyResult(accepted=False, error="DOWNGRADE_REJECTED"), None
-    if cand_seq == floor:
-        # Same sequence check
-        if current_state.observed is not None:
-            if current_state.observed.payload_sha256 != payload_sha or current_state.observed.release_id != release_set_v2.release_id:
+    if intent == "repair":
+        if current_state.committed is not None:
+            if cand_seq != current_state.committed.binding.release_sequence:
+                return RequestReadyResult(accepted=False, error="REPAIR_SEQUENCE_MISMATCH"), None
+            if current_state.committed.binding.release_id != release_set_v2.release_id:
                 return RequestReadyResult(accepted=False, error="SAME_SEQUENCE_CONFLICT"), None
-            if current_state.failed == current_state.observed:
-                return RequestReadyResult(accepted=False, error="CANDIDATE_SUPPRESSED"), None
+            if current_state.committed.binding.payload_sha256 != payload_sha:
+                return RequestReadyResult(accepted=False, error="SAME_SEQUENCE_CONFLICT"), None
+    else:
+        if cand_seq < floor:
+            return RequestReadyResult(accepted=False, error="DOWNGRADE_REJECTED"), None
+        if cand_seq == floor:
+            # Same sequence check
+            if current_state.observed is not None:
+                if (
+                    current_state.observed.payload_sha256 != payload_sha
+                    or current_state.observed.release_id != release_set_v2.release_id
+                ):
+                    return RequestReadyResult(accepted=False, error="SAME_SEQUENCE_CONFLICT"), None
+                if current_state.failed == current_state.observed:
+                    return RequestReadyResult(accepted=False, error="CANDIDATE_SUPPRESSED"), None
 
     # Changed components calculation
     launcher_comp = release_set_v2.components["launcher"]
     core_comp = release_set_v2.components["core"]
 
-    changed_launcher = (
-        current_state.committed is None
-        or current_state.committed.launcher_identity_sha256 != launcher_comp.installed_identity_sha256
-    )
-    changed_core = (
-        current_state.committed is None
-        or current_state.committed.core_identity_sha256 != core_comp.installed_identity_sha256
-    )
+    if intent == "repair" and repair_components:
+        changed_launcher = "launcher" in repair_components
+        changed_core = "core" in repair_components
+        tx_repair_components = tuple(repair_components)
+    else:
+        changed_launcher = (
+            current_state.committed is None
+            or current_state.committed.launcher_identity_sha256
+            != launcher_comp.installed_identity_sha256
+        )
+        changed_core = (
+            current_state.committed is None
+            or current_state.committed.core_identity_sha256 != core_comp.installed_identity_sha256
+        )
+        tx_repair_components = None
 
     request_id = secrets.token_hex(16)
     transaction_id = secrets.token_hex(16)
@@ -192,6 +254,7 @@ def handle_begin_request(
     try:
         handle, incoming_identity, _ = create_incoming_container(root_dir, request_id)
         import ctypes
+
         ctypes.windll.kernel32.CloseHandle(handle)
     except Exception:
         return RequestReadyResult(accepted=False, error="IO_FAILED"), None
@@ -216,6 +279,7 @@ def handle_begin_request(
         staging=None,
         stage="ADMITTED",
         mutation=None,
+        repair_components=tx_repair_components,
     )
 
     next_evidence = dict(current_state.evidence)
@@ -288,8 +352,16 @@ def handle_apply_request(
     except Exception:
         return ApplyResult(accepted=False, error="SIGNATURE_INVALID")
 
-    # If launcher changed
-    if current_state.committed is None or current_state.committed.launcher_identity_sha256 != cand.launcher_identity_sha256:
+    # If launcher changed / repaired
+    launcher_needs_check = (
+        ("launcher" in tx.repair_components)
+        if tx.repair_components is not None
+        else (
+            current_state.committed is None
+            or current_state.committed.launcher_identity_sha256 != cand.launcher_identity_sha256
+        )
+    )
+    if launcher_needs_check:
         launcher_file = incoming_dir / "launcher.artifact"
         if not launcher_file.exists():
             return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
@@ -301,8 +373,16 @@ def handle_apply_request(
             return ApplyResult(accepted=False, error="HASH_MISMATCH")
         expected_files.add("launcher.artifact")
 
-    # If core changed
-    if current_state.committed is None or current_state.committed.core_identity_sha256 != cand.core_identity_sha256:
+    # If core changed / repaired
+    core_needs_check = (
+        ("core" in tx.repair_components)
+        if tx.repair_components is not None
+        else (
+            current_state.committed is None
+            or current_state.committed.core_identity_sha256 != cand.core_identity_sha256
+        )
+    )
+    if core_needs_check:
         core_file = incoming_dir / "core.artifact.zip"
         if not core_file.exists():
             return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
