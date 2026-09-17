@@ -180,6 +180,11 @@ class FakeReleaseGateway:
         return self.resolved
 
 
+DEFAULT_UPDATER_BYTES: bytes = b"MZ-test-updater-binary-bytes" + b"\0" * (4096 - 28)
+DEFAULT_UPDATER_SHA: str = hashlib.sha256(DEFAULT_UPDATER_BYTES).hexdigest()
+DEFAULT_UPDATER_SIZE: int = len(DEFAULT_UPDATER_BYTES)
+
+
 def make_resolved_release(
     sequence: int = 50,
     *,
@@ -187,10 +192,12 @@ def make_resolved_release(
     core_version: str = "3.0.0",
     launcher_sha: str = "1" * 64,
     core_sha: str = "2" * 64,
-    updater_sha: str = "3" * 64,
+    updater_sha: str = DEFAULT_UPDATER_SHA,
     launcher_size: int = 1024,
     core_size: int = 2048,
-    updater_size: int = 4096,
+    updater_size: int = DEFAULT_UPDATER_SIZE,
+    proto_min: int = 1,
+    proto_max: int = 1,
 ) -> ResolvedGitHubRelease:
     doc = valid_v2_release_document(
         sequence=sequence,
@@ -203,6 +210,8 @@ def make_resolved_release(
         core_size=core_size,
         updater_sha=updater_sha,
         updater_size=updater_size,
+        proto_min=proto_min,
+        proto_max=proto_max,
     )
     envelope = signed_envelope(doc)
     envelope_bytes = canonical_json_dumps(envelope)
@@ -306,15 +315,33 @@ def make_verified_pending(
     changed_components: tuple[str, ...] = ("launcher", "core"),
     launcher_bytes: bytes = b"MZ-test-launcher-binary-bytes",
     core_bytes: bytes = b"PK-test-core-zip-binary-bytes",
+    updater_bytes: bytes | None = DEFAULT_UPDATER_BYTES,
+    proto_min: int = 1,
+    proto_max: int = 1,
+    create_installed_updater: bool = True,
 ) -> tuple[VerifiedPendingUpdate, ResolvedGitHubRelease]:
     launcher_sha = hashlib.sha256(launcher_bytes).hexdigest()
     core_sha = hashlib.sha256(core_bytes).hexdigest()
+    updater_sha = (
+        hashlib.sha256(updater_bytes).hexdigest()
+        if updater_bytes is not None
+        else DEFAULT_UPDATER_SHA
+    )
+    updater_size = (
+        len(updater_bytes)
+        if updater_bytes is not None
+        else DEFAULT_UPDATER_SIZE
+    )
     resolved = make_resolved_release(
         sequence=sequence,
         launcher_size=len(launcher_bytes),
         launcher_sha=launcher_sha,
         core_size=len(core_bytes),
         core_sha=core_sha,
+        updater_size=updater_size,
+        updater_sha=updater_sha,
+        proto_min=proto_min,
+        proto_max=proto_max,
     )
     gen_dir = (
         base_dir
@@ -331,6 +358,9 @@ def make_verified_pending(
     if "core" in changed_components:
         core_artifact = gen_dir / "core.artifact.zip"
         core_artifact.write_bytes(core_bytes)
+
+    if create_installed_updater and updater_bytes is not None:
+        (base_dir / "NekoUpdater.exe").write_bytes(updater_bytes)
 
     pending = VerifiedPendingUpdate(
         release_id=resolved.authenticated_release.release_id,
@@ -1101,4 +1131,62 @@ def test_prepare_pending_aborts_without_spawning_when_installed_updater_corrupt(
 
     assert exc_info.value.code == "UPDATER_INCOMPATIBLE"
     assert len(spawner.calls) == 0
+
+
+@pytest.mark.parametrize(
+    ("defect", "setup_fn"),
+    [
+        (
+            "missing",
+            lambda tmp_path: (tmp_path / "NekoUpdater.exe").unlink(missing_ok=True),
+        ),
+        (
+            "corrupt_hash",
+            lambda tmp_path: (tmp_path / "NekoUpdater.exe").write_bytes(
+                b"C" * DEFAULT_UPDATER_SIZE
+            ),
+        ),
+        (
+            "wrong_size",
+            lambda tmp_path: (tmp_path / "NekoUpdater.exe").write_bytes(
+                b"MZ-short-corrupt"
+            ),
+        ),
+        (
+            "incompatible_protocol",
+            lambda tmp_path: None,
+        ),
+    ],
+)
+def test_custom_spawner_cannot_bypass_updater_integrity_validation(
+    tmp_path: Path, defect: str, setup_fn: Any
+) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    proto_min = 99 if defect == "incompatible_protocol" else 1
+    proto_max = 100 if defect == "incompatible_protocol" else 1
+
+    pending, _ = make_verified_pending(
+        tmp_path,
+        50,
+        changed_components=(),
+        proto_min=proto_min,
+        proto_max=proto_max,
+        create_installed_updater=True,
+    )
+
+    setup_fn(tmp_path)
+
+    spawner = FakeSpawner()
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: FakeChannel([]),
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "UPDATER_INCOMPATIBLE"
+    assert len(spawner.calls) == 0
+    assert not (tmp_path / "incoming").exists()
 
