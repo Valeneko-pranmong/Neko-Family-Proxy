@@ -1,10 +1,16 @@
 from pathlib import Path
 import tkinter as tk
+from typing import Any
 
 import pytest
 import customtkinter as ctk
 
 from neko_launcher import __version__
+from neko_launcher.application.file_integrity import (
+    FileIntegrityItem,
+    FileIntegrityReport,
+    IntegrityStatus,
+)
 from neko_launcher.ui.settings_window import (
     SettingsWindow,
     customer_connection_status,
@@ -1005,3 +1011,239 @@ def test_a19_settings_reapplies_product_icon_after_ctk_delayed_icon() -> None:
     assert "self.iconbitmap(icon_path)" in source
     assert "ImageTk.PhotoImage" in source
     assert "self.iconphoto(False, self._window_icon_photo)" in source
+
+
+# ----------------------------------------------------------------------
+# RT-SR4: File Check & Repair UI Controller
+# ----------------------------------------------------------------------
+
+def _make_dummy_report(
+    *,
+    launcher_status: IntegrityStatus = IntegrityStatus.OK,
+    updater_status: IntegrityStatus = IntegrityStatus.OK,
+    core_status: IntegrityStatus = IntegrityStatus.OK,
+) -> FileIntegrityReport:
+    from neko_launcher.application.software_update_models import InstalledReleaseSelector
+
+    items = (
+        FileIntegrityItem(
+            component="launcher",
+            path=Path("NekoLauncher.exe"),
+            expected_size=100,
+            expected_sha256="1" * 64,
+            actual_size=100 if launcher_status == IntegrityStatus.OK else None,
+            actual_sha256="1" * 64 if launcher_status == IntegrityStatus.OK else None,
+            status=launcher_status,
+        ),
+        FileIntegrityItem(
+            component="updater",
+            path=Path("NekoUpdater.exe"),
+            expected_size=200,
+            expected_sha256="2" * 64,
+            actual_size=200 if updater_status == IntegrityStatus.OK else None,
+            actual_sha256="2" * 64 if updater_status == IntegrityStatus.OK else None,
+            status=updater_status,
+        ),
+        FileIntegrityItem(
+            component="core",
+            path=Path("ProxyCore/core-manifest.json"),
+            expected_size=300,
+            expected_sha256="3" * 64,
+            actual_size=300 if core_status == IntegrityStatus.OK else None,
+            actual_sha256="3" * 64 if core_status == IntegrityStatus.OK else None,
+            status=core_status,
+        ),
+    )
+
+    if updater_status != IntegrityStatus.OK:
+        reinstall_required = True
+        repairable: tuple[str, ...] = ()
+    else:
+        reinstall_required = False
+        rep = []
+        if launcher_status != IntegrityStatus.OK:
+            rep.append("launcher")
+        if core_status != IntegrityStatus.OK:
+            rep.append("core")
+        repairable = tuple(rep)
+
+    return FileIntegrityReport(
+        selector=InstalledReleaseSelector(
+            sequence=1,
+            release_id="test",
+            version="1.0.0",
+            tag_name="v1.0.0",
+            target_commit="a" * 40,
+        ),
+        items=items,
+        repairable_components=repairable,
+        reinstall_required=reinstall_required,
+    )
+
+
+def test_file_check_button_starts_diagnostics_on_explicit_click() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        calls = {"check": 0}
+        report = _make_dummy_report()
+
+        def do_check() -> FileIntegrityReport:
+            calls["check"] += 1
+            return report
+
+        window = SettingsWindow(
+            root,
+            on_file_check=do_check,
+        )
+
+        assert hasattr(window, "_file_check_button")
+        assert calls["check"] == 0
+
+        window._file_check_button.invoke()
+        assert calls["check"] == 1
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_file_check_renders_per_file_results() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        report = _make_dummy_report(
+            launcher_status=IntegrityStatus.OK,
+            updater_status=IntegrityStatus.OK,
+            core_status=IntegrityStatus.HASH_MISMATCH,
+        )
+
+        window = SettingsWindow(
+            root,
+            on_file_check=lambda: report,
+        )
+
+        window._file_check_button.invoke()
+
+        assert hasattr(window, "_file_check_launcher_var")
+        assert hasattr(window, "_file_check_updater_var")
+        assert hasattr(window, "_file_check_core_var")
+
+        assert "OK" in window._file_check_launcher_var.get()
+        assert "OK" in window._file_check_updater_var.get()
+        assert "HASH_MISMATCH" in window._file_check_core_var.get() or "ไม่ตรง" in window._file_check_core_var.get()
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_file_check_repair_control_appears_only_for_repairable_findings_with_trusted_updater() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        # Case 1: All OK -> repair button not shown / disabled
+        window_all_ok = SettingsWindow(
+            root,
+            on_file_check=lambda: _make_dummy_report(),
+        )
+        window_all_ok._file_check_button.invoke()
+        assert (
+            window_all_ok._repair_button.winfo_manager() == ""
+            or window_all_ok._repair_button.cget("state") == "disabled"
+        )
+
+        # Case 2: Launcher missing, Updater OK -> repair button appears / enabled
+        repairable_report = _make_dummy_report(
+            launcher_status=IntegrityStatus.MISSING,
+            updater_status=IntegrityStatus.OK,
+            core_status=IntegrityStatus.OK,
+        )
+        window_repairable = SettingsWindow(
+            root,
+            on_file_check=lambda: repairable_report,
+        )
+        window_repairable._file_check_button.invoke()
+        assert (
+            window_repairable._repair_button.winfo_manager() != ""
+            and window_repairable._repair_button.cget("state") != "disabled"
+        )
+
+        # Case 3: Updater mismatch -> reinstall required, repair button NOT shown / disabled
+        untrusted_updater_report = _make_dummy_report(
+            launcher_status=IntegrityStatus.MISSING,
+            updater_status=IntegrityStatus.HASH_MISMATCH,
+            core_status=IntegrityStatus.OK,
+        )
+        window_untrusted = SettingsWindow(
+            root,
+            on_file_check=lambda: untrusted_updater_report,
+        )
+        window_untrusted._file_check_button.invoke()
+        assert (
+            window_untrusted._repair_button.winfo_manager() == ""
+            or window_untrusted._repair_button.cget("state") == "disabled"
+        )
+        assert (
+            "ติดตั้งใหม่" in window_untrusted._file_check_notice_var.get()
+            or "REINSTALL" in window_untrusted._file_check_notice_var.get().upper()
+        )
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_file_check_completion_never_starts_repair_automatically() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        repairable_report = _make_dummy_report(
+            launcher_status=IntegrityStatus.HASH_MISMATCH,
+            updater_status=IntegrityStatus.OK,
+            core_status=IntegrityStatus.OK,
+        )
+        calls = {"repair": 0}
+
+        def do_repair(*_args: Any) -> None:
+            calls["repair"] += 1
+
+        window = SettingsWindow(
+            root,
+            on_file_check=lambda: repairable_report,
+            on_repair=do_repair,
+        )
+
+        # Run file check
+        window._file_check_button.invoke()
+
+        # Crucial assertion: repair was NEVER called automatically on check completion
+        assert calls["repair"] == 0
+
+        # Only clicking repair button calls repair
+        window._repair_button.invoke()
+        assert calls["repair"] == 1
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass

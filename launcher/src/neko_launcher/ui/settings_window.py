@@ -9,6 +9,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from neko_launcher import __version__
+from neko_launcher.application.file_integrity import FileIntegrityReport, IntegrityStatus
 from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
 from neko_launcher.ui.components.buttons import (
     card,
@@ -105,6 +106,8 @@ class SettingsWindow(ctk.CTkToplevel):
         on_launch_game: Callable[[], None] | None = None,
         on_open_logs: Callable[[], None] | None = None,
         on_show_advanced_diagnostics: Callable[[], None] | None = None,
+        on_file_check: Callable[[], FileIntegrityReport | None] | None = None,
+        on_repair: Callable[[FileIntegrityReport], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_close_callback = on_close
@@ -164,6 +167,13 @@ class SettingsWindow(ctk.CTkToplevel):
         self._on_launch_game = on_launch_game
         self._on_open_logs = on_open_logs
         self._on_show_advanced_diagnostics = on_show_advanced_diagnostics
+        self._on_file_check = on_file_check
+        self._on_repair = on_repair
+        self._last_integrity_report: FileIntegrityReport | None = None
+        self._file_check_launcher_var = tk.StringVar(value="NekoLauncher.exe: ยังไม่ได้ตรวจสอบ")
+        self._file_check_updater_var = tk.StringVar(value="NekoUpdater.exe: ยังไม่ได้ตรวจสอบ")
+        self._file_check_core_var = tk.StringVar(value="Core: ยังไม่ได้ตรวจสอบ")
+        self._file_check_notice_var = tk.StringVar(value="")
 
         self.title("NEKO FAMILY — Settings")
         window_width = SETTINGS_WIDTH
@@ -843,7 +853,123 @@ class SettingsWindow(ctk.CTkToplevel):
             )
             self._advanced_diagnostics_button.pack(side="left")
 
+        # File integrity diagnostic card
+        c_integrity = card(page)
+        ctk.CTkLabel(
+            c_integrity,
+            text="ความสมบูรณ์ของไฟล์",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+            text_color=PALETTE.text,
+        ).pack(anchor="w", padx=16, pady=(12, 8))
+
+        row_check = ctk.CTkFrame(c_integrity, fg_color="transparent")
+        row_check.pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(
+            row_check,
+            text="ตรวจสอบไฟล์ติดตั้ง",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=PALETTE.text_muted,
+        ).pack(side="left")
+        self._file_check_button = secondary_button(
+            row_check,
+            "ตรวจสอบไฟล์",
+            self._invoke_file_check,
+            width=90,
+            height=32,
+        )
+        self._file_check_button.pack(side="right")
+
+        for variable in (
+            self._file_check_launcher_var,
+            self._file_check_updater_var,
+            self._file_check_core_var,
+        ):
+            ctk.CTkLabel(
+                c_integrity,
+                textvariable=variable,
+                anchor="w",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                text_color=PALETTE.text_muted,
+            ).pack(fill="x", padx=16, pady=2)
+
+        self._file_check_notice_label = ctk.CTkLabel(
+            c_integrity,
+            textvariable=self._file_check_notice_var,
+            anchor="w",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
+            text_color=PALETTE.text,
+        )
+        self._file_check_notice_label.pack(fill="x", padx=16, pady=4)
+
+        self._repair_container = ctk.CTkFrame(c_integrity, fg_color="transparent")
+        self._repair_container.pack(fill="x", padx=16, pady=(4, 12))
+
+        self._repair_button = primary_button(
+            self._repair_container,
+            "ซ่อมแซมไฟล์",
+            self._invoke_repair,
+        )
+        self._repair_button.pack_forget()
+
         return page
+
+    def run_file_check(self) -> FileIntegrityReport | None:
+        if self._on_file_check is not None:
+            report = self._on_file_check()
+            if report is not None:
+                self._handle_file_check_report(report)
+            return report
+        return None
+
+    def _invoke_file_check(self) -> None:
+        self.run_file_check()
+
+    def _handle_file_check_report(self, report: FileIntegrityReport) -> None:
+        self._last_integrity_report = report
+        item_map = {item.component: item for item in report.items}
+
+        status_text_map = {
+            IntegrityStatus.OK: "OK",
+            IntegrityStatus.MISSING: "สูญหาย (MISSING)",
+            IntegrityStatus.SIZE_MISMATCH: "ขนาดไม่ตรง (SIZE_MISMATCH)",
+            IntegrityStatus.HASH_MISMATCH: "ข้อมูลไม่ตรง (HASH_MISMATCH)",
+            IntegrityStatus.UNTRUSTED_UPDATER: "ไม่ผ่านการตรวจสอบ (UNTRUSTED_UPDATER)",
+        }
+
+        if "launcher" in item_map:
+            st = item_map["launcher"].status
+            self._file_check_launcher_var.set(
+                f"NekoLauncher.exe: {status_text_map.get(st, st.value)}"
+            )
+        if "updater" in item_map:
+            st = item_map["updater"].status
+            self._file_check_updater_var.set(
+                f"NekoUpdater.exe: {status_text_map.get(st, st.value)}"
+            )
+        if "core" in item_map:
+            st = item_map["core"].status
+            self._file_check_core_var.set(
+                f"Core: {status_text_map.get(st, st.value)}"
+            )
+
+        if report.reinstall_required:
+            self._file_check_notice_var.set(
+                "ตรวจพบข้อผิดพลาดในระบบอัปเดต จำเป็นต้องติดตั้งใหม่ (REINSTALL REQUIRED)"
+            )
+            self._repair_button.pack_forget()
+        elif report.repairable_components:
+            names = ", ".join(report.repairable_components)
+            self._file_check_notice_var.set(
+                f"พบไฟล์เสียหายที่สามารถซ่อมแซมได้: {names}"
+            )
+            self._repair_button.pack(side="left")
+        else:
+            self._file_check_notice_var.set("ไฟล์ทั้งหมดสมบูรณ์ถูกต้อง (OK)")
+            self._repair_button.pack_forget()
+
+    def _invoke_repair(self) -> None:
+        if self._on_repair is not None and self._last_integrity_report is not None:
+            self._on_repair(self._last_integrity_report)
 
     def set_redeem_busy(self, busy: bool) -> None:
         self._redeem_coupon_button.configure(
