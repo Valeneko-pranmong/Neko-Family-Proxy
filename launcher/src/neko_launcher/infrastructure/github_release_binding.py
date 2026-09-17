@@ -46,7 +46,168 @@ __all__ = [
     "AuthenticatedReleaseGateway",
     "GitHubReleaseResolverError",
     "GitHubReleaseResolver",
+    "InstalledUpdaterVerification",
+    "verify_installed_updater",
 ]
+
+
+@dataclass(frozen=True)
+class InstalledUpdaterVerification:
+    trusted: bool
+    reinstall_required: bool
+    expected_sha256: str
+    actual_sha256: str | None
+    reason: str | None
+
+
+def verify_installed_updater(
+    updater_path: Path,
+    bound_release: object,
+    supported_protocol: int = UPDATER_PROTOCOL_VERSION,
+) -> InstalledUpdaterVerification:
+    target_release: object = bound_release
+    if (
+        hasattr(target_release, "authenticated_release_v2")
+        and target_release.authenticated_release_v2 is not None
+    ):
+        target_release = target_release.authenticated_release_v2
+
+    updater_comp: object = None
+    if hasattr(target_release, "components"):
+        comps = target_release.components
+        if isinstance(comps, Mapping) or isinstance(comps, dict):
+            updater_comp = comps.get("updater")
+        elif isinstance(comps, (list, tuple)):
+            updater_comp = next(
+                (c for c in comps if getattr(c, "name", None) == "updater"),
+                None,
+            )
+    elif hasattr(target_release, "updater_component"):
+        updater_comp = target_release.updater_component
+    elif hasattr(target_release, "updater"):
+        updater_comp = target_release.updater
+
+    if updater_comp is not None:
+        expected_sha256 = getattr(
+            updater_comp,
+            "artifact_sha256",
+            getattr(
+                updater_comp,
+                "sha256",
+                getattr(updater_comp, "installed_identity_sha256", ""),
+            ),
+        )
+        expected_size = getattr(
+            updater_comp,
+            "artifact_size",
+            getattr(updater_comp, "size", None),
+        )
+    else:
+        expected_sha256 = getattr(
+            bound_release,
+            "updater_sha256",
+            getattr(
+                bound_release,
+                "updater_sha",
+                getattr(target_release, "updater_sha256", ""),
+            ),
+        )
+        expected_size = getattr(
+            bound_release,
+            "updater_size",
+            getattr(target_release, "updater_size", None),
+        )
+
+    if isinstance(expected_sha256, str):
+        expected_sha256 = expected_sha256.lower()
+    else:
+        expected_sha256 = ""
+
+    proto = getattr(
+        target_release,
+        "updater_protocol",
+        getattr(bound_release, "updater_protocol", None),
+    )
+
+    u_path = Path(updater_path)
+    if not u_path.is_file():
+        return InstalledUpdaterVerification(
+            trusted=False,
+            reinstall_required=True,
+            expected_sha256=expected_sha256,
+            actual_sha256=None,
+            reason="UPDATER_MISSING",
+        )
+
+    if expected_size is not None:
+        try:
+            actual_size = u_path.stat().st_size
+        except OSError:
+            return InstalledUpdaterVerification(
+                trusted=False,
+                reinstall_required=True,
+                expected_sha256=expected_sha256,
+                actual_sha256=None,
+                reason="UPDATER_IO_ERROR",
+            )
+        if actual_size != expected_size:
+            return InstalledUpdaterVerification(
+                trusted=False,
+                reinstall_required=True,
+                expected_sha256=expected_sha256,
+                actual_sha256=None,
+                reason="UPDATER_SIZE_MISMATCH",
+            )
+
+    try:
+        hasher = hashlib.sha256()
+        with u_path.open("rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        actual_sha256 = hasher.hexdigest().lower()
+    except OSError:
+        return InstalledUpdaterVerification(
+            trusted=False,
+            reinstall_required=True,
+            expected_sha256=expected_sha256,
+            actual_sha256=None,
+            reason="UPDATER_IO_ERROR",
+        )
+
+    if not expected_sha256 or actual_sha256 != expected_sha256:
+        return InstalledUpdaterVerification(
+            trusted=False,
+            reinstall_required=True,
+            expected_sha256=expected_sha256,
+            actual_sha256=actual_sha256,
+            reason="UPDATER_HASH_MISMATCH",
+        )
+
+    if proto is not None:
+        if isinstance(proto, int):
+            proto_ok = proto == supported_protocol
+        elif hasattr(proto, "minimum") and hasattr(proto, "maximum"):
+            proto_ok = proto.minimum <= supported_protocol <= proto.maximum
+        elif isinstance(proto, (list, tuple)) and len(proto) == 2:
+            proto_ok = proto[0] <= supported_protocol <= proto[1]
+        else:
+            proto_ok = False
+        if not proto_ok:
+            return InstalledUpdaterVerification(
+                trusted=False,
+                reinstall_required=True,
+                expected_sha256=expected_sha256,
+                actual_sha256=actual_sha256,
+                reason="UPDATER_PROTOCOL_INCOMPATIBLE",
+            )
+
+    return InstalledUpdaterVerification(
+        trusted=True,
+        reinstall_required=False,
+        expected_sha256=expected_sha256,
+        actual_sha256=actual_sha256,
+        reason=None,
+    )
 
 
 @dataclass(frozen=True)
@@ -203,23 +364,12 @@ class GitHubReleaseResolver:
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED") from None
 
         helper_path = self._install_root / UPDATER_ASSET_NAME
-        if not helper_path.is_file():
-            raise GitHubReleaseResolverError("UPDATER_INCOMPATIBLE")
-
-        try:
-            hasher = hashlib.sha256()
-            with helper_path.open("rb") as f:
-                while chunk := f.read(65536):
-                    hasher.update(chunk)
-            installed_helper_sha256 = hasher.hexdigest().lower()
-        except OSError:
-            raise GitHubReleaseResolverError("UPDATER_INCOMPATIBLE") from None
-
-        if installed_helper_sha256 != updater_comp.artifact_sha256.lower():
-            raise GitHubReleaseResolverError("UPDATER_INCOMPATIBLE")
-
-        proto = release_set_v2.updater_protocol
-        if not (proto.minimum <= self._updater_protocol <= proto.maximum):
+        verification = verify_installed_updater(
+            updater_path=helper_path,
+            bound_release=release_set_v2,
+            supported_protocol=self._updater_protocol,
+        )
+        if not verification.trusted or verification.reinstall_required:
             raise GitHubReleaseResolverError("UPDATER_INCOMPATIBLE")
 
         return ResolvedGitHubRelease(

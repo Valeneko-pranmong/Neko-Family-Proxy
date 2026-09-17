@@ -11,6 +11,10 @@ from neko_launcher.infrastructure.github_release import (
     GitHubReleaseAsset,
     GitHubReleaseDiscoveryError,
 )
+from neko_launcher.infrastructure.github_release_binding import (
+    InstalledUpdaterVerification,
+    verify_installed_updater,
+)
 from neko_launcher.updater.canonical_json import canonical_json_dumps
 from tests.software_update_helpers import (
     TEST_KEY_ID,
@@ -71,7 +75,7 @@ def _setup_resolver_environment(
     launcher_size: int = 1000,
     updater_size: int = 2000,
     core_size: int = 3000,
-    helper_bytes: bytes = b"installed helper binary MZ",
+    helper_bytes: bytes = b"installed helper binary MZ" + b"\x00" * 1974,
     doc_overrides: dict[str, Any] | None = None,
     tag_name: str | None = None,
     include_extra_asset: bool = False,
@@ -478,3 +482,110 @@ def test_resolver_accepts_channel_profile(tmp_path: Path) -> None:
     resolved = resolver.resolve()
     assert resolved is not None
     assert resolved.authenticated_release.channel == "stable"
+
+
+def test_corrupt_updater_requires_reinstall(tmp_path: Path) -> None:
+    env_data = _setup_resolver_environment(tmp_path)
+    resolved = env_data["resolver"].resolve()
+    assert resolved is not None
+    release_v2 = resolved.authenticated_release_v2
+    updater_path = tmp_path / "NekoUpdater.exe"
+    # Write bytes with exact expected size 2000 but corrupt content
+    updater_path.write_bytes(b"tampered installed helper bytes" + b"\x01" * 1969)
+
+    result = verify_installed_updater(
+        updater_path=updater_path,
+        bound_release=release_v2,
+        supported_protocol=1,
+    )
+    assert result.reinstall_required is True
+    assert result.trusted is False
+    assert result.actual_sha256 != result.expected_sha256
+    assert result.reason == "UPDATER_HASH_MISMATCH"
+
+
+def test_missing_updater_requires_reinstall(tmp_path: Path) -> None:
+    env_data = _setup_resolver_environment(tmp_path)
+    resolved = env_data["resolver"].resolve()
+    assert resolved is not None
+    release_v2 = resolved.authenticated_release_v2
+    nonexistent = tmp_path / "NonexistentUpdater.exe"
+
+    result = verify_installed_updater(
+        updater_path=nonexistent,
+        bound_release=release_v2,
+        supported_protocol=1,
+    )
+    assert result.reinstall_required is True
+    assert result.trusted is False
+    assert result.actual_sha256 is None
+    assert result.reason == "UPDATER_MISSING"
+
+
+def test_wrong_size_updater_requires_reinstall(tmp_path: Path) -> None:
+    env_data = _setup_resolver_environment(tmp_path)
+    resolved = env_data["resolver"].resolve()
+    assert resolved is not None
+    release_v2 = resolved.authenticated_release_v2
+    updater_path = tmp_path / "NekoUpdater.exe"
+    # Write bytes with different length than updater_size (2000)
+    updater_path.write_bytes(b"short bytes")
+
+    result = verify_installed_updater(
+        updater_path=updater_path,
+        bound_release=release_v2,
+        supported_protocol=1,
+    )
+    assert result.reinstall_required is True
+    assert result.trusted is False
+    assert result.reason == "UPDATER_SIZE_MISMATCH"
+
+
+def test_incompatible_protocol_updater_requires_reinstall(tmp_path: Path) -> None:
+    doc_overrides = {"updater_protocol": {"minimum": 2, "maximum": 2}}
+    env_data = _setup_resolver_environment(tmp_path, doc_overrides=doc_overrides)
+    helper_path = env_data["helper_path"]
+    from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
+    release_v2, _ = verify_release_envelope_v2(
+        env_data["downloader"].manifest.document,
+        {TEST_KEY_ID: TEST_PUBLIC_KEY},
+    )
+
+    result = verify_installed_updater(
+        updater_path=helper_path,
+        bound_release=release_v2,
+        supported_protocol=1,
+    )
+    assert result.reinstall_required is True
+    assert result.trusted is False
+    assert result.reason == "UPDATER_PROTOCOL_INCOMPATIBLE"
+
+
+def test_valid_updater_verification_succeeds(tmp_path: Path) -> None:
+    env_data = _setup_resolver_environment(tmp_path)
+    resolved = env_data["resolver"].resolve()
+    assert resolved is not None
+    helper_path = env_data["helper_path"]
+
+    result = verify_installed_updater(
+        updater_path=helper_path,
+        bound_release=resolved,
+        supported_protocol=1,
+    )
+    assert isinstance(result, InstalledUpdaterVerification)
+    assert result.trusted is True
+    assert result.reinstall_required is False
+    assert result.actual_sha256 == result.expected_sha256
+    assert result.reason is None
+
+
+def test_resolver_raises_updater_incompatible_on_helper_size_mismatch(tmp_path: Path) -> None:
+    env_data = _setup_resolver_environment(tmp_path)
+    # Tamper size: write different length to installed helper
+    env_data["helper_path"].write_bytes(b"different size bytes")
+    resolver = env_data["resolver"]
+
+    with pytest.raises(Exception) as exc_info:
+        resolver.resolve()
+
+    assert exc_info.value.code == "UPDATER_INCOMPATIBLE"

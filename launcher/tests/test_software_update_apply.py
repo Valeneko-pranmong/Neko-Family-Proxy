@@ -1082,3 +1082,23 @@ def test_prepare_pending_invalid_envelope_fails_closed(tmp_path: Path) -> None:
 
     assert exc_info.value.code == "INVALID_PENDING_ENVELOPE"
 
+
+def test_prepare_pending_aborts_without_spawning_when_installed_updater_corrupt(tmp_path: Path) -> None:
+    service_cls, _, error_cls = _get_apply_api()
+    pending, _ = make_verified_pending(tmp_path, 50, changed_components=())
+    updater_path = tmp_path / "NekoUpdater.exe"
+    updater_path.write_bytes(b"tampered installed helper binary")
+    spawner = FakeSpawner()
+
+    service = service_cls(
+        root_dir=tmp_path,
+        spawner=spawner,
+        channel_factory=lambda: FakeChannel([]),
+    )
+
+    with pytest.raises(error_cls) as exc_info:
+        service.prepare_pending(pending)
+
+    assert exc_info.value.code == "UPDATER_INCOMPATIBLE"
+    assert len(spawner.calls) == 0
+

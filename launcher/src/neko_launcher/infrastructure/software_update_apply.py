@@ -136,6 +136,19 @@ class SoftwareUpdateApplyService:
         except Exception:
             raise SoftwareUpdateApplyError("INVALID_PENDING_ENVELOPE") from None
 
+        helper_path = self.root_dir / "NekoUpdater.exe"
+        if helper_path.is_file() or self.spawner is None:
+            from neko_launcher.infrastructure.github_release_binding import (
+                verify_installed_updater,
+            )
+
+            verification = verify_installed_updater(
+                updater_path=helper_path,
+                bound_release=release_v2,
+            )
+            if not verification.trusted or verification.reinstall_required:
+                raise SoftwareUpdateApplyError("UPDATER_INCOMPATIBLE")
+
         prepared, channel = self._spawn_helper()
 
         try:

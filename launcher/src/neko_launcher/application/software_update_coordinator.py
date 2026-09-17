@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from neko_launcher.application.software_update_models import (
     LocalReleaseIdentity,
     UpdateCheckResult,
+    UpdateDiagnosticCode,
     UpdateInvocationReason,
     UpdateState,
 )
@@ -125,9 +126,13 @@ class SoftwareUpdateCoordinator:
             pending=pending,
             diagnostic_code=None,
             disposition=(
-                StartupUpdateDisposition.MANDATORY_UPDATE
-                if pending is not None
-                else self._startup_disposition
+                StartupUpdateDisposition.REINSTALL_REQUIRED
+                if self._startup_disposition == StartupUpdateDisposition.REINSTALL_REQUIRED
+                else (
+                    StartupUpdateDisposition.MANDATORY_UPDATE
+                    if pending is not None
+                    else self._startup_disposition
+                )
             ),
         )
         with self._lock:
@@ -311,7 +316,22 @@ class SoftwareUpdateCoordinator:
         pending = existing_pending
 
         disposition: StartupUpdateDisposition | None = None
-        if resolved is not None:
+        diag_raw = (
+            check_result.diagnostic_code.value
+            if hasattr(check_result.diagnostic_code, "value")
+            else (
+                str(check_result.diagnostic_code)
+                if check_result.diagnostic_code is not None
+                else None
+            )
+        )
+        if diag_raw in (
+            UpdateDiagnosticCode.UPDATER_INCOMPATIBLE.value,
+            "UPDATER_INCOMPATIBLE",
+            "REINSTALL_REQUIRED",
+        ):
+            disposition = StartupUpdateDisposition.REINSTALL_REQUIRED
+        elif resolved is not None:
             try:
                 disposition = classify_startup_release(local, resolved)
             except Exception:

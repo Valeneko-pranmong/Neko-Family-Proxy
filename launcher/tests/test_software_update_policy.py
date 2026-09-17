@@ -937,3 +937,39 @@ def test_startup_classification_invalid_untrusted_conflicting_remote_fails_close
     # Invalid local identity
     with pytest.raises(TypeError, match="LocalReleaseIdentity"):
         classify_startup_release(local=None, remote=bound_release(version="5.1.3", sequence=9))  # type: ignore[arg-type]
+
+
+def test_untrusted_updater_verification_requires_reinstall() -> None:
+    from neko_launcher.infrastructure.github_release_binding import (
+        InstalledUpdaterVerification,
+    )
+
+    local = local_release_identity(version="5.1.2", sequence=8)
+    remote = bound_release(version="5.1.3", sequence=9)
+    untrusted = InstalledUpdaterVerification(
+        trusted=False,
+        reinstall_required=True,
+        expected_sha256="0" * 64,
+        actual_sha256="1" * 64,
+        reason="UPDATER_HASH_MISMATCH",
+    )
+    res = classify_startup_release(local=local, remote=remote, updater_verification=untrusted)
+    assert res is StartupUpdateDisposition.REINSTALL_REQUIRED
+
+
+def test_missing_updater_verification_requires_reinstall() -> None:
+    from neko_launcher.infrastructure.github_release_binding import (
+        InstalledUpdaterVerification,
+    )
+
+    local = local_release_identity(version="5.1.2", sequence=8)
+    remote = bound_release(version="5.1.2", sequence=8)
+    missing = InstalledUpdaterVerification(
+        trusted=False,
+        reinstall_required=True,
+        expected_sha256="0" * 64,
+        actual_sha256=None,
+        reason="UPDATER_MISSING",
+    )
+    res = classify_startup_release(local=local, remote=remote, updater_verification=missing)
+    assert res is StartupUpdateDisposition.REINSTALL_REQUIRED

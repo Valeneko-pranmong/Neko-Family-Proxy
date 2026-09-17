@@ -67,6 +67,8 @@ def _is_updater_protocol_compatible(remote: Any, supported_protocol: int = 1) ->
 def classify_startup_release(
     local: LocalReleaseIdentity,
     remote: Any,
+    *,
+    updater_verification: Any = None,
 ) -> StartupUpdateDisposition:
     if not isinstance(local, LocalReleaseIdentity):
         raise TypeError(
@@ -74,6 +76,12 @@ def classify_startup_release(
         )
     if remote is None:
         raise SoftwareUpdatePolicyError("INVALID_REMOTE", "Remote release cannot be None")
+
+    if updater_verification is not None and (
+        (hasattr(updater_verification, "trusted") and not updater_verification.trusted)
+        or (hasattr(updater_verification, "reinstall_required") and updater_verification.reinstall_required)
+    ):
+        return StartupUpdateDisposition.REINSTALL_REQUIRED
 
     target = remote
     if hasattr(target, "authenticated_release_v2") and target.authenticated_release_v2 is not None:

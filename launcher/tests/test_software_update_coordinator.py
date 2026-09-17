@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from unittest.mock import Mock
+
 import pytest
 
 from neko_launcher.application.software_update_coordinator import (
@@ -1065,3 +1067,60 @@ def test_login_composition_allowed_when_release_is_current(tmp_path: Path) -> No
 
     result = coordinator.gate_login(lambda: "login_ok")
     assert result == "login_ok"
+
+
+def test_coordinator_startup_maps_updater_incompatible_to_reinstall_required(tmp_path: Path) -> None:
+    gateway = TrackingGateway(error=CodedError("UPDATER_INCOMPATIBLE"))
+    downloader = FakeAssetDownloader({})
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.startup()
+    assert snap.disposition == StartupUpdateDisposition.REINSTALL_REQUIRED
+    assert snap.diagnostic_code == "UPDATER_INCOMPATIBLE"
+    assert snap.pending is None
+    assert len(downloader.download_calls) == 0
+    assert coordinator.can_proceed_to_login() is False
+
+    with pytest.raises(SoftwareUpdateGateBlockedError) as exc_info:
+        coordinator.gate_login(lambda: "blocked")
+    assert exc_info.value.code == "REINSTALL_REQUIRED"
+
+
+def test_coordinator_manual_check_maps_updater_incompatible_to_reinstall_required(tmp_path: Path) -> None:
+    gateway = TrackingGateway(error=CodedError("UPDATER_INCOMPATIBLE"))
+    downloader = FakeAssetDownloader({})
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.manual_check()
+    assert snap.disposition == StartupUpdateDisposition.REINSTALL_REQUIRED
+    assert snap.diagnostic_code == "UPDATER_INCOMPATIBLE"
+    assert snap.pending is None
+    assert len(downloader.download_calls) == 0
+    assert coordinator.can_proceed_to_login() is False
+
+    with pytest.raises(SoftwareUpdateGateBlockedError) as exc_info:
+        coordinator.gate_login(lambda: "blocked")
+    assert exc_info.value.code == "REINSTALL_REQUIRED"
+
+
+def test_corrupt_updater_prevents_updater_session_and_staging_mutation(tmp_path: Path) -> None:
+    admission_service = Mock()
+    gateway = TrackingGateway(error=CodedError("UPDATER_INCOMPATIBLE"))
+    downloader = FakeAssetDownloader({})
+    coordinator, _store, stage_service = _setup_coordinator(
+        tmp_path,
+        gateway,
+        downloader,
+        admission_service=admission_service,
+    )
+    stage_service.stage = Mock()
+
+    snap = coordinator.startup()
+    assert snap.disposition == StartupUpdateDisposition.REINSTALL_REQUIRED
+    assert snap.pending is None
+    # No downloader mutation
+    assert len(downloader.download_calls) == 0
+    # No stager mutation
+    assert stage_service.stage.call_count == 0
+    # No updater session mutation (admission never invoked)
+    assert admission_service.admit.call_count == 0
