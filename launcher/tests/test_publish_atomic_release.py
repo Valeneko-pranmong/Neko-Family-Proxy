@@ -13,13 +13,17 @@ import zipfile
 
 import pytest
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
 try:
     from tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
 except ImportError:
     from launcher.tests.software_update_helpers import TEST_PUBLIC_KEY, signed_envelope
 
 
-SCRIPT = Path(__file__).parents[2] / "scripts" / "publish_atomic_release.py"
+SCRIPT = REPOSITORY_ROOT / "scripts" / "publish_atomic_release.py"
 SCRIPTS_DIR = str(SCRIPT.parent)
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
@@ -948,6 +952,9 @@ def _setup_machine_publish_test_env(
     seq: int = 8,
     rel_id: str = "stable-0008",
     target: str = TARGET,
+    minimum_supported_sequence: int | None = None,
+    mandatory: bool = False,
+    floor_sequence: int = 7,
 ):
     import base64
     from authenticated_production_history import (
@@ -966,9 +973,12 @@ def _setup_machine_publish_test_env(
     make_stage(
         staging_dir,
         sequence=seq,
-        minimum_supported_sequence=seq,
+        minimum_supported_sequence=(
+            seq if minimum_supported_sequence is None else minimum_supported_sequence
+        ),
         release_id=rel_id,
         version=version,
+        mandatory=mandatory,
     )
 
     manifest_bytes = (staging_dir / "release-v2.json").read_bytes()
@@ -979,9 +989,10 @@ def _setup_machine_publish_test_env(
 
     ledger_path = tmp_path / "ledger.jsonl"
 
+    floor_release_id = f"stable-{floor_sequence:04d}"
     binding7 = AuthenticatedProductionBinding(
-        sequence=7,
-        release_id="stable-0007",
+        sequence=floor_sequence,
+        release_id=floor_release_id,
         payload_sha256="7" * 64,
         envelope_sha256="7" * 64,
         key_id="neko-update-prod-1",
@@ -995,10 +1006,10 @@ def _setup_machine_publish_test_env(
     )
 
     floor_snapshot = AuthenticatedHistorySnapshot(
-        bindings_by_sequence={7: binding7},
-        provenance_source_commit_by_sequence={7: "c" * 40},
+        bindings_by_sequence={floor_sequence: binding7},
+        provenance_source_commit_by_sequence={floor_sequence: "c" * 40},
         live_updates_sequences=frozenset(),
-        highest_authenticated_sequence=7,
+        highest_authenticated_sequence=floor_sequence,
         authenticated_bindings_sha256="b" * 64,
         snapshot_sha256="s" * 64,
     )
@@ -1394,3 +1405,138 @@ def test_publish_unified_release_happy_path_promotes_once_and_appends_published(
         assert last_event.sequence == 8
         assert last_event.status == "PUBLISHED"
         assert verified.latest_entry_sha256 == result.entry_sha256
+
+
+def test_publish_unified_release_mandatory_successor_binds_authority_policy_end_to_end(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding9, binding10 = _setup_machine_publish_test_env(
+        tmp_path,
+        tag="v5.1.3",
+        version="5.1.3",
+        seq=10,
+        rel_id="stable-0010",
+        minimum_supported_sequence=9,
+        mandatory=True,
+        floor_sequence=9,
+    )
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+    from production_sequence_ledger import open_authority_session
+
+    pre_snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={9: binding9, 10: binding10},
+        provenance_source_commit_by_sequence={9: "c" * 40, 10: TARGET},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=10,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+    post_snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={9: binding9, 10: binding10},
+        provenance_source_commit_by_sequence={9: "c" * 40, 10: TARGET},
+        live_updates_sequences=frozenset({10}),
+        highest_authenticated_sequence=10,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def load(self):
+            self.calls += 1
+            return pre_snap if self.calls == 1 else post_snap
+
+    executor = _FakeMachinePublishExecutor(
+        staging_dir,
+        tag="v5.1.3",
+        live_draft=True,
+    )
+    result = module.publish_unified_release(
+        ledger_path=ledger_path,
+        history_provider=_Prov(),
+        tag="v5.1.3",
+        body="notes",
+        authority_binding=signed,
+        target_commit=TARGET,
+        staging_dir=staging_dir,
+        executor=executor,
+        expected_minimum_sequence=9,
+        expected_mandatory=True,
+    )
+
+    assert result.status == "PUBLISHED"
+    assert result.sequence == 10
+    assert result.release_id == "stable-0010"
+    assert result.tag == "v5.1.3"
+    assert any(call[:3] == ["gh", "release", "create"] for call in executor.calls)
+    assert any(call[:3] == ["gh", "release", "upload"] for call in executor.calls)
+    assert any(
+        call[:3] == ["gh", "release", "edit"] and "--draft=false" in call
+        for call in executor.calls
+    )
+
+    with open_authority_session(ledger_path) as session:
+        verified = session.read_verified()
+        last_event = verified.events[-1]
+        assert last_event.sequence == 10
+        assert last_event.release_id == "stable-0010"
+        assert last_event.status == "PUBLISHED"
+        assert verified.latest_entry_sha256 == result.entry_sha256
+
+
+def test_publish_unified_release_mandatory_successor_requires_explicit_authority_policy(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    staging_dir, ledger_path, signed, binding9, binding10 = _setup_machine_publish_test_env(
+        tmp_path,
+        tag="v5.1.3",
+        version="5.1.3",
+        seq=10,
+        rel_id="stable-0010",
+        minimum_supported_sequence=9,
+        mandatory=True,
+        floor_sequence=9,
+    )
+
+    from authenticated_production_history import AuthenticatedHistorySnapshot
+
+    snap = AuthenticatedHistorySnapshot(
+        bindings_by_sequence={9: binding9, 10: binding10},
+        provenance_source_commit_by_sequence={9: "c" * 40, 10: TARGET},
+        live_updates_sequences=frozenset(),
+        highest_authenticated_sequence=10,
+        authenticated_bindings_sha256="b" * 64,
+        snapshot_sha256="s" * 64,
+    )
+
+    class _Prov:
+        def load(self):
+            return snap
+
+    executor = _FakeMachinePublishExecutor(staging_dir, tag="v5.1.3")
+    with pytest.raises(module.StageDraftReleaseError, match="Stable-release authority mismatch"):
+        module.publish_unified_release(
+            ledger_path=ledger_path,
+            history_provider=_Prov(),
+            tag="v5.1.3",
+            body="notes",
+            authority_binding=signed,
+            target_commit=TARGET,
+            staging_dir=staging_dir,
+            executor=executor,
+        )
+
+    assert not any(
+        call[:3]
+        in (
+            ["gh", "release", "create"],
+            ["gh", "release", "upload"],
+            ["gh", "release", "edit"],
+        )
+        for call in executor.calls
+    )

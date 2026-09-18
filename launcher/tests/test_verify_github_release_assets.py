@@ -11,7 +11,11 @@ from typing import Any
 
 import pytest
 
-from neko_launcher.updater.canonical_json import canonical_json_dumps
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from neko_launcher.updater.canonical_json import canonical_json_dumps  # noqa: E402
 try:
     from tests.software_update_helpers import (
         TEST_KEY_ID,
@@ -29,7 +33,6 @@ except ImportError:
         valid_v2_release_document,
     )
 
-REPOSITORY_ROOT = Path(__file__).parents[2]
 SCRIPT_PATH = REPOSITORY_ROOT / "scripts" / "verify_github_release_assets.py"
 
 
