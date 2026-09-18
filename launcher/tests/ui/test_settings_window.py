@@ -447,9 +447,92 @@ def test_app_window_settings_single_instance_contract() -> None:
     assert fake_top.lift_called == 1
     assert fake_top.focus_called == 1
 
+    # Reopening iconic (minimized) window restores and lifts it
+    fake_top.deiconify_called = 0
+    fake_top.state = lambda: "iconic"  # type: ignore[assignment]
+    def fake_deiconify() -> None:
+        fake_top.deiconify_called += 1
+    fake_top.deiconify = fake_deiconify  # type: ignore[assignment]
+    window._open_settings_window()
+    assert fake_top.deiconify_called == 1
+    assert fake_top.lift_called == 2
+    assert fake_top.focus_called == 2
+
     # Closing settings window clears owner reference
     window._close_settings_window()
     assert window._settings_window is None
+
+
+def test_settings_window_sets_transient_to_parent() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(root)
+        # Transient window's master is set to root
+        assert str(window.transient()) == str(root)
+    finally:
+        try:
+            window.destroy()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_app_window_open_settings_lifts_and_focuses_new_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeController:
+        state = type("State", (), {"auth_status": AuthStatus.AUTHENTICATED})()
+
+    class FakeSettings:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.lift_called = 0
+            self.focus_called = 0
+
+        def winfo_exists(self) -> bool:
+            return True
+
+        def lift(self) -> None:
+            self.lift_called += 1
+
+        def focus_force(self) -> None:
+            self.focus_called += 1
+
+        def attributes(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    fake_instance = FakeSettings()
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.SettingsWindow",
+        lambda *_args, **_kwargs: fake_instance,
+    )
+
+    window = object.__new__(AppWindow)
+    window._controller = FakeController()  # type: ignore[assignment]
+    window._settings_window = None
+    window.root = type("FakeRoot", (), {"attributes": lambda *a, **k: None})()  # type: ignore[assignment]
+    window._always_on_top = type("FakeVar", (), {"get": lambda *a, **k: False})()  # type: ignore[assignment]
+    window._program_preferences = type("FakePrefs", (), {"set_always_on_top": lambda *a, **k: None})()  # type: ignore[assignment]
+    for attr in [
+        "_icon_path", "_logo_path", "_account", "_status", "_entitlement",
+        "_entitlement_days", "_entitlement_expiry", "_coupon_code",
+        "_game_connection_status", "_game_path", "_auto_launch",
+        "_proxy_connection_status", "_telemetry_speed", "_telemetry_transfer",
+        "_telemetry_session", "_telemetry_health", "_hide_to_tray",
+        "_diagnostics", "_debug_mode", "_debug_log_dir",
+    ]:
+        setattr(window, attr, None)
+
+    window._open_settings_window()
+    assert fake_instance.lift_called >= 1
+    assert fake_instance.focus_called >= 1
 
 
 def test_app_window_does_not_open_settings_while_unauthenticated(

@@ -193,9 +193,10 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.protocol("WM_DELETE_WINDOW", self.close)
 
-        # Center window over parent if possible
+        # Center window over parent if possible and establish transient ownership
         try:
             parent_root = parent.winfo_toplevel()
+            self.transient(parent_root)
             px = parent_root.winfo_rootx() + (parent_root.winfo_width() - window_width) // 2
             py = parent_root.winfo_rooty() + (parent_root.winfo_height() - window_height) // 2
             self.geometry(f"{window_width}x{window_height}+{max(0, px)}+{max(0, py)}")
@@ -206,6 +207,17 @@ class SettingsWindow(ctk.CTkToplevel):
         self.bind("<Control-f>", self._focus_search)
         style_native_title_bar(self, PALETTE)
         apply_rounded_window_shape(self, radius=20)
+        self.lift()
+        self.focus_force()
+        self.after(20, self._ensure_window_focus_and_lift)
+
+    def _ensure_window_focus_and_lift(self) -> None:
+        try:
+            if self.winfo_exists():
+                self.lift()
+                self.focus_force()
+        except (tk.TclError, RuntimeError):
+            pass
 
     def _apply_window_icon(self) -> None:
         """Keep Settings on the same Windows taskbar icon as the Launcher."""
