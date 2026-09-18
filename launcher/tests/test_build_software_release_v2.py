@@ -881,3 +881,90 @@ def test_build_unsigned_baseline_rejects_tampered_component_set():
 
     with pytest.raises(ValueError, match="(?i)(digest|component_set|mismatch|tamper)"):
         build_unsigned_baseline(allocation=allocation, component_set=tampered_set)
+
+
+def test_build_unsigned_successor_can_preserve_published_compatibility_floor():
+    from scripts.build_software_release_v2 import (
+        ArtifactIdentity,
+        CoreAuthorityBinding,
+        FinalComponentSet,
+        TrustProfileBinding,
+        build_unsigned_baseline,
+        compute_component_set_sha256,
+    )
+    from scripts.derive_version import ReleaseAllocation
+
+    launcher = ArtifactIdentity("NekoLauncher.exe", "5.1.3", "1" * 64, 101, "1" * 64, "raw-pe-v1")
+    updater = ArtifactIdentity("NekoUpdater.exe", "5.1.3", "2" * 64, 202, "2" * 64, "raw-pe-v1")
+    core = ArtifactIdentity("NekoProxyCore.zip", "5.1.3", "3" * 64, 303, "4" * 64, "zip-core-v1")
+    core_binding = CoreAuthorityBinding(
+        authority_version_tag="v5.1.2",
+        authority_release_sequence=6,
+        authority_release_id="stable-0006",
+        authority_payload_sha256="5" * 64,
+        authority_envelope_sha256="6" * 64,
+        authority_key_id="neko-update-prod-1",
+        core_source_commit="6ab94bb",
+        provenance_sha256="7" * 64,
+    )
+    trust = TrustProfileBinding(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        profile_authority_key_id="neko-update-profile-v512-1",
+        profile_authority_public_key_sha256="8" * 64,
+        profile_envelope_sha256="9" * 64,
+        keyset_sha256="a" * 64,
+    )
+    digest = compute_component_set_sha256(
+        source_commit="b" * 40,
+        launcher=launcher,
+        updater=updater,
+        core=core,
+        core_authority=core_binding,
+        trust_profile=trust,
+    )
+    component_set = FinalComponentSet(
+        source_commit="b" * 40,
+        launcher=launcher,
+        updater=updater,
+        core=core,
+        core_authority=core_binding,
+        trust_profile=trust,
+        component_set_sha256=digest,
+    )
+    allocation = ReleaseAllocation(
+        sequence=10,
+        release_id="stable-0010",
+        ledger_entry_sha256="c" * 64,
+        component_set_sha256=digest,
+        authenticated_bindings_sha256="d" * 64,
+        history_snapshot_sha256="e" * 64,
+    )
+
+    unsigned = build_unsigned_baseline(
+        allocation=allocation,
+        component_set=component_set,
+        minimum_supported_sequence=9,
+    )
+    doc = json.loads(unsigned.payload_path.read_text(encoding="utf-8"))
+    assert doc["release_sequence"] == 10
+    assert doc["minimum_supported_sequence"] == 9
+    assert doc["mandatory"] is False
+
+
+@pytest.mark.parametrize("minimum_supported_sequence", [0, 11])
+def test_build_unsigned_rejects_invalid_compatibility_floor(minimum_supported_sequence: int):
+    from scripts.build_software_release_v2 import build_unsigned_baseline
+
+    class Allocation:
+        sequence = 10
+        release_id = "stable-0010"
+
+    with pytest.raises(ValueError, match="minimum_supported_sequence"):
+        build_unsigned_baseline(
+            allocation=Allocation(),
+            component_set=None,  # validation of the explicit floor must fail first
+            minimum_supported_sequence=minimum_supported_sequence,
+        )

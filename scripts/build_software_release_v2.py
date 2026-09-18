@@ -240,8 +240,23 @@ def build_unsigned_baseline(
     *,
     allocation: Any,
     component_set: FinalComponentSet,
+    minimum_supported_sequence: int | None = None,
     output_path: Path | None = None,
 ) -> UnsignedBaselineEvidence:
+    release_sequence = allocation.sequence
+    if minimum_supported_sequence is None:
+        minimum_supported_sequence = release_sequence
+    if (
+        isinstance(minimum_supported_sequence, bool)
+        or not isinstance(minimum_supported_sequence, int)
+        or minimum_supported_sequence < 1
+        or minimum_supported_sequence > release_sequence
+    ):
+        raise ValueError(
+            "minimum_supported_sequence must be an integer in "
+            f"[1, release_sequence={release_sequence}]"
+        )
+
     expected_sha = compute_component_set_sha256(
         source_commit=component_set.source_commit,
         launcher=component_set.launcher,
@@ -285,9 +300,9 @@ def build_unsigned_baseline(
             },
         },
         "mandatory": False,
-        "minimum_supported_sequence": allocation.sequence,
+        "minimum_supported_sequence": minimum_supported_sequence,
         "release_id": allocation.release_id,
-        "release_sequence": allocation.sequence,
+        "release_sequence": release_sequence,
         "schema_version": 2,
         "updater_protocol": {"maximum": 1, "minimum": 1},
     }
