@@ -145,7 +145,7 @@ def check_installed_files(
                 expected_size = getattr(
                     comp,
                     "installed_identity_size",
-                    getattr(comp, "installed_size", getattr(comp, "artifact_size", 0)),
+                    getattr(comp, "installed_size", None),
                 )
             else:
                 expected_sha256 = getattr(
@@ -168,7 +168,7 @@ def check_installed_files(
                 status = IntegrityStatus.MISSING
 
             if actual_size is not None:
-                if actual_size != expected_size:
+                if expected_size is not None and actual_size != expected_size:
                     status = IntegrityStatus.SIZE_MISMATCH
                     actual_sha256 = None
                 else:
@@ -199,7 +199,7 @@ def check_installed_files(
         item = FileIntegrityItem(
             component=comp_name,
             path=path,
-            expected_size=expected_size,
+            expected_size=expected_size if expected_size is not None else (actual_size or 0),
             expected_sha256=expected_sha256,
             actual_size=actual_size,
             actual_sha256=actual_sha256,

@@ -447,9 +447,272 @@ def test_app_window_settings_single_instance_contract() -> None:
     assert fake_top.lift_called == 1
     assert fake_top.focus_called == 1
 
+    # Reopening iconic (minimized) window restores and lifts it
+    fake_top.deiconify_called = 0
+    fake_top.state = lambda: "iconic"  # type: ignore[assignment]
+    def fake_deiconify() -> None:
+        fake_top.deiconify_called += 1
+    fake_top.deiconify = fake_deiconify  # type: ignore[assignment]
+    window._open_settings_window()
+    assert fake_top.deiconify_called == 1
+    assert fake_top.lift_called == 2
+    assert fake_top.focus_called == 2
+
     # Closing settings window clears owner reference
     window._close_settings_window()
     assert window._settings_window is None
+
+
+def test_settings_window_sets_transient_to_parent() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(root)
+        # Transient window's master is set to root
+        assert str(window.transient()) == str(root)
+    finally:
+        try:
+            window.destroy()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_app_window_open_settings_lifts_and_focuses_new_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeController:
+        state = type("State", (), {"auth_status": AuthStatus.AUTHENTICATED})()
+
+    class FakeSettings:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.lift_called = 0
+            self.focus_called = 0
+
+        def winfo_exists(self) -> bool:
+            return True
+
+        def lift(self) -> None:
+            self.lift_called += 1
+
+        def focus_force(self) -> None:
+            self.focus_called += 1
+
+        def attributes(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    fake_instance = FakeSettings()
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.SettingsWindow",
+        lambda *_args, **_kwargs: fake_instance,
+    )
+
+    window = object.__new__(AppWindow)
+    window._controller = FakeController()  # type: ignore[assignment]
+    window._settings_window = None
+    window.root = type("FakeRoot", (), {"attributes": lambda *a, **k: None})()  # type: ignore[assignment]
+    window._always_on_top = type("FakeVar", (), {"get": lambda *a, **k: False})()  # type: ignore[assignment]
+    window._program_preferences = type("FakePrefs", (), {"set_always_on_top": lambda *a, **k: None})()  # type: ignore[assignment]
+    for attr in [
+        "_icon_path", "_logo_path", "_account", "_status", "_entitlement",
+        "_entitlement_days", "_entitlement_expiry", "_coupon_code",
+        "_game_connection_status", "_game_path", "_auto_launch",
+        "_proxy_connection_status", "_telemetry_speed", "_telemetry_transfer",
+        "_telemetry_session", "_telemetry_health", "_hide_to_tray",
+        "_diagnostics", "_debug_mode", "_debug_log_dir",
+    ]:
+        setattr(window, attr, None)
+
+    window._open_settings_window()
+    assert fake_instance.lift_called >= 1
+    assert fake_instance.focus_called >= 1
+
+
+def test_app_window_open_settings_wires_file_check_and_repair_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    class FakeController:
+        state = type("State", (), {"auth_status": AuthStatus.AUTHENTICATED})()
+
+    def fake_settings_init(*args: Any, **kwargs: Any) -> Any:
+        captured_kwargs.update(kwargs)
+        fake = type(
+            "FakeSettings",
+            (),
+            {
+                "lift": lambda self: None,
+                "focus_force": lambda self: None,
+                "attributes": lambda *a, **k: None,
+                "winfo_exists": lambda self: True,
+            },
+        )()
+        return fake
+
+    monkeypatch.setattr("neko_launcher.ui.app_window.SettingsWindow", fake_settings_init)
+
+    window = object.__new__(AppWindow)
+    window._controller = FakeController()  # type: ignore[assignment]
+    window._settings_window = None
+    window.root = type("FakeRoot", (), {"attributes": lambda *a, **k: None})()  # type: ignore[assignment]
+    window._always_on_top = type("FakeVar", (), {"get": lambda *a, **k: False})()  # type: ignore[assignment]
+    window._program_preferences = type("FakePrefs", (), {"set_always_on_top": lambda *a, **k: None})()  # type: ignore[assignment]
+    for attr in [
+        "_icon_path", "_logo_path", "_account", "_status", "_entitlement",
+        "_entitlement_days", "_entitlement_expiry", "_coupon_code",
+        "_game_connection_status", "_game_path", "_auto_launch",
+        "_proxy_connection_status", "_telemetry_speed", "_telemetry_transfer",
+        "_telemetry_session", "_telemetry_health", "_hide_to_tray",
+        "_diagnostics", "_debug_mode", "_debug_log_dir", "_update_coordinator",
+        "_update_check_service", "_update_apply_service",
+    ]:
+        setattr(window, attr, None)
+
+    window._open_settings_window()
+
+    assert "on_file_check" in captured_kwargs
+    assert callable(captured_kwargs["on_file_check"])
+    assert "on_repair" in captured_kwargs
+    assert callable(captured_kwargs["on_repair"])
+
+
+def test_app_window_handle_file_check_missing_release_returns_none(tmp_path: Path) -> None:
+    window = object.__new__(AppWindow)
+    window._update_coordinator = None
+    window._update_check_service = None
+
+    import neko_launcher.updater.root_validator as rv
+    rv_backup = getattr(rv, "get_expected_install_root", None)
+    rv.get_expected_install_root = lambda: tmp_path
+    try:
+        report = window._handle_file_check()
+        assert report is None
+    finally:
+        if rv_backup is not None:
+            rv.get_expected_install_root = rv_backup
+
+
+def test_app_window_handle_file_check_delegates_to_check_installed_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    window = object.__new__(AppWindow)
+    fake_coordinator = type(
+        "FakeCoordinator",
+        (),
+        {"_pending_store": type("FakeStore", (), {"root_dir": tmp_path})()},
+    )()
+    window._update_coordinator = fake_coordinator
+    window._update_check_service = None
+
+    dummy_report = _make_dummy_report()
+    called = {}
+
+    def fake_check(install_root: Path, release: Any) -> Any:
+        called["install_root"] = install_root
+        called["release"] = release
+        return dummy_report
+
+    monkeypatch.setattr("neko_launcher.application.file_integrity.check_installed_files", fake_check)
+
+    # Mock slot store loader to return a dummy release
+    dummy_rel = _make_dummy_report()
+    monkeypatch.setattr(
+        "neko_launcher.updater.trust_profile.load_installed_update_trust_profile",
+        lambda root: type("Prof", (), {})(),
+    )
+    class FakeReader:
+        _keys = {}
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+        def _verify_envelope_evidence(self, *args: Any, **kwargs: Any) -> Any:
+            return dummy_rel
+
+    monkeypatch.setattr(
+        "neko_launcher.infrastructure.authenticated_release_identity.AuthenticatedReleaseIdentityReader",
+        FakeReader,
+    )
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "state" / "slot-a.bin").write_bytes(b"a")
+    (tmp_path / "state" / "slot-b.bin").write_bytes(b"b")
+
+    class FakeStore:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+        def load(self) -> Any:
+            return type("Selection", (), {
+                "state": type("State", (), {
+                    "committed": type("Gen", (), {
+                        "binding": type("Binding", (), {})(),
+                        "selector": None,
+                    })(),
+                    "evidence": {},
+                })()
+            })()
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("neko_launcher.updater.slot_store.SlotStore", FakeStore)
+
+    res = window._handle_file_check()
+    assert res is dummy_report
+    assert called["install_root"] == tmp_path
+    assert called["release"] is dummy_rel
+
+
+def test_app_window_handle_file_repair_invokes_repair_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    window = object.__new__(AppWindow)
+    fake_coordinator = type(
+        "FakeCoordinator",
+        (),
+        {
+            "_pending_store": type("FakeStore", (), {"root_dir": tmp_path})(),
+            "_check_service": type("FakeCheck", (), {"_release_gateway": "fake-gateway"})(),
+            "_stage_service": "fake-stage",
+            "_admission_service": "fake-admission",
+        },
+    )()
+    window._update_coordinator = fake_coordinator
+    window._settings_window = None
+    window.root = type("FakeRoot", (), {"after": lambda *a, **k: None})()
+    window._update_executor = None
+    window._executor = None
+
+    repairable_report = _make_dummy_report(
+        launcher_status=IntegrityStatus.MISSING,
+        updater_status=IntegrityStatus.OK,
+        core_status=IntegrityStatus.OK,
+    )
+
+    calls = {}
+    def fake_repair_installed_release(**kwargs: Any) -> Any:
+        calls.update(kwargs)
+        return type("RepairResult", (), {"success": True})()
+
+    monkeypatch.setattr(
+        "neko_launcher.application.file_repair.repair_installed_release",
+        fake_repair_installed_release,
+    )
+
+    window._handle_file_repair(repairable_report)
+    assert calls["install_root"] == tmp_path
+    assert calls["exact_release_resolver"] == "fake-gateway"
+    assert calls["stage_service"] == "fake-stage"
+    assert calls["updater_session"] == "fake-admission"
+    assert calls["request"].components == ("launcher",)
+
+
 
 
 def test_app_window_does_not_open_settings_while_unauthenticated(

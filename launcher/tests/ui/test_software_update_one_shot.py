@@ -201,6 +201,8 @@ def build_window(
     window._executor = ForbiddenExecutor()  # type: ignore[assignment]
     window._last_update_result = None
     window._last_lifecycle_snapshot = None
+    window._update_notification_var = FakeVariable("")  # type: ignore[assignment]
+    window._notice = FakeVariable("")  # type: ignore[assignment]
     window._diagnostics = None
     window._last_debug_status = None
     window._tray_manager = None
@@ -1237,3 +1239,42 @@ def test_close_during_background_apply_serializes_and_prevents_duplicate_helper_
     finally:
         allow_prepare_finish.set()
         bg_executor.shutdown(wait=False, cancel_futures=True)
+
+
+def test_update_notification_label_displays_when_pending_update_exists() -> None:
+    apply_service = SimpleNamespace(prepare_pending=lambda p: None)
+    pending = make_pending(release_sequence=46, changed_components=("launcher",))
+    check_result = make_result(state=UpdateState.AVAILABLE, release_sequence=46)
+    snapshot = make_snapshot(
+        state=UpdateLifecycleState.UPDATE_PENDING,
+        check_result=check_result,
+        pending=pending,
+    )
+
+    coordinator = SimpleNamespace(
+        startup=lambda: snapshot,
+        manual_check=lambda: snapshot,
+        current=lambda: snapshot,
+    )
+
+    window, root, _ = build_window(
+        None,
+        apply_service=apply_service,
+        coordinator=coordinator,
+    )
+
+    # Initial state before update check: empty
+    assert window._update_notification_var.get() == ""
+
+    # Run check
+    window._check_software_update_startup()
+    root.run_callbacks()
+
+    # After update detected: notification label displays new version and next launch notice
+    label_text = window._update_notification_var.get()
+    assert "มีเวอร์ชันใหม่" in label_text
+    assert "จะอัปเดตอัตโนมัติเมื่อเปิดโปรแกรมครั้งต่อไป" in label_text
+    assert "2.0.0" in label_text
+
+    # Banner notice is also populated
+    assert "จะอัปเดตอัตโนมัติเมื่อเปิดโปรแกรมครั้งต่อไป" in window._notice.get()

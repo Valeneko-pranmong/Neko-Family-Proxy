@@ -72,7 +72,7 @@ SolidCompression=yes
 OutputDir={#BuildOutDir}
 OutputBaseFilename=NekoFamilyProxy-Installer
 
-SetupIconFile=..\icon_app.ico
+SetupIconFile=..\Asset\icon_app.ico
 
 Uninstallable=yes
 UninstallDisplayName={#MyAppName}
@@ -82,6 +82,24 @@ DisableProgramGroupPage=yes
 WizardStyle=modern
 CloseApplications=no
 RestartIfNeededByRun=no
+
+[InstallDelete]
+; Clean stale/conflicting updater state slots before baseline enrollment
+Type: filesandordirs; Name: "{app}\state"
+Type: files; Name: "{app}\launcher-error.log"
+
+[UninstallDelete]
+; Clean all runtime state, logs, and metadata upon uninstallation
+Type: filesandordirs; Name: "{app}\state"
+Type: filesandordirs; Name: "{app}\baseline"
+Type: filesandordirs; Name: "{app}\trust"
+Type: filesandordirs; Name: "{app}\tools"
+Type: filesandordirs; Name: "{app}\ProxyCore"
+Type: filesandordirs; Name: "{app}\logging"
+Type: files; Name: "{app}\*.log"
+Type: files; Name: "{app}\*.json"
+Type: files; Name: "{app}\*.path"
+Type: dirifempty; Name: "{app}"
 
 [Files]
 ; Approved Launcher EXE (fail-closed hash-gated by build_beta_installer.py).
@@ -406,10 +424,8 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then begin
     SuppressibleMsgBox(
-      'Note: the netfilter2 network driver is treated as a shared machine ' +
-      'prerequisite and is intentionally PRESERVED by this uninstaller.'#13#10#13#10 +
-      'Only NEKO FAMILY PROXY program files, shortcuts, and their uninstall ' +
-      'entries are removed.',
+      'หมายเหตุ: ไดรเวอร์ระบบเครือข่ายถูกคงไว้เพื่อความปลอดภัยของระบบ'#13#10#13#10 +
+      'ไฟล์โปรแกรม การตั้งค่า และข้อมูลทั้งหมดของ NEKO FAMILY PROXY จะถูกลบออกอย่างสมบูรณ์',
       mbInformation, MB_OK, IDOK);
   end;
 end;

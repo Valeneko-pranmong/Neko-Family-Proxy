@@ -17,6 +17,7 @@ from PIL import Image
 from neko_launcher import __version__
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import LauncherServiceError
+from neko_launcher.application.file_integrity import FileIntegrityReport
 from neko_launcher.application.reconnect import (
     AutomaticProxyReconnectController,
     ReconnectAttempt,
@@ -241,6 +242,7 @@ class AppWindow:
         self._server_average_window = tk.StringVar(value="เฉลี่ย 30 นาที")
         self._error = tk.StringVar(value="")
         self._notice = tk.StringVar(value="")
+        self._update_notification_var = tk.StringVar(value="")
         self._error.trace_add("write", self._update_message_visibility)
         self._notice.trace_add("write", self._update_message_visibility)
         self._login_email = tk.StringVar()
@@ -427,6 +429,14 @@ class AppWindow:
         self._update_message_visibility()
         self._toast = ToastNotification(self.root)
 
+        self._update_notification_label = ctk.CTkLabel(
+            shell,
+            textvariable=self._update_notification_var,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=PALETTE.node_engine,
+        )
+        self._update_notification_label.pack(pady=(0, 2))
+
         self._update_apply_button = ctk.CTkButton(
             shell,
             text="อัปเดตตอนนี้",
@@ -435,7 +445,6 @@ class AppWindow:
             width=112,
             height=26,
         )
-        self._update_apply_button.pack(pady=(0, 2))
 
         footer = ctk.CTkLabel(
             shell,
@@ -482,8 +491,15 @@ class AppWindow:
             self._settings_window is not None
             and self._settings_window.winfo_exists()
         ):
-            self._settings_window.lift()
-            self._settings_window.focus_force()
+            try:
+                if hasattr(self._settings_window, "state") and self._settings_window.state() in ("iconic", "withdrawn"):
+                    self._settings_window.deiconify()
+            except (tk.TclError, RuntimeError):
+                pass
+            if hasattr(self._settings_window, "lift"):
+                self._settings_window.lift()
+            if hasattr(self._settings_window, "focus_force"):
+                self._settings_window.focus_force()
             return
 
         self._settings_window = SettingsWindow(
@@ -519,15 +535,142 @@ class AppWindow:
             on_launch_game=self._launch_game,
             on_open_logs=self._open_debug_logs,
             on_show_advanced_diagnostics=self._show_debug_dialog,
+            on_file_check=self._handle_file_check,
+            on_repair=self._handle_file_repair,
         )
         self._apply_always_on_top()
+        if hasattr(self._settings_window, "lift"):
+            self._settings_window.lift()
+        if hasattr(self._settings_window, "focus_force"):
+            self._settings_window.focus_force()
+
+    def _handle_file_check(self) -> FileIntegrityReport | None:
+        """User-invoked diagnostic file check against the installed bound release."""
+        install_root = None
+        if (
+            self._update_coordinator is not None
+            and getattr(self._update_coordinator, "_pending_store", None) is not None
+        ):
+            install_root = self._update_coordinator._pending_store.root_dir
+        if install_root is None:
+            try:
+                from neko_launcher.updater.root_validator import get_expected_install_root
+
+                install_root = get_expected_install_root()
+            except Exception:
+                install_root = Path(".")
+
+        release = None
+        # 1. Try local verified slot store evidence first (offline-safe & authoritative)
+        try:
+            from neko_launcher.infrastructure.authenticated_release_identity import (
+                AuthenticatedReleaseIdentityReader,
+            )
+            from neko_launcher.updater.slot_store import SlotStore
+            from neko_launcher.updater.trust_profile import (
+                load_installed_update_trust_profile,
+            )
+
+            profile = load_installed_update_trust_profile(install_root)
+            reader = AuthenticatedReleaseIdentityReader(profile)
+            state_dir = install_root / "state"
+            slot_a = state_dir / "slot-a.bin"
+            slot_b = state_dir / "slot-b.bin"
+            if slot_a.is_file() and slot_b.is_file():
+                store = SlotStore(slot_a, slot_b, reader._keys)
+                selection = store.load()
+                store.close()
+                if selection.state and selection.state.committed:
+                    committed_gen = selection.state.committed
+                    release = reader._verify_envelope_evidence(
+                        committed_gen.binding,
+                        selection.state.evidence,
+                        "committed",
+                    )
+                    if committed_gen.selector is not None:
+                        object.__setattr__(release, "selector", committed_gen.selector)
+        except Exception:
+            release = None
+
+        # 2. Fall back to update check service / coordinator if slot store not available
+        if release is None and self._update_check_service is not None:
+            try:
+                resolved = getattr(self._update_check_service, "_startup_resolved", None)
+                if resolved is not None:
+                    release = resolved
+            except Exception:
+                pass
+
+        if release is None:
+            return None
+
+        from neko_launcher.application.file_integrity import check_installed_files
+
+        return check_installed_files(install_root=install_root, release=release)
+
+    def _handle_file_repair(self, report: FileIntegrityReport) -> None:
+        """User-invoked repair of damaged launcher or core components."""
+        if self._update_coordinator is None:
+            return
+
+        def do_repair() -> Any:
+            from neko_launcher.application.file_repair import (
+                create_repair_request_from_report,
+                repair_installed_release,
+            )
+            from neko_launcher.infrastructure.github_release_binding import (
+                verify_installed_updater,
+            )
+
+            install_root = getattr(self._update_coordinator._pending_store, "root_dir", None)
+            req = create_repair_request_from_report(report)
+            exact_resolver = getattr(self._update_coordinator._check_service, "_release_gateway", None)
+            stage_service = self._update_coordinator._stage_service
+            admission_service = getattr(self._update_coordinator, "_admission_service", None)
+
+            return repair_installed_release(
+                request=req,
+                exact_release_resolver=exact_resolver,
+                updater_verifier=verify_installed_updater,
+                stage_service=stage_service,
+                updater_session=admission_service,
+                install_root=install_root,
+            )
+
+        def on_complete(future: Future[Any]) -> None:
+            try:
+                future.result()
+            except Exception:
+                pass
+            if self._settings_window is not None and self._settings_window.winfo_exists():
+                try:
+                    self.root.after(0, self._settings_window.run_file_check)
+                except Exception:
+                    pass
+
+        executor = getattr(self, "_update_executor", getattr(self, "_executor", None))
+        if executor is not None:
+            fut = executor.submit(do_repair)
+            fut.add_done_callback(on_complete)
+        else:
+            try:
+                do_repair()
+            finally:
+                if self._settings_window is not None and self._settings_window.winfo_exists():
+                    try:
+                        self._settings_window.run_file_check()
+                    except Exception:
+                        pass
 
     def _apply_always_on_top(self) -> None:
         enabled = bool(self._always_on_top.get())
         self._program_preferences.set_always_on_top(enabled)
         self.root.attributes("-topmost", enabled)
         if self._settings_window is not None and self._settings_window.winfo_exists():
-            self._settings_window.attributes("-topmost", enabled)
+            if hasattr(self._settings_window, "attributes"):
+                self._settings_window.attributes("-topmost", enabled)
+            if hasattr(self._settings_window, "lift"):
+                self._settings_window.lift()
 
     def _apply_hide_to_tray(self) -> None:
         enabled = bool(self._hide_to_tray.get())
@@ -881,7 +1024,7 @@ class AppWindow:
                 or disposition == StartupUpdateDisposition.MANDATORY_UPDATE
             ):
                 if err is not None:
-                    err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ")
+                    err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ (กรุณาปิดแล้วเปิดโปรแกรมใหม่)")
             else:
                 if err is not None:
                     err.set("ไม่สามารถเข้าสู่ระบบได้เนื่องจากติดสถานะการอัปเดต")
@@ -1371,10 +1514,25 @@ class AppWindow:
         return self._get_verified_pending_update() is not None
 
     def _refresh_software_update_apply_action(self) -> None:
+        has_pending = self._can_apply_software_update()
+        notify_var = getattr(self, "_update_notification_var", None)
+        if notify_var is not None:
+            if has_pending:
+                version_str = ""
+                snapshot = getattr(self, "_last_lifecycle_snapshot", None)
+                if snapshot is not None and getattr(snapshot, "check_result", None) is not None:
+                    ver = getattr(snapshot.check_result, "launcher_version", "")
+                    if ver:
+                        version_str = f" {ver if ver.startswith('v') else f'v{ver}'}"
+                notify_var.set(
+                    f"มีเวอร์ชันใหม่{version_str} จะอัปเดตอัตโนมัติเมื่อเปิดโปรแกรมครั้งต่อไป"
+                )
+            else:
+                notify_var.set("")
         button = getattr(self, "_update_apply_button", None)
         if button is not None:
             button.configure(
-                state="normal" if self._can_apply_software_update() else "disabled"
+                state="normal" if has_pending else "disabled"
             )
 
     def _abort_update_apply_future(self, future: Future[Any]) -> None:
@@ -1541,7 +1699,7 @@ class AppWindow:
             elif result.pending is not None or result.disposition == StartupUpdateDisposition.MANDATORY_UPDATE:
                 notice = getattr(self, "_notice", None)
                 if notice is not None:
-                    notice.set("มีอัปเดตสำคัญ — กรุณาคลิก 'อัปเดตทันที' เพื่อดำเนินการต่อ")
+                    notice.set("มีเวอร์ชันใหม่ — จะอัปเดตอัตโนมัติเมื่อเปิดโปรแกรมครั้งต่อไป")
             self._record_debug_status(
                 "SOFTWARE_UPDATE_LIFECYCLE",
                 state=result.state.value,

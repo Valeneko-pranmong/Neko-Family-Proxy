@@ -521,3 +521,33 @@ def test_file_check_has_no_mutation_dependency(tmp_path: Path) -> None:
 
     # Verify no files were created or modified in install_root
     assert list(tmp_path.iterdir()) == []
+
+
+def test_check_installed_files_real_world_core_manifest_bundle(tmp_path: Path) -> None:
+    l_bytes = b"L" * 100
+    u_bytes = b"U" * 200
+    manifest_bytes = b'{"files": ["NekoProxyCore.exe"]}' + b" " * 172000
+
+    manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    rel = _make_release(
+        launcher_size=100,
+        launcher_sha=hashlib.sha256(l_bytes).hexdigest(),
+        updater_size=200,
+        updater_sha=hashlib.sha256(u_bytes).hexdigest(),
+        core_size=156001298,  # ZIP artifact size
+        core_sha=manifest_sha,
+    )
+    (tmp_path / "NekoLauncher.exe").write_bytes(l_bytes)
+    (tmp_path / "NekoUpdater.exe").write_bytes(u_bytes)
+    proxy_core_dir = tmp_path / "ProxyCore"
+    proxy_core_dir.mkdir(parents=True, exist_ok=True)
+    (proxy_core_dir / "core-manifest.json").write_bytes(manifest_bytes)
+
+    report = check_installed_files(install_root=tmp_path, release=rel)
+    item_map = {item.component: item for item in report.items}
+
+    assert item_map["launcher"].status == IntegrityStatus.OK
+    assert item_map["updater"].status == IntegrityStatus.OK
+    assert item_map["core"].status == IntegrityStatus.OK
+    assert report.repairable_components == ()
+    assert report.reinstall_required is False
