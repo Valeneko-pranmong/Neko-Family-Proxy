@@ -167,6 +167,8 @@ def _hosted_verify_unified_channel(
     runner: CommandExecutor,
     *,
     expected_signed: Any | None = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
 ) -> None:
     from scripts.verify_github_release_assets import verify_github_release_assets
 
@@ -209,6 +211,8 @@ def _hosted_verify_unified_channel(
                 expected_target=expected_target,
                 require_draft=True,
                 expected_signed=expected_signed,
+                expected_minimum_sequence=expected_minimum_sequence,
+                expected_mandatory=expected_mandatory,
             )
         except Exception as e:
             raise StageDraftReleaseError(
@@ -299,6 +303,8 @@ def _validate_manifest(
     expected_sequence: int | None = None,
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
 ) -> None:
     data = manifest_path.read_bytes()
     if len(data) > 65_536:
@@ -318,21 +324,38 @@ def _validate_manifest(
     if expected_allocation is not None:
         target_seq = expected_allocation.sequence
         target_rel_id = expected_allocation.release_id
-        target_min_seq = target_seq
+        default_min_seq = target_seq
     elif expected_sequence is not None:
         target_seq = expected_sequence
         target_rel_id = expected_release_id or f"stable-{target_seq:04d}"
-        target_min_seq = 1
+        default_min_seq = 1
     else:
         target_seq = release_set.release_sequence
         target_rel_id = release_set.release_id
-        target_min_seq = 1
+        default_min_seq = 1
+
+    target_min_seq = (
+        default_min_seq if expected_minimum_sequence is None else expected_minimum_sequence
+    )
+    if (
+        isinstance(target_min_seq, bool)
+        or not isinstance(target_min_seq, int)
+        or target_min_seq < 1
+        or target_min_seq > target_seq
+    ):
+        raise StageDraftReleaseError("Invalid expected minimum supported sequence")
+    if expected_mandatory is not None and type(expected_mandatory) is not bool:
+        raise StageDraftReleaseError("Invalid expected mandatory flag")
 
     if (
         release_set.channel != "stable"
         or release_set.release_sequence != target_seq
         or release_set.minimum_supported_sequence != target_min_seq
         or release_set.release_id != target_rel_id
+        or (
+            expected_mandatory is not None
+            and release_set.mandatory is not expected_mandatory
+        )
     ):
         raise StageDraftReleaseError("Stable-release authority mismatch")
     if (
@@ -391,6 +414,8 @@ def validate_staging_preconditions(
     expected_sequence: int | None = None,
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
 ) -> dict[str, Path]:
     if re.fullmatch(r"[0-9a-fA-F]{40}", target_commit) is None:
         raise StageDraftReleaseError("Target commit must be a 40-character hexadecimal SHA")
@@ -429,6 +454,8 @@ def validate_staging_preconditions(
         expected_sequence=expected_sequence,
         expected_release_id=expected_release_id,
         expected_allocation=expected_allocation,
+        expected_minimum_sequence=expected_minimum_sequence,
+        expected_mandatory=expected_mandatory,
     )
     return assets
 
@@ -492,6 +519,8 @@ def stage_draft_release(
     expected_sequence: int | None = None,
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
 ) -> StagedDraftEvidence | None:
     runner = executor or _SubprocessExecutor()
     repo_root = Path(__file__).resolve().parents[1]
@@ -504,6 +533,8 @@ def stage_draft_release(
         expected_sequence=expected_sequence,
         expected_release_id=expected_release_id,
         expected_allocation=expected_allocation,
+        expected_minimum_sequence=expected_minimum_sequence,
+        expected_mandatory=expected_mandatory,
     )
     _validate_remote_tag_binding(
         tag=tag,
@@ -798,6 +829,8 @@ def publish_unified_release(
     repo: str = CANONICAL_REPO,
     ledger_path: Path | None = None,
     history_provider: Any = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
 ) -> UnifiedPublishResult:
     try:
         from production_sequence_ledger import (
@@ -980,6 +1013,8 @@ def publish_unified_release(
                     require_draft=False,
                     require_prerelease=False,
                     expected_signed=authority_binding,
+                    expected_minimum_sequence=expected_minimum_sequence,
+                    expected_mandatory=expected_mandatory,
                 )
 
             pub_event = SequenceLedgerEvent(
@@ -1025,6 +1060,8 @@ def publish_unified_release(
             as_prerelease=False,
             executor=executor,
             expected_allocation=authority_binding,
+            expected_minimum_sequence=expected_minimum_sequence,
+            expected_mandatory=expected_mandatory,
         )
         if not evidence:
             raise StageDraftReleaseError("Draft staging returned no evidence")
@@ -1036,6 +1073,8 @@ def publish_unified_release(
             expected_target=target_commit,
             runner=executor,
             expected_signed=authority_binding,
+            expected_minimum_sequence=expected_minimum_sequence,
+            expected_mandatory=expected_mandatory,
         )
 
         _run(

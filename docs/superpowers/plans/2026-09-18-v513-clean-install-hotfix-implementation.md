@@ -27,7 +27,7 @@
 3. Construct unsigned ReleaseSet:
    - version 5.1.3 for all three components
    - channel stable
-   - mandatory false
+   - mandatory true
    - minimum_supported_sequence 9
    - updater protocol 1..1
    - exact frozen artifact identities

@@ -503,7 +503,16 @@ def _make_trust_profile_file(
     return path, raw, {auth_key_id: auth_pub}
 
 
-def test_collect_final_component_set_happy_path(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("release_version", "core_release_version", "expected_core_version"),
+    [("5.1.2", None, "5.1.2"), ("5.1.3", "5.1.3", "5.1.3")],
+)
+def test_collect_final_component_set_happy_path(
+    tmp_path: Path,
+    release_version: str,
+    core_release_version: str | None,
+    expected_core_version: str,
+):
     from scripts.build_software_release_v2 import (
         ArtifactIdentity,
         CoreAuthorityBinding,
@@ -545,24 +554,33 @@ def test_collect_final_component_set_happy_path(tmp_path: Path):
 
     prof_path, _, auth_keys = _make_trust_profile_file(tmp_path, profile_id="production")
 
+    core_version_args = (
+        {} if core_release_version is None else {"core_release_version": core_release_version}
+    )
     comp_set = collect_final_component_set(
         source_commit="a" * 40,
         launcher_path=launcher_file,
-        launcher_version="5.1.2",
+        launcher_version=release_version,
         updater_path=updater_file,
-        updater_version="5.1.2",
+        updater_version=release_version,
         core_authority=core_authority,
         trust_profile_path=prof_path,
         profile_authority_public_keys=auth_keys,
+        **core_version_args,
     )
 
     assert isinstance(comp_set, FinalComponentSet)
     assert comp_set.source_commit == "a" * 40
     assert comp_set.launcher.artifact_id == "NekoLauncher.exe"
-    assert comp_set.launcher.version == "5.1.2"
+    assert comp_set.launcher.version == release_version
     assert comp_set.launcher.sha256 == hashlib.sha256(b"launcher-bytes-456").hexdigest()
     assert comp_set.updater.artifact_id == "NekoUpdater.exe"
+    assert comp_set.updater.version == release_version
     assert comp_set.core.artifact_id == "NekoProxyCore.zip"
+    assert comp_set.core.version == expected_core_version
+    assert comp_set.core.sha256 == core_identity.sha256
+    assert comp_set.core.size == core_identity.size
+    assert comp_set.core.installed_identity_sha256 == core_identity.installed_identity_sha256
     assert comp_set.core_authority == core_binding
     assert comp_set.trust_profile.profile_id == "production"
     assert len(comp_set.component_set_sha256) == 64
@@ -947,11 +965,12 @@ def test_build_unsigned_successor_can_preserve_published_compatibility_floor():
         allocation=allocation,
         component_set=component_set,
         minimum_supported_sequence=9,
+        mandatory=True,
     )
     doc = json.loads(unsigned.payload_path.read_text(encoding="utf-8"))
     assert doc["release_sequence"] == 10
     assert doc["minimum_supported_sequence"] == 9
-    assert doc["mandatory"] is False
+    assert doc["mandatory"] is True
 
 
 @pytest.mark.parametrize("minimum_supported_sequence", [0, 11])
@@ -967,4 +986,21 @@ def test_build_unsigned_rejects_invalid_compatibility_floor(minimum_supported_se
             allocation=Allocation(),
             component_set=None,  # validation of the explicit floor must fail first
             minimum_supported_sequence=minimum_supported_sequence,
+        )
+
+
+@pytest.mark.parametrize("mandatory", [None, 0, 1, "true"])
+def test_build_unsigned_rejects_non_bool_mandatory(mandatory):
+    from scripts.build_software_release_v2 import build_unsigned_baseline
+
+    class Allocation:
+        sequence = 10
+        release_id = "stable-0010"
+
+    with pytest.raises(ValueError, match="mandatory"):
+        build_unsigned_baseline(
+            allocation=Allocation(),
+            component_set=None,  # mandatory validation must fail first
+            minimum_supported_sequence=9,
+            mandatory=mandatory,
         )

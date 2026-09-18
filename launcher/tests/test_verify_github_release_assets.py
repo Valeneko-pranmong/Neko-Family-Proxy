@@ -11,7 +11,11 @@ from typing import Any
 
 import pytest
 
-from neko_launcher.updater.canonical_json import canonical_json_dumps
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from neko_launcher.updater.canonical_json import canonical_json_dumps  # noqa: E402
 try:
     from tests.software_update_helpers import (
         TEST_KEY_ID,
@@ -29,7 +33,6 @@ except ImportError:
         valid_v2_release_document,
     )
 
-REPOSITORY_ROOT = Path(__file__).parents[2]
 SCRIPT_PATH = REPOSITORY_ROOT / "scripts" / "verify_github_release_assets.py"
 
 
@@ -64,6 +67,7 @@ def create_test_release_bundle(
     updater_version: str = "5.1.4",
     core_version: str = "5.1.4",
     channel: str = "stable",
+    mandatory: bool = False,
 ) -> dict[str, Any]:
     download_dir = tmp_path / "download"
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +103,7 @@ def create_test_release_bundle(
         core_sha=core_sha,
         core_size=len(core_bytes),
         core_installed_sha=core_sha,
+        mandatory=mandatory,
     )
 
     envelope = signed_envelope(v2_doc, key_id=key_id)
@@ -249,6 +254,63 @@ def test_verify_assets_fails_first_release_invariant(
     bundle = create_test_release_bundle(tmp_path, **bundle_kwargs)
     with pytest.raises(verifier.GitHubReleaseAssetsVerificationError, match=message):
         verify_bundle(verifier, bundle)
+
+
+def test_verify_successor_accepts_previous_published_floor_and_mandatory(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.1.3",
+        sequence=10,
+        minimum_supported_sequence=9,
+        release_id="stable-0010",
+        launcher_version="5.1.3",
+        updater_version="5.1.3",
+        core_version="5.1.3",
+        mandatory=True,
+    )
+    verify_bundle(
+        verifier,
+        bundle,
+        expected_tag="v5.1.3",
+        expected_sequence=10,
+        expected_release_id="stable-0010",
+        expected_minimum_sequence=9,
+        expected_mandatory=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("minimum_supported_sequence", "mandatory"),
+    [(10, True), (9, False)],
+)
+def test_verify_successor_rejects_wrong_floor_or_nonmandatory(
+    tmp_path: Path,
+    minimum_supported_sequence: int,
+    mandatory: bool,
+) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.1.3",
+        sequence=10,
+        minimum_supported_sequence=minimum_supported_sequence,
+        release_id="stable-0010",
+        launcher_version="5.1.3",
+        updater_version="5.1.3",
+        core_version="5.1.3",
+        mandatory=mandatory,
+    )
+    with pytest.raises(verifier.GitHubReleaseAssetsVerificationError):
+        verify_bundle(
+            verifier,
+            bundle,
+            expected_tag="v5.1.3",
+            expected_sequence=10,
+            expected_release_id="stable-0010",
+            expected_minimum_sequence=9,
+            expected_mandatory=True,
+        )
 
 
 def test_verify_assets_fails_when_envelope_key_id_mismatches_expected(tmp_path: Path) -> None:

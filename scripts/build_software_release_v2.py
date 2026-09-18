@@ -146,6 +146,7 @@ def collect_final_component_set(
     updater_version: str,
     core_authority: VerifiedCoreAuthority,
     trust_profile_path: Path,
+    core_release_version: str | None = None,
     profile_authority_public_keys: Mapping[str, bytes] | None = None,
     expected_profile_id: str = "production",
 ) -> FinalComponentSet:
@@ -186,6 +187,21 @@ def collect_final_component_set(
     if not isinstance(core_authority, VerifiedCoreAuthority):
         raise TypeError(f"core_authority must be a VerifiedCoreAuthority, got {type(core_authority)}")
 
+    core_identity = core_authority.core
+    if core_release_version is not None:
+        if not isinstance(core_release_version, str) or not core_release_version.strip():
+            raise ValueError("core_release_version must be a non-empty string")
+        if core_release_version != launcher_version or core_release_version != updater_version:
+            raise ValueError("core_release_version must match launcher_version and updater_version")
+        core_identity = ArtifactIdentity(
+            artifact_id=core_authority.core.artifact_id,
+            version=core_release_version,
+            sha256=core_authority.core.sha256,
+            size=core_authority.core.size,
+            installed_identity_sha256=core_authority.core.installed_identity_sha256,
+            artifact_format=core_authority.core.artifact_format,
+        )
+
     from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
     from neko_launcher.updater.trust_profile import verify_update_trust_profile
 
@@ -220,7 +236,7 @@ def collect_final_component_set(
         source_commit=source_commit,
         launcher=launcher_identity,
         updater=updater_identity,
-        core=core_authority.core,
+        core=core_identity,
         core_authority=core_authority.binding,
         trust_profile=trust_binding,
     )
@@ -229,7 +245,7 @@ def collect_final_component_set(
         source_commit=source_commit,
         launcher=launcher_identity,
         updater=updater_identity,
-        core=core_authority.core,
+        core=core_identity,
         core_authority=core_authority.binding,
         trust_profile=trust_binding,
         component_set_sha256=comp_set_sha,
@@ -241,6 +257,7 @@ def build_unsigned_baseline(
     allocation: Any,
     component_set: FinalComponentSet,
     minimum_supported_sequence: int | None = None,
+    mandatory: bool = False,
     output_path: Path | None = None,
 ) -> UnsignedBaselineEvidence:
     release_sequence = allocation.sequence
@@ -256,6 +273,9 @@ def build_unsigned_baseline(
             "minimum_supported_sequence must be an integer in "
             f"[1, release_sequence={release_sequence}]"
         )
+
+    if type(mandatory) is not bool:
+        raise ValueError("mandatory must be a bool")
 
     expected_sha = compute_component_set_sha256(
         source_commit=component_set.source_commit,
@@ -299,7 +319,7 @@ def build_unsigned_baseline(
                 "version": component_set.updater.version,
             },
         },
-        "mandatory": False,
+        "mandatory": mandatory,
         "minimum_supported_sequence": minimum_supported_sequence,
         "release_id": allocation.release_id,
         "release_sequence": release_sequence,
