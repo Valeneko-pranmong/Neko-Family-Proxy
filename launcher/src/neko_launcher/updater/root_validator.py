@@ -23,12 +23,12 @@ class GUID(ctypes.Structure):
     ]
 
 
-# FOLDERID_UserProgramFiles = {5CD7AEE2-2219-4A67-B85D-6C9CE15660CB}
-FOLDERID_UserProgramFiles = GUID(
-    0x5CD7AEE2,
-    0x2219,
-    0x4A67,
-    (ctypes.c_byte * 8)(0xB8, 0x5D, 0x6C, 0x9C, 0xE1, 0x56, 0x60, 0xCB),
+# FOLDERID_LocalAppData = {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}
+FOLDERID_LocalAppData = GUID(
+    0xF1B32785,
+    0x6FBA,
+    0x4FCF,
+    (ctypes.c_byte * 8)(0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91),
 )
 
 TOKEN_QUERY = 0x0008
@@ -40,10 +40,10 @@ class TOKEN_ELEVATION(ctypes.Structure):
 
 
 def get_expected_install_root() -> Path:
-    """Retrieve the expected installation root under FOLDERID_UserProgramFiles."""
+    """Retrieve the canonical per-user install root under FOLDERID_LocalAppData."""
     path_ptr = wintypes.LPWSTR()
     hr = ctypes.windll.shell32.SHGetKnownFolderPath(
-        ctypes.byref(FOLDERID_UserProgramFiles),
+        ctypes.byref(FOLDERID_LocalAppData),
         0,
         None,
         ctypes.byref(path_ptr),
@@ -53,7 +53,7 @@ def get_expected_install_root() -> Path:
         local_app_data = os.environ.get("LOCALAPPDATA")
         if not local_app_data:
             raise OSError(f"SHGetKnownFolderPath failed with HRESULT {hr:#x} and no LOCALAPPDATA fallback")
-        return Path(local_app_data) / "Programs" / "NEKO FAMILY"
+        return Path(local_app_data) / "NEKO FAMILY"
 
     base_path = path_ptr.value
     ctypes.windll.ole32.CoTaskMemFree(path_ptr)
