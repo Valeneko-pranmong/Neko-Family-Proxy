@@ -21,6 +21,10 @@ from neko_launcher.bootstrap.single_instance import (
 from neko_launcher.infrastructure.unavailable_gateway import (
     AuthorizationPendingProxyGateway,
 )
+from neko_launcher.infrastructure.installation_credential import (
+    InstallationBindingRequired,
+    create_installation_credential_provider,
+)
 from neko_launcher.updater.canonical_json import canonical_json_dumps
 from neko_launcher.updater.enrollment import validate_enrollment_trust_binding
 from neko_launcher.updater.trust_profile import load_installed_update_trust_profile
@@ -231,15 +235,26 @@ def test_main_enroll_baseline_happy_path_and_idempotence(
     marker_path = install / "state" / "enrollment.bin"
     assert marker_path.exists(), "enrollment.bin must be written"
 
+    public_credential_path = install / "state" / "installation-credential.json"
+    protected_credential_path = install / "state" / "installation-credential.bin"
+    assert public_credential_path.exists(), "installation-credential.json must be provisioned by enrollment"
+    assert protected_credential_path.exists(), "installation-credential.bin must be provisioned by enrollment"
+
+    provider = create_installation_credential_provider(install)
+    identity = provider.load_public_identity()
+    assert identity.credential_id != ""
+    assert identity.algorithm == "ed25519"
+
     verified_profile = load_installed_update_trust_profile(install)
     marker = validate_enrollment_trust_binding(install, verified_profile)
     assert marker.profile_id == "proof-v512"
     assert marker.keyset_sha256 == verified_profile.keyset_sha256
 
-    # 2. Second enrollment run is idempotent, also exits 0
+    # 2. Second enrollment run is idempotent, also exits 0 and preserves identical credential
     with pytest.raises(SystemExit) as exc_info2:
         main()
     assert exc_info2.value.code == 0
+    assert provider.load_public_identity() == identity
 
 
 @pytest.mark.parametrize(
@@ -340,3 +355,33 @@ def test_main_enroll_baseline_fails_when_fixed_paths_missing(
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code != 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI requires win32")
+def test_launcher_without_baseline_enrollment_fails_binding_and_succeeds_after_enrollment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install, auth_keys, _, _ = _make_enrollment_install(tmp_path)
+    monkeypatch.setattr("neko_launcher.updater.root_validator.get_expected_install_root", lambda: install)
+    monkeypatch.setattr("neko_launcher.updater.trust.PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+    monkeypatch.setattr("neko_launcher.updater.trust_profile.PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+    monkeypatch.setattr(
+        "neko_launcher.main.build_window",
+        lambda: (_ for _ in ()).throw(AssertionError("UI must not be built")),
+    )
+
+    # 1. Before enrollment, loading credential fails closed
+    provider = create_installation_credential_provider(install)
+    with pytest.raises(InstallationBindingRequired):
+        provider.load_public_identity()
+
+    # 2. Run enrollment
+    monkeypatch.setattr(sys, "argv", ["NekoLauncher.exe", "--enroll-baseline"])
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+
+    # 3. After enrollment, credential loads successfully
+    identity = provider.load_public_identity()
+    assert identity.credential_id != ""
+    assert identity.algorithm == "ed25519"

@@ -21,6 +21,9 @@ from neko_launcher.bootstrap.single_instance import (
 from neko_launcher.updater.early_dispatch import maybe_dispatch_updater_entry
 from neko_launcher.updater import root_validator
 from neko_launcher.updater.trust_profile import load_installed_update_trust_profile
+from neko_launcher.infrastructure.installation_credential import (
+    create_installation_credential_provider,
+)
 
 
 def dispatch_baseline_enrollment(argv: list[str]) -> int:
@@ -38,6 +41,8 @@ def dispatch_baseline_enrollment(argv: list[str]) -> int:
             trust_profile=trust_profile,
         )
         if result.enrolled:
+            credential_provider = create_installation_credential_provider(install_root)
+            credential_provider.provision()
             return 0
         return 1
     except Exception:
