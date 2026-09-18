@@ -192,6 +192,7 @@ def make_stage(
     minimum_supported_sequence: int = 1,
     release_id: str = "stable-0008",
     version: str = "5.1.4",
+    mandatory: bool = False,
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
@@ -228,7 +229,7 @@ def make_stage(
         "minimum_supported_sequence": minimum_supported_sequence,
         "release_id": release_id,
         "updater_protocol": {"minimum": 1, "maximum": 1},
-        "mandatory": False,
+        "mandatory": mandatory,
         "components": components,
     }
     envelope = signed_envelope(payload, key_id="neko-update-prod-1")
@@ -444,6 +445,75 @@ def test_authority_bound_baseline_accepts_minimum_sequence_equal_allocation(
     )
 
     assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)
+
+
+def test_successor_authority_accepts_previous_published_floor_and_mandatory(
+    tmp_path: Path,
+) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    allocation = type(
+        "Allocation",
+        (),
+        {"sequence": 10, "release_id": "stable-0010"},
+    )()
+    stage = make_stage(
+        tmp_path,
+        sequence=10,
+        minimum_supported_sequence=9,
+        release_id="stable-0010",
+        mandatory=True,
+    )
+
+    assets = module.validate_staging_preconditions(
+        staging_dir=stage,
+        tag=TAG,
+        target_commit=TARGET,
+        repo_root=SCRIPT.parents[1],
+        executor=executor,
+        expected_allocation=allocation,
+        expected_minimum_sequence=9,
+        expected_mandatory=True,
+    )
+
+    assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)
+
+
+@pytest.mark.parametrize(
+    ("minimum_supported_sequence", "mandatory"),
+    [(10, True), (9, False)],
+)
+def test_successor_authority_rejects_wrong_floor_or_nonmandatory(
+    tmp_path: Path,
+    minimum_supported_sequence: int,
+    mandatory: bool,
+) -> None:
+    module = load_module()
+    executor = FakeExecutor()
+    allocation = type(
+        "Allocation",
+        (),
+        {"sequence": 10, "release_id": "stable-0010"},
+    )()
+    stage = make_stage(
+        tmp_path,
+        sequence=10,
+        minimum_supported_sequence=minimum_supported_sequence,
+        release_id="stable-0010",
+        mandatory=mandatory,
+    )
+
+    with pytest.raises(module.StageDraftReleaseError, match="Stable-release authority mismatch"):
+        module.validate_staging_preconditions(
+            staging_dir=stage,
+            tag=TAG,
+            target_commit=TARGET,
+            repo_root=SCRIPT.parents[1],
+            executor=executor,
+            expected_allocation=allocation,
+            expected_minimum_sequence=9,
+            expected_mandatory=True,
+        )
 
 
 def test_authority_bound_baseline_rejects_legacy_minimum_sequence_one(

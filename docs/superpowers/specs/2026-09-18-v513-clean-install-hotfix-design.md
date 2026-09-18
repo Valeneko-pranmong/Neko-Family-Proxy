@@ -13,12 +13,12 @@ Do not mutate or replace published v5.1.2 / stable-0009 assets, tag, signed enve
 - next production sequence: reserve the next available sequence from the production ledger (expected `10`; never hard-code if ledger disagrees)
 - release_id: derived from reserved sequence (expected `stable-0010`)
 - channel: `stable`
-- mandatory: `false`
+- mandatory: `true`
 - minimum_supported_sequence: `9`
 - updater protocol: `1..1`
 - signing key: `neko-update-prod-1`
 
-Why minimum_supported_sequence=9: stable-0009 is the current published authenticated baseline. Existing healthy v5.1.2 installations remain supported and may update normally; older authenticated sequences remain below the compatibility floor. This hotfix fixes clean installation and does not require forcibly interrupting healthy seq9 clients.
+Why minimum_supported_sequence=9: stable-0009 is the current published authenticated baseline, so it remains the compatibility floor. The successor itself is still mandatory because the frozen single-repo 5.x policy requires every newer authenticated 5.x Release to gate normal service use until the client reconciles to the newer Release. Thus seq9 clients are compatible with the updater protocol but must apply seq10 before normal protected-service use.
 
 ## 3. Component Policy
 

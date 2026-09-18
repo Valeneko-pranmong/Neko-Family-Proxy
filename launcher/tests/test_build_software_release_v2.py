@@ -947,11 +947,12 @@ def test_build_unsigned_successor_can_preserve_published_compatibility_floor():
         allocation=allocation,
         component_set=component_set,
         minimum_supported_sequence=9,
+        mandatory=True,
     )
     doc = json.loads(unsigned.payload_path.read_text(encoding="utf-8"))
     assert doc["release_sequence"] == 10
     assert doc["minimum_supported_sequence"] == 9
-    assert doc["mandatory"] is False
+    assert doc["mandatory"] is True
 
 
 @pytest.mark.parametrize("minimum_supported_sequence", [0, 11])
@@ -967,4 +968,21 @@ def test_build_unsigned_rejects_invalid_compatibility_floor(minimum_supported_se
             allocation=Allocation(),
             component_set=None,  # validation of the explicit floor must fail first
             minimum_supported_sequence=minimum_supported_sequence,
+        )
+
+
+@pytest.mark.parametrize("mandatory", [None, 0, 1, "true"])
+def test_build_unsigned_rejects_non_bool_mandatory(mandatory):
+    from scripts.build_software_release_v2 import build_unsigned_baseline
+
+    class Allocation:
+        sequence = 10
+        release_id = "stable-0010"
+
+    with pytest.raises(ValueError, match="mandatory"):
+        build_unsigned_baseline(
+            allocation=Allocation(),
+            component_set=None,  # mandatory validation must fail first
+            minimum_supported_sequence=9,
+            mandatory=mandatory,
         )

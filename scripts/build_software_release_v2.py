@@ -241,6 +241,7 @@ def build_unsigned_baseline(
     allocation: Any,
     component_set: FinalComponentSet,
     minimum_supported_sequence: int | None = None,
+    mandatory: bool = False,
     output_path: Path | None = None,
 ) -> UnsignedBaselineEvidence:
     release_sequence = allocation.sequence
@@ -256,6 +257,9 @@ def build_unsigned_baseline(
             "minimum_supported_sequence must be an integer in "
             f"[1, release_sequence={release_sequence}]"
         )
+
+    if type(mandatory) is not bool:
+        raise ValueError("mandatory must be a bool")
 
     expected_sha = compute_component_set_sha256(
         source_commit=component_set.source_commit,
@@ -299,7 +303,7 @@ def build_unsigned_baseline(
                 "version": component_set.updater.version,
             },
         },
-        "mandatory": False,
+        "mandatory": mandatory,
         "minimum_supported_sequence": minimum_supported_sequence,
         "release_id": allocation.release_id,
         "release_sequence": release_sequence,

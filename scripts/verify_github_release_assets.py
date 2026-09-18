@@ -131,6 +131,8 @@ def verify_unified_release_assets(
     expected_allocation: Any | None = None,
     expected_binding: Any | None = None,
     expected_signed: Any | None = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
     expected_repo: str = CANONICAL_REPO,
     installer_path: Path | str | None = None,
     expected_installer_sha256: str | None = None,
@@ -324,19 +326,34 @@ def verify_unified_release_assets(
     except Exception as err:
         raise GitHubReleaseAssetsVerificationError("Envelope cryptographic verification failed") from err
 
-    expected_minimum_sequence = STABLE_RELEASE_EXPECTED_MIN_SEQUENCE
+    resolved_minimum_sequence = expected_minimum_sequence
+    if expected_mandatory is not None and type(expected_mandatory) is not bool:
+        raise GitHubReleaseAssetsVerificationError("Expected mandatory flag must be a bool")
+
     if expected_signed is not None:
         expected_sequence = expected_signed.sequence
         expected_release_id = expected_signed.release_id
         expected_key_id = expected_signed.key_id
-        expected_minimum_sequence = expected_signed.sequence
+        if resolved_minimum_sequence is None:
+            resolved_minimum_sequence = expected_signed.sequence
     elif expected_allocation is not None:
         expected_sequence = expected_allocation.sequence
         expected_release_id = expected_allocation.release_id
-        expected_minimum_sequence = expected_allocation.sequence
+        if resolved_minimum_sequence is None:
+            resolved_minimum_sequence = expected_allocation.sequence
     elif expected_binding is not None:
         expected_sequence = expected_binding.sequence
         expected_release_id = expected_binding.release_id
+
+    if resolved_minimum_sequence is None:
+        resolved_minimum_sequence = STABLE_RELEASE_EXPECTED_MIN_SEQUENCE
+    if (
+        isinstance(resolved_minimum_sequence, bool)
+        or not isinstance(resolved_minimum_sequence, int)
+        or resolved_minimum_sequence < 1
+        or (expected_sequence is not None and resolved_minimum_sequence > expected_sequence)
+    ):
+        raise GitHubReleaseAssetsVerificationError("Expected minimum supported sequence is invalid")
 
     if enforce_first_release:
         if expected_sequence is None:
@@ -350,10 +367,15 @@ def verify_unified_release_assets(
             (release_set_v2.channel == STABLE_RELEASE_EXPECTED_CHANNEL, "channel"),
             (release_set_v2.release_sequence == expected_sequence, "release_sequence"),
             (
-                release_set_v2.minimum_supported_sequence == expected_minimum_sequence,
+                release_set_v2.minimum_supported_sequence == resolved_minimum_sequence,
                 "minimum_supported_sequence",
             ),
             (release_set_v2.release_id == expected_release_id, "release_id"),
+            (
+                expected_mandatory is None
+                or release_set_v2.mandatory is expected_mandatory,
+                "mandatory",
+            ),
             (
                 release_set_v2.updater_protocol.minimum == STABLE_RELEASE_EXPECTED_PROTOCOL_MIN
                 and release_set_v2.updater_protocol.maximum == STABLE_RELEASE_EXPECTED_PROTOCOL_MAX,
@@ -461,6 +483,8 @@ def verify_github_release_assets(
     expected_allocation: Any | None = None,
     expected_binding: Any | None = None,
     expected_signed: Any | None = None,
+    expected_minimum_sequence: int | None = None,
+    expected_mandatory: bool | None = None,
     expected_repo: str = CANONICAL_REPO,
     installer_path: Path | str | None = None,
     expected_installer_sha256: str | None = None,
@@ -482,6 +506,8 @@ def verify_github_release_assets(
         expected_allocation=expected_allocation,
         expected_binding=expected_binding,
         expected_signed=expected_signed,
+        expected_minimum_sequence=expected_minimum_sequence,
+        expected_mandatory=expected_mandatory,
         expected_repo=expected_repo,
         installer_path=installer_path,
         expected_installer_sha256=expected_installer_sha256,
