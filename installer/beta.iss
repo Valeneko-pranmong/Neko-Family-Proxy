@@ -177,7 +177,10 @@ end;
 
 function PSExePath(): String;
 begin
-  Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if IsWin64 then
+    Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe')
+  else
+    Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 end;
 
 function RunPSFile(const PSFile, ExtraArgs: String; var ExitCode: Integer): Boolean;

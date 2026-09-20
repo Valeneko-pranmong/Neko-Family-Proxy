@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Stop'
 function Out-Result([string]$Message) {
     Write-Output $Message
     if ($ResultFile) {
-        try { Set-Content -LiteralPath $ResultFile -Value $Message -Encoding UTF8 } catch {}
+        try { Set-Content -LiteralPath $ResultFile -Value $Message -Encoding Ascii } catch {}
     }
 }
 
