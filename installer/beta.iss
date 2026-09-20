@@ -141,6 +141,9 @@ Source: "scripts\verify-core-install.ps1"; \
 Source: "scripts\ensure-netfilter2.ps1"; \
     DestDir: "{app}\tools\installer"; \
     Flags: ignoreversion
+Source: "scripts\ensure-netfilter2.cmd"; \
+    DestDir: "{app}\tools\installer"; \
+    Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\NekoLauncher.exe"
@@ -177,10 +180,7 @@ end;
 
 function PSExePath(): String;
 begin
-  if IsWin64 then
-    Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe')
-  else
-    Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 end;
 
 function RunPSFile(const PSFile, ExtraArgs: String; var ExitCode: Integer): Boolean;
@@ -292,9 +292,9 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   AppDir, CoreDir, BinDir, ToolsDir, LauncherExe: String;
-  VerifyScript, DriverScript, ResFile: String;
+  VerifyScript, DriverScript, DriverCmd, ResFile: String;
   Bootstrapper: String;
-  RC: Integer;
+  RC, I: Integer;
   Ok: Boolean;
   Msg: String;
 begin
@@ -307,6 +307,7 @@ begin
   ToolsDir := AppDir + '\tools\installer';
   VerifyScript := ToolsDir + '\verify-core-install.ps1';
   DriverScript := ToolsDir + '\ensure-netfilter2.ps1';
+  DriverCmd := ToolsDir + '\ensure-netfilter2.cmd';
 
   { ---- 1. External Core manifest verification (unelevated) ---- }
   if not FileExists(VerifyScript) then begin
@@ -369,12 +370,17 @@ begin
             ResFile := ToolsDir + '\nf-result.txt';
             DeleteFile(ResFile);
             Log('requesting elevation for netfilter2 registration');
-            Ok := ShellExec('runas', PSExePath(),
-              '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' +
-              DriverScript + '" -CoreBinDir "' + BinDir + '" -Apply -ResultFile "' +
-              ResFile + '"',
-              ExtractFileDir(DriverScript), HideCmd, ewWaitUntilTerminated, RC);
+            Ok := ShellExec('runas', ExpandConstant('{cmd}'),
+              '/c ""' + DriverCmd + '" -CoreBinDir "' + BinDir + '" -Apply -ResultFile "' +
+              ResFile + '""',
+              ExtractFileDir(DriverCmd), HideCmd, ewWaitUntilTerminated, RC);
             Log('elevated apply: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
+            { Wait up to 15 seconds for ResFile to appear from elevated process }
+            for I := 1 to 30 do begin
+              if FileExists(ResFile) then
+                Break;
+              Sleep(500);
+            end;
             { Authoritative outcome = fresh unelevated re-check of real state. }
             Ok := RunPSFile(DriverScript, ' -CoreBinDir "' + BinDir + '" -CheckOnly', RC);
             g_DriverOK := Ok and (RC = 0);

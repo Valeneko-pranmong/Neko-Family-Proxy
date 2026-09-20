@@ -375,7 +375,7 @@ def build_candidate(args: argparse.Namespace) -> int:
 
     # ---- gate 6: installer helper scripts present ---------------------------
     scripts_dir = os.path.join(REPO, "installer", "scripts")
-    for s in ("verify-core-install.ps1", "ensure-netfilter2.ps1"):
+    for s in ("verify-core-install.ps1", "ensure-netfilter2.ps1", "ensure-netfilter2.cmd"):
         if not os.path.isfile(os.path.join(scripts_dir, s)):
             fail(f"missing helper script {s}")
     if not os.path.isfile(ISS_PATH):
