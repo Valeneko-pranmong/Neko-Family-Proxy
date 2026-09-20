@@ -325,6 +325,17 @@ def test_static_beta_iss_inspection() -> None:
     assert "หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล" in iss_text, "must instruct contacting operator on failure"
 
 
+def test_beta_iss_64bit_powershell_redirection_guard() -> None:
+    iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    assert "{sysnative}" in iss_text, "beta.iss must use {sysnative} on 64-bit Windows to avoid 32-bit WOW64 redirection"
+    assert "IsWin64" in iss_text, "beta.iss must check IsWin64 for powershell path"
+
+
+def test_ensure_netfilter2_clean_encoding_no_bom() -> None:
+    ps1_text = (REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.ps1").read_text(encoding="utf-8")
+    assert "-Encoding UTF8" not in ps1_text, "ensure-netfilter2.ps1 must not write UTF-8 BOM to ResultFile"
+
+
 def test_beta_iss_baseline_enrollment_contract() -> None:
     iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
     assert r'{#PayloadDir}\trust\update-profile-v1.json' in iss_text and r'{app}\trust' in iss_text, (

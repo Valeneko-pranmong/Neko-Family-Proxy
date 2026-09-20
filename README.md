@@ -23,7 +23,7 @@
 
 ## Overview
 
-**Neko Family Proxy** (`v5.1.3` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
+**Neko Family Proxy** (`v5.1.4` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
 
 ### Key Capabilities
 
@@ -117,12 +117,12 @@ Starting in `v5.0.0`, the proxy ecosystem utilizes **Runtime Config v1**:
 
 ### Packaged Stable Release (Recommended)
 
-1. Download `NekoFamilyProxy-Installer.exe` from the [v5.1.3 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases).
+1. Download `NekoFamilyProxy-Installer.exe` from the [v5.1.4 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases).
 2. Run the Installer and complete installation.
 3. Open Neko Family Proxy and sign in with your account credentials.
 4. Start PSO2 through the normal launcher flow.
 
-> **Update Note (v5.1.3 stable):** The deferred update lifecycle (background staging, durable `UPDATE_PENDING` storage, non-disruptive session guard, and safe offline apply) and Two-Repo Role Inversion are now fully integrated and active in production. Client updates process automatically and non-disruptively in the background.
+> **Update Note (v5.1.4 stable):** The deferred update lifecycle (background staging, durable `UPDATE_PENDING` storage, non-disruptive session guard, and safe offline apply) and Two-Repo Role Inversion are now fully integrated and active in production. Client updates process automatically and non-disruptively in the background.
 
 *Note: Users do not need to enter or manage proxy credentials. Configuration and routing are handled automatically during session authorization.*
 
@@ -181,7 +181,10 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
 
 ## Roadmap
 
-- **v5.1.3 (Current Stable Release)**:
+- **v5.1.4 (Current Stable Release)**:
+  - 64-bit WOW64 redirection guard in elevated driver installer (`PSExePath`) to resolve `0x8007000B` on clean machine installs.
+  - Non-BOM ASCII logging in `ensure-netfilter2.ps1` to prevent localized Thai character corruption in installer dialogs.
+- **v5.1.3 (Maintenance Release)**:
   - Integrated file integrity verification and automated repair.
   - Refined update notifications and settings window focus management.
   - Clean uninstaller and state cleanup upon reinstallation.
