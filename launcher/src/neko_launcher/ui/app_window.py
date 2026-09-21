@@ -286,11 +286,18 @@ class AppWindow:
 
         self._programmatic_withdraw = False
         self._active_view: str | None = None
+        self._startup_splash: ctk.CTkToplevel | None = None
+        self._startup_splash_status_var: tk.StringVar | None = None
+        self._startup_splash_sub_var: tk.StringVar | None = None
+        self._startup_splash_pbar: Any = None
+        self._startup_check_in_progress = True
 
         if self._telemetry_client is not None:
             self._telemetry_client.start()
 
         self._build_layout(logo_path)
+        self.root.after(50, self._show_startup_splash_window)
+        self.root.after(6_000, self._dismiss_startup_splash)
         self.root.after(250, lambda: center_window(self.root, self._window_size))
         self.root.after(350, self._show_initial_window)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -312,6 +319,8 @@ class AppWindow:
         """Ensure a borderless window is visible after Windows maps it."""
         if not self.root.winfo_exists() or self._closing:
             return
+        if getattr(self, "_startup_check_in_progress", False):
+            return
         style_native_title_bar(self.root, PALETTE)
         self.root.deiconify()
         self.root.update_idletasks()
@@ -324,6 +333,185 @@ class AppWindow:
     def _release_initial_topmost(self) -> None:
         if self.root.winfo_exists() and not self._closing:
             self.root.attributes("-topmost", self._always_on_top.get())
+
+    def _dismiss_startup_splash(self) -> None:
+        self._startup_check_in_progress = False
+        splash = getattr(self, "_startup_splash", None)
+        if splash is not None:
+            self._startup_splash = None
+            try:
+                if splash.winfo_exists():
+                    splash.destroy()
+            except Exception:
+                pass
+        self._show_initial_window()
+
+    def _show_startup_splash_window(self) -> None:
+        if self._closing or not getattr(self, "_startup_check_in_progress", False):
+            return
+        if (
+            getattr(self, "_update_coordinator", None) is None
+            and getattr(self, "_update_check_service", None) is None
+        ):
+            self._dismiss_startup_splash()
+            return
+        try:
+            if not hasattr(self.root, "winfo_exists") or not self.root.winfo_exists():
+                self._dismiss_startup_splash()
+                return
+
+            dialog = ctk.CTkToplevel(self.root)
+            dialog.title("Neko Family Proxy")
+            dialog_width = 380
+            dialog_height = 180
+            dialog.geometry(f"{dialog_width}x{dialog_height}")
+            dialog.resizable(False, False)
+            dialog.overrideredirect(True)
+            dialog.configure(fg_color=PALETTE.background)
+            if self._icon_path and self._icon_path.is_file():
+                try:
+                    dialog.iconbitmap(self._icon_path)
+                except Exception:
+                    pass
+
+            panel = ctk.CTkFrame(
+                dialog,
+                fg_color=PALETTE.card,
+                border_color=PALETTE.border,
+                border_width=1,
+                corner_radius=16,
+            )
+            panel.pack(fill="both", expand=True, padx=8, pady=8)
+
+            header_frame = ctk.CTkFrame(panel, fg_color="transparent")
+            header_frame.pack(fill="x", padx=16, pady=(16, 4))
+
+            ctk.CTkLabel(
+                header_frame,
+                text="NEKO FAMILY PROXY",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+                text_color=PALETTE.primary_dark,
+            ).pack(side="left")
+
+            ctk.CTkLabel(
+                header_frame,
+                text=f"v{__version__}",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                text_color=PALETTE.text_muted,
+            ).pack(side="right")
+
+            status_var = tk.StringVar(value="กำลังตรวจสอบอัปเดต...")
+            ctk.CTkLabel(
+                panel,
+                textvariable=status_var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                text_color=PALETTE.text,
+            ).pack(anchor="w", padx=16, pady=(10, 8))
+
+            pbar = ctk.CTkProgressBar(
+                panel,
+                mode="indeterminate",
+                width=330,
+                progress_color=PALETTE.primary,
+            )
+            pbar.pack(padx=16, pady=(0, 10))
+            pbar.start()
+
+            sub_var = tk.StringVar(value="กรุณารอสักครู่...")
+            ctk.CTkLabel(
+                panel,
+                textvariable=sub_var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+                text_color=PALETTE.text_muted,
+            ).pack(anchor="w", padx=16, pady=(0, 8))
+
+            dialog.update_idletasks()
+            sw = dialog.winfo_screenwidth()
+            sh = dialog.winfo_screenheight()
+            px = max(0, (sw - dialog_width) // 2)
+            py = max(0, (sh - dialog_height) // 2)
+            dialog.geometry(f"{dialog_width}x{dialog_height}+{px}+{py}")
+            dialog.attributes("-topmost", True)
+            dialog.lift()
+
+            self._startup_splash = dialog
+            self._startup_splash_status_var = status_var
+            self._startup_splash_sub_var = sub_var
+            self._startup_splash_pbar = pbar
+
+            self.root.after(100, self._check_software_update_startup)
+        except Exception:
+            self._dismiss_startup_splash()
+
+    def _on_startup_check_completed(self, result: Any) -> None:
+        if not getattr(self, "_startup_check_in_progress", False):
+            return
+
+        has_update = False
+        if isinstance(result, UpdateLifecycleSnapshot):
+            has_update = (
+                result.pending is not None
+                or result.disposition in (
+                    StartupUpdateDisposition.UPDATE_AVAILABLE,
+                    StartupUpdateDisposition.MANDATORY_UPDATE,
+                )
+            )
+        elif isinstance(result, UpdateCheckResult):
+            has_update = result.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
+
+        status_var = getattr(self, "_startup_splash_status_var", None)
+        sub_var = getattr(self, "_startup_splash_sub_var", None)
+        pbar = getattr(self, "_startup_splash_pbar", None)
+
+        if has_update:
+            version_str = ""
+            if isinstance(result, UpdateLifecycleSnapshot) and result.check_result is not None:
+                ver = getattr(result.check_result, "launcher_version", "")
+                if ver:
+                    version_str = f" (v{ver.lstrip('v')})"
+            elif isinstance(result, UpdateCheckResult):
+                ver = getattr(result, "launcher_version", "")
+                if ver:
+                    version_str = f" (v{ver.lstrip('v')})"
+
+            if status_var is not None:
+                status_var.set(f"พบเวอร์ชันใหม่{version_str}!")
+            if sub_var is not None:
+                sub_var.set("กำลังเตรียมการอัปเดตอัตโนมัติ...")
+
+            if self._can_apply_software_update():
+                def apply_now() -> None:
+                    splash = getattr(self, "_startup_splash", None)
+                    if splash is not None:
+                        try:
+                            if splash.winfo_exists():
+                                splash.destroy()
+                        except Exception:
+                            pass
+                        self._startup_splash = None
+                    self._startup_check_in_progress = False
+                    self._apply_software_update()
+
+                self.root.after(600, apply_now)
+                return
+            else:
+                self.root.after(800, self._dismiss_startup_splash)
+                return
+
+        # Up to date or no update
+        if status_var is not None:
+            status_var.set("เป็นเวอร์ชันล่าสุดแล้ว (OK)")
+        if sub_var is not None:
+            sub_var.set("กำลังเข้าสู่โปรแกรม...")
+        if pbar is not None:
+            try:
+                pbar.stop()
+                pbar.configure(mode="determinate")
+                pbar.set(1.0)
+            except Exception:
+                pass
+
+        self.root.after(600, self._dismiss_startup_splash)
 
     # ------------------------------------------------------------------
     # Layout
@@ -1852,6 +2040,8 @@ class AppWindow:
                 diagnostic_code=diagnostic_code,
             )
         self._refresh_software_update_apply_action()
+        if getattr(self, "_startup_check_in_progress", False):
+            self._on_startup_check_completed(result)
 
     def _submit_software_update_check(
         self,
@@ -1861,6 +2051,8 @@ class AppWindow:
             future = self._update_executor.submit(work)
         except RuntimeError:
             self._record_software_update_internal_failure()
+            if getattr(self, "_startup_check_in_progress", False):
+                self._dismiss_startup_splash()
             return
 
         def finish() -> None:
@@ -1874,6 +2066,8 @@ class AppWindow:
                 result = future.result()
             except Exception:
                 self._record_software_update_internal_failure()
+                if getattr(self, "_startup_check_in_progress", False):
+                    self._dismiss_startup_splash()
                 return
 
             self._handle_software_update_result(result)
@@ -2552,6 +2746,13 @@ class AppWindow:
                 update_apply_future.add_done_callback(self._abort_update_apply_future)
         self._cancel_automatic_reconnect(reset_attempts=True)
         self._clear_recovery_sensitive_fields()
+        if getattr(self, "_startup_splash", None) is not None:
+            try:
+                if self._startup_splash.winfo_exists():
+                    self._startup_splash.destroy()
+            except Exception:
+                pass
+            self._startup_splash = None
         if getattr(self, "_settings_window", None) is not None:
             try:
                 if self._settings_window.winfo_exists():
