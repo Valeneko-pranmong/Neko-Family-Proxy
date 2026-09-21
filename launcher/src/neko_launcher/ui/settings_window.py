@@ -173,6 +173,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._file_check_launcher_var = tk.StringVar(value="NekoLauncher.exe: ยังไม่ได้ตรวจสอบ")
         self._file_check_updater_var = tk.StringVar(value="NekoUpdater.exe: ยังไม่ได้ตรวจสอบ")
         self._file_check_core_var = tk.StringVar(value="Core: ยังไม่ได้ตรวจสอบ")
+        self._file_check_version_var = tk.StringVar(value="เวอร์ชัน: ยังไม่ได้ตรวจสอบ")
         self._file_check_notice_var = tk.StringVar(value="")
 
         self.title("NEKO FAMILY — Settings")
@@ -895,6 +896,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self._file_check_launcher_var,
             self._file_check_updater_var,
             self._file_check_core_var,
+            self._file_check_version_var,
         ):
             ctk.CTkLabel(
                 c_integrity,
@@ -964,6 +966,24 @@ class SettingsWindow(ctk.CTkToplevel):
                 f"Core: {status_text_map.get(st, st.value)}"
             )
 
+        ver_str = report.version or __version__
+        if report.is_latest is True:
+            self._file_check_version_var.set(
+                f"เวอร์ชัน: v{ver_str} (เป็นเวอร์ชันล่าสุดแล้ว / OK)"
+            )
+        elif report.is_latest is False and report.latest_version:
+            self._file_check_version_var.set(
+                f"เวอร์ชัน: v{ver_str} (พบเวอร์ชันใหม่ v{report.latest_version} พร้อมอัปเดต)"
+            )
+        elif report.is_latest is False:
+            self._file_check_version_var.set(
+                f"เวอร์ชัน: v{ver_str} (มีเวอร์ชันใหม่พร้อมอัปเดต)"
+            )
+        else:
+            self._file_check_version_var.set(
+                f"เวอร์ชัน: v{ver_str} (OK)"
+            )
+
         if report.reinstall_required:
             self._file_check_notice_var.set(
                 "ตรวจพบข้อผิดพลาดในระบบอัปเดต จำเป็นต้องติดตั้งใหม่ (REINSTALL REQUIRED)"
@@ -976,7 +996,10 @@ class SettingsWindow(ctk.CTkToplevel):
             )
             self._repair_button.pack(side="left")
         else:
-            self._file_check_notice_var.set("ไฟล์ทั้งหมดสมบูรณ์ถูกต้อง (OK)")
+            if report.is_latest is True or report.is_latest is None:
+                self._file_check_notice_var.set("ไฟล์ทั้งหมดสมบูรณ์ถูกต้อง และเป็นเวอร์ชันล่าสุดแล้ว (OK)")
+            else:
+                self._file_check_notice_var.set("ไฟล์ทั้งหมดสมบูรณ์ แต่มีเวอร์ชันใหม่พร้อมอัปเดต")
             self._repair_button.pack_forget()
 
     def _invoke_repair(self) -> None:

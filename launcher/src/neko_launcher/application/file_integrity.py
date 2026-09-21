@@ -36,6 +36,9 @@ class FileIntegrityReport:
     items: tuple[FileIntegrityItem, ...]
     repairable_components: tuple[Literal["launcher", "core"], ...]
     reinstall_required: bool
+    version: str | None = None
+    is_latest: bool | None = None
+    latest_version: str | None = None
 
 
 def _compute_sha256_stream(file_path: Path, chunk_size: int = 65536) -> tuple[int, str]:
@@ -226,4 +229,5 @@ def check_installed_files(
         items=tuple(items),
         repairable_components=repairable_components,
         reinstall_required=reinstall_required,
+        version=getattr(selector, "version", None),
     )
