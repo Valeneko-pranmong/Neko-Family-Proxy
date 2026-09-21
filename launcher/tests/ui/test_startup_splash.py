@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from unittest.mock import Mock
-import pytest
 
 from neko_launcher.application.software_update_models import (
     UpdateCheckResult,
@@ -46,7 +45,6 @@ def test_startup_splash_guards_initial_window_until_dismissed() -> None:
     window = object.__new__(AppWindow)
     window._closing = False
     window._startup_check_in_progress = True
-    initial_window_shown = False
 
     window._show_initial_window = lambda: setattr(window, "_initial_window_shown", True)
 
