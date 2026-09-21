@@ -7,6 +7,7 @@ import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 import secrets
+import shutil
 from typing import Any
 
 from neko_launcher.application.software_update_models import (
@@ -394,6 +395,24 @@ def enroll_baseline_from_signed_envelope(
                 )
         finally:
             store.close()
+
+        # Populate initial releases generation folder so updater can find baseline generation
+        try:
+            old_id = f"g-{state_binding.release_sequence:020d}-{state_binding.payload_sha256}"
+            gen_dir = install_root / "releases" / old_id
+            gen_dir.mkdir(parents=True, exist_ok=True)
+            gen_launcher = gen_dir / "NekoLauncher.exe"
+            if launcher_file.is_file() and not gen_launcher.is_file():
+                shutil.copy2(launcher_file, gen_launcher)
+            gen_core = gen_dir / "ProxyCore"
+            root_core = install_root / "ProxyCore"
+            if root_core.is_dir() and not gen_core.is_dir():
+                shutil.copytree(root_core, gen_core, dirs_exist_ok=True)
+            env_target = gen_dir / "release-envelope.json"
+            if not env_target.is_file():
+                env_target.write_bytes(envelope_canonical_bytes)
+        except Exception:
+            pass
 
         return BaselineEnrollmentResult(
             enrolled=True,

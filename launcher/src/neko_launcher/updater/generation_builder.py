@@ -667,6 +667,8 @@ def build_generation(
 
         old_id = f"g-{old.binding.release_sequence:020d}-{old.binding.payload_sha256}"
         old_dir = root / "releases" / old_id
+        if not old_dir.exists():
+            old_dir = root
         old_launcher = old_dir / "NekoLauncher.exe"
         old_core = old_dir / "ProxyCore"
 

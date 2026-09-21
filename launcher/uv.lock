@@ -554,7 +554,7 @@ wheels = [
 
 [[package]]
 name = "neko-family-launcher"
-version = "5.1.5"
+version = "5.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

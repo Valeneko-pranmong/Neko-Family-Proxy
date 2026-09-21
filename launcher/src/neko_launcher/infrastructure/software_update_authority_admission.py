@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,22 +50,19 @@ class SoftwareUpdateAuthorityAdmissionService:
         exe_path = str(self.root_dir / "NekoUpdater.exe")
         cmd = [exe_path, "--session"]
 
+        spawn_kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.DEVNULL,
+            "shell": False,
+        }
+        if sys.platform == "win32":
+            spawn_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         if self.spawner:
-            process = self.spawner(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                shell=False,
-            )
+            process = self.spawner(cmd, **spawn_kwargs)
         else:
-            process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                shell=False,
-            )
+            process = subprocess.Popen(cmd, **spawn_kwargs)
 
         if self.channel_factory:
             channel = self.channel_factory()

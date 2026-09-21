@@ -1373,6 +1373,7 @@ def test_file_check_renders_per_file_results() -> None:
         assert hasattr(window, "_file_check_launcher_var")
         assert hasattr(window, "_file_check_updater_var")
         assert hasattr(window, "_file_check_core_var")
+        assert hasattr(window, "_file_check_version_var")
 
         assert "OK" in window._file_check_launcher_var.get()
         assert "OK" in window._file_check_updater_var.get()
@@ -1380,6 +1381,7 @@ def test_file_check_renders_per_file_results() -> None:
             "HASH_MISMATCH" in window._file_check_core_var.get()
             or "ไม่ตรง" in window._file_check_core_var.get()
         )
+        assert "เวอร์ชัน" in window._file_check_version_var.get()
     finally:
         try:
             root.destroy()

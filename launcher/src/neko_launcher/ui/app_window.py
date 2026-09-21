@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 import tkinter as tk
 from collections.abc import Callable
@@ -1552,6 +1554,63 @@ class AppWindow:
             except Exception:
                 pass
 
+    def _show_update_progress_dialog(self) -> tuple[Any, Any, Any] | None:
+        try:
+            if not hasattr(self.root, "winfo_exists") or not self.root.winfo_exists():
+                return None
+            dialog = ctk.CTkToplevel(self.root)
+            dialog.title("อัปเดตระบบ")
+            dialog_width = 380
+            dialog_height = 160
+            dialog.geometry(f"{dialog_width}x{dialog_height}")
+            dialog.resizable(False, False)
+            dialog.overrideredirect(True)
+            dialog.configure(fg_color=PALETTE.background)
+            if self._icon_path and self._icon_path.is_file():
+                try:
+                    dialog.iconbitmap(self._icon_path)
+                except Exception:
+                    pass
+            dialog.transient(self.root)
+
+            panel = ctk.CTkFrame(
+                dialog,
+                fg_color=PALETTE.card,
+                border_color=PALETTE.border,
+                border_width=1,
+                corner_radius=16,
+            )
+            panel.pack(fill="both", expand=True, padx=10, pady=10)
+
+            ctk.CTkLabel(
+                panel,
+                text="กำลังอัปเดต Neko Family Proxy",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
+                text_color=PALETTE.primary_dark,
+            ).pack(anchor="w", padx=16, pady=(14, 4))
+
+            status_var = tk.StringVar(value="กำลังเตรียมการติดตั้งและตรวจสอบความปลอดภัย...")
+            ctk.CTkLabel(
+                panel,
+                textvariable=status_var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                text_color=PALETTE.text_muted,
+            ).pack(anchor="w", padx=16, pady=(0, 10))
+
+            pbar = ctk.CTkProgressBar(panel, mode="indeterminate", width=320)
+            pbar.pack(padx=16, pady=(0, 10))
+            pbar.start()
+
+            dialog.update_idletasks()
+            px = self.root.winfo_rootx() + (self.root.winfo_width() - dialog_width) // 2
+            py = self.root.winfo_rooty() + (self.root.winfo_height() - dialog_height) // 2
+            dialog.geometry(f"{dialog_width}x{dialog_height}+{max(0, px)}+{max(0, py)}")
+            dialog.grab_set()
+
+            return dialog, status_var, pbar
+        except Exception:
+            return None
+
     def _apply_software_update(self) -> None:
         if not self._can_apply_software_update():
             return
@@ -1577,6 +1636,7 @@ class AppWindow:
 
         self._update_apply_pending = True
         self._refresh_software_update_apply_action()
+        update_dialog_info = self._show_update_progress_dialog()
 
         service = self._update_apply_service
 
@@ -1618,15 +1678,26 @@ class AppWindow:
 
         def finish() -> None:
             if not future.done():
-                if self.root.winfo_exists() and not self._closing:
-                    self.root.after(100, finish)
+                if hasattr(self.root, "winfo_exists") and self.root.winfo_exists() and not self._closing:
+                    if hasattr(self.root, "after"):
+                        self.root.after(100, finish)
                 return
             if self._closing:
+                if update_dialog_info:
+                    try:
+                        update_dialog_info[0].destroy()
+                    except Exception:
+                        pass
                 self._abort_update_apply_future(future)
                 return
             try:
                 prepared = future.result()
             except Exception as exc:
+                if update_dialog_info:
+                    try:
+                        update_dialog_info[0].destroy()
+                    except Exception:
+                        pass
                 if getattr(self, "_update_apply_future", None) is future:
                     self._update_apply_future = None
                 self._update_apply_pending = False
@@ -1640,14 +1711,50 @@ class AppWindow:
                 self._refresh_software_update_apply_action()
                 return
 
-            self._update_apply_future = None
-            self._update_apply_pending = False
-            self._applied_update_prepared = True
-            self._perform_close()
-            if prepared is not None and hasattr(prepared, "release"):
-                prepared.release()
+            if update_dialog_info:
+                try:
+                    dlg, s_var, pbar = update_dialog_info
+                    s_var.set("อัปเดตเสร็จสมบูรณ์! กำลังเริ่มโปรแกรมใหม่...")
+                    pbar.stop()
+                    pbar.configure(mode="determinate")
+                    pbar.set(1.0)
+                    dlg.update()
+                except Exception:
+                    pass
 
-        self.root.after(100, finish)
+            def do_relaunch_and_close() -> None:
+                if update_dialog_info:
+                    try:
+                        update_dialog_info[0].destroy()
+                    except Exception:
+                        pass
+                self._update_apply_future = None
+                self._update_apply_pending = False
+                self._applied_update_prepared = True
+
+                if sys.platform == "win32" and getattr(sys, "frozen", False):
+                    launcher_exe = str(Path(sys.executable).resolve())
+                    if launcher_exe.lower().endswith(".exe"):
+                        relaunch_cmd = f'cmd.exe /c timeout /t 2 /nobreak >nul & start "" "{launcher_exe}"'
+                        cflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                        try:
+                            subprocess.Popen(relaunch_cmd, shell=False, creationflags=cflags)
+                        except Exception:
+                            pass
+
+                self._perform_close()
+                if prepared is not None and hasattr(prepared, "release"):
+                    prepared.release()
+
+            if update_dialog_info and hasattr(self.root, "after"):
+                self.root.after(800, do_relaunch_and_close)
+            else:
+                do_relaunch_and_close()
+
+        if hasattr(self.root, "after"):
+            self.root.after(100, finish)
+        else:
+            finish()
 
     def _record_software_update_internal_failure(self) -> None:
         has_pending = (

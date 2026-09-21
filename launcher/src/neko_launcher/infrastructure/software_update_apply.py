@@ -4,6 +4,7 @@ import base64
 import hashlib
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -75,22 +76,25 @@ class SoftwareUpdateApplyService:
         exe_path = str(self.root_dir / "NekoUpdater.exe")
         cmd = [exe_path, "--session"]
 
+        spawn_kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.DEVNULL,
+            "shell": False,
+        }
+        if sys.platform == "win32":
+            spawn_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         try:
             if self.spawner:
                 process = self.spawner(
                     cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    shell=False,
+                    **spawn_kwargs,
                 )
             else:
                 process = subprocess.Popen(
                     cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    shell=False,
+                    **spawn_kwargs,
                 )
         except Exception:
             raise SoftwareUpdateApplyError("SPAWN_FAILED") from None
