@@ -30,11 +30,18 @@ from neko_launcher.infrastructure.installation_credential import (
 
 def dispatch_baseline_enrollment(argv: list[str]) -> int:
     """Handle internal --enroll-baseline command mode; returns process exit code."""
-    if len(argv) != 2 or argv[1] != "--enroll-baseline":
+    if len(argv) < 2 or argv[1] != "--enroll-baseline":
         return 2
 
     try:
-        install_root = root_validator.get_expected_install_root()
+        cwd = Path.cwd().resolve()
+        if (cwd / "baseline" / "release-v2.json").is_file():
+            install_root = cwd
+        elif len(argv) >= 3 and argv[2]:
+            install_root = Path(argv[2]).resolve()
+        else:
+            install_root = root_validator.get_expected_install_root()
+
         trust_profile = load_installed_update_trust_profile(install_root)
         envelope_path = install_root / "baseline" / "release-v2.json"
         result = enroll_baseline_from_signed_envelope(
