@@ -26,6 +26,7 @@ from neko_launcher.updater.trust_profile import load_installed_update_trust_prof
 from neko_launcher.infrastructure.installation_credential import (
     create_installation_credential_provider,
 )
+from neko_launcher.infrastructure.software_release_identity import sha256_file
 
 
 def dispatch_baseline_enrollment(argv: list[str]) -> int:
@@ -58,6 +59,40 @@ def dispatch_baseline_enrollment(argv: list[str]) -> int:
         return 1
 
 
+def _replace_executable_atomically(
+    *,
+    current_exe: Path,
+    committed_exe: Path,
+    backup_exe: Path,
+    expected_sha256: str,
+) -> bool:
+    temp_exe = current_exe.with_name(f"{current_exe.name}.new")
+    try:
+        temp_exe.unlink(missing_ok=True)
+        shutil.copy2(committed_exe, temp_exe)
+        if sha256_file(temp_exe) != expected_sha256:
+            return False
+        try:
+            with temp_exe.open("rb+") as stream:
+                os.fsync(stream.fileno())
+        except OSError:
+            pass
+        os.replace(current_exe, backup_exe)
+        try:
+            os.replace(temp_exe, current_exe)
+        except OSError:
+            os.replace(backup_exe, current_exe)
+            return False
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            temp_exe.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _maybe_sync_committed_generation(install_root: Path) -> None:
     """If a committed generation is newer than the running launcher, safely replace and relaunch."""
     try:
@@ -84,7 +119,6 @@ def _maybe_sync_committed_generation(install_root: Path) -> None:
         if profile is None:
             return
 
-        from neko_launcher.infrastructure.software_release_identity import sha256_file
         from neko_launcher.updater.slot_selector import SelectionStatus
         from neko_launcher.updater.slot_store import SlotStore
 
@@ -111,8 +145,13 @@ def _maybe_sync_committed_generation(install_root: Path) -> None:
         if sha256_file(committed_exe) != committed.launcher_identity_sha256:
             return
 
-        os.replace(current_exe, old_backup)
-        shutil.copy2(committed_exe, current_exe)
+        if not _replace_executable_atomically(
+            current_exe=current_exe,
+            committed_exe=committed_exe,
+            backup_exe=old_backup,
+            expected_sha256=committed.launcher_identity_sha256,
+        ):
+            return
 
         committed_core = install_root / "releases" / committed_id / "ProxyCore"
         root_core = install_root / "ProxyCore"

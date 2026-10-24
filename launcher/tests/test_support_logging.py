@@ -21,14 +21,17 @@ def test_support_log_is_created_without_debug_mode_and_records_artifact_hashes(t
     logger.record_stage("AUTH_TEST", password="should-not-leak")
 
     latest = (log_dir / "support.log").read_text(encoding="utf-8")
+    debug = (log_dir / "debug.log").read_text(encoding="utf-8")
     session_logs = list(log_dir.glob("neko-support-*.log"))
     assert len(session_logs) == 1
-    assert "NEKO FAMILY PROXY SUPPORT DIAGNOSTIC SESSION" in latest
-    assert "DEBUG_VERBOSE = NO" in latest
-    assert hashlib.sha256(b"core-exe").hexdigest() in latest
-    assert hashlib.sha256(b"core-dll").hexdigest() in latest
-    assert "should-not-leak" not in latest
-    assert "<redacted>" in latest
+    session = session_logs[0].read_text(encoding="utf-8")
+    for content in (latest, debug, session):
+        assert "NEKO FAMILY PROXY SUPPORT DIAGNOSTIC SESSION" in content
+        assert "DEBUG_VERBOSE = NO" in content
+        assert hashlib.sha256(b"core-exe").hexdigest() in content
+        assert hashlib.sha256(b"core-dll").hexdigest() in content
+        assert "should-not-leak" not in content
+        assert "<redacted>" in content
 
 
 def test_support_log_rotation_keeps_at_most_ten_session_logs(tmp_path: Path) -> None:
@@ -43,6 +46,33 @@ def test_support_log_rotation_keeps_at_most_ten_session_logs(tmp_path: Path) -> 
     logger.log_session_header()
 
     assert len(list(log_dir.glob("neko-support-*.log"))) <= 10
+
+
+def test_logger_writes_without_reopening_log_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    log_dir = tmp_path / "logs"
+    logger = DevelopmentLogger(log_dir, verbose=False)
+    original_open = Path.open
+
+    def fail_open(*args, **kwargs):
+        raise AssertionError("log writes must not reopen files")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+    try:
+        logger.record_stage("STREAM_WRITE_TEST")
+    finally:
+        monkeypatch.setattr(Path, "open", original_open)
+
+    try:
+        for path in (
+            log_dir / "support.log",
+            log_dir / "debug.log",
+            next(log_dir.glob("neko-support-*.log")),
+        ):
+            assert "STREAM_WRITE_TEST" in path.read_text(encoding="utf-8")
+    finally:
+        logger.close()
 
 
 def test_application_factory_always_constructs_support_logger() -> None:

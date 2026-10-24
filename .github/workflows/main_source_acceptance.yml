@@ -11,8 +11,8 @@ jobs:
     outputs:
       release_eligible: ${{ steps.classify.outputs.release_eligible }}
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { fetch-depth: 0, persist-credentials: false }
       - name: Check trigger
         id: classify
         run: python -c "from scripts.ci_change_classifier import should_trigger; import subprocess, sys, os; files=subprocess.check_output(['git','diff','--name-only','HEAD^','HEAD']).decode().split(); is_product = should_trigger(files); fh = open(os.environ['GITHUB_OUTPUT'], 'a'); fh.write(f'release_eligible={str(is_product).lower()}\n'); fh.close()"

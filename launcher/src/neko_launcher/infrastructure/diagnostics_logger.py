@@ -30,22 +30,44 @@ class DevelopmentLogger:
     def __init__(self, log_dir: Path, *, verbose: bool = False) -> None:
         self._log_dir = log_dir
         self._verbose = bool(verbose)
-        self._session_id = f"{datetime.datetime.utcnow():%Y%m%d-%H%M%S}-{os.getpid()}"
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        self._session_id = f"{now_utc:%Y%m%d-%H%M%S}-{os.getpid()}"
         self._log_file = self._log_dir / "support.log"
-        self._legacy_debug_log_file = self._log_dir / "debug.log"
         self._legacy_debug_log_file = self._log_dir / "debug.log"
         self._timestamped_log_file = self._log_dir / f"neko-support-{self._session_id}.log"
         self._attempt_id: str | None = None
         self._lock = RLock()
         self._header_written = False
+        self._streams: list[Any] = []
 
         try:
             self._log_dir.mkdir(parents=True, exist_ok=True)
             self._rotate_session_logs()
-            self._log_file.write_text("", encoding="utf-8")
-            self._legacy_debug_log_file.write_text("", encoding="utf-8")
-            self._timestamped_log_file.write_text("", encoding="utf-8")
+            self._streams = [
+                self._open_stream(self._log_file),
+                self._open_stream(self._legacy_debug_log_file),
+                self._open_stream(self._timestamped_log_file),
+            ]
         except OSError:
+            self.close()
+
+    @staticmethod
+    def _open_stream(path: Path) -> Any:
+        return path.open("w", encoding="utf-8", buffering=1)
+
+    def close(self) -> None:
+        with self._lock:
+            streams, self._streams = self._streams, []
+        for stream in streams:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
             pass
 
     def _rotate_session_logs(self) -> None:
@@ -118,12 +140,15 @@ class DevelopmentLogger:
 
         core_exe = Path(core_path) if core_path else Path()
         core_dll = core_exe.with_name("NekoProxyCore.dll") if core_path else Path()
+        timestamp_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%f"
+        )
         lines = [
             "======================================================================",
             "NEKO FAMILY PROXY SUPPORT DIAGNOSTIC SESSION",
             "======================================================================",
             f"SUPPORT_SESSION_ID = {self._session_id}",
-            f"TIMESTAMP_UTC = {datetime.datetime.utcnow().isoformat()}Z",
+            f"TIMESTAMP_UTC = {timestamp_utc}Z",
             f"LAUNCHER_VERSION = {__version__}",
             f"DEBUG_VERBOSE = {'YES' if self._verbose else 'NO'}",
             f"PACKAGED_VS_SOURCE = {'PACKAGED' if packaged else 'SOURCE'}",
@@ -187,15 +212,19 @@ class DevelopmentLogger:
         ts = now.strftime("%H:%M:%S.%f")[:-3]
         attempt = f"[{self._attempt_id}]" if self._attempt_id else "[]"
         log_line = f"[{ts}] {attempt} {sanitized}\n"
-        try:
-            with self._log_file.open("a", encoding="utf-8") as stream:
+        failed: list[Any] = []
+        for stream in self._streams:
+            try:
                 stream.write(log_line)
-            with self._legacy_debug_log_file.open("a", encoding="utf-8") as stream:
-                stream.write(log_line)
-            with self._timestamped_log_file.open("a", encoding="utf-8") as stream:
-                stream.write(log_line)
-        except OSError:
-            pass
+            except OSError:
+                failed.append(stream)
+        if failed:
+            self._streams = [stream for stream in self._streams if stream not in failed]
+            for stream in failed:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
         if self._verbose:
             try:

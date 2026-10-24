@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - Upgraded Pillow from 12.2.0 to 13.0.0 to remediate known image-parsing CVEs.
+- Pinned all GitHub Actions to full commit SHAs and disabled credential persistence in checkout steps.
 
 ### Changed
 - Reduced the packaged Launcher from ~35 MB to ~27 MB by excluding unused Pillow plugins, the httpx CLI, rich/pygments, and interactive REPL modules.
 - Disabled UPX in the Launcher build for deterministic output and fewer antivirus false positives.
+- Self-sync now stages the committed executable in a verified temp file and replaces the running launcher with atomic renames plus rollback.
+- Support logging keeps line-buffered file handles open instead of reopening three files for every line.
 
 ## [5.1.6] - 2026-09-21
 

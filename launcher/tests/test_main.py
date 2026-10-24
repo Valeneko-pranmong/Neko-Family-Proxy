@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -10,7 +11,11 @@ from unittest.mock import MagicMock
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from neko_launcher.main import _report_startup_error, main
+from neko_launcher.main import (
+    _replace_executable_atomically,
+    _report_startup_error,
+    main,
+)
 from neko_launcher.bootstrap.pending_update_bootstrap import (
     PendingUpdateBootstrapResult,
 )
@@ -78,6 +83,83 @@ def test_startup_error_report_does_not_persist_or_display_exception_detail(
     assert sentinel not in log_text
     assert "Traceback" not in log_text
     assert messages and sentinel not in messages[0]
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_replace_executable_atomically_replaces_and_keeps_backup(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "NekoLauncher.exe"
+    committed = tmp_path / "committed.exe"
+    backup = tmp_path / "NekoLauncher.exe.old"
+    current.write_bytes(b"old")
+    committed.write_bytes(b"new")
+
+    assert _replace_executable_atomically(
+        current_exe=current,
+        committed_exe=committed,
+        backup_exe=backup,
+        expected_sha256=_sha256(b"new"),
+    )
+
+    assert current.read_bytes() == b"new"
+    assert backup.read_bytes() == b"old"
+    assert not (tmp_path / "NekoLauncher.exe.new").exists()
+
+
+def test_replace_executable_atomically_rejects_hash_mismatch(tmp_path: Path) -> None:
+    current = tmp_path / "NekoLauncher.exe"
+    committed = tmp_path / "committed.exe"
+    backup = tmp_path / "NekoLauncher.exe.old"
+    current.write_bytes(b"old")
+    committed.write_bytes(b"tampered")
+
+    assert not _replace_executable_atomically(
+        current_exe=current,
+        committed_exe=committed,
+        backup_exe=backup,
+        expected_sha256=_sha256(b"expected"),
+    )
+
+    assert current.read_bytes() == b"old"
+    assert not backup.exists()
+    assert not (tmp_path / "NekoLauncher.exe.new").exists()
+
+
+def test_replace_executable_atomically_rolls_back_when_final_rename_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "NekoLauncher.exe"
+    committed = tmp_path / "committed.exe"
+    backup = tmp_path / "NekoLauncher.exe.old"
+    current.write_bytes(b"old")
+    committed.write_bytes(b"new")
+
+    real_replace = os.replace
+    calls: list[tuple[object, object]] = []
+
+    def fake_replace(source: object, destination: object) -> None:
+        calls.append((source, destination))
+        if len(calls) == 2:
+            raise OSError("simulated final rename failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr("neko_launcher.main.os.replace", fake_replace)
+
+    assert not _replace_executable_atomically(
+        current_exe=current,
+        committed_exe=committed,
+        backup_exe=backup,
+        expected_sha256=_sha256(b"new"),
+    )
+
+    assert current.read_bytes() == b"old"
+    assert not backup.exists()
+    assert not (tmp_path / "NekoLauncher.exe.new").exists()
+    assert len(calls) == 3
 
 
 def test_main_bootstrap_handoff_started_exits_before_building_window(

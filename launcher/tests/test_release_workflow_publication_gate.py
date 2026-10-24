@@ -92,7 +92,7 @@ def test_publication_checks_out_exact_expected_target() -> None:
     checkout = next(
         step
         for step in re.split(r"(?m)(?=^      - )", publication)
-        if "uses: actions/checkout@v6" in step
+        if "uses: actions/checkout@" in step
     )
 
     assert re.search(
