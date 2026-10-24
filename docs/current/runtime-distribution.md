@@ -1,12 +1,12 @@
 # NekoProxyCore runtime distribution
 
-**Status:** Feature branch architecture — updated 2026-09-12 for Neko Family 5.1.2 (Two-Repo Role Inversion & Deferred Update Lifecycle). Public production release remains v5.1.0 installer-only; no production backend or release mutation has occurred.
+**Status:** Active — updated 2026-10-24 for the 5.1.6 release line. `v5.1.6` is the current public stable release; machine updates and human installer releases are split per the Two-Repo Role Inversion.
 
 `NekoProxyCore` is a separately licensed external runtime. It is never committed as source to this repository or embedded inside the `NekoLauncher.exe` binary.
 
 ## Distribution Architecture (Production Updates & Canonical Main Separation)
 
-Under the Neko Family 5.1.2 architecture (Revision 3.4), distribution responsibilities are separated into distinct repository roles:
+Under the active architecture (Revision 3.4), distribution responsibilities are separated into distinct repository roles:
 
 1. **Machine-Update Channel (`Valeneko-pranmong/Neko-Family-Proxy-Updates`)**:
    - Production automated machine update channel for existing client installations.

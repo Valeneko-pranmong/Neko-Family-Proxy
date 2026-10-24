@@ -1,33 +1,33 @@
-# NEKO FAMILY PROXY — Current Component Status & 5.1.2 Architecture
+# NEKO FAMILY PROXY — Current Component Status & 5.1.6 Release Line
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         FEATURE BRANCH ACCEPTANCE (5.1.2) / PENDING R10 & RELEASE GATES
-PRODUCT_BASELINE:               5.1.2 DEFERRED UPDATE ARCHITECTURE (BRANCH SCOPE)
-ACTIVE_DEV_BRANCH:              feature/neko-family-5.1.2
-BASE_COMMIT:                    ed82b885138015e194bbf45db61a7d6899640156 (origin/main)
-DISTRIBUTION_ARCHITECTURE:      TWO-REPO ROLE INVERSION (PLANNED / BRANCH IMPLEMENTATION)
+STATUS:                         STABLE RELEASE 5.1.6 (maintained on main)
+PRODUCT_BASELINE:               5.1.6
+CURRENT_STABLE_TAG:             v5.1.6 (01d5331, released 2026-09-21)
+ACTIVE_DEV_BRANCH:              main
+MAIN_HEAD_AT_REVIEW:            616ff89 (2026-10-24)
+DISTRIBUTION_ARCHITECTURE:      TWO-REPO ROLE INVERSION (ACTIVE)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
 NEXT_LAUNCH_APPLY:              PASS (Offline verified bootstrap before window creation)
-BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; first-release only)
+BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; historical bootstrap)
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
-REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py)
-RUFF_LINT:                      PASS (0 errors, clean)
-TEST_COVERAGE:                  1928 passed, 3 skipped, 7 deselected, 1 pre-existing baseline
-LAST_VERIFIED:                  2026-09-12 +07:00 (Asia/Bangkok)
+REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
+TEST_SUITE:                     >1,900 test functions; CI is the release gate
+LAST_VERIFIED:                  2026-10-24 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** The active feature branch `feature/neko-family-5.1.2` contains the complete implementation and test coverage of the 5.1.2 Deferred Update Architecture. Public production remains v5.1.0 installer-only; the architecture is implemented and verified on this branch and awaits R10 review, Main Source Acceptance, merge to main, and subsequent release engineering gates before production availability. No production backend or release mutation has occurred. Frozen historical release evidence remains historical authority for the exact accepted artifacts only.
+> **Current-state rule:** `main` is the maintained release line and `v5.1.6` is the current public stable release. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
 
 ---
 
-## 1. What is the 5.1.2 Architecture doing?
+## 1. What is the current architecture doing?
 
-The Neko Family 5.1.2 feature branch implements the **Deferred Update Lifecycle** and the **Production Updates & Canonical Main Repository Topology** (Revision 3.4), designed to restore automated in-app updates upon post-merge release:
+The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Production Updates & Canonical Main Repository Topology** (Revision 3.4). Later patch releases extended it without changing the fail-closed authorization model:
 
 ### 1.1 Repository Roles & Distribution Topology
 - **Machine-Update Channel**: The dedicated updates repository `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the permanent machine-update channel.
@@ -39,20 +39,27 @@ The Neko Family 5.1.2 feature branch implements the **Deferred Update Lifecycle*
   *Note: Normal users must not be linked to the machine repository as a download surface.*
 - **Human-Facing Installer Surface**: The canonical main repository `Valeneko-pranmong/Neko-Family-Proxy` serves as the official human release surface. Standalone installer executables (`NekoFamilyProxy-Installer.exe`) are distributed directly from main repository releases (`Valeneko-pranmong/Neko-Family-Proxy/releases`). Any historical separate installer repository is retired.
 
-### 1.2 Bounded Bootstrap Authority Override
-- Public `v5.1.0` was released installer-only and lacks public machine assets (`release-v2.json`, `NekoProxyCore.zip`, etc.).
-- To establish the first new machine release, `scripts/release_controller.py` implements a strictly bounded bootstrap authority override:
+### 1.2 Bounded Bootstrap Authority Override (Historical)
+- Public `v5.1.0` was released installer-only and lacked public machine assets (`release-v2.json`, `NekoProxyCore.zip`, etc.).
+- To establish the first machine release, `scripts/release_controller.py` implemented a strictly bounded bootstrap authority override:
   - Scoped exclusively to bootstrap Stable `v5.1.0`.
-  - Consumes the byte-for-byte archived Attempt-3 signed manifest and Core bundle.
-  - Verifies production Ed25519 signature, channel, Core hash, size, canonical manifest, and installed identity.
+  - Consumed the byte-for-byte archived Attempt-3 signed manifest and Core bundle.
+  - Verified production Ed25519 signature, channel, Core hash, size, canonical manifest, and installed identity.
   - Automatically refused for newer versions or arbitrary local files.
-  - Disabled once a newer accepted machine release exists on GitHub.
+  - Disabled once a newer accepted machine release existed on GitHub.
+- The bootstrap path is retained for traceability; it is not the release path for the current line.
+
+### 1.3 Release Line 5.1.3–5.1.6
+- **v5.1.3**: installed-file integrity check and repair in Settings; update-notification and Settings-focus refinements; clean uninstall/state cleanup; machine credential provisioned during baseline enrollment.
+- **v5.1.4**: 64-bit WOW64 redirection guard in the elevated driver installer and non-BOM ASCII installer logging.
+- **v5.1.5**: native `ensure-netfilter2.cmd` Sysnative dispatcher and Inno Setup result-file polling guard.
+- **v5.1.6**: startup update-check splash before the main window; in-app update progress dialog; windowless updater helper; committed-generation self-sync; Settings version check; baseline enrollment from a working-directory install root.
 
 ---
 
 ## 2. Deferred Update Lifecycle
 
-The 5.1.2 client architecture guarantees that update operations never disrupt active user gameplay or proxy sessions:
+The released client architecture guarantees that update operations never disrupt active user gameplay or proxy sessions:
 
 1. **Every-Open Discovery**: Launcher automatically schedules a background check on startup; manual checks remain independent.
 2. **Background Staging (`SoftwareUpdateStageService`)**:
@@ -78,7 +85,7 @@ The 5.1.2 client architecture guarantees that update operations never disrupt ac
 
 ## 3. Non-Regression Contracts
 
-The 5.1.2 branch preserves all fundamental security and product invariants:
+The released line preserves all fundamental security and product invariants:
 
 - **Fail-Closed Authorization**: External Core startup requires authenticating, single active session ownership, valid entitlement, and fresh launch permit verification.
 - **External Core Topology**: NekoProxyCore remains external under `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe`.
@@ -92,8 +99,7 @@ The 5.1.2 branch preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Complete Launcher Suite**: 1,928 passed, 3 skipped, 7 deselected in `launcher/`.
-  - *Note*: One pre-existing failure (`tests/test_config.py::test_application_root_resolves_to_repository_root_in_source_mode`) is proven pre-existing on canonical `main` due to repository file reorganization (`image_11.png` relocated to `Asset/`). It is retained as baseline evidence and not masked.
-- **Ruff Code Inspection**: 0 errors / 0 warnings across all source and test modules.
-- **Repository Safety**: `python scripts/check_repository_safety.py` PASSED with zero findings.
-- **Git Diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.
+- **Launcher suite**: more than 1,900 test functions in `launcher/tests`. The 5.1.2 acceptance run recorded 1,928 passed, 3 skipped, and 7 deselected; re-run at the current HEAD is required before quoting it as current release evidence.
+- **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
+- **Ruff and CI**: enforced by `.github/workflows/ci.yml`; run locally before merge.
+- **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.

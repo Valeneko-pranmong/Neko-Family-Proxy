@@ -1,7 +1,8 @@
 # Neko Launcher Architecture Refactor
 
-> **Status:** Current architecture; implementation complete and final manual UI
-> and GitHub Actions validation pending (reviewed 8 August 2026).
+> **Status:** Current architecture; implementation complete. CI is active and
+> the release workflow is manually gated; manual UI validation remains
+> release-owner evidence (reviewed 2026-10-24).
 
 ## Purpose
 Perform a maintainability-focused architectural refactor of the Python launcher, resolving a monolithic 1700-line UI script and an unorganized infrastructure layer.
@@ -36,8 +37,8 @@ Perform a maintainability-focused architectural refactor of the Python launcher,
 - Ruff linter passes with 0 violations.
 - All non-integration tests pass.
 - Automated scaling tests cover 100%, 125%, 150%, and short-notebook display scenarios.
-- Manual UI regression validation (Pending).
-- GitHub Actions CI / release workflows (Pending).
+- Manual UI regression validation: release-owner evidence.
+- GitHub Actions CI: active; release workflow: manual and gated.
 
 ## Known Limitations
 - The old architecture instructions were moved to `docs/archive/refactor-instructions.md` for historical preservation.

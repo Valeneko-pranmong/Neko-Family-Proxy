@@ -1,11 +1,11 @@
 # Project Context — Neko Family Proxy Launcher
 
-Updated: 2026-09-12 (Neko Family 5.1.2 Architecture)
+Updated: 2026-10-24 (Neko Family 5.1.6 Release Line)
 
 ## Purpose
-This repository is the Windows Launcher/client tier for Neko Family Proxy. It owns user-facing launch/session orchestration, authentication/permit flow integration, installer/updater code, release-controller automation, Supabase client/backend contracts, and the planned permanent machine-update channel for existing clients under the 5.1.2 architecture.
+This repository is the Windows Launcher/client tier for Neko Family Proxy. It owns user-facing launch/session orchestration, authentication/permit flow integration, installer/updater code, release-controller automation, Supabase client/backend contracts, and the permanent machine-update channel for existing clients. The deferred update lifecycle introduced in 5.1.2 is shipped and maintained on the 5.1.6 line.
 
-## Architecture Evolution (Neko Family 5.1.2 Feature Branch Implementation)
+## Architecture Evolution (5.1.2+ Released Architecture)
 
 ### 1. Repository Roles & Distribution Topology (Revision 3.4)
 - **Machine-Update Channel**: `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the permanent production machine-update channel. Releases on this channel publish four signed machine assets:
@@ -24,16 +24,18 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - **Safe Apply Paths**: Updates apply safely via explicit Update action, normal Launcher exit, or early next-launch offline bootstrap (`try_apply_pending_on_launch`).
 - **Updater Engine Reuse**: Handoff uses existing `NekoUpdater.exe` transactional, generation, probation, and rollback machinery.
 
-### 3. Bounded Bootstrap Authority Override
+### 3. Bounded Bootstrap Authority Override (Historical)
 - Because public `v5.1.0` was released installer-only without machine assets, `scripts/release_controller.py` implements a bounded bootstrap authority override for `v5.1.0` using the archived Attempt-3 signed manifest and Core payload.
 - Strictly validated against production Ed25519 signature, channel, size, hash, and installed identity.
 - Restricted solely to bootstrap `v5.1.0` and auto-disabled once a newer machine release exists.
 
 ## Current Baseline
-- Historical/Current Production Release: `v5.1.0` (Release ID `387113854`, commit `0b71f03ee4ed69176da2682fdd1cfb4e5cce971c`). Public v5.1.0 remains strictly installer-only.
-- Active Feature Branch: `feature/neko-family-5.1.2`
-- Base Commit: `ed82b885138015e194bbf45db61a7d6899640156` (`origin/main`)
-- Readiness & Production Scope: Implemented and tested on `feature/neko-family-5.1.2` and pending R10, Main Source Acceptance, merge to `main`, and future release engineering gates. In-app automatic updates are NOT yet available for production users, the architecture is not yet declared production-ready, and no production backend or release mutation has occurred. The dedicated installer repository plan is retired, and public machine assets do not exist publicly yet.
+- Current Stable Release: `v5.1.6` (tag `01d5331`, released 2026-09-21). `main` is two commits ahead for merge/test cleanup (`616ff89`).
+- Active Branch: `main`.
+- Distribution: Two-Repo Role Inversion is active. `Valeneko-pranmong/Neko-Family-Proxy-Updates` carries machine assets; `Valeneko-pranmong/Neko-Family-Proxy` carries the human installer and source.
+- Update Lifecycle: background staging, durable pending storage, session guard, and offline apply are released and active.
+- Release Automation: `.github/workflows/release.yml` is the manual publication gate. `scripts/release_controller.py` still contains v5.1.2-specific bootstrap/version checks and must be generalized before it can drive a new release line.
+- Repository Status (2026-10-24, at review start): `main` clean and synced with `origin/main`; repository safety check PASS.
 
 ## Related Projects
 - `E:\Github\NekoProxyCore` — low-level Core/driver/runtime used by the Launcher.
@@ -54,8 +56,8 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - Deferred E2E tests: `launcher/tests/e2e/test_deferred_pending_update_e2e.py`
 
 ## Read Next
-1. `docs/README.md`
+1. `docs/current/README.md` — current release-line status
 2. `docs/HANDOFF.md`
-3. `docs/superpowers/specs/2026-09-12-neko-family-5-1-2-update-architecture.md`
-4. `docs/superpowers/plans/2026-09-12-neko-family-5-1-2-implementation.md`
-5. `E:\Github\Project manager\current\CONTROLLER_LEDGER_NEKO_FAMILY_5_1_2.md`
+3. `docs/current/launcher-architecture.md`
+4. `docs/superpowers/specs/2026-09-12-neko-family-5-1-2-update-architecture.md` (historical architecture)
+5. `E:\Github\Project manager\current\CONTROLLER_LEDGER_NEKO_FAMILY_5_1_2.md` (historical ledger)

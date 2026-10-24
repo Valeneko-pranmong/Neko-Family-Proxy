@@ -1,50 +1,46 @@
 # Handoff — Neko Family Proxy Launcher
 
-Updated: 2026-09-12 (Neko Family 5.1.2 Deferred Update Architecture)
+Updated: 2026-10-24 (Neko Family 5.1.6 Release Line)
 
 ## Current state
-- Active integration branch: `feature/neko-family-5.1.2`
-- Base commit: `ed82b885138015e194bbf45db61a7d6899640156` (`origin/main`)
-- Distribution Architecture: Production Updates & Canonical Main Separation under Revision 3.4.
-  - `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the production machine-update channel for machine assets.
-  - `Valeneko-pranmong/Neko-Family-Proxy` serves as the official human release surface for installer downloads (`NekoFamilyProxy-Installer.exe`). Any historical separate installer repository is retired; normal users must not be linked to the machine repository as a download surface.
-- Deferred Update Lifecycle: Implemented and tested on `feature/neko-family-5.1.2`:
+- Current stable release: `v5.1.6` (tag `01d5331`, released 2026-09-21). `main` is two commits ahead for merge/test cleanup (`616ff89`).
+- Active branch: `main`.
+- Distribution Architecture: Production Updates & Canonical Main Separation under Revision 3.4, now active.
+  - `Valeneko-pranmong/Neko-Family-Proxy-Updates` carries machine assets.
+  - `Valeneko-pranmong/Neko-Family-Proxy` carries the official human installer (`NekoFamilyProxy-Installer.exe`) and source.
+- Deferred Update Lifecycle (released since 5.1.2, extended through 5.1.6):
   - Background staging (`SoftwareUpdateStageService`) downloads changed components while sessions remain active.
   - Durable pending store (`PendingUpdateStore`) verifies signed envelopes and reconstructs trust offline.
   - Session activity guard (`SessionActivityGuard`) guarantees updates never forcibly terminate game (`pso2.exe`) or proxy sessions.
   - Safe apply pathways: explicit Update action, normal exit, and next-launch offline bootstrap (`try_apply_pending_on_launch`).
-  - Reuses existing `NekoUpdater.exe` transactional engine, probation runner, rollback, and anti-downgrade machinery.
-- Bounded Bootstrap Authority: Implemented in `scripts/release_controller.py` to enable initial machine release from `v5.1.0` Attempt-3 signed archive; strictly bounded to `v5.1.0` and auto-disabled for subsequent releases.
-- Remediations:
-  - Installer Core authority handoff bound dynamically to build authority (`verify-core-install.ps1`).
-  - Canonical Launcher title bar version display bound to `neko_launcher.__version__`.
-- Status: Tasks 1-9 complete and independently reviewed C0/I0 on `feature/neko-family-5.1.2`. Task 10 branch documentation and full suite acceptance active. Pending R10/Main Source Acceptance/merge/release gates. No production backend/release mutation has occurred.
+  - Reuses the existing `NekoUpdater.exe` transactional engine, probation runner, rollback, and anti-downgrade machinery.
+- v5.1.6 additions: startup update-check splash, in-app update progress dialog, windowless updater helper, committed-generation self-sync, Settings version check, and baseline enrollment from a working-directory install root.
+- Release workflow: `.github/workflows/release.yml` validates `release_tag` against `launcher/pyproject.toml` at `expected_target`, not a hardcoded version.
+- Known remaining gap: `scripts/release_controller.py` still contains v5.1.2-specific version/bootstrap checks and is not yet a general release path for the current line.
 
 ## User-facing readiness
-- Public production release remains `v5.1.0` (installer-only). In-app automatic updates are NOT yet available for production users; public v5.1.0 users continue to use manual installer setup until post-merge release gates are executed.
-- Deferred update lifecycle and Two-Repo Role Inversion are implemented and tested strictly on `feature/neko-family-5.1.2` and await R10 review, Main Source Acceptance, merge to `main`, and future release engineering gates before public availability.
-- No production backend or release mutation has occurred. The dedicated installer repository plan is retired, and public machine-update assets do not exist publicly yet.
+- `v5.1.6` is the current public stable release; in-app automatic updates are active for the released line.
+- The manual release workflow is unlocked for any tag that matches the checked-out launcher version, subject to its existing immutable-ID, SHA, asset, and hosted-verification gates.
 
 ## Next work
-1. Complete R10 independent final architecture/security/regression review (card `t_6d0a2950`).
-2. Pass G2 C0/I0 gate (`t_b0931a99`).
-3. Conduct Main Source Acceptance against exact branch HEAD (`t_ad651015`).
-4. Merge accepted branch HEAD to `main` (`t_8fcf4c10`).
-5. Run post-merge CI/source acceptance (`t_6638b7d3`).
-6. Execute release engineering gates (H1 hosted bootstrap proof, H2 legacy upgrade proof, R13 release acceptance).
+1. Re-run the full launcher suite and Ruff at current `main` HEAD.
+2. Generalize `scripts/release_controller.py` beyond its v5.1.2 hardcodes if automated releases are intended.
+3. Review hosted Supabase/Edge deployment docs against production state; several `docs/current` and `supabase` deployment statements predate 5.1.6.
 
 ## Do not accidentally change
-- Do not claim release completion, production readiness, or public availability during local branch acceptance.
-- Do not mutate or replace public `v5.1.0` release assets; no production release or backend mutation has occurred.
+- Do not mutate or replace published `v5.1.6` release assets.
+- Do not bypass the workflow's canonical-repository, immutable release-ID, expected-target, signed-envelope, or asset-verification gates.
 - Do not bypass fail-closed cryptographic verification of the signed manifest or component digests.
 - Do not modify `launcher/tests/test_config.py` to hide pre-existing baseline asset defects.
 - Do not expose signing private-key bytes.
 
 ## Authoritative reference documents
-- Architecture: `docs/superpowers/specs/2026-09-12-neko-family-5-1-2-update-architecture.md`
-- Implementation Plan: `docs/superpowers/plans/2026-09-12-neko-family-5-1-2-implementation.md`
-- Controller Ledger: `E:\Github\Project manager\current\CONTROLLER_LEDGER_NEKO_FAMILY_5_1_2.md`
-- Accepted v5.1.0 archive: `E:\Github\artifacts\v5.1.0-clean-candidate\attempt-3\`
+- Current status: `docs/current/README.md`
+- Current architecture: `docs/current/launcher-architecture.md`
+- Update architecture (historical 5.1.2 design): `docs/superpowers/specs/2026-09-12-neko-family-5-1-2-update-architecture.md`
+- Implementation plan (historical 5.1.2): `docs/superpowers/plans/2026-09-12-neko-family-5-1-2-implementation.md`
+- Controller ledger (historical 5.1.2): `E:\Github\Project manager\current\CONTROLLER_LEDGER_NEKO_FAMILY_5_1_2.md`
+- Accepted v5.1.0 archive (historical bootstrap): `E:\Github\artifacts\v5.1.0-clean-candidate\attempt-3\`
 
 ## First checks for a new maintainer
 1. `git status --short --branch`

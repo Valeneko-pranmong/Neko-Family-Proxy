@@ -23,7 +23,7 @@
 
 ## Overview
 
-**Neko Family Proxy** (`v5.1.5` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
+**Neko Family Proxy** (`v5.1.6` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
 
 ### Key Capabilities
 
@@ -117,12 +117,12 @@ Starting in `v5.0.0`, the proxy ecosystem utilizes **Runtime Config v1**:
 
 ### Packaged Stable Release (Recommended)
 
-1. Download `NekoFamilyProxy-Installer.exe` from the [v5.1.5 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases).
+1. Download `NekoFamilyProxy-Installer.exe` from the [v5.1.6 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases).
 2. Run the Installer and complete installation.
 3. Open Neko Family Proxy and sign in with your account credentials.
 4. Start PSO2 through the normal launcher flow.
 
-> **Update Note (v5.1.5 stable):** The deferred update lifecycle (background staging, durable `UPDATE_PENDING` storage, non-disruptive session guard, and safe offline apply) and Two-Repo Role Inversion are now fully integrated and active in production. Client updates process automatically and non-disruptively in the background.
+> **Update Note (v5.1.6 stable):** The deferred update lifecycle (background staging, durable `UPDATE_PENDING` storage, non-disruptive session guard, and safe offline apply) and Two-Repo Role Inversion are active in production. v5.1.6 adds a startup update-check splash, an in-app update progress dialog, a windowless updater helper, committed-generation self-sync, and a version check in Settings.
 
 *Note: Users do not need to enter or manage proxy credentials. Configuration and routing are handled automatically during session authorization.*
 
@@ -181,7 +181,12 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
 
 ## Roadmap
 
-- **v5.1.5 (Current Stable Release)**:
+- **v5.1.6 (Current Stable Release)**:
+  - Added a startup update-check splash window before entering the main program, with automatic apply when no game session is active.
+  - Added an in-app update progress dialog and a windowless updater helper.
+  - Added committed-generation self-sync at launch and a version check in Settings.
+  - Supported baseline enrollment from the working-directory install root.
+- **v5.1.5 (Maintenance Release)**:
   - Added native `ensure-netfilter2.cmd` dispatcher with `%SystemRoot%\Sysnative` detection to ensure elevated driver registration executes under 64-bit PowerShell across all Windows versions.
   - Added result-file polling guard in Inno Setup to guarantee driver registration completes before state verification.
 - **v5.1.4 (Maintenance Release)**:

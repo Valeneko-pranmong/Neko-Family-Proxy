@@ -1,6 +1,6 @@
 # NEKO-AUTH-LITE v1
 
-**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Release/cutover remains the successor gate.
+**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line; `v5.1.6` is the current stable release.
 
 ```text
 SESSION_POLICY = LATEST_CLAIM_WINS
@@ -84,14 +84,16 @@ Owned Core lifecycle, bounded IPC, malformed JSON rejection, correlation IDs,
 named-pipe server PID validation, and exact-child cleanup remain useful
 defensive controls. They are not Lite release blockers.
 
-## Release blockers
+## Historical release blockers (cleared)
 
-Production composition remains fail closed until these exist and pass:
+The pre-production gate listed these blockers:
 `BACKEND_PERMIT_ISSUER_UNAVAILABLE`, `CORE_PUBLIC_KEY_UNAVAILABLE`,
 `CORE_AUTHORIZED_START_UNAVAILABLE`,
 `SINGLE_ACTIVE_SESSION_ENFORCEMENT_UNAVAILABLE`,
 `SESSION_CONCURRENCY_PROTECTION_UNAVAILABLE`,
 `CORE_CHALLENGE_VERIFICATION_UNAVAILABLE`, `LITE_E2E_UNVERIFIED`.
+The active gate in `production_authorization.py` now reports no blockers, and
+`app_factory.py` composes the production authorization adapters.
 
 S0 configuration SHA/PID cryptographic binding,
 package-SHA ceremony, continuous renewal, advanced replay DB, strict pipe proof,
@@ -101,7 +103,8 @@ anti-debugging, and S1 are historical or optional hardening—not Lite blockers.
 
 ```text
 HOSTED LITE DEPLOYMENT = MIGRATION DEPLOYED AND VERIFIED
-PRODUCTION CUTOVER = NOT PERFORMED
+CURRENT STABLE RELEASE = v5.1.6
+LAUNCHER PRODUCTION AUTHORIZATION = ENABLED (NO BLOCKERS)
 CORE LITE MIGRATION = VERIFIED AT CORE AUTHORITY
 LITE CROSS-COMPONENT E2E = PHASE 2.5 TECHNICAL SECURITY GATE PASS
 HOSTED_MIGRATION = 20260821120000_neko_auth_lite_latest_claim_wins

@@ -15,8 +15,8 @@ Only the latest stable release of Neko Family Proxy receives active security fix
 
 | Version | Supported          | Status |
 | ------- | ------------------ | ------ |
-| 5.1.3   | :white_check_mark: | Active production release |
-| 5.1.x   | :white_check_mark: | Active feature branch and updates |
+| 5.1.6   | :white_check_mark: | Current stable release |
+| 5.1.5 and earlier | :x:     | Superseded; upgrade to 5.1.6 |
 | < 5.1.0 | :x:                | Unsupported |
 
 ## Security Architecture Principles

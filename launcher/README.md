@@ -3,10 +3,11 @@
 Desktop launcher for Supabase username/password membership, entitlement checks,
 launcher-session control, and user-selected PSO2 Tweaker configuration.
 
-> **Current status (24 August 2026):** the accepted NEKO-AUTH-LITE production
-> composition is active. Core startup remains fail-closed unless Auth, the
-> current Launcher session, ACTIVE entitlement, exact PSO2 identity, fresh
-> challenge/permit, and typed RUNNING checks all succeed.
+> **Current status (24 October 2026, v5.1.6):** the accepted NEKO-AUTH-LITE
+> production composition is active. Core startup remains fail-closed unless
+> Auth, the current Launcher session, ACTIVE entitlement, exact PSO2 identity,
+> fresh challenge/permit, and typed RUNNING checks all succeed. Startup now
+> runs an update-check splash before the main window.
 
 ## Set up
 
