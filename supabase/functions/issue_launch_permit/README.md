@@ -57,6 +57,17 @@ The response returns `runtimeConfig` with `schemaVersion: 1`, `configVersion`,
 canonical ASCII serialization hash of this exact config. Missing, unavailable,
 or invalid runtime config fails closed without affecting `lite-v1`.
 
+## Rate limit
+
+`issue_launch_permit` calls `launcher.consume_permit_attempt(10, 60)` after
+authentication and before authorization. The RPC serializes attempts per user,
+stores them in `launcher.permit_attempts`, and returns `allowed=false` when the
+60-second window is exhausted. The function returns HTTP 429 `RateLimited`
+with `Retry-After: 60`.
+
+Apply `20261024120000_permit_rate_limit.sql` before deploying this function.
+A missing RPC fails closed with HTTP 503 `AuthorizationUnavailable`.
+
 ## Local validation
 
 ```bash

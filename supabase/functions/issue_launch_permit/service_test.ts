@@ -87,6 +87,7 @@ async function handler(
       token === ACCESS_TOKEN
         ? { userId: USER_ID, authSessionId: AUTH_SESSION_ID }
         : null,
+    consumePermitAttempt: async () => true,
     authorize: async () => activeState,
     loadRuntimeConfig: async () => ({ ...activeConfigRecord }),
     privateKeyPem: keys.privateKeyPem,
@@ -138,6 +139,40 @@ async function verifyPermit(
     new TextEncoder().encode(`${header}.${claims}`),
   );
 }
+
+test("Rate-limited request returns 429 before authorization or signing", async () => {
+  let authorizeCalls = 0;
+  const { result, body } = await request(validBody, `Bearer ${ACCESS_TOKEN}`, {
+    consumePermitAttempt: async () => false,
+    authorize: async () => {
+      authorizeCalls++;
+      return activeState;
+    },
+  });
+
+  assert.equal(result.status, 429);
+  assert.equal(body.error, "RateLimited");
+  assert.equal(result.headers.get("retry-after"), "60");
+  assert.equal(authorizeCalls, 0);
+});
+
+test("Rate-limit dependency failure fails closed with safe 503", async () => {
+  const { result, body, logs } = await request(
+    validBody,
+    `Bearer ${ACCESS_TOKEN}`,
+    {
+      consumePermitAttempt: async () => {
+        throw new Error("rate limit database unavailable");
+      },
+    },
+  );
+
+  assert.equal(result.status, 503);
+  assert.equal(body.error, "AuthorizationUnavailable");
+  assert.ok(
+    logs.every((line) => !line.includes("rate limit database unavailable")),
+  );
+});
 
 test("Valid request produces exact success response with runtime-config-v1, 120s expiry, signed claims, and no logged secret", async () => {
   const logs: string[] = [];

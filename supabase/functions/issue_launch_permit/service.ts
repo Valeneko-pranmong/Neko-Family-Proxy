@@ -29,6 +29,7 @@ export type RuntimeProxyConfigRecord = {
 
 export type Dependencies = {
   authenticate: (accessToken: string) => Promise<AuthenticatedCaller | null>;
+  consumePermitAttempt: (caller: AuthenticatedCaller) => Promise<boolean>;
   authorize: (
     caller: AuthenticatedCaller,
     body: Record<string, unknown>,
@@ -66,17 +67,24 @@ const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const PERMIT_SECONDS = 30;
 const RUNTIME_CONFIG_SECONDS = 120;
 const PRODUCTION_KID = "neko-prod-key-2";
+export const PERMIT_RATE_LIMIT = 10;
+export const PERMIT_RATE_WINDOW_SECONDS = 60;
 
 const PRINTABLE_ASCII_64 = /^[\x20-\x7e]{1,64}$/;
 const PRINTABLE_ASCII_253 = /^[\x20-\x7e]{1,253}$/;
 const PRINTABLE_ASCII_256 = /^[\x20-\x7e]{1,256}$/;
 
-function json(status: number, body: Record<string, unknown>): Response {
+function json(
+  status: number,
+  body: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      ...extraHeaders,
     },
   });
 }
@@ -294,6 +302,20 @@ export function createIssueLaunchPermitHandler(deps: Dependencies) {
       body = null;
     }
     if (!body) return json(400, { error: "ProtocolInvalid" });
+
+    let rateAllowed: boolean;
+    try {
+      rateAllowed = await deps.consumePermitAttempt(caller);
+    } catch {
+      return json(503, { error: "AuthorizationUnavailable" });
+    }
+    if (!rateAllowed) {
+      return json(
+        429,
+        { error: "RateLimited" },
+        { "retry-after": String(PERMIT_RATE_WINDOW_SECONDS) },
+      );
+    }
 
     let state: AuthorizationState | null;
     try {

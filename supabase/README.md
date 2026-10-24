@@ -60,6 +60,14 @@ the Data API.
 The required test cases are documented in
 [`security-test-plan.md`](security-test-plan.md).
 
+`20261024120000_permit_rate_limit.sql` adds a private
+`launcher.permit_attempts` table and the `launcher.consume_permit_attempt`
+RPC. The issued function calls it after authentication and before session
+authorization; clients receive HTTP 429 `RateLimited` when the per-user
+10-attempt/60-second window is exhausted. The table has RLS forced and no
+client grants. Apply this migration before deploying the matching Edge
+Function.
+
 The repository also includes an environment-gated live client test for Auth,
 Coupon replay, and launcher-session takeover. Run the manual
 `Supabase integration` GitHub Actions workflow with disposable credentials.

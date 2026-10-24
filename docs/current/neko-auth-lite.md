@@ -50,6 +50,14 @@ A second Supabase Auth session for same account may authenticate and claim,
 superseding first session. Superseded Auth session cannot request a permit:
 Backend returns `SessionInactive`, never permit.
 
+## Permit rate limit
+
+`issue_launch_permit` consumes one per-user attempt after authentication and
+before authorization. The default window is 10 attempts per 60 seconds,
+serialized by a per-user advisory lock. Exhausted callers receive HTTP 429
+`RateLimited` with `Retry-After: 60`; the attempt log is stored in
+`launcher.permit_attempts`, which has RLS forced and no client grants.
+
 ## Lite permit API
 
 `POST issue_launch_permit` with `Authorization: Bearer <Supabase access token>`:

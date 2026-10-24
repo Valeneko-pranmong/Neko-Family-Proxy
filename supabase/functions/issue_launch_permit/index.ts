@@ -5,6 +5,8 @@ import {
   type AuthenticatedCaller,
   type AuthorizationState,
   createIssueLaunchPermitHandler,
+  PERMIT_RATE_LIMIT,
+  PERMIT_RATE_WINDOW_SECONDS,
   type RuntimeProxyConfigRecord,
 } from "./service.ts";
 
@@ -85,6 +87,28 @@ async function loadRuntimeConfig(): Promise<RuntimeProxyConfigRecord> {
   return parseRuntimeConfigRpcResult(data);
 }
 
+async function consumePermitAttempt(
+  caller: AuthenticatedCaller,
+): Promise<boolean> {
+  if (!caller.accessToken) {
+    throw new Error("authenticated context unavailable");
+  }
+  const client = clientFor(caller.accessToken);
+  const { data, error } = await client
+    .schema("launcher")
+    .rpc("consume_permit_attempt", {
+      p_limit: PERMIT_RATE_LIMIT,
+      p_window_seconds: PERMIT_RATE_WINDOW_SECONDS,
+    });
+  if (error) {
+    throw new Error("rate limit dependency unavailable");
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return false;
+  }
+  return (data as Record<string, unknown>).allowed === true;
+}
+
 const handler = createIssueLaunchPermitHandler({
   authenticate: async (accessToken): Promise<AuthenticatedCaller | null> => {
     const client = clientFor(accessToken);
@@ -94,6 +118,7 @@ const handler = createIssueLaunchPermitHandler({
     if (!authSessionId) return null;
     return { userId: data.user.id, authSessionId, accessToken };
   },
+  consumePermitAttempt,
   authorize: async (
     caller,
     body,
