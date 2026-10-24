@@ -366,9 +366,10 @@ def test_process_accepted_commits_unified_build_and_provenance(monkeypatch, tmp_
     run_id = 99999
     installer_repo = "Valeneko-pranmong/Neko-Family-Proxy-Installer"
 
-    staging_base = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}")
+    staging_base = tmp_path / "artifacts" / "main-auto-release" / f"{run_id}-{sha}"
     import shutil
     shutil.rmtree(staging_base, ignore_errors=True)
+    monkeypatch.setenv("NEKO_RELEASE_STAGING_ROOT", str(tmp_path / "artifacts"))
 
     monkeypatch.setattr(
         "scripts.release_controller.get_successful_main_runs",
@@ -385,6 +386,7 @@ def test_process_accepted_commits_unified_build_and_provenance(monkeypatch, tmp_
     fake_core.write_bytes(b"core-zip-bytes")
     fake_dotnet = tmp_path / "windowsdesktop-runtime-6.0.36-win-x64.exe"
     fake_dotnet.write_bytes(b"dotnet")
+    monkeypatch.setenv("NEKO_DOTNET_BOOTSTRAPPER", str(fake_dotnet))
 
     monkeypatch.setattr(
         "scripts.release_controller.verify_and_fetch_core",
@@ -422,6 +424,8 @@ def test_process_accepted_commits_unified_build_and_provenance(monkeypatch, tmp_
             (s_dir / "launcher" / "dist").mkdir(parents=True, exist_ok=True)
             (s_dir / "launcher" / "dist" / "NekoLauncher.exe").write_bytes(b"launcher-exe")
             (s_dir / "launcher" / "dist" / "NekoUpdater.exe").write_bytes(b"updater-exe")
+            (s_dir / "trust").mkdir(parents=True, exist_ok=True)
+            (s_dir / "trust" / "update-profile-v1.json").write_bytes(b"{}")
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if args[0] == "uv":
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")

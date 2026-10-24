@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -62,8 +63,23 @@ _RT1_SECURITY_PATHS = [
     "launcher/src/neko_launcher/updater/trust_profile.py",
 ]
 
-_PROFILE_AUTHORITY_CUSTODY_PATH = Path("E:/Github/authority/v512-update-profile-authority/public-v1.json")
-_PROOF_RELEASE_AUTHORITY_CUSTODY_PATH = Path("E:/Github/authority/v512-proof-release-authority/public-v1.json")
+def _custody_path(env_name: str, relative: Path) -> Path:
+    configured = os.environ.get(env_name, "").strip()
+    if configured:
+        return Path(configured)
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    base = Path(local_app_data) if local_app_data else Path.home()
+    return base / relative
+
+
+_PROFILE_AUTHORITY_CUSTODY_PATH = _custody_path(
+    "NEKO_V512_PROFILE_AUTHORITY_CUSTODY",
+    Path("NekoFamily", "authority", "v512-update-profile-authority", "public-v1.json"),
+)
+_PROOF_RELEASE_AUTHORITY_CUSTODY_PATH = _custody_path(
+    "NEKO_V512_PROOF_RELEASE_AUTHORITY_CUSTODY",
+    Path("NekoFamily", "authority", "v512-proof-release-authority", "public-v1.json"),
+)
 
 
 def validate_acceptance_record_schema(raw_bytes: bytes) -> dict:

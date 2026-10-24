@@ -192,6 +192,7 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
         return derive_version.ReleaseTargetIntent(source_base="v5.1.1", target="v5.1.2", intent="user_bug")
     monkeypatch.setattr("scripts.derive_version.get_armed_target_from_dir", mock_get_armed_target)
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
+    monkeypatch.setenv("NEKO_RELEASE_STAGING_ROOT", str(tmp_path))
 
     # Need to skip core verify
     monkeypatch.setattr(

@@ -194,6 +194,7 @@ def build_window(
     window.root = root  # type: ignore[assignment]
     window._closing = False
     window._update_apply_pending = False
+    window._startup_update_check_submitted = False
     window._update_check_service = service
     window._update_apply_service = apply_service
     window._update_coordinator = coordinator
@@ -312,8 +313,8 @@ def test_repeated_startup_callbacks_use_update_executor_and_service_single_fligh
     window._check_software_update_startup()
     root.run_callbacks()
 
-    assert len(update_executor.submitted) == 2
-    assert service.startup_calls == 2
+    assert len(update_executor.submitted) == 1
+    assert service.startup_calls == 1
     assert service.gateway_fetches == 1
     assert window._last_update_result is result
 

@@ -17,9 +17,33 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from neko_launcher.application.software_update_models import parse_release_set
 
-PRODUCTION_KEY_REF = "C:/Users/Pranmong/AppData/Local/NekoFamily/release-custody/neko-update-prod-1.pem"
-
 _KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+def _normalized_path(value: str | Path) -> str:
+    return os.path.normcase(os.path.abspath(str(value)))
+
+
+def production_key_reference() -> str:
+    configured = os.environ.get("NEKO_RELEASE_KEY_REF", "").strip()
+    if configured:
+        return _normalized_path(configured)
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    base = Path(local_app_data) if local_app_data else Path.home()
+    return _normalized_path(
+        base / "NekoFamily" / "release-custody" / "neko-update-prod-1.pem"
+    )
+
+
+def _assert_custody_reference(private_key_path: Path | str) -> None:
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    repo_root = Path(__file__).resolve().parents[1]
+    resolved = Path(private_key_path).resolve()
+    if resolved.is_relative_to(repo_root):
+        raise ValueError("Custody reference violation")
+    if _normalized_path(private_key_path) != production_key_reference():
+        raise ValueError("Custody reference violation")
 
 
 @dataclass(frozen=True)
@@ -43,9 +67,7 @@ class PrivateKeyReleaseSigner:
         if "runtime-settings.key" in str(self._private_key_file):
             raise ValueError("runtime-settings.key is forbidden")
 
-        if str(self._private_key_file).replace("\\", "/") != PRODUCTION_KEY_REF:
-            if "PYTEST_CURRENT_TEST" not in os.environ:
-                raise ValueError("Custody reference violation")
+        _assert_custody_reference(self._private_key_file)
 
         if _KEY_ID_PATTERN.fullmatch(self._key_id) is None:
             raise ValueError("KEY_ID_INVALID")
@@ -70,13 +92,9 @@ class PrivateKeyReleaseSigner:
 def verify_and_sign(input_path: str | Path, output_path: str | Path, private_key_path: str | Path, key_id: str) -> None:
     if "runtime-settings.key" in str(private_key_path):
         raise ValueError("runtime-settings.key is forbidden")
-    
-    # Enforce exactly the production key reference
-    if str(private_key_path).replace("\\", "/") != PRODUCTION_KEY_REF:
-        if "PYTEST_CURRENT_TEST" not in os.environ:
-            raise ValueError("Custody reference violation")
 
-    
+    _assert_custody_reference(private_key_path)
+
     if _KEY_ID_PATTERN.fullmatch(key_id) is None:
         raise ValueError("KEY_ID_INVALID")
         
@@ -165,10 +183,8 @@ def main() -> int:
         if "runtime-settings.key" in str(arguments.private_key_file):
             raise ValueError("runtime-settings.key is forbidden")
             
-        if str(arguments.private_key_file).replace("\\", "/") != PRODUCTION_KEY_REF:
-            if "PYTEST_CURRENT_TEST" not in os.environ:
-                raise ValueError("Custody reference violation")
-            
+        _assert_custody_reference(arguments.private_key_file)
+
         if _KEY_ID_PATTERN.fullmatch(arguments.key_id) is None:
             raise ValueError("KEY_ID_INVALID")
         document, release = _load_release(arguments.input)

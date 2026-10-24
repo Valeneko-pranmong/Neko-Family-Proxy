@@ -291,6 +291,7 @@ class AppWindow:
         self._startup_splash_sub_var: tk.StringVar | None = None
         self._startup_splash_pbar: Any = None
         self._startup_check_in_progress = True
+        self._startup_update_check_submitted = False
 
         if self._telemetry_client is not None:
             self._telemetry_client.start()
@@ -1654,8 +1655,9 @@ class AppWindow:
         self.root.after(100, finish)
 
     def _check_software_update_startup(self) -> None:
-        if self._closing:
+        if self._closing or getattr(self, "_startup_update_check_submitted", False):
             return
+        self._startup_update_check_submitted = True
         coordinator = getattr(self, "_update_coordinator", None)
         if coordinator is not None:
             self._submit_software_update_check(coordinator.startup)

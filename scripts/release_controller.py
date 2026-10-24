@@ -70,9 +70,48 @@ from production_sequence_ledger import (  # noqa: E402
 from sign_software_release import (  # noqa: E402
     DetachedReleaseSignature,
     ReleaseSigner,
+    production_key_reference,
 )
 
 BOOTSTRAP_STABLE_TAG = "v5.1.0"
+
+
+def release_staging_root() -> Path:
+    configured = os.environ.get("NEKO_RELEASE_STAGING_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(tempfile.gettempdir()) / "neko-family-release-artifacts"
+
+
+def release_private_key_path() -> Path:
+    configured = os.environ.get("NEKO_RELEASE_KEY_FILE", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(production_key_reference())
+
+
+def release_private_key_id() -> str:
+    configured = os.environ.get("NEKO_RELEASE_KEY_ID", "").strip()
+    return configured or "neko-update-prod-1"
+
+
+def dotnet_bootstrapper_path() -> Path:
+    configured = os.environ.get("NEKO_DOTNET_BOOTSTRAPPER", "").strip()
+    if configured:
+        return Path(configured)
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    base = Path(local_app_data) if local_app_data else Path(tempfile.gettempdir())
+    return (
+        base
+        / "NekoFamily"
+        / "installer-prereqs"
+        / "windowsdesktop-runtime-6.0.36-win-x64.exe"
+    )
+
+
+def trust_profile_path() -> Path:
+    configured = os.environ.get("NEKO_UPDATE_TRUST_PROFILE", "").strip()
+    return Path(configured) if configured else Path()
 
 _SEMVER_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _SEMVER_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
@@ -1415,7 +1454,9 @@ def process_accepted_commits(
         sys.exit(1)
 
 
-    staging_base = Path(f"E:/Github/artifacts/main-auto-release/{run_id}-{commit}")
+    staging_base = (
+        release_staging_root() / "main-auto-release" / f"{run_id}-{commit}"
+    )
     staging_base.mkdir(parents=True, exist_ok=True)
 
     source_dir = staging_base / "source"
@@ -1585,7 +1626,7 @@ def process_accepted_commits(
     prereqs_dir = payload_dir / "Prereqs"
     prereqs_dir.mkdir(exist_ok=True)
 
-    dotnet_src = Path("E:/Github/artifacts/v5.1.0-one-click-installer/payload/Prereqs/windowsdesktop-runtime-6.0.36-win-x64.exe")
+    dotnet_src = dotnet_bootstrapper_path()
     expected_dotnet_sha = "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
     if _get_sha256(dotnet_src) != expected_dotnet_sha:
         raise RuntimeError(".NET runtime source SHA mismatch.")
@@ -1648,8 +1689,8 @@ def process_accepted_commits(
     sign_script = source_dir / "scripts" / "build_software_release_v2.py"
     release_json_out = publish_dir / "release-v2.json"
 
-    prod_key_path = "C:/Users/Pranmong/AppData/Local/NekoFamily/release-custody/neko-update-prod-1.pem"
-    prod_key_id = "neko-update-prod-1"
+    prod_key_path = str(release_private_key_path())
+    prod_key_id = release_private_key_id()
 
     # Create trusted public key file for the builder
     from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
@@ -1669,7 +1710,9 @@ def process_accepted_commits(
         "--public-key-file", str(pub_key_path),
         "--output", str(release_json_out),
     ]
-    subprocess.run(cmd, check=True)
+    sign_env = env.copy()
+    sign_env["NEKO_RELEASE_KEY_REF"] = prod_key_path
+    subprocess.run(cmd, check=True, env=sign_env)
 
     manifest_hash = _get_sha256(release_json_out)
 
@@ -1685,7 +1728,7 @@ def process_accepted_commits(
     from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
     from neko_launcher.updater.trust_profile import verify_update_trust_profile
 
-    canonical_trust_profile = Path("E:/Github/artifacts/v512-update-trust-profiles/production/update-profile-v1.json")
+    canonical_trust_profile = trust_profile_path()
     if not canonical_trust_profile.is_file():
         canonical_trust_profile = staging_base / "update-profile-v1.json"
         if not canonical_trust_profile.is_file():
