@@ -17,7 +17,7 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,539 passed / 3 skipped (local 2026-10-24)
+TEST_SUITE:                     2,543 passed / 3 skipped (local 2026-10-24)
 LAST_VERIFIED:                  2026-10-24 +07:00 (Asia/Bangkok)
 ```
 
@@ -99,7 +99,10 @@ The released line preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Launcher suite**: 2,539 passed, 3 skipped, 7 deselected on 2026-10-24 (local Python 3.14 venv). One environment-only failure remains: `test_release_workflow_github_assets.py::test_noncanonical_repository_is_rejected_before_first_release_api` requires PowerShell 7 (`pwsh`), which is not installed on this host.
+- **Launcher suite**: 2,543 passed, 3 skipped, 7 deselected on 2026-10-24 (local Python 3.14 venv). One environment-only failure remains: `test_release_workflow_github_assets.py::test_noncanonical_repository_is_rejected_before_first_release_api` requires PowerShell 7 (`pwsh`), which is not installed on this host.
 - **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
 - **Ruff and CI**: `ruff check src tests` PASS; CI enforces the same gate in `.github/workflows/ci.yml`.
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.
+- **Edge permit service**: 31 Node tests PASS, including rate-limit 429 and fail-closed 503 paths.
+- **Installer driver registration**: 30 builder/PowerShell tests PASS, including pinned hash mismatch and secure-stage checks.
+- **Pending gates**: Authenticode signing requires an operator certificate; Core-side named-pipe ACL verification remains in the separate NekoProxyCore repository.

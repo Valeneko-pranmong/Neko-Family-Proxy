@@ -10,12 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Upgraded Pillow from 12.2.0 to 13.0.0 to remediate known image-parsing CVEs.
 - Pinned all GitHub Actions to full commit SHAs and disabled credential persistence in checkout steps.
+- Pinned the Core manifest, `Redirector.bin`, and `nfdriver.sys` during elevated driver registration and load the verified redirector from an admin-only staging directory.
+- Added a per-user 10-attempt/60-second rate limit to `issue_launch_permit`; exhausted requests receive HTTP 429 `RateLimited`.
+- Removed personal operator and private-key paths from release tooling; staging, key, trust-profile, and bootstrapper paths are environment-configurable.
 
 ### Changed
 - Reduced the packaged Launcher from ~35 MB to ~27 MB by excluding unused Pillow plugins, the httpx CLI, rich/pygments, and interactive REPL modules.
 - Disabled UPX in the Launcher build for deterministic output and fewer antivirus false positives.
 - Self-sync now stages the committed executable in a verified temp file and replaces the running launcher with atomic renames plus rollback.
 - Support logging keeps line-buffered file handles open instead of reopening three files for every line.
+- The duplicate startup update-check callback is now one-shot; the manual check remains independent.
 
 ## [5.1.6] - 2026-09-21
 
