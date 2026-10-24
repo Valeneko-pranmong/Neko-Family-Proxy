@@ -94,11 +94,17 @@ def _stage(tmp_path: Path) -> Path:
     (payload / "NekoLauncher.exe").write_bytes(b"launcher")
     (payload / "NekoUpdater.exe").write_bytes(b"updater")
     (core / "bin" / "v2ray-sn.exe").write_bytes(b"v2ray")
+    (core / "bin" / "Redirector.bin").write_bytes(b"redirector")
+    (core / "bin" / "nfdriver.sys").write_bytes(b"nfdriver")
     (core / "runtime-settings.nkps").write_bytes(b"sealed")
     core_manifest_bytes = (
         '{"source_commit": "' + CORE_AUTHORITY + '", "files": '
         '[{"path": "bin/v2ray-sn.exe", "sha256": "' + _digest(b"v2ray")
-        + '", "size": 5}], '
+        + '", "size": 5}, '
+        '{"path": "bin/Redirector.bin", "sha256": "' + _digest(b"redirector")
+        + '", "size": 10}, '
+        '{"path": "bin/nfdriver.sys", "sha256": "' + _digest(b"nfdriver")
+        + '", "size": 8}], '
         '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
     ).encode("utf-8")
     (core / "core-manifest.json").write_bytes(core_manifest_bytes)
@@ -336,6 +342,131 @@ def test_beta_iss_64bit_powershell_redirection_guard() -> None:
     )
 
 
+def test_driver_registration_uses_pinned_hashes_and_secure_stage() -> None:
+    iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    for define in (
+        "ExpectedCoreManifestSha256",
+        "ExpectedRedirectorSha256",
+        "ExpectedNfDriverSha256",
+    ):
+        assert f"#ifndef {define}" in iss_text
+        assert f'#define {define} ""' in iss_text
+        assert f"{{#{define}}}" in iss_text
+
+    ps1_text = (
+        REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.ps1"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "ExpectedCoreManifestSha256",
+        "ExpectedRedirectorSha256",
+        "ExpectedNfDriverSha256",
+        "New-SecureStage",
+        "SetDllDirectory($stage)",
+    ):
+        assert token in ps1_text
+    assert "SetDllDirectory($CoreBinDir)" not in ps1_text
+
+
+def _netfilter2_present() -> bool:
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "if (Get-Service -Name netfilter2 -ErrorAction SilentlyContinue) { 'yes' }",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    return "yes" in result.stdout.lower()
+
+
+def test_ensure_netfilter2_rejects_pinned_hash_mismatch_before_state(
+    tmp_path: Path,
+) -> None:
+    if _netfilter2_present():
+        pytest.skip("netfilter2 is installed on this host; state-dependent test")
+
+    core_root = tmp_path / "CoreBundle"
+    bin_dir = core_root / "bin"
+    bin_dir.mkdir(parents=True)
+    driver = b"nfdriver"
+    redirector = b"redirector"
+    (bin_dir / "nfdriver.sys").write_bytes(driver)
+    (bin_dir / "Redirector.bin").write_bytes(redirector)
+    manifest = {
+        "source_commit": "test",
+        "files": [
+            {
+                "path": "bin/nfdriver.sys",
+                "size": len(driver),
+                "sha256": _digest(driver),
+            },
+            {
+                "path": "bin/Redirector.bin",
+                "size": len(redirector),
+                "sha256": _digest(redirector),
+            },
+        ],
+    }
+    manifest_path = core_root / "core-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_sha = _digest(manifest_path.read_bytes())
+    script = REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.ps1"
+
+    def run(
+        *,
+        manifest_hash: str = manifest_sha,
+        driver_hash: str = _digest(driver),
+        redirector_hash: str = _digest(redirector),
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-CoreBinDir",
+                str(bin_dir),
+                "-CheckOnly",
+                "-ExpectedCoreManifestSha256",
+                manifest_hash,
+                "-ExpectedRedirectorSha256",
+                redirector_hash,
+                "-ExpectedNfDriverSha256",
+                driver_hash,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    accepted = run()
+    assert accepted.returncode == 10, (
+        accepted.returncode,
+        accepted.stdout,
+        accepted.stderr,
+    )
+    assert "netfilter2 absent" in accepted.stdout
+
+    bad_redirector = run(redirector_hash="0" * 64)
+    assert bad_redirector.returncode == 22
+    assert "Redirector.bin hash mismatch" in bad_redirector.stdout
+
+    bad_driver = run(driver_hash="0" * 64)
+    assert bad_driver.returncode == 21
+    assert "nfdriver.sys hash mismatch" in bad_driver.stdout
+
+    bad_manifest = run(manifest_hash="0" * 64)
+    assert bad_manifest.returncode == 25
+    assert "core-manifest.json hash mismatch" in bad_manifest.stdout
+
+
 def test_ensure_netfilter2_clean_encoding_no_bom() -> None:
     ps1_text = (REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.ps1").read_text(encoding="utf-8")
     assert "-Encoding UTF8" not in ps1_text, "ensure-netfilter2.ps1 must not write UTF-8 BOM to ResultFile"
@@ -516,6 +647,10 @@ def test_candidate_build_record_and_post_install_verification_agree(
     v2ray_bytes = b"synthetic-v2ray-sn-for-build-record-agreement"
     v2ray_hash = _digest(v2ray_bytes)
     (core / "bin" / "v2ray-sn.exe").write_bytes(v2ray_bytes)
+    redirector_bytes = b"redirector"
+    nfdriver_bytes = b"nfdriver"
+    (core / "bin" / "Redirector.bin").write_bytes(redirector_bytes)
+    (core / "bin" / "nfdriver.sys").write_bytes(nfdriver_bytes)
 
     manifest = {
         "source_commit": candidate_authority,
@@ -525,7 +660,17 @@ def test_candidate_build_record_and_post_install_verification_agree(
                 "path": "bin/v2ray-sn.exe",
                 "size": len(v2ray_bytes),
                 "sha256": v2ray_hash,
-            }
+            },
+            {
+                "path": "bin/Redirector.bin",
+                "size": len(redirector_bytes),
+                "sha256": _digest(redirector_bytes),
+            },
+            {
+                "path": "bin/nfdriver.sys",
+                "size": len(nfdriver_bytes),
+                "sha256": _digest(nfdriver_bytes),
+            },
         ],
     }
     (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -596,8 +741,11 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
     def mock_find_iscc() -> str:
         return "mock_iscc.exe"
 
+    iscc_invoked_args: list[str] = []
+
     def mock_subprocess_run(args, **kwargs) -> Any:
         if args and args[0] == "mock_iscc.exe":
+            iscc_invoked_args.extend(args)
             assert "/DMyAppVersion=5.1.3" in args
             assert "/DMyAppDisplayVersion=5.1.3" in args
             assert f"/DCoreAuthority={CORE_AUTHORITY}" in args
@@ -626,6 +774,20 @@ def test_builder_record_contains_required_fields(tmp_path: Path, monkeypatch: py
     assert record["release_version"] == "5.1.3"
     assert "installer_version" not in record
     assert record["installer_file"] == "NekoFamilyProxy-Installer.exe"
+    assert record["driver_pins"] == {
+        "core_manifest_sha256": _digest(manifest_bytes),
+        "redirector_sha256": _digest(b"redirector"),
+        "nfdriver_sha256": _digest(b"nfdriver"),
+    }
+    assert any(
+        arg.startswith("/DExpectedCoreManifestSha256=") for arg in iscc_invoked_args
+    )
+    assert any(
+        arg.startswith("/DExpectedRedirectorSha256=") for arg in iscc_invoked_args
+    )
+    assert any(
+        arg.startswith("/DExpectedNfDriverSha256=") for arg in iscc_invoked_args
+    )
 
 
 def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path, Path, dict[str, bytes]]:
@@ -665,7 +827,11 @@ def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path,
         core_manifest_bytes = (
             '{"source_commit": "' + CORE_AUTHORITY + '", "files": '
             '[{"path": "bin/v2ray-sn.exe", "sha256": "' + _digest(b"v2ray")
-            + '", "size": 5}], '
+            + '", "size": 5}, '
+            '{"path": "bin/Redirector.bin", "sha256": "' + _digest(b"redirector")
+            + '", "size": 10}, '
+            '{"path": "bin/nfdriver.sys", "sha256": "' + _digest(b"nfdriver")
+            + '", "size": 8}], '
             '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
         ).encode("utf-8")
 

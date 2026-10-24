@@ -46,6 +46,18 @@
   #define CoreAuthority ""
 #endif
 
+; Driver registration pins. The elevated helper refuses to load anything that
+; does not match these build-approved digests.
+#ifndef ExpectedCoreManifestSha256
+  #define ExpectedCoreManifestSha256 ""
+#endif
+#ifndef ExpectedRedirectorSha256
+  #define ExpectedRedirectorSha256 ""
+#endif
+#ifndef ExpectedNfDriverSha256
+  #define ExpectedNfDriverSha256 ""
+#endif
+
 [Setup]
 AppId={{D4A7C182-6B3E-4F19-9C05-2E8AF7B31D64}
 AppName={#MyAppName}
@@ -362,7 +374,11 @@ begin
   if not FileExists(DriverScript) then begin
     AddDetail('internal error: ensure-netfilter2.ps1 missing');
   end else begin
-    Ok := RunPSFile(DriverScript, ' -CoreBinDir "' + BinDir + '" -CheckOnly', RC);
+    Ok := RunPSFile(DriverScript,
+      ' -CoreBinDir "' + BinDir + '" -CheckOnly' +
+      ' -ExpectedCoreManifestSha256 "{#ExpectedCoreManifestSha256}"' +
+      ' -ExpectedRedirectorSha256 "{#ExpectedRedirectorSha256}"' +
+      ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"', RC);
     Log('netfilter2 check exit code: ' + IntToStr(RC));
     case RC of
       0: g_DriverOK := True; { already valid and running; no elevation needed }
@@ -372,7 +388,9 @@ begin
             Log('requesting elevation for netfilter2 registration');
             Ok := ShellExec('runas', ExpandConstant('{cmd}'),
               '/c ""' + DriverCmd + '" -CoreBinDir "' + BinDir + '" -Apply -ResultFile "' +
-              ResFile + '""',
+              ResFile + '" -ExpectedCoreManifestSha256 "{#ExpectedCoreManifestSha256}"' +
+              ' -ExpectedRedirectorSha256 "{#ExpectedRedirectorSha256}"' +
+              ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '""',
               ExtractFileDir(DriverCmd), HideCmd, ewWaitUntilTerminated, RC);
             Log('elevated apply: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
             { Wait up to 15 seconds for ResFile to appear from elevated process }
@@ -382,7 +400,11 @@ begin
               Sleep(500);
             end;
             { Authoritative outcome = fresh unelevated re-check of real state. }
-            Ok := RunPSFile(DriverScript, ' -CoreBinDir "' + BinDir + '" -CheckOnly', RC);
+            Ok := RunPSFile(DriverScript,
+      ' -CoreBinDir "' + BinDir + '" -CheckOnly' +
+      ' -ExpectedCoreManifestSha256 "{#ExpectedCoreManifestSha256}"' +
+      ' -ExpectedRedirectorSha256 "{#ExpectedRedirectorSha256}"' +
+      ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"', RC);
             g_DriverOK := Ok and (RC = 0);
           end;
       20: AddDetail('incompatible netfilter2 driver is running; overwrite refused');

@@ -60,6 +60,21 @@ Layout:
   optional launch action stays suppressed (`LaunchAllowed` requires Core
   verification AND runtime presence).
 
+## Driver registration hardening
+
+The installer build pins the SHA-256 of `core-manifest.json`,
+`bin\Redirector.bin`, and `bin\nfdriver.sys` and passes those values to the
+elevated helper. The helper verifies the manifest and every declared driver
+file before touching machine state, then copies the verified driver, redirector,
+and declared DLLs into an admin-only staging directory under
+`%ProgramData%\NekoFamily\driver-stage`. `Redirector.bin` is loaded from that
+staging directory, not from the user-writable `%LOCALAPPDATA%` Core folder, and
+the staging directory is removed afterwards.
+
+Residual risk: `ensure-netfilter2.ps1` itself still runs from the per-user app
+directory. Full protection against a same-user script swap requires a signed
+helper installed in an admin-only location.
+
 ## Test evidence policy
 
 Installer changes require: silent install exit 0, Launcher SHA-256 at the

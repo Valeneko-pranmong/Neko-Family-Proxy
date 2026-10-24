@@ -382,6 +382,38 @@ def build_candidate(args: argparse.Namespace) -> int:
         fail(f"missing {ISS_PATH}")
     print("GATE installer-source=PASS")
 
+    # ---- gate 7: elevated driver registration pins --------------------------
+    manifest_entries = {
+        str(rel).replace("\\", "/").lower(): str(digest).lower()
+        for rel, digest in (
+            (item["path"], item["sha256"]) for item in files_obj
+        )
+    } if isinstance(files_obj, list) else {
+        str(rel).replace("\\", "/").lower(): str(digest).lower()
+        for rel, digest in files_obj.items()
+    }
+    driver_pins: dict[str, str] = {}
+    for rel in ("bin/Redirector.bin", "bin/nfdriver.sys"):
+        rel_key = rel.lower()
+        if rel_key not in manifest_entries:
+            fail(f"{rel} not declared in core-manifest.json")
+        driver_path = os.path.join(core_bundle, *rel.split("/"))
+        if not os.path.isfile(driver_path):
+            fail(f"missing {rel} in staged CoreBundle")
+        actual = sha256_file(driver_path)
+        if actual != manifest_entries[rel_key]:
+            fail(f"{rel} sha mismatch")
+        driver_pins[rel] = actual
+    core_manifest_sha256 = sha256_file(manifest_path)
+    redirector_sha256 = driver_pins["bin/Redirector.bin"]
+    nfdriver_sha256 = driver_pins["bin/nfdriver.sys"]
+    print(
+        "GATE driver-pins=PASS "
+        f"manifest={core_manifest_sha256} "
+        f"redirector={redirector_sha256} "
+        f"nfdriver={nfdriver_sha256}"
+    )
+
     # ---- compile -------------------------------------------------------------
     os.makedirs(out_dir, exist_ok=True)
     proc = subprocess.run(
@@ -392,6 +424,9 @@ def build_candidate(args: argparse.Namespace) -> int:
             f"/DMyAppVersion={args.release_version}",
             f"/DMyAppDisplayVersion={args.release_version}",
             f"/DCoreAuthority={args.core_authority}",
+            f"/DExpectedCoreManifestSha256={core_manifest_sha256}",
+            f"/DExpectedRedirectorSha256={redirector_sha256}",
+            f"/DExpectedNfDriverSha256={nfdriver_sha256}",
             "/Qp",
             ISS_PATH,
         ],
@@ -418,6 +453,11 @@ def build_candidate(args: argparse.Namespace) -> int:
         "updater_sha256": args.updater_sha256,
         "core_authority": args.core_authority,
         "core_installed_identity": sha256_file(manifest_path),
+        "driver_pins": {
+            "core_manifest_sha256": core_manifest_sha256,
+            "redirector_sha256": redirector_sha256,
+            "nfdriver_sha256": nfdriver_sha256,
+        },
         "v2ray_sha256": APPROVED_V2RAY_SHA256,
         "dotnet_desktop_runtime": {
             "version": DOTNET_RUNTIME_VERSION_PIN,
