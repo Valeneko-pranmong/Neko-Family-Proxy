@@ -105,4 +105,5 @@ The released line preserves all fundamental security and product invariants:
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.
 - **Edge permit service**: 31 Node tests PASS, including rate-limit 429 and fail-closed 503 paths.
 - **Installer driver registration**: 30 builder/PowerShell tests PASS, including pinned hash mismatch and secure-stage checks.
-- **Pending gates**: Authenticode signing requires an operator certificate; Core-side named-pipe ACL verification remains in the separate NekoProxyCore repository.
+- **Core pipe isolation**: NekoProxyCore `ab3b08c` uses `PipeOptions.CurrentUserOnly` plus exact Launcher-PID binding for both control and telemetry pipes.
+- **Pending gate**: Authenticode signing requires an operator certificate.

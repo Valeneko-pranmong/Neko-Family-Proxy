@@ -28,9 +28,10 @@ Updated: 2026-10-24 (Neko Family 5.1.6 Release Line)
 ## Next work
 1. Apply the permit rate-limit migration and deploy the matching Edge Function.
 2. Procure a Windows Authenticode certificate and wire signing into the release pipeline.
-3. Audit the Core-side named-pipe DACL and client verification in the separate NekoProxyCore repository.
-4. Re-run the full launcher suite and Ruff at current `main` HEAD.
-5. Review hosted Supabase/Edge deployment docs against production state; several `docs/current` and `supabase` deployment statements predate 5.1.6.
+3. Re-run the full launcher suite and Ruff at current `main` HEAD.
+4. Review hosted Supabase/Edge deployment docs against production state; several `docs/current` and `supabase` deployment statements predate 5.1.6.
+
+Core pipe isolation is complete in the separate repository: NekoProxyCore commit `ab3b08c` keeps `PipeOptions.CurrentUserOnly` on the control and telemetry pipes and binds both to the exact Launcher PID. A future image-path check remains optional defense in depth.
 
 ## Do not accidentally change
 - Do not mutate or replace published `v5.1.6` release assets.
