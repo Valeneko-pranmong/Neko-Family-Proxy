@@ -332,7 +332,7 @@ def test_security_boundary_no_private_key_read():
                 if isinstance(node.func.value, ast.Name) and "key" in node.func.value.id.lower():
                     pytest.fail("Private key read detected in code")
 
-def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
+def test_release_controller_tag_version_mismatch_fails_closed(monkeypatch, tmp_path):
     sha = "2222222222222222222222222222222222222222"
     run_id = 54321
 
@@ -351,6 +351,10 @@ def test_release_controller_mismatch_fails_closed(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("scripts.derive_version.get_github_releases", lambda: [])
     monkeypatch.setattr("scripts.release_controller.should_trigger", lambda f: True)
+    monkeypatch.setattr(
+        "scripts.release_controller._release_tag_at_commit",
+        lambda *args, **kwargs: "v5.1.2",
+    )
 
     def fake_run(args, **kwargs):
         import subprocess

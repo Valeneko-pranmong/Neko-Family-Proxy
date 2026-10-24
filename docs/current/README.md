@@ -17,7 +17,7 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     >1,900 test functions; CI is the release gate
+TEST_SUITE:                     2,533 passed / 3 skipped (local 2026-10-24)
 LAST_VERIFIED:                  2026-10-24 +07:00 (Asia/Bangkok)
 ```
 
@@ -99,7 +99,7 @@ The released line preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Launcher suite**: more than 1,900 test functions in `launcher/tests`. The 5.1.2 acceptance run recorded 1,928 passed, 3 skipped, and 7 deselected; re-run at the current HEAD is required before quoting it as current release evidence.
+- **Launcher suite**: 2,533 passed, 3 skipped, 7 deselected on 2026-10-24 (local Python 3.14 venv). One environment-only failure remains: `test_release_workflow_github_assets.py::test_noncanonical_repository_is_rejected_before_first_release_api` requires PowerShell 7 (`pwsh`), which is not installed on this host.
 - **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
-- **Ruff and CI**: enforced by `.github/workflows/ci.yml`; run locally before merge.
+- **Ruff and CI**: `ruff check src tests` PASS; CI enforces the same gate in `.github/workflows/ci.yml`.
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.

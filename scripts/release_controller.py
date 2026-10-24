@@ -74,6 +74,259 @@ from sign_software_release import (  # noqa: E402
 
 BOOTSTRAP_STABLE_TAG = "v5.1.0"
 
+_SEMVER_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_SEMVER_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+_PYPROJECT_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
+_INIT_VERSION_RE = re.compile(r'__version__\s*=\s*"([^"]+)"')
+
+
+@dataclass(frozen=True)
+class ReleaseVersionResolution:
+    version_tag: str
+    version: str
+    source_base_tag: str
+    source_base_version: str
+    requires_injection: bool
+    version_source: str
+
+
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    return tuple(int(part) for part in version.split("."))  # type: ignore[return-value]
+
+
+def _read_single_declared_version(
+    path: Path,
+    pattern: re.Pattern[str],
+    label: str,
+) -> str:
+    if not path.exists():
+        raise ValueError(f"{label} not found: {path}")
+    matches = list(pattern.finditer(path.read_text(encoding="utf-8")))
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one version in {label}, found {len(matches)}")
+    return matches[0].group(1)
+
+
+def _read_declared_launcher_version(source_dir: Path) -> str:
+    pyproject_version = _read_single_declared_version(
+        source_dir / "launcher" / "pyproject.toml",
+        _PYPROJECT_VERSION_RE,
+        "pyproject.toml",
+    )
+    init_version = _read_single_declared_version(
+        source_dir / "launcher" / "src" / "neko_launcher" / "__init__.py",
+        _INIT_VERSION_RE,
+        "__init__.py",
+    )
+    if pyproject_version != init_version:
+        raise ValueError(
+            "Declared launcher versions disagree: "
+            f"pyproject.toml={pyproject_version}, __init__.py={init_version}"
+        )
+    if not _SEMVER_VERSION_RE.fullmatch(pyproject_version):
+        raise ValueError(f"Declared launcher version is not X.Y.Z: {pyproject_version}")
+    return pyproject_version
+
+
+def _release_tag_at_commit(repo_root: Path, commit: str) -> str | None:
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", str(repo_root), "tag", "--points-at", commit],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    tags = [
+        line.strip()
+        for line in output.splitlines()
+        if _SEMVER_TAG_RE.fullmatch(line.strip())
+    ]
+    if len(tags) > 1:
+        raise ValueError(f"Commit {commit} has multiple release tags: {sorted(tags)}")
+    return tags[0] if tags else None
+
+
+def _previous_patch_tag(version: str) -> str:
+    major, minor, patch = _version_tuple(version)
+    if patch == 0:
+        raise ValueError(
+            f"Cannot derive a source base for {version}; "
+            "provide a matching armed source_base"
+        )
+    return f"v{major}.{minor}.{patch - 1}"
+
+
+def _armed_target_versions(armed_target: Any) -> tuple[str, str] | None:
+    if armed_target is None:
+        return None
+    if isinstance(armed_target, tuple):
+        return str(armed_target[0]), str(armed_target[1])
+    return str(armed_target.source_base), str(armed_target.target)
+
+
+def resolve_release_version(
+    source_dir: Path,
+    repo_root: Path,
+    commit: str,
+    *,
+    armed_target: Any | None = None,
+) -> ReleaseVersionResolution:
+    """Resolve the release version from the commit tag and launcher declarations."""
+    declared_version = _read_declared_launcher_version(source_dir)
+    exact_tag = _release_tag_at_commit(repo_root, commit)
+    armed_versions = _armed_target_versions(armed_target)
+
+    if exact_tag is not None:
+        tag_version = exact_tag[1:]
+        if tag_version != declared_version:
+            raise ValueError(
+                f"Release tag {exact_tag} does not match declared launcher version "
+                f"{declared_version}"
+            )
+        version = declared_version
+        if armed_versions is not None and armed_versions[1].lstrip("v") == version:
+            source_base_tag = armed_versions[0]
+        else:
+            source_base_tag = _previous_patch_tag(version)
+        requires_injection = False
+        version_source = "tag"
+    elif armed_versions is None:
+        version = declared_version
+        source_base_tag = _previous_patch_tag(version)
+        requires_injection = False
+        version_source = "pyproject"
+    else:
+        armed_source_tag, armed_target_tag = armed_versions
+        armed_source_version = armed_source_tag.lstrip("v")
+        armed_target_version = armed_target_tag.lstrip("v")
+        if declared_version == armed_target_version:
+            version = declared_version
+            source_base_tag = armed_source_tag
+            requires_injection = False
+            version_source = "pyproject"
+        elif declared_version == armed_source_version:
+            version = armed_target_version
+            source_base_tag = armed_source_tag
+            requires_injection = True
+            version_source = "release-target"
+        else:
+            version = declared_version
+            source_base_tag = _previous_patch_tag(version)
+            requires_injection = False
+            version_source = "pyproject"
+
+    if not _SEMVER_VERSION_RE.fullmatch(version):
+        raise ValueError(f"Resolved release version is not X.Y.Z: {version}")
+    source_base_version = source_base_tag.lstrip("v")
+    if not _SEMVER_VERSION_RE.fullmatch(source_base_version):
+        raise ValueError(f"Resolved source base is not X.Y.Z: {source_base_tag}")
+    if _version_tuple(version) <= _version_tuple(source_base_version):
+        raise ValueError(
+            f"Resolved release version {version} must be newer than source base "
+            f"{source_base_version}"
+        )
+    return ReleaseVersionResolution(
+        version_tag=f"v{version}",
+        version=version,
+        source_base_tag=(
+            source_base_tag if source_base_tag.startswith("v") else f"v{source_base_tag}"
+        ),
+        source_base_version=source_base_version,
+        requires_injection=requires_injection,
+        version_source=version_source,
+    )
+
+
+def validate_idempotent_version(
+    record: Mapping[str, Any],
+    source_dir: Path,
+    repo_root: Path,
+    commit: str,
+) -> None:
+    """Validate a resumed record against the tag and launcher declarations."""
+    try:
+        version_tag = str(record["version_tag"])
+        stable_tag = str(record["stable"])
+    except KeyError as exc:
+        raise ValueError(f"Idempotency record missing {exc.args[0]}") from None
+    version = version_tag.lstrip("v")
+    stable_version = stable_tag.lstrip("v")
+    if not _SEMVER_VERSION_RE.fullmatch(version):
+        raise ValueError(f"Idempotency target version is not X.Y.Z: {version_tag}")
+    if not _SEMVER_VERSION_RE.fullmatch(stable_version):
+        raise ValueError(f"Idempotency base version is not X.Y.Z: {stable_tag}")
+
+    declared_version = _read_declared_launcher_version(source_dir)
+    exact_tag = _release_tag_at_commit(repo_root, commit)
+    if exact_tag is not None:
+        if exact_tag != version_tag:
+            raise ValueError(
+                f"Release tag {exact_tag} does not match idempotency target {version_tag}"
+            )
+        if declared_version != version:
+            raise ValueError(
+                f"Tagged commit declares {declared_version}, expected {version}"
+            )
+        return
+    if declared_version not in {version, stable_version}:
+        raise ValueError(
+            f"Declared launcher version {declared_version} does not match idempotency "
+            f"target {version_tag} or base {stable_tag}"
+        )
+
+
+def inject_launcher_version(
+    source_dir: Path,
+    *,
+    target_version: str,
+    source_base_version: str,
+) -> list[str]:
+    """Align declared versions with the target and return files actually changed."""
+    entries = (
+        (
+            source_dir / "launcher" / "src" / "neko_launcher" / "__init__.py",
+            _INIT_VERSION_RE,
+            "launcher/src/neko_launcher/__init__.py",
+        ),
+        (
+            source_dir / "launcher" / "pyproject.toml",
+            _PYPROJECT_VERSION_RE,
+            "launcher/pyproject.toml",
+        ),
+    )
+    planned: list[tuple[Path, str, str]] = []
+    for path, pattern, relative_label in entries:
+        if not path.exists():
+            raise ValueError(f"{relative_label} not found: {path}")
+        content = path.read_text(encoding="utf-8")
+        matches = list(pattern.finditer(content))
+        if len(matches) != 1:
+            raise ValueError(
+                f"Expected exactly one version in {relative_label}, found {len(matches)}"
+            )
+        match = matches[0]
+        found_version = match.group(1)
+        if found_version == target_version:
+            continue
+        if found_version != source_base_version:
+            raise ValueError(
+                f"Base version mismatch in {relative_label}. Expected "
+                f"{source_base_version} or {target_version}, found {found_version}"
+            )
+        planned.append((
+            path,
+            content[: match.start(1)] + target_version + content[match.end(1):],
+            relative_label,
+        ))
+    injected: list[str] = []
+    for path, new_content, relative_label in planned:
+        path.write_text(new_content, encoding="utf-8")
+        injected.append(relative_label)
+    return injected
+
 
 @dataclass(frozen=True)
 class SigningRequired:
@@ -1178,43 +1431,61 @@ def process_accepted_commits(
     idempotency_file = staging_base / "idempotency_record.json"
     if idempotency_file.exists():
         record = json.loads(idempotency_file.read_text())
+        validate_idempotent_version(record, source_dir, repo_root, commit)
         version_tag = record["version_tag"]
         version = version_tag.lstrip("v")
         stable = record["stable"]
         stable_version = stable.lstrip("v")
         sequence = record["sequence"]
         release_id = record["release_id"]
-        if version != "5.1.2":
-            raise ValueError(f"Target version must be 5.1.2, got {version_tag} ({version})")
+        version_source = str(record.get("version_source", "idempotency-record"))
         print(f"Resuming idempotent run: {version_tag}")
     else:
         # 2. Version allocation
         try:
             from scripts.derive_version import get_armed_target_from_dir
             target_res = get_armed_target_from_dir(source_dir)
-            if hasattr(target_res, "target"):
-                version_tag = target_res.target
-                stable = target_res.source_base
-                sequence = getattr(target_res, "sequence", None) or 8
-                release_id = getattr(target_res, "release_id", None) or f"stable-{sequence:04d}"
-            else:
-                stable, target, sequence, release_id = target_res
-                version_tag = target
         except ValueError as e:
             print(f"Error: Could not derive target version from extracted source: {e}", file=sys.stderr)
             sys.exit(1)
-        version = version_tag.lstrip("v")
-        stable_version = stable.lstrip("v")
-        if version != "5.1.2":
-            print(f"Error: Target version must be 5.1.2, got {version_tag} ({version}) - stale version inputs rejected", file=sys.stderr)
-            raise ValueError(f"Target version must be 5.1.2, got {version_tag} ({version})")
-        print(f"Allocated version: {version_tag} ({version}), base/stable: {stable_version}, sequence: {sequence}, release_id: {release_id}")
+        try:
+            resolution = resolve_release_version(
+                source_dir,
+                repo_root,
+                commit,
+                armed_target=target_res,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        version_tag = resolution.version_tag
+        version = resolution.version
+        stable = resolution.source_base_tag
+        stable_version = resolution.source_base_version
+        version_source = resolution.version_source
+        if isinstance(target_res, tuple):
+            _, _, *allocation = target_res
+            sequence = int(allocation[0]) if allocation else 8
+            release_id = (
+                str(allocation[1])
+                if len(allocation) > 1
+                else f"stable-{sequence:04d}"
+            )
+        else:
+            sequence = getattr(target_res, "sequence", None) or 8
+            release_id = getattr(target_res, "release_id", None) or f"stable-{sequence:04d}"
+        print(
+            f"Resolved version: {version_tag} ({version}) from {version_source}, "
+            f"base/stable: {stable_version}, sequence: {sequence}, "
+            f"release_id: {release_id}"
+        )
 
         idempotency_file.write_text(json.dumps({
             "version_tag": version_tag,
             "stable": stable,
             "sequence": sequence,
-            "release_id": release_id
+            "release_id": release_id,
+            "version_source": version_source,
         }))
 
     from scripts.derive_version import get_github_releases
@@ -1266,46 +1537,15 @@ def process_accepted_commits(
         )
         return
 
-    # 4. Inject version
-    init_py_path = source_dir / "launcher" / "src" / "neko_launcher" / "__init__.py"
-    if init_py_path.exists():
-        content = init_py_path.read_text(encoding="utf-8")
-        import re
-        matches = list(re.finditer(r'__version__\s*=\s*"([^"]+)"', content))
-        if len(matches) != 1:
-            print(f"Error: Expected exactly one __version__ in __init__.py, found {len(matches)}", file=sys.stderr)
-            sys.exit(1)
-        m = matches[0]
-        found_version = m.group(1)
-        if found_version != stable_version:
-            if found_version != version:
-                print(f"Error: Base version mismatch in __init__.py. Expected {stable_version}, found {found_version}", file=sys.stderr)
-                sys.exit(1)
-        else:
-            content = content[:m.start(1)] + version + content[m.end(1):]
-            init_py_path.write_text(content, encoding="utf-8")
-    else:
-        print("Error: __init__.py not found", file=sys.stderr)
-        sys.exit(1)
-
-    pyproject_path = source_dir / "launcher" / "pyproject.toml"
-    if pyproject_path.exists():
-        content = pyproject_path.read_text(encoding="utf-8")
-        matches = list(re.finditer(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE))
-        if len(matches) != 1:
-            print(f"Error: Expected exactly one version in pyproject.toml, found {len(matches)}", file=sys.stderr)
-            sys.exit(1)
-        m = matches[0]
-        found_version = m.group(1)
-        if found_version != stable_version:
-            if found_version != version:
-                print(f"Error: Base version mismatch in pyproject.toml. Expected {stable_version}, found {found_version}", file=sys.stderr)
-                sys.exit(1)
-        else:
-            content = content[:m.start(1)] + version + content[m.end(1):]
-            pyproject_path.write_text(content, encoding="utf-8")
-    else:
-        print("Error: pyproject.toml not found", file=sys.stderr)
+    # 4. Inject version only when the accepted source still declares the base.
+    try:
+        injected_files = inject_launcher_version(
+            source_dir,
+            target_version=version,
+            source_base_version=stable_version,
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     # 5. Build Launcher/Updater
@@ -1565,7 +1805,8 @@ def process_accepted_commits(
         "stable_version": stable_version,
         "target_version": version,
         "version": version_tag,
-        "injected_files": ["launcher/src/neko_launcher/__init__.py", "launcher/pyproject.toml"],
+        "version_source": version_source,
+        "injected_files": injected_files,
         "sequence": sequence,
         "release_id": release_id,
         "key_id": signed_key_id,

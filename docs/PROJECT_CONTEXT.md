@@ -34,7 +34,7 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - Active Branch: `main`.
 - Distribution: Two-Repo Role Inversion is active. `Valeneko-pranmong/Neko-Family-Proxy-Updates` carries machine assets; `Valeneko-pranmong/Neko-Family-Proxy` carries the human installer and source.
 - Update Lifecycle: background staging, durable pending storage, session guard, and offline apply are released and active.
-- Release Automation: `.github/workflows/release.yml` is the manual publication gate. `scripts/release_controller.py` still contains v5.1.2-specific bootstrap/version checks and must be generalized before it can drive a new release line.
+- Release Automation: `.github/workflows/release.yml` is the manual publication gate. `scripts/release_controller.py` resolves the version from the exact commit tag or the declared `launcher/pyproject.toml` / `__init__.py`; bump both declared versions before an untagged release. `release_target.json` remains the sequence/allocation input and is still armed at v5.1.2.
 - Repository Status (2026-10-24, at review start): `main` clean and synced with `origin/main`; repository safety check PASS.
 
 ## Related Projects

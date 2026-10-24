@@ -16,7 +16,7 @@ Updated: 2026-10-24 (Neko Family 5.1.6 Release Line)
   - Reuses the existing `NekoUpdater.exe` transactional engine, probation runner, rollback, and anti-downgrade machinery.
 - v5.1.6 additions: startup update-check splash, in-app update progress dialog, windowless updater helper, committed-generation self-sync, Settings version check, and baseline enrollment from a working-directory install root.
 - Release workflow: `.github/workflows/release.yml` validates `release_tag` against `launcher/pyproject.toml` at `expected_target`, not a hardcoded version.
-- Known remaining gap: `scripts/release_controller.py` still contains v5.1.2-specific version/bootstrap checks and is not yet a general release path for the current line.
+- Release controller: `scripts/release_controller.py` resolves the release version from the exact semver tag at the accepted commit, falling back to the declared `launcher/pyproject.toml` and `__init__.py` versions. For an untagged release, bump both declared versions before running the controller; an exact tag must match them. `release_target.json` still supplies sequence/allocation and remains armed at v5.1.2.
 
 ## User-facing readiness
 - `v5.1.6` is the current public stable release; in-app automatic updates are active for the released line.
