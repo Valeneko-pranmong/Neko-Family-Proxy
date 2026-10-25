@@ -29,6 +29,9 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 TARGET = "b4dab9e9571cbe6d05c6fdb17617137b302856d2"
 TAG = "v5.1.4"
+from scripts.verify_github_release_assets import (  # noqa: E402
+    EXPECTED_PRODUCTION_KEY_ID as CURRENT_KEY_ID,
+)
 
 
 def load_module():
@@ -46,7 +49,7 @@ def use_test_release_public_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
     monkeypatch.setitem(
-        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
+        PRODUCTION_RELEASE_PUBLIC_KEYS, CURRENT_KEY_ID, TEST_PUBLIC_KEY
     )
 
 
@@ -236,7 +239,7 @@ def make_stage(
         "mandatory": mandatory,
         "components": components,
     }
-    envelope = signed_envelope(payload, key_id="neko-update-prod-1")
+    envelope = signed_envelope(payload, key_id=CURRENT_KEY_ID)
     assert set(envelope) == {
         "envelope_version", "key_id", "payload_b64", "signature_b64"
     }
@@ -374,7 +377,7 @@ def test_manifest_descriptor_mismatch(tmp_path: Path, field: str) -> None:
     payload["components"]["launcher"][field] = 99 if field == "artifact_size" else "0" * 64
     if field == "artifact_sha256":
         payload["components"]["launcher"]["installed_identity_sha256"] = "0" * 64
-    doc = signed_envelope(payload, key_id="neko-update-prod-1")
+    doc = signed_envelope(payload, key_id=CURRENT_KEY_ID)
     (stage / "release-v2.json").write_bytes(canonical(doc))
     with pytest.raises(
         module.StageDraftReleaseError, match="Manifest descriptor mismatch: launcher"
@@ -995,14 +998,14 @@ def _setup_machine_publish_test_env(
         release_id=floor_release_id,
         payload_sha256="7" * 64,
         envelope_sha256="7" * 64,
-        key_id="neko-update-prod-1",
+        key_id=CURRENT_KEY_ID,
     )
     binding8 = AuthenticatedProductionBinding(
         sequence=seq,
         release_id=rel_id,
         payload_sha256=payload_sha,
         envelope_sha256=env_sha,
-        key_id="neko-update-prod-1",
+        key_id=CURRENT_KEY_ID,
     )
 
     floor_snapshot = AuthenticatedHistorySnapshot(
@@ -1054,7 +1057,7 @@ def _setup_machine_publish_test_env(
             component_set_sha256="comp" * 16,
             payload_sha256=payload_sha,
             envelope_sha256=env_sha,
-            key_id="neko-update-prod-1",
+            key_id=CURRENT_KEY_ID,
             timestamp="2026-09-14T00:01:00Z",
             previous_entry_sha256=prev_sha,
         )
@@ -1067,7 +1070,7 @@ def _setup_machine_publish_test_env(
         component_set_sha256="comp" * 16,
         payload_sha256=payload_sha,
         envelope_sha256=env_sha,
-        key_id="neko-update-prod-1",
+        key_id=CURRENT_KEY_ID,
         
     )
 
@@ -1266,7 +1269,7 @@ def test_publish_unified_release_conflicting_authority_hard_stops_with_zero_muta
         release_id="stable-0009",
         payload_sha256="9" * 64,
         envelope_sha256="9" * 64,
-        key_id="neko-update-prod-1",
+        key_id=CURRENT_KEY_ID,
     )
     conflicting_snap = AuthenticatedHistorySnapshot(
         bindings_by_sequence={7: binding7, 8: binding8, 9: binding9},

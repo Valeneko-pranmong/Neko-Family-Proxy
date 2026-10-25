@@ -45,5 +45,5 @@ def test_sign_software_release_default_key_reference_is_not_personal(monkeypatch
     reference = production_key_reference()
 
     assert "nekofamily" in reference.lower()
-    assert "neko-update-prod-1.pem" in reference
+    assert "neko-update-prod-2.pem" in reference
     assert "pranmong" not in reference.lower()

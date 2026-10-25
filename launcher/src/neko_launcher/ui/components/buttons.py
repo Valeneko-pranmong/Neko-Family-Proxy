@@ -4,7 +4,12 @@ from typing import Any, Callable
 
 import customtkinter as ctk
 
-from neko_launcher.ui.theme import FONT_FAMILY, PALETTE
+from neko_launcher.ui.theme import (
+    CARD_RADIUS,
+    CONTROL_RADIUS,
+    FONT_FAMILY,
+    PALETTE,
+)
 
 
 def toggle_password_visibility(entry: Any, variable: Any) -> None:
@@ -25,8 +30,8 @@ def primary_button(
         hover_color=PALETTE.primary_hover,
         text_color=PALETTE.on_primary,
         font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
-        corner_radius=10,
-        height=36,
+        corner_radius=12,
+        height=38,
         command=command,
     )
 
@@ -46,11 +51,11 @@ def secondary_button(
         parent,
         text=text,
         fg_color="transparent",
-        hover_color="#F3F4F6",
+        hover_color=PALETTE.surface,
         border_color=PALETTE.border,
         border_width=1,
         text_color=PALETTE.text,
-        corner_radius=8,
+        corner_radius=CONTROL_RADIUS,
         height=height,
         font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
         command=command,
@@ -71,7 +76,7 @@ def destructive_button(
         border_color=PALETTE.danger,
         border_width=1,
         text_color=PALETTE.danger,
-        corner_radius=8,
+        corner_radius=CONTROL_RADIUS,
         height=32,
         font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
         command=command,
@@ -84,7 +89,7 @@ def card(parent: ctk.CTkBaseClass) -> ctk.CTkFrame:
         fg_color=PALETTE.card,
         border_color=PALETTE.border,
         border_width=1,
-        corner_radius=10,
+        corner_radius=CARD_RADIUS,
     )
     frame.pack(fill="x", padx=8, pady=4)
     return frame
@@ -110,16 +115,17 @@ def icon_entry(
 ) -> ctk.CTkEntry:
     frame = ctk.CTkFrame(
         parent,
-        fg_color=PALETTE.card,
-        border_width=0,
-        corner_radius=10,
+        fg_color=PALETTE.surface,
+        border_color=PALETTE.border,
+        border_width=1,
+        corner_radius=CONTROL_RADIUS,
     )
     frame.pack(fill="x", padx=16, pady=(2, 4))
 
     ctk.CTkLabel(
         frame,
         text=icon,
-        text_color="#A0A0A0",
+        text_color=PALETTE.text_muted,
         font=ctk.CTkFont(family=FONT_FAMILY, size=18),
         width=30,
     ).pack(side="left", padx=(10, 4), pady=4)
@@ -141,7 +147,7 @@ def icon_entry(
         eye = ctk.CTkLabel(
             frame,
             text=right_icon,
-            text_color="#C0C0C0",
+            text_color=PALETTE.text_muted,
             font=ctk.CTkFont(family=FONT_FAMILY, size=18),
             width=30,
             cursor="hand2" if show else "arrow",

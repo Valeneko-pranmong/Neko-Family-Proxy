@@ -13,7 +13,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from neko_launcher.updater.canonical_json import canonical_json_dumps
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2
-from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+from neko_launcher.updater.trust import (
+    CURRENT_PRODUCTION_RELEASE_KEY_ID,
+    PRODUCTION_RELEASE_PUBLIC_KEYS,
+)
 
 CANONICAL_REPO = "Valeneko-pranmong/Neko-Family-Proxy"
 _RETIRED_INSTALLER_REPO = "/".join(
@@ -23,7 +26,7 @@ _SUPERSEDED_UPDATES_REPO = "/".join(
     ["Valeneko-pranmong", "-".join(["Neko", "Family", "Proxy", "Updates"])]
 )
 
-EXPECTED_PRODUCTION_KEY_ID = "neko-update-prod-1"
+EXPECTED_PRODUCTION_KEY_ID = CURRENT_PRODUCTION_RELEASE_KEY_ID
 STABLE_RELEASE_EXPECTED_CHANNEL = "stable"
 STABLE_RELEASE_EXPECTED_MIN_SEQUENCE = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MIN = 1
@@ -305,9 +308,10 @@ def verify_unified_release_assets(
         except KeyError as err:
             raise GitHubReleaseAssetsVerificationError("Expected trusted public key not found") from err
     else:
-        if expected_key_id != EXPECTED_PRODUCTION_KEY_ID:
-            raise GitHubReleaseAssetsVerificationError("Production key_id mismatch")
-        registry_key_bytes = PRODUCTION_RELEASE_PUBLIC_KEYS[EXPECTED_PRODUCTION_KEY_ID]
+        try:
+            registry_key_bytes = PRODUCTION_RELEASE_PUBLIC_KEYS[expected_key_id]
+        except KeyError as err:
+            raise GitHubReleaseAssetsVerificationError("Production key_id mismatch") from err
         public_key_bytes = (
             registry_key_bytes
             if public_key_file is None

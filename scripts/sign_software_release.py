@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from neko_launcher.application.software_update_models import parse_release_set
+from neko_launcher.updater.trust import CURRENT_PRODUCTION_RELEASE_KEY_ID
 
 _KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
@@ -28,10 +29,14 @@ def production_key_reference() -> str:
     configured = os.environ.get("NEKO_RELEASE_KEY_REF", "").strip()
     if configured:
         return _normalized_path(configured)
+    key_id = (
+        os.environ.get("NEKO_RELEASE_KEY_ID", "").strip()
+        or CURRENT_PRODUCTION_RELEASE_KEY_ID
+    )
     local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
     base = Path(local_app_data) if local_app_data else Path.home()
     return _normalized_path(
-        base / "NekoFamily" / "release-custody" / "neko-update-prod-1.pem"
+        base / "NekoFamily" / "release-custody" / f"{key_id}.pem"
     )
 
 

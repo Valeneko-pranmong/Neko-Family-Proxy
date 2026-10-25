@@ -30,7 +30,7 @@ class MetricCard:
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=8,
+            corner_radius=12,
             **kwargs,
         )
 

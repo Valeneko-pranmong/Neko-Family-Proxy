@@ -523,11 +523,11 @@ class AppWindow:
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=14,
+            corner_radius=18,
         )
         shell.pack(fill="both", expand=True, padx=8, pady=6)
         header = ctk.CTkFrame(shell, fg_color="transparent")
-        header.pack(fill="x", padx=12, pady=(6, 2))
+        header.pack(fill="x", padx=12, pady=(5, 1))
 
         # Keep the brand mathematically centered on every route. The right-side
         # Settings slot stays a fixed 32 px wide even while its button is hidden;
@@ -562,9 +562,9 @@ class AppWindow:
         ctk.CTkLabel(
             brand,
             text="NEKO FAMILY PROXY",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(anchor="center", pady=(4, 0))
+        ).pack(anchor="center", pady=(3, 0))
         self._header_message = ctk.CTkLabel(
             brand,
             text="High Performance & Low Latency",
@@ -572,6 +572,13 @@ class AppWindow:
             text_color=PALETTE.text_muted,
         )
         self._header_message.pack(anchor="center")
+        ctk.CTkFrame(
+            brand,
+            fg_color=PALETTE.primary,
+            width=28,
+            height=3,
+            corner_radius=2,
+        ).pack(anchor="center", pady=(4, 0))
 
         self._content = ctk.CTkFrame(shell, fg_color="transparent")
         self._content.pack(fill="both", expand=True, padx=4, pady=(0, 2))
@@ -640,10 +647,14 @@ class AppWindow:
         footer = ctk.CTkLabel(
             shell,
             text=f"v{__version__}",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10, weight="bold"),
             text_color=PALETTE.text_muted,
+            fg_color=PALETTE.surface,
+            corner_radius=8,
+            padx=8,
+            pady=1,
         )
-        footer.pack(pady=(0, 4))
+        footer.pack(pady=(0, 3))
 
     def _build_window_controls(self, drag_surface: ctk.CTkBaseClass) -> None:
         controls = ctk.CTkFrame(
@@ -665,7 +676,7 @@ class AppWindow:
         self._settings_button = ctk.CTkButton(
             controls, text="", image=self._settings_control_image,
             command=self._open_settings_window, width=32, height=26,
-            fg_color="transparent", hover_color="#F3F4F6",
+            fg_color="transparent", hover_color=PALETTE.surface,
         )
         self._settings_button.pack(side="left")
 

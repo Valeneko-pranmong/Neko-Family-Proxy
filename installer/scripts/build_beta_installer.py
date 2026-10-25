@@ -102,8 +102,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--baseline-envelope", required=True)
     parser.add_argument("--trust-profile", required=True)
     args = parser.parse_args(argv)
-    if not re.match(r"^5\.1\.\d+$", args.release_version):
-        parser.error("--release-version must be stable 5.1.x format (e.g., 5.1.3)")
+    if not re.match(r"^5\.(?:1|2)\.\d+$", args.release_version):
+        parser.error("--release-version must be stable 5.x.y format (e.g., 5.2.0)")
     if not args.core_authority.strip():
         parser.error("--core-authority must not be empty")
     return args

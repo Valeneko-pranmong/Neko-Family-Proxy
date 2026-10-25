@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+
+import pytest
 
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
@@ -43,6 +46,7 @@ def workflow_step_run(name: str) -> str:
     return lines[run_index][13:]
 
 
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
 def test_noncanonical_repository_is_rejected_before_first_release_api(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()

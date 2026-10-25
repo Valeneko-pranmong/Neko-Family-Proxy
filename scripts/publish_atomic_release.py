@@ -306,6 +306,11 @@ def _validate_manifest(
     expected_minimum_sequence: int | None = None,
     expected_mandatory: bool | None = None,
 ) -> None:
+    from neko_launcher.updater.trust import (
+        CURRENT_PRODUCTION_RELEASE_KEY_ID,
+        PRODUCTION_RELEASE_PUBLIC_KEYS,
+    )
+
     data = manifest_path.read_bytes()
     if len(data) > 65_536:
         raise StageDraftReleaseError("release-v2.json exceeds 65,536 bytes")
@@ -317,7 +322,11 @@ def _validate_manifest(
         raise StageDraftReleaseError("release-v2.json is invalid JSON") from error
     if not isinstance(document, dict) or _canonical_json(document) != data:
         raise StageDraftReleaseError("release-v2.json is not canonical JSON")
-    if document.get("key_id") != "neko-update-prod-1":
+    key_id = document.get("key_id")
+    if (
+        key_id != CURRENT_PRODUCTION_RELEASE_KEY_ID
+        or key_id not in PRODUCTION_RELEASE_PUBLIC_KEYS
+    ):
         raise StageDraftReleaseError("Stable-release key authority mismatch")
     release_set = _verify_manifest_signature(document)
 

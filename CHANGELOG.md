@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-10-24
+
+### Added
+- Refreshed launcher, authentication, dashboard, and Settings presentation with the new rose/plum visual system; all existing flows and status semantics are preserved.
+- Rotated the production release authority to `neko-update-prod-2` and the profile authority to `neko-update-profile-v520-1`; the signed v5.2.0 trust profile authorizes only the current release key.
+- Added bilingual 5.2.0 release notes and a manual-upgrade guide for existing 5.1.6 users.
+- Added regression coverage for historical trust anchors, editable trusted-key registries, and 5.2.0 minor-release intent parsing.
+
 ### Security
 - Upgraded Pillow from 12.2.0 to 13.0.0 to remediate known image-parsing CVEs.
 - Pinned all GitHub Actions to full commit SHAs and disabled credential persistence in checkout steps.
 - Pinned the Core manifest, `Redirector.bin`, and `nfdriver.sys` during elevated driver registration and load the verified redirector from an admin-only staging directory.
 - Added a per-user 10-attempt/60-second rate limit to `issue_launch_permit`; exhausted requests receive HTTP 429 `RateLimited`.
 - Removed personal operator and private-key paths from release tooling; staging, key, trust-profile, and bootstrapper paths are environment-configurable.
+- Core telemetry and control named pipes are bound to the CurrentUserOnly ACL and the exact Launcher process ID.
 
 ### Changed
 - Reduced the packaged Launcher from ~35 MB to ~27 MB by excluding unused Pillow plugins, the httpx CLI, rich/pygments, and interactive REPL modules.
@@ -20,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Self-sync now stages the committed executable in a verified temp file and replaces the running launcher with atomic renames plus rollback.
 - Support logging keeps line-buffered file handles open instead of reopening three files for every line.
 - The duplicate startup update-check callback is now one-shot; the manual check remains independent.
+- The release intent parser now accepts a single patch increment or a `.0` minor release from the accepted source base; the installer version gate accepts stable 5.1.x and 5.2.x.
+
+### Upgrade
+- Existing v5.1.6 installations cannot auto-update to v5.2.0 because the old installed trust profile authorizes only `neko-update-prod-1`, whose custody material is unavailable. Run the v5.2.0 installer manually; account and launcher data are preserved.
 
 ## [5.1.6] - 2026-09-21
 

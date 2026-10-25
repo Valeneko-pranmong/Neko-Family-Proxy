@@ -81,11 +81,11 @@ class ConnectionDiagram:
             fg_color=PALETTE.surface,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=10,
+            corner_radius=14,
             **kwargs,
         )
         self._grid = ctk.CTkFrame(self.frame, fg_color="transparent")
-        self._grid.pack(fill="x", padx=10, pady=(7, 7))
+        self._grid.pack(fill="x", padx=12, pady=(10, 9))
         self._grid.grid_columnconfigure(0, weight=1, uniform="hop")
         self._grid.grid_columnconfigure(1, weight=0)
         self._grid.grid_columnconfigure(2, weight=1, uniform="hop")

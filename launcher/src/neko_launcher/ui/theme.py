@@ -10,39 +10,43 @@ import customtkinter as ctk
 FONT_FAMILY = "Sarabun"
 FONT_FILENAMES = ("Sarabun-Regular.ttf", "Sarabun-Bold.ttf")
 
+CARD_RADIUS = 16
+CONTROL_RADIUS = 10
+SMALL_RADIUS = 8
+
 
 @dataclass(frozen=True)
 class PinkPalette:
-    background: str = "#FFFFFF"
+    background: str = "#F6F2F4"
     card: str = "#FFFFFF"
-    surface: str = "#F9FAFB"
-    surface_accent: str = "#FFF0F5"
-    primary: str = "#F84B93"
-    primary_soft: str = "#FCE7F0"
-    primary_dark: str = "#E02B78"
-    primary_hover: str = "#FF65A8"
-    text: str = "#1F2937"
-    text_muted: str = "#6B7280"
+    surface: str = "#FBF8FA"
+    surface_accent: str = "#FDEFF5"
+    primary: str = "#C2185B"
+    primary_soft: str = "#FCE4EC"
+    primary_dark: str = "#8E0E43"
+    primary_hover: str = "#E0447C"
+    text: str = "#241A20"
+    text_muted: str = "#6E5E67"
     on_primary: str = "#FFFFFF"
-    border: str = "#E5E7EB"
-    border_accent: str = "#FFC1D6"
-    success: str = "#10B981"
-    success_surface: str = "#F0FDF4"
-    warning: str = "#F59E0B"
-    warning_surface: str = "#FFFBEB"
-    danger: str = "#EF4444"
-    danger_surface: str = "#FEF2F2"
+    border: str = "#EADDE3"
+    border_accent: str = "#F3B6CB"
+    success: str = "#087A55"
+    success_surface: str = "#E8F7F0"
+    warning: str = "#B45309"
+    warning_surface: str = "#FFF6E5"
+    danger: str = "#C62828"
+    danger_surface: str = "#FDECEC"
     # Phase 1 — semantic connection-diagram node tokens
     # (docs/current/dashboard-redesign-plan.md v1.2, sections 4.4 and 1.3).
     # Names use semantic roles; no raw address or infrastructure fields.
-    node_local: str = "#10B981"
-    node_local_surface: str = "#F0FDF4"
-    node_engine: str = "#3B82F6"
-    node_engine_surface: str = "#EFF6FF"
-    node_remote: str = "#8B5CF6"
-    node_remote_surface: str = "#F5F3FF"
-    node_game: str = "#F84B93"
-    node_game_surface: str = "#FCE7F0"
+    node_local: str = "#0F9D6E"
+    node_local_surface: str = "#E8F7F0"
+    node_engine: str = "#1D4ED8"
+    node_engine_surface: str = "#EAF1FF"
+    node_remote: str = "#6D28D9"
+    node_remote_surface: str = "#F3EEFF"
+    node_game: str = "#C2185B"
+    node_game_surface: str = "#FCE4EC"
 
 
 PALETTE = PinkPalette()

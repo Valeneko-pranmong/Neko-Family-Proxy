@@ -1,6 +1,6 @@
 # NEKO-AUTH-LITE v1
 
-**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line; `v5.1.6` is the current stable release.
+**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line and carried into the `v5.2.0` release line; existing 5.1.6 clients require the 5.2.0 manual installer because the update trust anchors were rotated.
 
 ```text
 SESSION_POLICY = LATEST_CLAIM_WINS
@@ -111,7 +111,7 @@ anti-debugging, and S1 are historical or optional hardening—not Lite blockers.
 
 ```text
 HOSTED LITE DEPLOYMENT = MIGRATION DEPLOYED AND VERIFIED
-CURRENT STABLE RELEASE = v5.1.6
+CURRENT RELEASE LINE = v5.2.0 (manual upgrade from v5.1.6)
 LAUNCHER PRODUCTION AUTHORIZATION = ENABLED (NO BLOCKERS)
 CORE LITE MIGRATION = VERIFIED AT CORE AUTHORITY
 LITE CROSS-COMPONENT E2E = PHASE 2.5 TECHNICAL SECURITY GATE PASS

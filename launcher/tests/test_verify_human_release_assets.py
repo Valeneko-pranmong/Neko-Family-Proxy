@@ -44,12 +44,18 @@ Current stable release for general users.
 """
 
 
+def _current_key_id() -> str:
+    from scripts.verify_github_release_assets import EXPECTED_PRODUCTION_KEY_ID
+
+    return EXPECTED_PRODUCTION_KEY_ID
+
+
 @pytest.fixture(autouse=True)
 def _patch_production_release_public_key(monkeypatch: pytest.MonkeyPatch):
     from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
 
     monkeypatch.setitem(
-        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
+        PRODUCTION_RELEASE_PUBLIC_KEYS, _current_key_id(), TEST_PUBLIC_KEY
     )
 
 
@@ -147,10 +153,11 @@ def create_test_unified_human_bundle(
     include_extra_asset: bool = False,
     extra_asset_name: str = "extra.exe",
     installer_bytes: bytes = b"MZ-test-human-installer-binary",
-    key_id: str = "neko-update-prod-1",
+    key_id: str | None = None,
     repo: str = "Valeneko-pranmong/Neko-Family-Proxy",
     body: str = APPROVED_BODY,
 ) -> dict[str, Any]:
+    key_id = key_id or _current_key_id()
     download_dir = tmp_path / "unified_human_download"
     download_dir.mkdir(parents=True, exist_ok=True)
 

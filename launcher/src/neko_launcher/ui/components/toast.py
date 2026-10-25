@@ -20,8 +20,8 @@ class ToastNotification:
             return
         self._frame = ctk.CTkFrame(
             self._root,
-            corner_radius=0,
-            fg_color=PALETTE.surface,
+            corner_radius=14,
+            fg_color=PALETTE.card,
             bg_color="transparent",
             border_width=1,
             border_color=PALETTE.border,
@@ -41,10 +41,10 @@ class ToastNotification:
             text="×",
             width=24,
             height=24,
-            corner_radius=0,
-            fg_color="black",
-            text_color="white",
-            hover_color="#333333",
+            corner_radius=8,
+            fg_color=PALETTE.primary,
+            text_color=PALETTE.on_primary,
+            hover_color=PALETTE.primary_dark,
             font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
             command=self.hide,
         )

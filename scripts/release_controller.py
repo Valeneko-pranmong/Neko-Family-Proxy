@@ -23,7 +23,10 @@ if str(_scripts_dir) not in sys.path:
     sys.path.insert(0, str(_scripts_dir))
 
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2  # noqa: E402
-from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS  # noqa: E402
+from neko_launcher.updater.trust import (  # noqa: E402
+    CURRENT_PRODUCTION_RELEASE_KEY_ID,
+    PRODUCTION_RELEASE_PUBLIC_KEYS,
+)
 
 from scripts.ci_change_classifier import should_trigger  # noqa: E402
 from scripts.kanban_release_adapter import get_successful_main_runs  # noqa: E402
@@ -92,7 +95,7 @@ def release_private_key_path() -> Path:
 
 def release_private_key_id() -> str:
     configured = os.environ.get("NEKO_RELEASE_KEY_ID", "").strip()
-    return configured or "neko-update-prod-1"
+    return configured or CURRENT_PRODUCTION_RELEASE_KEY_ID
 
 
 def dotnet_bootstrapper_path() -> Path:
@@ -741,7 +744,7 @@ def verify_core_authority_bytes(
         raise RuntimeError(f"Failed to read/parse manifest JSON: {e}") from e
 
     if trusted_keys is None:
-        trusted_keys = {"neko-update-prod-1": PRODUCTION_RELEASE_PUBLIC_KEYS["neko-update-prod-1"]}
+        trusted_keys = dict(PRODUCTION_RELEASE_PUBLIC_KEYS)
 
     try:
         release_set, _ = verify_release_envelope_v2(manifest_doc, trusted_keys)
@@ -1755,11 +1758,11 @@ def process_accepted_commits(
             "profile_id": "production",
             "channel": "stable",
             "owner": "Valeneko-pranmong",
-            "repository": "Neko-Family-Proxy-Updates",
-            "profile_authority_key_id": "neko-update-profile-v512-1",
-            "profile_authority_public_key_sha256": "a81f4b684500bd6c8089bbd5954d50684276745999d10ba26c929ce51ef5651f",
-            "profile_envelope_sha256": "e3c6e3f61c468db3f026dbca7ea93fb3e784f1f427268c912c79f960d6f63f5f",
-            "keyset_sha256": "263740da84b4e12d7761a0585fbfa20d543900fd739f2533b22f3bb9b287b0c1",
+            "repository": "Neko-Family-Proxy",
+            "profile_authority_key_id": "neko-update-profile-v520-1",
+            "profile_authority_public_key_sha256": "6a0adfacebbdc482c29495ec7cf4d5645a2c5216b2c99004555fd19f926cc5f0",
+            "profile_envelope_sha256": "418b3f442a4a128a1d948ebc7736d1249b3d2a0009fd74a8dd792542834b69e2",
+            "keyset_sha256": "9d9c64a8e3cc02edc5f546e63a809f8b9c5ce915acc010ef2a1e40f41a9994f1",
         }
 
     # Format frozen CoreAuthorityBinding dict

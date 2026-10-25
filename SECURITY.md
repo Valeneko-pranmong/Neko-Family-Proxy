@@ -15,8 +15,9 @@ Only the latest stable release of Neko Family Proxy receives active security fix
 
 | Version | Supported          | Status |
 | ------- | ------------------ | ------ |
-| 5.1.6   | :white_check_mark: | Current stable release |
-| 5.1.5 and earlier | :x:     | Superseded; upgrade to 5.1.6 |
+| 5.2.0   | :white_check_mark: | Current release line; existing 5.1.6 users must install manually |
+| 5.1.6   | :warning:          | Previous release; supported for migration only, no auto-update to 5.2.0 |
+| 5.1.5 and earlier | :x:     | Superseded; upgrade to 5.2.0 |
 | < 5.1.0 | :x:                | Unsupported |
 
 ## Security Architecture Principles
@@ -25,6 +26,7 @@ Only the latest stable release of Neko Family Proxy receives active security fix
 - **Credential Separation**: The client launcher only ever contains publishable client configuration (such as Supabase URL and publishable anon key). Service-role keys, raw signing secrets, and elevated database administrative credentials are strictly forbidden in client distributions and repository sources.
 - **Bound Authority**: Launch permits and session controls are bound to distinct, verified sessions to prevent permit replay and credential reuse.
 - **Cryptographic Machine-Update Integrity**: Machine-update discovery strictly validates canonical Ed25519 signatures on `release-v2.json`. Staged update artifacts (`NekoLauncher.exe`, `NekoUpdater.exe`, `NekoProxyCore.zip`) must match exact signed byte sizes, SHA-256 hashes, and canonical Core manifest identities before promotion or apply.
+- **Trust-Anchor Rotation (v5.2.0)**: The v5.2.0 installer replaces the installed update trust profile with one signed by the current profile authority and authorizing only the `neko-update-prod-2` release key. Historical public keys remain in the client for verification, but the installed profile does not authorize them for new releases. Because the prior custody material is unavailable, v5.1.6 clients cannot receive this rotation automatically; the signed installer must be run manually.
 - **Offline Trust Reconstruction for Staged Payloads**: The durable `PendingUpdateStore` treats all on-disk staging as untrusted until cryptographically re-verified against the signed envelope and file hashes on every load. Downgrade attempts and same-sequence conflicts fail closed.
 
 ## Reporting a Vulnerability

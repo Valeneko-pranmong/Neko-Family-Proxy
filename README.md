@@ -23,7 +23,7 @@
 
 ## Overview
 
-**Neko Family Proxy** (`v5.1.6` stable) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
+**Neko Family Proxy** (`v5.2.0` release line) is the dedicated Windows desktop client and session orchestration tier for Phantasy Star Online 2 New Genesis JP. It bridges user authentication, account entitlement checks, bound launch permits, and external proxy core process supervision under strict fail-closed security guarantees.
 
 ### Key Capabilities
 
@@ -32,7 +32,21 @@
 - **Runtime Config v1**: Real-time proxy configuration managed server-side and issued during authorization, allowing backend routing updates without desktop binary reinstalls.
 - **Single-Active-Session Arbitration**: Prevents permit replay and concurrent conflicting client sessions across installations.
 - **Credential Separation**: The client launcher uses strictly publishable credentials (Supabase URL and Supabase publishable client key). Elevated service keys and administrative authorities remain strictly backend-isolated.
-- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (>1,900 tests) and automated repository safety verification.
+- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,544 launcher tests passing) and automated repository safety verification.
+
+---
+
+## Screenshots — 5.2.0 Refresh
+
+![Neko Family Proxy 5.2.0 release hero](screenshots/00_release_hero.png)
+
+| Dashboard | Login |
+| --- | --- |
+| ![Dashboard](screenshots/01_main_authenticated_dashboard.png) | ![Login](screenshots/02_login.png) |
+
+| Settings — Program | Settings — Account | Settings — About |
+| --- | --- | --- |
+| ![Settings Program](screenshots/03_settings_program.png) | ![Settings Account](screenshots/04_settings_account.png) | ![Settings About](screenshots/05_settings_about.png) |
 
 ---
 
@@ -117,12 +131,12 @@ Starting in `v5.0.0`, the proxy ecosystem utilizes **Runtime Config v1**:
 
 ### Packaged Stable Release (Recommended)
 
-1. Download `NekoFamilyProxy-Installer.exe` from the [v5.1.6 Release Page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases).
+1. Download `NekoFamilyProxy-Installer.exe` from the [Releases page](https://github.com/Valeneko-pranmong/Neko-Family-Proxy/releases).
 2. Run the Installer and complete installation.
 3. Open Neko Family Proxy and sign in with your account credentials.
 4. Start PSO2 through the normal launcher flow.
 
-> **Update Note (v5.1.6 stable):** The deferred update lifecycle (background staging, durable `UPDATE_PENDING` storage, non-disruptive session guard, and safe offline apply) and Two-Repo Role Inversion are active in production. v5.1.6 adds a startup update-check splash, an in-app update progress dialog, a windowless updater helper, committed-generation self-sync, and a version check in Settings.
+> **Update Note (v5.2.0 — manual upgrade):** v5.2.0 rotates the update trust anchors and introduces the refreshed launcher interface plus the accumulated security hardening from the 5.1.x line. **Existing v5.1.6 installations cannot auto-update to v5.2.0.** Download and run the 5.2.0 installer over the existing installation; your account and launcher data in `%LOCALAPPDATA%\NEKO FAMILY` are preserved. The old version keeps working until you upgrade, but it no longer receives new updates. See [docs/current/5.2.0-manual-upgrade.md](docs/current/5.2.0-manual-upgrade.md).
 
 *Note: Users do not need to enter or manage proxy credentials. Configuration and routing are handled automatically during session authorization.*
 
@@ -181,7 +195,13 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
 
 ## Roadmap
 
-- **v5.1.6 (Current Stable Release)**:
+- **v5.2.0 (Current Release Line — manual upgrade)**:
+  - Refreshed launcher, auth, dashboard, and Settings presentation while preserving existing flows.
+  - Added atomic committed-generation self-sync, buffered support/debug logging, and one-shot startup update checks.
+  - Hardened the installer driver path with pinned hashes and an administrator-only staging directory.
+  - Added per-user permit-issuance rate limiting and pinned CI actions to immutable commits.
+  - Rotated production release and profile-authority trust anchors; existing 5.1.6 installs require the 5.2.0 installer once.
+- **v5.1.6 (Maintenance Release)**:
   - Added a startup update-check splash window before entering the main program, with automatic apply when no game session is active.
   - Added an in-app update progress dialog and a windowless updater helper.
   - Added committed-generation self-sync at launch and a version check in Settings.

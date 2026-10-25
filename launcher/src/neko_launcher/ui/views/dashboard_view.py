@@ -67,9 +67,13 @@ class DashboardView:
         # 1. Compact connection hero
         # --------------------------------------------------------------
         hero_card = card(self.frame)
+        hero_card.configure(
+            fg_color=PALETTE.surface_accent,
+            border_color=PALETTE.border_accent,
+        )
         hero_card.pack_configure(padx=6, pady=2)
         hero_inner = ctk.CTkFrame(hero_card, fg_color="transparent")
-        hero_inner.pack(fill="x", padx=10, pady=7)
+        hero_inner.pack(fill="x", padx=12, pady=9)
 
         self._status_pill = ctk.CTkFrame(
             hero_inner,
@@ -129,6 +133,13 @@ class DashboardView:
 
         header_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
         header_row.pack(fill="x", pady=(0, 6))
+        ctk.CTkFrame(
+            header_row,
+            fg_color=PALETTE.primary,
+            width=3,
+            height=14,
+            corner_radius=2,
+        ).pack(side="left", padx=(0, 6))
         ctk.CTkLabel(
             header_row,
             text="สมาชิก",
@@ -160,6 +171,10 @@ class DashboardView:
             text_color=PALETTE.text,
         ).pack(side="right")
 
+        ctk.CTkFrame(
+            membership_inner, fg_color=PALETTE.border, height=1
+        ).pack(fill="x", pady=(4, 0))
+
         days_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
         days_row.pack(fill="x", pady=3)
         ctk.CTkLabel(
@@ -173,6 +188,10 @@ class DashboardView:
             text_color=PALETTE.success,
         )
         self._entitlement_days_label.pack(side="right")
+
+        ctk.CTkFrame(
+            membership_inner, fg_color=PALETTE.border, height=1
+        ).pack(fill="x", pady=(4, 0))
 
         expiry_row = ctk.CTkFrame(membership_inner, fg_color="transparent")
         expiry_row.pack(fill="x", pady=3)
@@ -191,17 +210,26 @@ class DashboardView:
         # 4. Passive guidance — directly follows membership, no empty metric row.
         # --------------------------------------------------------------
         guidance_card = card(self.frame)
+        guidance_card.configure(fg_color=PALETTE.surface)
         guidance_card.pack_configure(padx=6, pady=2)
         guidance_inner = ctk.CTkFrame(guidance_card, fg_color="transparent")
-        guidance_inner.pack(fill="x", padx=10, pady=6)
+        guidance_inner.pack(fill="x", padx=12, pady=8)
+        guidance_row = ctk.CTkFrame(guidance_inner, fg_color="transparent")
+        guidance_row.pack(anchor="center")
         ctk.CTkLabel(
-            guidance_inner,
-            text="💡 ระบบจะเชื่อมต่อ Neko Proxy อัตโนมัติเมื่อเปิดเกม PSO2",
+            guidance_row,
+            text="●",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=9, weight="bold"),
+            text_color=PALETTE.primary,
+        ).pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(
+            guidance_row,
+            text="ระบบจะเชื่อมต่อ Neko Proxy อัตโนมัติเมื่อเปิดเกม PSO2",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             text_color=PALETTE.text_muted,
-            wraplength=520,
+            wraplength=500,
             justify="center",
-        ).pack(anchor="center")
+        ).pack(side="left")
 
     def update_status_role(self, role: str) -> None:
         """Update the visual color theme of the hero status pill."""

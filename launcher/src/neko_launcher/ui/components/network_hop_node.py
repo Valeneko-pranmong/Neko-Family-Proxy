@@ -33,18 +33,18 @@ class NetworkHopNode:
             fg_color=fg_color,
             border_color=border_color,
             border_width=1,
-            corner_radius=8,
+            corner_radius=12,
             **kwargs,
         )
 
         self._content_frame = ctk.CTkFrame(self.frame, fg_color="transparent")
-        self._content_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        self._content_frame.pack(fill="both", expand=True, padx=6, pady=6)
 
         self._icon_label: ctk.CTkLabel | None = None
         if self._icon_path is not None and self._icon_path.is_file():
             try:
                 self._icon_image = ctk.CTkImage(
-                    Image.open(self._icon_path), size=(28, 28)
+                    Image.open(self._icon_path), size=(30, 30)
                 )
                 self._icon_label = ctk.CTkLabel(
                     self._content_frame,

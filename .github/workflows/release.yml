@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       release_tag:
-        description: Expected release Git tag (must match launcher/pyproject.toml version, e.g. v5.1.6)
+        description: Expected release Git tag (must match launcher/pyproject.toml version, e.g. v5.2.0)
         required: true
         type: string
       expected_target:

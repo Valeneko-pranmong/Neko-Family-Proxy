@@ -63,6 +63,18 @@ def test_explicit_user_bug_intent_success(mock_target_file):
     assert intent.intent == "user_bug"
 
 
+def test_explicit_minor_release_success(mock_target_file):
+    mock_target_file.write_text(json.dumps({
+        "source_base": "v5.1.6",
+        "target": "v5.2.0",
+        "intent": "user_bug"
+    }), encoding="utf-8")
+    intent = scripts.derive_version.get_armed_target()
+    assert intent.source_base == "v5.1.6"
+    assert intent.target == "v5.2.0"
+    assert intent.intent == "user_bug"
+
+
 def test_reject_skip_patch(mock_target_file):
     mock_target_file.write_text(json.dumps({
         "source_base": "v5.1.1",
@@ -70,6 +82,16 @@ def test_reject_skip_patch(mock_target_file):
         "intent": "user_bug"
     }), encoding="utf-8")
     with pytest.raises(ValueError, match="exactly one patch increment from accepted source_base is allowed"):
+        scripts.derive_version.get_armed_target()
+
+
+def test_reject_minor_release_with_nonzero_patch(mock_target_file):
+    mock_target_file.write_text(json.dumps({
+        "source_base": "v5.1.6",
+        "target": "v5.2.1",
+        "intent": "user_bug"
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="\\.0 minor release"):
         scripts.derive_version.get_armed_target()
 
 

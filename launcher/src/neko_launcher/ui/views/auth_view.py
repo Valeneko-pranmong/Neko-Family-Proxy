@@ -65,9 +65,11 @@ class AuthView:
 
         self._tab_controls = ctk.CTkFrame(
             intro,
-            fg_color="#F3F4F6",
-            corner_radius=10,
-            height=36,
+            fg_color=PALETTE.surface,
+            border_color=PALETTE.border,
+            border_width=1,
+            corner_radius=12,
+            height=38,
         )
         self._tab_controls.pack(fill="x", padx=20, pady=(6, 6))
         self._tab_controls.pack_propagate(False)
@@ -78,7 +80,7 @@ class AuthView:
             fg_color=PALETTE.primary,
             text_color=PALETTE.on_primary,
             hover_color=PALETTE.primary_hover,
-            corner_radius=8,
+            corner_radius=10,
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             command=lambda: self._switch_tab("login"),
         )
@@ -89,8 +91,8 @@ class AuthView:
             text="สมัครสมาชิก",
             fg_color="transparent",
             text_color=PALETTE.text_muted,
-            hover_color="#E5E7EB",
-            corner_radius=8,
+            hover_color=PALETTE.surface_accent,
+            corner_radius=10,
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             command=lambda: self._switch_tab("register"),
         )
@@ -205,7 +207,7 @@ class AuthView:
             self._register_tab_btn.configure(
                 fg_color="transparent",
                 text_color=PALETTE.text_muted,
-                hover_color="#E5E7EB",
+                hover_color=PALETTE.surface_accent,
             )
             self._register_frame.pack_forget()
             self._login_frame.pack(fill="both", expand=True)
@@ -218,7 +220,7 @@ class AuthView:
             self._login_tab_btn.configure(
                 fg_color="transparent",
                 text_color=PALETTE.text_muted,
-                hover_color="#E5E7EB",
+                hover_color=PALETTE.surface_accent,
             )
             self._login_frame.pack_forget()
             self._register_frame.pack(fill="both", expand=True)

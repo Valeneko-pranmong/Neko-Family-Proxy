@@ -1,14 +1,17 @@
-# NEKO FAMILY PROXY — Current Component Status & 5.1.6 Release Line
+# NEKO FAMILY PROXY — Current Component Status & 5.2.0 Release Line
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         STABLE RELEASE 5.1.6 (maintained on main)
-PRODUCT_BASELINE:               5.1.6
-CURRENT_STABLE_TAG:             v5.1.6 (01d5331, released 2026-09-21)
+STATUS:                         RELEASE CANDIDATE 5.2.0 (installer built + signed; publication pending)
+PRODUCT_BASELINE:               5.2.0
+CURRENT_RELEASE_TAG:            v5.2.0 (candidate; not yet published)
+LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
+INSTALLER_CANDIDATE:            PASS (207,758,092 bytes, sha256 0e7aec10...9daad; 2026-10-25)
 ACTIVE_DEV_BRANCH:              main
-MAIN_HEAD_AT_REVIEW:            616ff89 (2026-10-24)
-DISTRIBUTION_ARCHITECTURE:      TWO-REPO ROLE INVERSION (ACTIVE)
+DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
+UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
+UPGRADE_PATH_5_1_6:             MANUAL INSTALLER ONLY (old release key cannot sign a transition)
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
@@ -17,11 +20,11 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,543 passed / 3 skipped (local 2026-10-24)
-LAST_VERIFIED:                  2026-10-24 +07:00 (Asia/Bangkok)
+TEST_SUITE:                     2,544 passed / 4 skipped (launcher, 2026-10-24); 69 passed / 1 environment-limited (root)
+LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** `main` is the maintained release line and `v5.1.6` is the current public stable release. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
+> **Current-state rule:** `main` is the maintained 5.2.0 release candidate. The installer and signed manifest are built and verified locally; `v5.1.6` remains the last published stable until the 5.2.0 release is published. Because the previous release key is unavailable, existing 5.1.6 clients must run the 5.2.0 installer manually. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.2.0. This document describes repository state, not a hosted-backend deployment audit.
 
 ---
 
@@ -30,14 +33,13 @@ LAST_VERIFIED:                  2026-10-24 +07:00 (Asia/Bangkok)
 The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Production Updates & Canonical Main Repository Topology** (Revision 3.4). Later patch releases extended it without changing the fail-closed authorization model:
 
 ### 1.1 Repository Roles & Distribution Topology
-- **Machine-Update Channel**: The dedicated updates repository `Valeneko-pranmong/Neko-Family-Proxy-Updates` serves as the permanent machine-update channel.
+- **Canonical Repository**: `Valeneko-pranmong/Neko-Family-Proxy` is the active machine-update channel and the human-facing release surface. The historical `Valeneko-pranmong/Neko-Family-Proxy-Updates` identity is superseded and is rejected by the updater trust profile.
 - **Machine Assets**: Every machine release publishes four canonical signed assets:
   1. `release-v2.json` (canonical Ed25519-signed manifest)
   2. `NekoLauncher.exe`
   3. `NekoUpdater.exe`
   4. `NekoProxyCore.zip`
-  *Note: Normal users must not be linked to the machine repository as a download surface.*
-- **Human-Facing Installer Surface**: The canonical main repository `Valeneko-pranmong/Neko-Family-Proxy` serves as the official human release surface. Standalone installer executables (`NekoFamilyProxy-Installer.exe`) are distributed directly from main repository releases (`Valeneko-pranmong/Neko-Family-Proxy/releases`). Any historical separate installer repository is retired.
+- **Human-Facing Installer Surface**: Standalone installer executables (`NekoFamilyProxy-Installer.exe`) are distributed from canonical repository releases (`Valeneko-pranmong/Neko-Family-Proxy/releases`).
 
 ### 1.2 Bounded Bootstrap Authority Override (Historical)
 - Public `v5.1.0` was released installer-only and lacked public machine assets (`release-v2.json`, `NekoProxyCore.zip`, etc.).
@@ -49,11 +51,12 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
   - Disabled once a newer accepted machine release existed on GitHub.
 - The bootstrap path is retained for traceability; it is not the release path for the current line.
 
-### 1.3 Release Line 5.1.3–5.1.6
+### 1.3 Release Line 5.1.3–5.2.0
 - **v5.1.3**: installed-file integrity check and repair in Settings; update-notification and Settings-focus refinements; clean uninstall/state cleanup; machine credential provisioned during baseline enrollment.
 - **v5.1.4**: 64-bit WOW64 redirection guard in the elevated driver installer and non-BOM ASCII installer logging.
 - **v5.1.5**: native `ensure-netfilter2.cmd` Sysnative dispatcher and Inno Setup result-file polling guard.
 - **v5.1.6**: startup update-check splash before the main window; in-app update progress dialog; windowless updater helper; committed-generation self-sync; Settings version check; baseline enrollment from a working-directory install root.
+- **v5.2.0**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. Existing 5.1.6 users must install manually.
 
 ---
 

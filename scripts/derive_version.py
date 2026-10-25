@@ -46,18 +46,30 @@ def parse_release_target_data(data: dict[str, Any]) -> ReleaseTargetIntent:
     if not source_base or not target:
         raise ValueError("Missing required fields in release_target.json")
 
-    source_match = re.match(r"^v5\.1\.(\d+)$", str(source_base))
-    target_match = re.match(r"^v5\.1\.(\d+)$", str(target))
+    source_match = re.match(r"^v5\.(\d+)\.(\d+)$", str(source_base))
+    target_match = re.match(r"^v5\.(\d+)\.(\d+)$", str(target))
 
     if not source_match or not target_match:
         raise ValueError("Invalid source_base or target format")
 
-    source_patch = int(source_match.group(1))
-    target_patch = int(target_match.group(1))
+    source_minor = int(source_match.group(1))
+    source_patch = int(source_match.group(2))
+    target_minor = int(target_match.group(1))
+    target_patch = int(target_match.group(2))
 
-    if target_patch != source_patch + 1:
+    is_patch_release = (
+        target_minor == source_minor and target_patch == source_patch + 1
+    )
+    is_minor_release = (
+        target_minor == source_minor + 1 and target_patch == 0
+    )
+    if target_minor == source_minor and not is_patch_release:
         raise ValueError(
             f"exactly one patch increment from accepted source_base is allowed (source_base={source_base}, target={target})"
+        )
+    if not is_patch_release and not is_minor_release:
+        raise ValueError(
+            f"exactly one patch increment or a .0 minor release from accepted source_base is allowed (source_base={source_base}, target={target})"
         )
 
     return ReleaseTargetIntent(

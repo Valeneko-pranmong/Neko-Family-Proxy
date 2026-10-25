@@ -40,6 +40,7 @@ def test_release_controller_e2e(monkeypatch, tmp_path):
     run_id = 12345
     source_base = "v5.1.1"
     target_version = "v5.1.2"
+    monkeypatch.setenv("NEKO_RELEASE_KEY_ID", "neko-update-prod-1")
     import shutil
     shutil.rmtree(f"E:/Github/artifacts/main-auto-release/{run_id}-{sha}", ignore_errors=True)
 

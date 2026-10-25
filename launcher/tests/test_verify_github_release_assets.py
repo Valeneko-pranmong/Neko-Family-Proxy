@@ -1321,10 +1321,10 @@ class _FakeHostedVerifierExecutor:
 @pytest.fixture
 def machine_staging_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+    from scripts import verify_github_release_assets as verifier
 
-    monkeypatch.setitem(
-        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
-    )
+    key_id = verifier.EXPECTED_PRODUCTION_KEY_ID
+    monkeypatch.setitem(PRODUCTION_RELEASE_PUBLIC_KEYS, key_id, TEST_PUBLIC_KEY)
     bundle = create_test_release_bundle(
         tmp_path / "staging",
         tag_name="v5.1.2",
@@ -1334,7 +1334,7 @@ def machine_staging_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
         core_version="5.1.2",
         sequence=8,
         release_id="stable-0008",
-        key_id="neko-update-prod-1",
+        key_id=key_id,
     )
     return bundle["download_dir"]
 
@@ -1400,12 +1400,12 @@ def test_hosted_verification_binds_minimum_sequence_to_signed_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from neko_launcher.updater.trust import PRODUCTION_RELEASE_PUBLIC_KEYS
+    from scripts import verify_github_release_assets as verifier
     from scripts.publish_atomic_release import StagedDraftEvidence
     from scripts.release_controller import _hosted_verify_unified_channel
 
-    monkeypatch.setitem(
-        PRODUCTION_RELEASE_PUBLIC_KEYS, "neko-update-prod-1", TEST_PUBLIC_KEY
-    )
+    key_id = verifier.EXPECTED_PRODUCTION_KEY_ID
+    monkeypatch.setitem(PRODUCTION_RELEASE_PUBLIC_KEYS, key_id, TEST_PUBLIC_KEY)
     bundle = create_test_release_bundle(
         tmp_path / "signed-staging",
         tag_name="v5.1.2",
@@ -1416,7 +1416,7 @@ def test_hosted_verification_binds_minimum_sequence_to_signed_baseline(
         sequence=9,
         minimum_supported_sequence=9,
         release_id="stable-0009",
-        key_id="neko-update-prod-1",
+        key_id=key_id,
     )
     staging_dir = bundle["download_dir"]
     executor = _FakeHostedVerifierExecutor(staging_dir)
@@ -1433,7 +1433,7 @@ def test_hosted_verification_binds_minimum_sequence_to_signed_baseline(
         {
             "sequence": 9,
             "release_id": "stable-0009",
-            "key_id": "neko-update-prod-1",
+            "key_id": verifier.EXPECTED_PRODUCTION_KEY_ID,
         },
     )()
 

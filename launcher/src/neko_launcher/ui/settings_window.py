@@ -243,20 +243,48 @@ class SettingsWindow(ctk.CTkToplevel):
             fg_color=PALETTE.card,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=14,
+            corner_radius=18,
         )
         shell.pack(fill="both", expand=True, padx=8, pady=8)
 
         # Header bar
         header = ctk.CTkFrame(shell, fg_color="transparent")
-        header.pack(fill="x", padx=16, pady=(10, 6))
+        header.pack(fill="x", padx=18, pady=(12, 8))
 
+        brand = ctk.CTkFrame(header, fg_color="transparent")
+        brand.pack(side="left")
+        ctk.CTkFrame(
+            brand,
+            fg_color=PALETTE.primary,
+            width=3,
+            height=30,
+            corner_radius=2,
+        ).pack(side="left", padx=(0, 9))
+        brand_text = ctk.CTkFrame(brand, fg_color="transparent")
+        brand_text.pack(side="left")
         ctk.CTkLabel(
-            header,
+            brand_text,
             text="NEKO FAMILY — Settings",
             font=ctk.CTkFont(family=FONT_FAMILY, size=15, weight="bold"),
             text_color=PALETTE.text,
-        ).pack(side="left")
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            brand_text,
+            text="บัญชี การเชื่อมต่อ และการแจ้งเตือน",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            text_color=PALETTE.text_muted,
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            header,
+            text=f"v{__version__}",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10, weight="bold"),
+            text_color=PALETTE.primary_dark,
+            fg_color=PALETTE.primary_soft,
+            corner_radius=8,
+            padx=8,
+            pady=2,
+        ).pack(side="right")
 
         self._drag_handler = WindowDragHandler(self)
         self._drag_handler.bind_to(header)
@@ -270,13 +298,13 @@ class SettingsWindow(ctk.CTkToplevel):
         # --------------------------------------------------------------
         self._sidebar = ctk.CTkFrame(
             body,
-            fg_color=PALETTE.surface,
+            fg_color=PALETTE.card,
             border_color=PALETTE.border,
             border_width=1,
-            corner_radius=10,
+            corner_radius=16,
             width=220,
         )
-        self._sidebar.pack(side="left", fill="y", padx=(0, 10), pady=0)
+        self._sidebar.pack(side="left", fill="y", padx=(0, 12), pady=0)
         self._sidebar.pack_propagate(False)
 
         # Search bar
@@ -284,18 +312,18 @@ class SettingsWindow(ctk.CTkToplevel):
             self._sidebar,
             placeholder_text="ค้นหาการตั้งค่า...",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            fg_color=PALETTE.card,
+            fg_color=PALETTE.surface,
             border_color=PALETTE.border,
             border_width=1,
-            height=32,
-            corner_radius=6,
+            height=34,
+            corner_radius=10,
         )
-        self._search_entry.pack(fill="x", padx=8, pady=(8, 8))
+        self._search_entry.pack(fill="x", padx=10, pady=(10, 8))
         self._search_entry.bind("<KeyRelease>", self._filter_categories)
 
         # Nav Buttons list
         self._nav_container = ctk.CTkFrame(self._sidebar, fg_color="transparent")
-        self._nav_container.pack(fill="both", expand=True, padx=4, pady=(0, 6))
+        self._nav_container.pack(fill="both", expand=True, padx=6, pady=(0, 8))
 
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
         for key, title in self.CATEGORIES:
@@ -305,13 +333,13 @@ class SettingsWindow(ctk.CTkToplevel):
                 anchor="w",
                 fg_color="transparent",
                 text_color=PALETTE.text,
-                hover_color="#F3F4F6",
+                hover_color=PALETTE.surface_accent,
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-                height=34,
-                corner_radius=6,
+                height=36,
+                corner_radius=10,
                 command=lambda k=key: self.select_category(k),
             )
-            btn.pack(fill="x", pady=1)
+            btn.pack(fill="x", pady=2)
             self._nav_buttons[key] = btn
 
         # --------------------------------------------------------------
@@ -352,15 +380,15 @@ class SettingsWindow(ctk.CTkToplevel):
         for k, btn in self._nav_buttons.items():
             if k == key:
                 btn.configure(
-                    fg_color=PALETTE.primary,
-                    text_color=PALETTE.on_primary,
-                    hover_color=PALETTE.primary_hover,
+                    fg_color=PALETTE.primary_soft,
+                    text_color=PALETTE.primary_dark,
+                    hover_color=PALETTE.surface_accent,
                 )
             else:
                 btn.configure(
                     fg_color="transparent",
                     text_color=PALETTE.text,
-                    hover_color="#F3F4F6",
+                    hover_color=PALETTE.surface_accent,
                 )
         for page in self._pages.values():
             page.pack_forget()
