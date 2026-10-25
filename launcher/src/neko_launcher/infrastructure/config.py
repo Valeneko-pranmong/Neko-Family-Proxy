@@ -16,6 +16,7 @@ from .defaults import (
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
 )
+from .release_config import RELEASE_PROXY_API_URL
 
 
 class ProgramPreferences:
@@ -119,12 +120,24 @@ class LauncherConfig:
             os.getenv("NEKO_IDENTITY_BASE_URL", "").strip() or IDENTITY_BASE_URL
         )
         web_auth_bridge_url = os.getenv("NEKO_AUTH_BRIDGE_URL", "").strip()
-        proxy_api_url = os.getenv("NEKO_PROXY_API_URL", "").strip()
-        if proxy_api_url:
-            proxy_api_url = _require_https_origin(proxy_api_url, "NEKO_PROXY_API_URL")
         frozen_build = bool(getattr(sys, "frozen", False))
-        if proxy_api_url and frozen_build:
+        env_proxy_api_url = os.getenv("NEKO_PROXY_API_URL", "").strip()
+        if env_proxy_api_url and frozen_build:
             raise ValueError("NEKO_PROXY_API_URL is disabled in frozen builds")
+        if frozen_build:
+            if not RELEASE_PROXY_API_URL:
+                raise ValueError(
+                    "frozen 5.2.0 builds require a release proxy API URL"
+                )
+            proxy_api_url = _require_https_origin(
+                RELEASE_PROXY_API_URL, "RELEASE_PROXY_API_URL"
+            )
+        elif env_proxy_api_url:
+            proxy_api_url = _require_https_origin(
+                env_proxy_api_url, "NEKO_PROXY_API_URL"
+            )
+        else:
+            proxy_api_url = ""
         if proxy_api_url and web_auth_bridge_url:
             raise ValueError(
                 "NEKO_PROXY_API_URL and NEKO_AUTH_BRIDGE_URL are mutually exclusive"
@@ -134,7 +147,8 @@ class LauncherConfig:
             os.getenv("NEKO_WEB_AUTH_ENABLED") == "1"
             and bool(web_auth_bridge_url)
         )
-        # The new source/dev-only path is enabled by NEKO_PROXY_API_URL alone.
+        # The new line uses NEKO_PROXY_API_URL in source/dev and the frozen
+        # release origin from release_config in packaged preview builds.
         web_auth_enabled = proxy_api_enabled or legacy_web_auth_enabled
         web_auth_only_override = os.getenv("NEKO_WEB_AUTH_ONLY", "").strip()
         if web_auth_only_override == "1":
@@ -156,7 +170,7 @@ class LauncherConfig:
         elif frozen_build:
             if not web_auth_enabled:
                 raise ValueError(
-                    "frozen 5.2.0 builds require the web auth bridge"
+                    "frozen 5.2.0 builds require web authentication"
                 )
             web_auth_only = True
         else:

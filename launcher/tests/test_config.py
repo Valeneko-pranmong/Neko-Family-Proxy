@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from neko_launcher.bootstrap.app_factory import application_root
+from neko_launcher.infrastructure import config as config_module
 from neko_launcher.infrastructure.config import LauncherConfig, ProgramPreferences
 
 
@@ -101,25 +102,41 @@ def test_source_build_is_web_only_when_the_bridge_is_enabled(
     assert config.web_auth_only is False
 
 
-def test_frozen_build_requires_web_auth_and_rejects_password_override(
+def test_frozen_build_uses_release_proxy_api_url(
     monkeypatch: object,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        config_module,
+        "RELEASE_PROXY_API_URL",
+        "",
+    )
 
-    with pytest.raises(ValueError, match="require the web auth bridge"):
+    with pytest.raises(ValueError, match="require a release proxy API URL"):
         LauncherConfig.from_environment(tmp_path)
 
-    monkeypatch.setenv("NEKO_WEB_AUTH_ENABLED", "1")  # type: ignore[attr-defined]
-    monkeypatch.setenv(  # type: ignore[attr-defined]
-        "NEKO_AUTH_BRIDGE_URL",
-        "https://bridge.example/auth/launcher/exchange",
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        config_module,
+        "RELEASE_PROXY_API_URL",
+        "https://proxy.example",
     )
     config = LauncherConfig.from_environment(tmp_path)
+    assert config.proxy_api_url == "https://proxy.example"
+    assert config.proxy_api_enabled is True
+    assert config.web_auth_enabled is True
     assert config.web_auth_only is True
 
-    monkeypatch.setenv("NEKO_WEB_AUTH_ONLY", "0")  # type: ignore[attr-defined]
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_PROXY_API_URL",
+        "https://other.example",
+    )
     with pytest.raises(ValueError, match="disabled in frozen builds"):
+        LauncherConfig.from_environment(tmp_path)
+
+    monkeypatch.delenv("NEKO_PROXY_API_URL", raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setenv("NEKO_WEB_AUTH_ONLY", "0")  # type: ignore[attr-defined]
+    with pytest.raises(ValueError, match="password authentication is disabled"):
         LauncherConfig.from_environment(tmp_path)
 
 
