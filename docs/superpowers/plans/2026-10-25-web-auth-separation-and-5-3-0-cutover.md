@@ -375,8 +375,15 @@ or explicitly deferred with customer communication.
 **P4 slice 1 status (2026-10-25):** `validate_stable_release_channel` blocks
 5.2.x from being staged/published as a non-prerelease stable release, while
 allowing an explicit prerelease stage. 5.1.x and 5.3.x stable behavior is
-unchanged. The dedicated preview channel, preview auto-update path, and
-feed-level E2E remain open.
+unchanged.
+
+**P4 slice 2 status (2026-10-25):** preview trust profiles can now read the
+newest prerelease from the repository release list, while the stable profile
+continues using `/releases/latest`. The resolver permits a prerelease only for
+a profile whose channel is `preview`; 5.1.6 stable discovery is unchanged.
+The preview profile must still be signed/installed, and preview publication,
+auto-apply, and feed-level E2E remain open. Full Launcher suite: 2,604 passed /
+4 skipped.
 
 ### P5 — 5.3.0 Cutover
 

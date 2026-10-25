@@ -23,6 +23,17 @@ class UpdateChannelProfile:
     latest_release_api: str
     browser_download_prefix: str
 
+    @property
+    def is_preview(self) -> bool:
+        return self.channel == "preview"
+
+    @property
+    def releases_api(self) -> str:
+        return (
+            f"https://api.github.com/repos/{self.owner}/"
+            f"{self.repository}/releases?per_page=100"
+        )
+
     @classmethod
     def from_verified(cls, profile: VerifiedUpdateTrustProfile) -> UpdateChannelProfile:
         owner = profile.owner

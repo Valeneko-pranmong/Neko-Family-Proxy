@@ -395,6 +395,45 @@ def test_gateway_routes_to_verified_channel_profile(monkeypatch: pytest.MonkeyPa
     assert opener.requests[0][0].full_url == profile.latest_release_api
 
 
+def test_gateway_preview_fetches_newest_prerelease_from_release_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="preview",
+        channel="preview",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_public_keys={"k": b"\x01" * 32},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    profile = UpdateChannelProfile.from_verified(verified)
+    stable = _valid_document()
+    stable["tag_name"] = "v5.1.6"
+    preview = _valid_document()
+    preview["tag_name"] = "v5.2.0"
+    preview["id"] = 8
+    preview["prerelease"] = True
+
+    body = json.dumps([stable, preview]).encode("utf-8")
+    module = _module()
+    opener = FakeOpener(FakeResponse(body))
+    monkeypatch.setattr(module.urllib.request, "build_opener", lambda *_: opener)
+
+    gateway = module.GitHubLatestReleaseGateway(channel_profile=profile)
+    release = gateway.fetch_preview()
+
+    assert release is not None
+    assert release.tag_name == "v5.2.0"
+    assert release.prerelease is True
+    assert opener.requests[0][0].full_url == profile.releases_api
+
+
 def test_gateway_fetch_by_tag_requests_exact_tag_url(monkeypatch: pytest.MonkeyPatch) -> None:
     document = _valid_document()
     document["tag_name"] = "v5.1.3"

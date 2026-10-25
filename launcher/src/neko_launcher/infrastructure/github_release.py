@@ -188,7 +188,7 @@ class GitHubLatestReleaseGateway:
     def channel_profile(self) -> UpdateChannelProfile | None:
         return self._channel_profile
 
-    def _execute_request(self, url: str, allow_prerelease: bool) -> GitHubRelease | None:
+    def _read_document(self, url: str) -> object | None:
         request = urllib.request.Request(
             url,
             method="GET",
@@ -213,13 +213,17 @@ class GitHubLatestReleaseGateway:
         if len(body) > _RESPONSE_MAX_BYTES:
             raise _invalid()
         try:
-            document = json.loads(
+            return json.loads(
                 body.decode("utf-8", errors="strict"),
                 object_pairs_hook=_reject_duplicate_keys,
             )
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
             raise _invalid() from None
 
+    def _execute_request(self, url: str, allow_prerelease: bool) -> GitHubRelease | None:
+        document = self._read_document(url)
+        if document is None:
+            return None
         prefix = (
             self._channel_profile.browser_download_prefix
             if self._channel_profile is not None
@@ -238,6 +242,28 @@ class GitHubLatestReleaseGateway:
             else GITHUB_RELEASE_API_URL
         )
         return self._execute_request(url, allow_prerelease=False)
+
+    def fetch_preview(self) -> GitHubRelease | None:
+        profile = self._channel_profile
+        if profile is None or not profile.is_preview:
+            raise ValueError("preview channel profile is required")
+        document = self._read_document(profile.releases_api)
+        if document is None:
+            return None
+        if not isinstance(document, list) or not 1 <= len(document) <= 100:
+            raise _invalid()
+        for item in document:
+            try:
+                release = parse_github_release(
+                    item,
+                    allow_prerelease=True,
+                    asset_path_prefix=profile.browser_download_prefix,
+                )
+            except GitHubReleaseDiscoveryError:
+                continue
+            if release.prerelease:
+                return release
+        return None
 
     def fetch_by_id(self, release_id: int) -> GitHubRelease | None:
         if self._channel_profile is not None:

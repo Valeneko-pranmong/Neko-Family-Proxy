@@ -261,9 +261,16 @@ class GitHubReleaseResolver:
         self._install_root = Path(install_root)
         self._updater_protocol = updater_protocol
 
+    def _uses_preview_channel(self) -> bool:
+        return self._channel_profile is not None and self._channel_profile.is_preview
+
     def resolve(self) -> ResolvedGitHubRelease | None:
         try:
-            release = self._release_gateway.fetch()
+            release = (
+                self._release_gateway.fetch_preview()
+                if self._uses_preview_channel()
+                else self._release_gateway.fetch()
+            )
         except GitHubReleaseDiscoveryError as err:
             if err.code == "GITHUB_RELEASE_UNAVAILABLE":
                 raise GitHubReleaseResolverError("GITHUB_RELEASE_UNAVAILABLE") from None
@@ -301,7 +308,9 @@ class GitHubReleaseResolver:
         release: GitHubRelease,
         expected_selector: InstalledReleaseSelector | None = None,
     ) -> ResolvedGitHubRelease:
-        if release.draft or release.prerelease:
+        if release.draft or (
+            release.prerelease and not self._uses_preview_channel()
+        ):
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
 
         required_names = {

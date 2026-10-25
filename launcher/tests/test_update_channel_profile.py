@@ -40,6 +40,31 @@ def test_update_channel_profile_from_verified_happy_path():
         channel_profile.release_public_keys["key-2"] = b"\x02" * 32
 
 
+def test_update_channel_profile_preview_uses_release_list():
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="preview",
+        channel="preview",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_public_keys={"key-1": b"\x01" * 32},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth-1",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+
+    channel_profile = UpdateChannelProfile.from_verified(verified)
+
+    assert channel_profile.is_preview is True
+    assert channel_profile.releases_api == (
+        "https://api.github.com/repos/Valeneko-pranmong/"
+        "Neko-Family-Proxy/releases?per_page=100"
+    )
+    assert channel_profile.latest_release_api.endswith("/releases/latest")
+
+
 def test_update_channel_profile_production():
     from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
 
