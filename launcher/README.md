@@ -14,7 +14,8 @@ auth only.
 > schema in the same Supabase project; it must not auto-update 5.1.6, must not
 > be installed over or alongside it, and requires a full 5.1.6 uninstall first.
 > Local state is a clean start, and 5.2.0 uses a dedicated preview channel.
-> 5.3.0 is the planned legacy migration/cutover.
+> There is no legacy day/coupon transfer; 5.3.0 is the planned legacy cutover,
+> with gate-based shutdown after the last active term or an approved cutoff.
 
 ## Web auth (development)
 

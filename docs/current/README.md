@@ -12,9 +12,9 @@ DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates re
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
 UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
 RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0 NEW-ACCOUNT WEB-AUTH PREVIEW; CLEAN START; NO SIDE-BY-SIDE
-UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0; NO LEGACY ACCOUNT IMPORT
+UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
 WEB_AUTH_LAUNCHER:              IMPLEMENTED, FLAG OFF; 5.2.0 TARGET IS WEB-ONLY (password removal pending)
-NEXT_CUTOVER:                   v5.3.0 (legacy 5.1.6 removal; planning)
+NEXT_CUTOVER:                   v5.3.0 (gate-based legacy shutdown; last active term or approved cutoff)
 SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
@@ -28,7 +28,7 @@ TEST_SUITE:                     2,568 passed / 4 skipped (launcher, 2026-10-25);
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** `main` is planning the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. 5.2.0 is a new-accounts-only manual preview using an isolated schema in the same Supabase project, a dedicated preview channel, and a clean-start install: it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer uninstall guard, web-only password removal, bridge/mapping/link flow, channel support, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
+> **Current-state rule:** `main` is planning the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. 5.2.0 is a new-accounts-only manual preview using an isolated schema in the same Supabase project, a dedicated preview channel, and a clean-start install: there is no legacy day/coupon transfer, 5.1.6 remains usable until its existing term expires or an approved cutoff, it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer uninstall guard, web-only password removal, bridge/mapping/link flow, channel support, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
 >
 > **Development plan:** [5.2.0 web-auth separation and 5.3.0 cutover](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
 

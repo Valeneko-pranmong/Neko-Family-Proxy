@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.
-- Locked P0 decisions: isolated schema/RPC namespace in the existing Supabase project, dedicated preview channel, clean-start uninstall, new-accounts-only 5.2.0, and preview-only auto-updates. Remaining P0 decisions are installer AppId/path, 5.3.0 migration/coupon policy, control web auth scope, and the sunset date.
+- Locked P0 decisions: isolated schema/RPC namespace in the existing Supabase project, dedicated preview channel, same AppId with a hard uninstall/process guard, clean-start uninstall, new-accounts-only 5.2.0, no legacy day/coupon transfer, Control Room admin-only web auth, gate-based sunset, and preview-only auto-updates. The shared-auth consumer audit is recorded; P0 is complete.
 
 ## [5.2.0] - 2026-10-24
 
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The release intent parser now accepts a single patch increment or a `.0` minor release from the accepted source base; the installer version gate accepts stable 5.1.x and 5.2.x.
 
 ### Upgrade
-- v5.1.6 remains public stable and must stay usable during 5.2.0 development. v5.2.0 is a separate web-auth-only preview and cannot auto-update 5.1.6 because the old installed trust profile authorizes only `neko-update-prod-1`, whose custody material is unavailable. A user who wants 5.2.0 must uninstall 5.1.6 first; in-place and side-by-side installation are not supported. Account/data migration is announced separately; 5.3.0 is the planned legacy cutover.
+- v5.1.6 remains public stable and must stay usable during 5.2.0 development. v5.2.0 is a separate web-auth-only preview and cannot auto-update 5.1.6 because the old installed trust profile authorizes only `neko-update-prod-1`, whose custody material is unavailable. A user who wants 5.2.0 must uninstall 5.1.6 first; in-place and side-by-side installation are not supported. There is no legacy day/coupon transfer; 5.1.6 remains usable until its existing term expires or an approved cutoff, and 5.3.0 is the planned legacy cutover.
 
 ## [5.1.6] - 2026-09-21
 

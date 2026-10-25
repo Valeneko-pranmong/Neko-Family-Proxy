@@ -21,33 +21,45 @@ notes and manual-upgrade guide.
    cutover, so a web-session allowlist is mandatory.
 3. **5.1.6 and 5.2.0 must not coexist on one installation.** A user who wants
    5.2.0 must uninstall 5.1.6 first. There is no in-place upgrade and no
-   side-by-side installation. Local state is a clean start; auth, trust, and
+   side-by-side installation. The installer keeps the existing AppId with a
+   hard uninstall/process guard. Local state is a clean start; auth, trust, and
    session state are never carried across lines.
 4. **5.2.0 must not be delivered as an automatic update to 5.1.6.** It is a
    manually installed preview line until the 5.3.0 cutover.
 5. **5.3.0 is the cutover release.** It ships only after web auth, control web
    auth, identity-to-proxy mapping, the link/claim flow, and end-to-end
    verification are complete. It removes legacy 5.1.6 password/recovery access
-   and retires the legacy backend.
+   and retires the legacy backend. There is **no legacy day or coupon
+   transfer**: legacy renewals/coupon issuance freeze, 5.1.6 stays usable
+   until the last active legacy term expires (or an explicit cutoff is
+   accepted), and unused legacy coupons become void after notice.
 6. **No publication gate may be skipped.** A 5.2.0 or 5.3.0 artifact is not
    releasable while any acceptance gate in this plan is open.
 7. **5.2.0 uses a dedicated preview channel in the same repository.** 5.1.6
    remains the latest stable feed; 5.2.0 may auto-update only within its
    dedicated preview channel.
 8. **5.2.0 is for new accounts only.** Legacy 5.1.6 accounts stay on 5.1.6
-   until the 5.3.0 migration/cutover gate; 5.2.0 does not migrate them.
+   until the 5.3.0 cutover; 5.2.0 does not migrate them and no day/coupon
+   transfer is planned.
+9. **Control web auth means the Control Room/admin surface only.** The
+   customer web portal is outside this scope.
+10. **The 5.1.6 sunset is gate-based, not date-based.** 5.3.0 ships when all
+    gates pass; legacy shutdown happens after the last active legacy term
+    expires or an explicit cutoff is accepted, with 30/14/7/1-day notices.
 
 ### สรุปการตัดสินใจ (Thai)
 
 - 5.1.6 ยังเป็น stable และใช้งานได้ตามปกติระหว่างพัฒนา 5.2.0
 - 5.2.0 เป็นอีกสายงานหนึ่ง ใช้ web auth 100% ไม่มี password/recovery ในโปรแกรม
 - 5.2.0 ใช้ schema/RPC namespace แยกใน Supabase project เดิม; `auth.users` ยังใช้ร่วมกับ 5.1.6 จนถึง 5.3.0 จึงต้องมี web-session allowlist
-- ผู้ใช้ 5.1.6 ที่ต้องการใช้ 5.2.0 ต้อง uninstall 5.1.6 ก่อน; ข้อมูลในเครื่องเริ่มใหม่ และไม่มีการโอน auth/trust/session ข้าม line
-- 5.2.0 preview เปิดเฉพาะบัญชีใหม่; บัญชี 5.1.6 เดิมจะ migrate ตอน 5.3.0
+- ผู้ใช้ 5.1.6 ที่ต้องการใช้ 5.2.0 ต้อง uninstall 5.1.6 ก่อน; installer ใช้ AppId เดิมพร้อม guard; ข้อมูลในเครื่องเริ่มใหม่ และไม่มีการโอน auth/trust/session ข้าม line
+- 5.2.0 preview เปิดเฉพาะบัญชีใหม่; ไม่มีการโอนวันคงเหลือหรือ coupon จาก 5.1.6
+- 5.1.6 ยังใช้ได้จนกว่าสิทธิ์เดิมจะหมดอายุ; legacy renewals/coupon issuance ต้องหยุด และ coupon ที่ไม่ถูกใช้จะหมดอายุหลังประกาศ
 - 5.2.0 ใช้ dedicated preview channel ใน repo เดิม; 5.1.6 ยังเป็น stable/latest
 - ห้ามติดตั้ง 5.2.0 ทับ 5.1.6 และห้ามให้ทั้งสองเวอร์ชันอยู่ด้วยกัน
 - 5.2.0 ต้องไม่ถูกส่งเป็น auto-update ให้ 5.1.6
-- 5.3.0 คือรุ่นตัดระบบเก่า หลัง web auth + control web auth + mapping/link + E2E เสร็จครบ
+- control web auth หมายถึง Control Room/admin เท่านั้น; customer portal อยู่นอก scope
+- 5.3.0 คือรุ่นตัดระบบเก่า หลัง web auth + control web auth + mapping/link + E2E เสร็จครบ; sunset เป็นแบบ gate-based ไม่กำหนดวันตายตัว
 
 ## 2. Current State and Gaps
 
@@ -93,6 +105,25 @@ password, enforce the web-session allowlist in the new schema RPCs, audit all
 other consumers of the shared auth pool, and disable/revoke legacy password
 auth only at the 5.3.0 gate.
 
+### Shared Auth Consumer Inventory
+
+Read-only audit completed 2026-10-25 against this repository and the private
+`Valeneko-pranmong/Neko-Family-Proxy-admin-tool` repository.
+
+| Consumer | Current auth use | Required action |
+| --- | --- | --- |
+| Launcher 5.1.6 | Supabase password + recovery | Keep until its term expires or cutoff; no transfer |
+| 5.2.0 Launcher/bridge | New web session; no password | Enforce next-line session allowlist |
+| Control Room admin (`server/auth.mjs`, `server/supabase.mjs`) | Username/password through Supabase Auth, `profiles.role=admin`, server-only service role | Migrate to Control Room admin web auth before disabling password |
+| Account recovery API (`server/account-recovery.mjs`) | Service-role lookup plus password update | Retire or replace when 5.1.6 password recovery is retired |
+| `issue_launch_permit` Edge Function | Validated Supabase access-token session | Keep; verify next-line session IDs and allowlist |
+| Tests/staging | Disposable password users | Remove/disable at cutover; never reuse production users |
+| Public proxy status/runtime config | Public status plus admin session | Verify admin session auth after Control Room admin web-auth migration |
+
+No other in-repo consumer of the shared password provider was found outside
+these paths. Any external app added later must be recorded here before the
+5.3.0 password shutdown.
+
 ## 4. Workstreams
 
 ### A. Identity, Bridge, and Web Auth
@@ -110,7 +141,7 @@ auth only at the 5.3.0 gate.
   same project and adopt it through `SupabaseGateway.sign_in_with_web()`.
 - Record the minted `auth_session_id` in a web-session allowlist and enforce it
   in the next-line `claim_session` and `authorize_launch_permit` RPCs.
-- Complete control web auth before 5.3.0.
+- Complete Control Room admin web auth before 5.3.0.
 - Decide and implement new-user, unlink, Discord-ban, lost-Discord, and legacy
   recovery policies.
 
@@ -124,8 +155,8 @@ auth only at the 5.3.0 gate.
   development/test builds; a release build must not be able to re-enable the
   password path.
 - Do not add a legacy-account migration entry point to 5.2.0. Show clear
-  guidance that existing 5.1.6 users stay on 5.1.6 until the 5.3.0 migration
-  gate.
+  guidance that existing 5.1.6 users stay on 5.1.6 until their term expires or
+  the 5.3.0 cutoff gate.
 - Use a new local session key. Because the install is a clean start, do not
   attempt to import legacy auth/trust/session state.
 - Update screenshots, release notes, support docs, and error messages to the
@@ -164,16 +195,18 @@ auth only at the 5.3.0 gate.
 ### E. Legacy Data and Entitlement Migration
 
 - 5.2.0 is locked to new accounts only; existing 5.1.6 accounts remain on the
-  legacy line until the 5.3.0 migration gate.
-- For 5.3.0, define a one-time migration proving ownership of the legacy
-  account, transferring remaining days, and revoking the old license/session
-  atomically.
-- Prevent double entitlement: a user must not run a legacy license and a new
-  license concurrently for the same entitlement.
-- Migrate or honor unused coupons; define payment/audit/tax retention.
-- Build a migration ledger: old user hash, new user ID, migrated-at time,
-  remaining days, method, and operator where applicable.
-- Do not copy legacy passwords into the new auth path.
+  legacy line until the 5.3.0 cutover.
+- 5.3.0 does **not** transfer remaining days or unused coupons. Freeze legacy
+  renewals and coupon issuance, keep 5.1.6 usable until the last active legacy
+  term expires, and announce the cutoff.
+- If an earlier shutdown is required, record an explicit cutoff/forfeiture
+  decision; never silently revoke paid days.
+- Prevent double entitlement at shutdown: revoke legacy licenses/sessions
+  atomically when the legacy line is retired.
+- Retain payment/audit/tax records; unused legacy coupons become void after
+  notice.
+- Keep a legacy reconciliation ledger (old user hash, license term, cutoff
+  date, operator where applicable); do not copy legacy passwords.
 
 ### F. Verification, Security, and Operations
 
@@ -201,19 +234,22 @@ Deliverables:
 - Locked: isolated schema/RPC namespace in the existing Supabase project.
 - Locked: dedicated preview channel in the same repository; 5.1.6 remains
   latest stable.
+- Locked: same AppId with a hard uninstall/process guard.
 - Locked: clean-start uninstall data policy; auth/trust/session/preferences do
   not cross lines.
-- Locked: 5.2.0 is new-accounts-only; legacy migration is a 5.3.0 gate.
+- Locked: 5.2.0 is new-accounts-only; no legacy day/coupon transfer.
 - Locked: 5.2.0 may auto-update only within the preview channel.
-- Pending: installer AppId/install-path strategy.
-- Pending: 5.3.0 legacy migration, coupon, and entitlement policy.
-- Pending: control web auth scope and acceptance evidence.
-- Pending: 5.1.6 support window and 5.3.0 sunset date.
-- Audit all consumers of the shared `auth.users`/password provider.
+- Locked: 5.3.0 freezes legacy renewals/coupons, waits for the last active
+  legacy term (or an explicit cutoff), and retires the legacy line.
+- Locked: control web auth is the Control Room/admin surface only.
+- Locked: gate-based sunset; no fixed shutdown date; 30/14/7/1-day notices.
+- Audit complete: shared-auth consumer inventory recorded (Launcher 5.1.6,
+  5.2.0 bridge, Control Room admin, recovery API, Edge permit, tests, public
+  status/config).
 - Update release notes, separation guide, handoff, and this plan.
 
 Exit gate: all P0 decisions recorded; no conflicting "install over 5.1.6"
-instructions remain in current docs; shared-auth-pool consumers are known.
+instructions remain in current docs; shared-auth-pool consumers are recorded.
 
 ### P1 — Identity and Bridge Foundation
 
@@ -236,8 +272,8 @@ Deliverables:
 - Password/recovery code and UI removed from the 5.2.0 product path.
 - Web-only auth view for new accounts, clean-start local state, new session
   storage key.
-- Clear guidance for existing 5.1.6 users to stay on 5.1.6 until the 5.3.0
-  migration gate.
+- Clear guidance for existing 5.1.6 users to stay on 5.1.6 until their term
+  expires or the 5.3.0 cutoff gate.
 - Updated tests and UI evidence.
 - 5.1.6 regression suite remains green.
 
@@ -263,26 +299,28 @@ Deliverables:
 - Dedicated preview-channel distribution in the same repository, with
   5.1.6 remaining latest stable.
 - Preview-channel auto-update for 5.2.0 only.
-- Bridge and control web auth monitoring.
+- Bridge and Control Room admin web-auth monitoring.
 - New-account onboarding rehearsal; separately rehearse the 5.3.0 legacy
-  migration/coupon path.
+  expiry/cutoff and coupon-notice path.
 - Support runbook and rollback plan.
 
 Exit gate: no 5.1.6 breakage in the release feed; preview users can complete
-web-only login and launch; 5.3.0 migration/coupon path is proven or explicitly
-deferred with customer communication.
+web-only login and launch; 5.3.0 expiry/cutoff and coupon-notice path is proven
+or explicitly deferred with customer communication.
 
 ### P5 — 5.3.0 Cutover
 
 Deliverables:
 
-- Web auth and control web auth complete.
-- Existing-user migration/entitlement decision executed for 5.1.6 accounts.
+- Web auth and Control Room admin web auth complete.
+- No-transfer policy executed: legacy renewals/coupon issuance frozen; last
+  active legacy term expired or an explicit cutoff approved.
 - 5.3.0 stable release.
 - Legacy 5.1.6 login/recovery disabled and legacy schema/RPCs frozen/archived.
-- Legacy auth surface decommissioned per the approved retention policy, with
-  the shared-auth-pool consumer audit complete.
-- 5.1.6 sunset communication and support plan.
+- Account recovery API retired/replaced; no password-reset consumer remains.
+- All shared-auth consumers from the inventory are migrated or retired.
+- Legacy auth surface decommissioned per the approved retention policy.
+- 5.1.6 sunset communication and support plan, including unused-coupon notice.
 
 Exit gate: all acceptance criteria below pass; owner approves publication and
 legacy shutdown.
@@ -308,10 +346,14 @@ legacy shutdown.
 
 ### 5.3.0 Cutover
 
-- [ ] Bridge, mapping, link/claim, control web auth, and E2E are complete.
-- [ ] Existing-user migration and remaining-day handling are complete, or a
-      documented support path exists.
-- [ ] Legacy licenses/sessions are revoked without double entitlement.
+- [ ] Bridge, mapping, link/claim, Control Room admin web auth, and E2E are complete.
+- [ ] Legacy account-recovery API is retired/replaced; no password-reset consumer remains.
+- [ ] Shared-auth consumer inventory is fully migrated or retired.
+- [ ] No-transfer policy applied: legacy renewals/coupon issuance frozen; last
+      active legacy term expired or an explicit cutoff approved.
+- [ ] Unused legacy coupons have a documented notice/void date.
+- [ ] Legacy licenses/sessions are revoked without double entitlement only at
+      the approved shutdown point.
 - [ ] Legacy data is archived/retained per policy and restore-tested.
 - [ ] 5.1.6 password/recovery access is removed only after the sunset gate.
 - [ ] 5.3.0 is published as stable with approved trust and signing evidence.
@@ -323,8 +365,8 @@ legacy shutdown.
 | 5.1.6 sees 5.2.0 as an update and shows an error | Keep 5.1.6 as latest stable; use the dedicated preview channel; test old-client feed behavior |
 | Installer silently replaces 5.1.6 | Hard pre-install guard and running-process guard; test with 5.1.6 installed |
 | Uninstall deletes local settings/account state | Clean-start policy is approved; document data loss and do not claim settings preservation |
-| Existing users lose remaining days | 5.2.0 is new accounts only; 5.1.6 stays usable until the 5.3.0 migration gate |
-| Double entitlement across two lines | Revoke old license/session at 5.3.0 migration; audit both schemas |
+| Existing users lose remaining days | No-transfer policy: freeze legacy renewals/coupons, keep 5.1.6 until the last active term expires, or record an explicit cutoff; do not silently revoke paid days |
+| Double entitlement across two lines | Revoke old license/session at the approved 5.3.0 shutdown point; audit both schemas |
 | Shared `auth.users`/password pool across lines | No-password 5.2.0 users; web-session allowlist in next-line RPCs; audit all auth consumers; disable legacy password auth only at cutover |
 | Legacy password remains an attack path | Keep it only on the legacy schema/RPC path; remove it from 5.2.0/5.3.0; revoke at cutover |
 | Bridge/identity outage blocks all login | Monitoring, retry/error UX, support runbook, rollback plan |
@@ -341,15 +383,16 @@ recorded), `DEFERRED` (explicitly moved to a later gate).
 | --- | --- | --- | --- |
 | D1 | Auth/data authority topology | Isolated schema/RPC namespace in the existing Supabase project; shared `auth.users` accepted with a mandatory web-session allowlist | LOCKED |
 | D2 | 5.2.0 distribution | Dedicated preview channel in the same repository; 5.1.6 remains latest stable | LOCKED |
-| D3a | Installer AppId/install-path strategy | Same AppId with a hard uninstall/process guard | PENDING |
+| D3a | Installer AppId/install-path strategy | Same AppId with a hard uninstall/process guard | LOCKED |
 | D3b | Uninstall data policy | Clean start; auth/trust/session/preferences do not cross lines; only the shared driver remains | LOCKED |
 | D4 | Existing 5.1.6 accounts in 5.2.0 | New accounts only; no legacy migration in 5.2.0 | LOCKED |
-| D5 | 5.3.0 migration, coupon, and entitlement policy | Transfer remaining days atomically, revoke the old license/session, honor unused coupons, and record a migration ledger | PENDING |
-| D6 | Control web auth scope | Define owner, surfaces, and acceptance evidence before 5.3.0 | PENDING |
-| D7 | 5.1.6 support window and 5.3.0 sunset | No fixed date until gates pass; announce 30/14/7/1 days before shutdown | PENDING |
+| D5 | 5.3.0 legacy shutdown, coupon, and entitlement policy | No transfer of remaining days or unused coupons; freeze legacy renewals/coupons and wait for the last active term or an explicit cutoff | LOCKED |
+| D6 | Control web auth scope | Control Room/admin surface only; customer web portal out of scope | LOCKED |
+| D7 | 5.1.6 support window and 5.3.0 sunset | Gate-based, no fixed date; last active legacy term or explicit cutoff; announce 30/14/7/1 days before shutdown | LOCKED |
 | D8 | 5.2.0 automatic updates | Preview channel may update 5.2.0 only; 5.1.6 remains on the stable channel | LOCKED |
 
-D1 guardrail: the shared-auth-pool consumer audit is a P0 exit item; the
+D1 guardrail: the shared-auth consumer inventory is recorded in section 3.
+Any new consumer must be added there before the 5.3.0 password shutdown; the
 isolated schema is not full auth isolation.
 
 ## 9. Out of Scope
