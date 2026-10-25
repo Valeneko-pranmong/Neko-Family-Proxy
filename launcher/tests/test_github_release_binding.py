@@ -102,6 +102,7 @@ def _setup_resolver_environment(
     extra_asset_name: str = "SHA256SUMS.txt",
     corrupt_signature: bool = False,
     raw_manifest_bytes: bytes | None = None,
+    channel: str = "stable",
 ) -> dict[str, Any]:
     binding_mod = _get_binding_module()
 
@@ -114,7 +115,7 @@ def _setup_resolver_environment(
     doc = valid_v2_release_document(
         sequence=sequence,
         release_id=release_id,
-        channel="stable",
+        channel=channel,
         launcher_version=launcher_version,
         launcher_sha="1" * 64,
         launcher_size=launcher_size,
@@ -509,7 +510,7 @@ def test_resolver_preview_accepts_a_prerelease_release(tmp_path: Path) -> None:
     from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
 
     binding_mod = _get_binding_module()
-    env_data = _setup_resolver_environment(tmp_path)
+    env_data = _setup_resolver_environment(tmp_path, channel="preview")
     verified = VerifiedUpdateTrustProfile(
         profile_id="preview",
         channel="preview",
@@ -541,9 +542,67 @@ def test_resolver_preview_accepts_a_prerelease_release(tmp_path: Path) -> None:
     resolved = resolver.resolve()
 
     assert resolved is not None
-    assert resolved.authenticated_release.channel == "stable"
+    assert resolved.authenticated_release.channel == "preview"
     assert env_data["gateway"].preview_requested is True
     assert env_data["gateway"].latest_requested is False
+
+
+def test_resolver_preview_profile_rejects_stable_manifest(tmp_path: Path) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    binding_mod = _get_binding_module()
+    env_data = _setup_resolver_environment(tmp_path, channel="stable")
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="preview",
+        channel="preview",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    resolver = binding_mod.GitHubReleaseResolver(
+        release_gateway=env_data["gateway"],
+        manifest_downloader=env_data["downloader"],
+        channel_profile=UpdateChannelProfile.from_verified(verified),
+        install_root=env_data["install_root"],
+        updater_protocol=1,
+    )
+
+    with pytest.raises(binding_mod.GitHubReleaseResolverError):
+        resolver.resolve()
+
+
+def test_resolver_stable_profile_rejects_preview_manifest(tmp_path: Path) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    binding_mod = _get_binding_module()
+    env_data = _setup_resolver_environment(tmp_path, channel="preview")
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    resolver = binding_mod.GitHubReleaseResolver(
+        release_gateway=env_data["gateway"],
+        manifest_downloader=env_data["downloader"],
+        channel_profile=UpdateChannelProfile.from_verified(verified),
+        install_root=env_data["install_root"],
+        updater_protocol=1,
+    )
+
+    with pytest.raises(binding_mod.GitHubReleaseResolverError):
+        resolver.resolve()
 
 
 def test_resolver_stable_profile_never_reads_the_preview_list(tmp_path: Path) -> None:

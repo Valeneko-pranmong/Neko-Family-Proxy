@@ -101,8 +101,8 @@ def parse_release_v2(payload: dict[str, Any]) -> ReleaseSetV2:
 
     if payload["schema_version"] != 2:
         raise ValueError("schema_version must be 2")
-    if payload["channel"] != "stable":
-        raise ValueError("channel must be 'stable'")
+    if payload["channel"] not in ("stable", "preview"):
+        raise ValueError("channel must be 'stable' or 'preview'")
 
     seq = payload["release_sequence"]
     if type(seq) is not int or seq < 1 or seq > 9223372036854775807:
@@ -190,7 +190,7 @@ def parse_release_v2(payload: dict[str, Any]) -> ReleaseSetV2:
 
     return ReleaseSetV2(
         schema_version=2,
-        channel="stable",
+        channel=payload["channel"],
         release_sequence=seq,
         release_id=rel_id,
         mandatory=payload["mandatory"],

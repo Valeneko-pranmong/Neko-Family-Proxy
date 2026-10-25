@@ -503,6 +503,25 @@ def _make_trust_profile_file(
     return path, raw, {auth_key_id: auth_pub}
 
 
+def test_expected_release_channel_binds_5_2_to_preview() -> None:
+    from scripts.build_software_release_v2 import (
+        expected_release_channel,
+        validate_release_channel,
+    )
+
+    assert expected_release_channel("5.2.0") == "preview"
+    assert expected_release_channel("v5.2.1") == "preview"
+    assert expected_release_channel("5.1.6") == "stable"
+    assert expected_release_channel("5.3.0") == "stable"
+
+    validate_release_channel("5.2.0", "preview")
+    validate_release_channel("5.3.0", "stable")
+    with pytest.raises(ValueError, match="must be 'preview'"):
+        validate_release_channel("5.2.0", "stable")
+    with pytest.raises(ValueError, match="must be 'stable'"):
+        validate_release_channel("5.3.0", "preview")
+
+
 @pytest.mark.parametrize(
     ("release_version", "core_release_version", "expected_core_version"),
     [("5.1.2", None, "5.1.2"), ("5.1.3", "5.1.3", "5.1.3")],
@@ -584,6 +603,81 @@ def test_collect_final_component_set_happy_path(
     assert comp_set.core_authority == core_binding
     assert comp_set.trust_profile.profile_id == "production"
     assert len(comp_set.component_set_sha256) == 64
+
+
+def test_collect_final_component_set_requires_preview_profile_for_5_2(tmp_path: Path):
+    from scripts.build_software_release_v2 import (
+        ArtifactIdentity,
+        CoreAuthorityBinding,
+        collect_final_component_set,
+    )
+    from scripts.core_authority_custody import VerifiedCoreAuthority
+
+    launcher_file = tmp_path / "NekoLauncher.exe"
+    launcher_file.write_bytes(b"launcher-bytes-456")
+    updater_file = tmp_path / "NekoUpdater.exe"
+    updater_file.write_bytes(b"updater-bytes-789")
+    core_file = tmp_path / "NekoProxyCore.zip"
+    core_file.write_bytes(b"core-bytes-012")
+    core_identity = ArtifactIdentity(
+        artifact_id="NekoProxyCore.zip",
+        version="5.2.0",
+        sha256=hashlib.sha256(b"core-bytes-012").hexdigest(),
+        size=len(b"core-bytes-012"),
+        installed_identity_sha256="c" * 64,
+        artifact_format="zip-core-v1",
+    )
+    core_binding = CoreAuthorityBinding(
+        authority_version_tag="v5.2.0",
+        authority_release_sequence=6,
+        authority_release_id="preview-0006",
+        authority_payload_sha256="p" * 64,
+        authority_envelope_sha256="e" * 64,
+        authority_key_id="neko-update-prod-2",
+        core_source_commit="6ab94bb",
+        provenance_sha256="pr" * 32,
+    )
+    core_authority = VerifiedCoreAuthority(
+        binding=core_binding,
+        core_zip_path=core_file,
+        core=core_identity,
+    )
+
+    stable_path, _, stable_keys = _make_trust_profile_file(
+        tmp_path, profile_id="production", channel="stable"
+    )
+    with pytest.raises(ValueError, match="must be 'preview'"):
+        collect_final_component_set(
+            source_commit="a" * 40,
+            launcher_path=launcher_file,
+            launcher_version="5.2.0",
+            updater_path=updater_file,
+            updater_version="5.2.0",
+            core_authority=core_authority,
+            trust_profile_path=stable_path,
+            profile_authority_public_keys=stable_keys,
+        )
+
+    preview_path, _, preview_keys = _make_trust_profile_file(
+        tmp_path,
+        profile_id="preview",
+        channel="preview",
+        repository="Neko-Family-Proxy",
+    )
+    comp_set = collect_final_component_set(
+        source_commit="a" * 40,
+        launcher_path=launcher_file,
+        launcher_version="5.2.0",
+        updater_path=updater_file,
+        updater_version="5.2.0",
+        core_authority=core_authority,
+        trust_profile_path=preview_path,
+        profile_authority_public_keys=preview_keys,
+        expected_profile_id="preview",
+    )
+
+    assert comp_set.trust_profile.channel == "preview"
+    assert comp_set.trust_profile.profile_id == "preview"
 
 
 def test_collect_final_component_set_rejects_proof_profile(tmp_path: Path):
@@ -822,6 +916,97 @@ def test_baseline_metadata_uses_reserved_sequence_as_minimum(tmp_path: Path):
     assert doc["components"]["core"]["artifact_id"] == "NekoProxyCore.zip"
     assert doc["components"]["launcher"]["artifact_id"] == "NekoLauncher.exe"
     assert doc["components"]["updater"]["artifact_id"] == "NekoUpdater.exe"
+
+
+def test_baseline_metadata_preserves_preview_channel(tmp_path: Path):
+    from scripts.build_software_release_v2 import (
+        ArtifactIdentity,
+        CoreAuthorityBinding,
+        FinalComponentSet,
+        TrustProfileBinding,
+        build_unsigned_baseline,
+        compute_component_set_sha256,
+    )
+    from scripts.derive_version import ReleaseAllocation
+
+    launcher_id = ArtifactIdentity(
+        artifact_id="NekoLauncher.exe",
+        version="5.2.0",
+        sha256="1" * 64,
+        size=100,
+        installed_identity_sha256="1" * 64,
+        artifact_format="raw-pe-v1",
+    )
+    updater_id = ArtifactIdentity(
+        artifact_id="NekoUpdater.exe",
+        version="5.2.0",
+        sha256="2" * 64,
+        size=200,
+        installed_identity_sha256="2" * 64,
+        artifact_format="raw-pe-v1",
+    )
+    core_id = ArtifactIdentity(
+        artifact_id="NekoProxyCore.zip",
+        version="5.2.0",
+        sha256="3" * 64,
+        size=300,
+        installed_identity_sha256="3" * 64,
+        artifact_format="zip-core-v1",
+    )
+    core_binding = CoreAuthorityBinding(
+        authority_version_tag="v5.2.0",
+        authority_release_sequence=6,
+        authority_release_id="preview-0006",
+        authority_payload_sha256="p" * 64,
+        authority_envelope_sha256="e" * 64,
+        authority_key_id="neko-update-prod-2",
+        core_source_commit="6ab94bb",
+        provenance_sha256="pr" * 32,
+    )
+    trust_binding = TrustProfileBinding(
+        profile_id="preview",
+        channel="preview",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        profile_authority_key_id="neko-update-profile-v520-1",
+        profile_authority_public_key_sha256="a" * 64,
+        profile_envelope_sha256="env" * 21 + "e",
+        keyset_sha256="k" * 64,
+    )
+    comp_sha = compute_component_set_sha256(
+        source_commit="c" * 40,
+        launcher=launcher_id,
+        updater=updater_id,
+        core=core_id,
+        core_authority=core_binding,
+        trust_profile=trust_binding,
+    )
+    component_set = FinalComponentSet(
+        source_commit="c" * 40,
+        launcher=launcher_id,
+        updater=updater_id,
+        core=core_id,
+        core_authority=core_binding,
+        trust_profile=trust_binding,
+        component_set_sha256=comp_sha,
+    )
+    allocation = ReleaseAllocation(
+        sequence=8,
+        release_id="preview-0008",
+        ledger_entry_sha256="led" * 21 + "l",
+        component_set_sha256=comp_sha,
+        authenticated_bindings_sha256="b" * 64,
+        history_snapshot_sha256="h" * 64,
+    )
+
+    unsigned = build_unsigned_baseline(
+        allocation=allocation,
+        component_set=component_set,
+    )
+
+    doc = json.loads(unsigned.payload_path.read_text(encoding="utf-8"))
+    assert doc["channel"] == "preview"
+    assert doc["release_id"] == "preview-0008"
 
 
 def test_build_unsigned_baseline_rejects_tampered_component_set():

@@ -180,6 +180,16 @@ def test_rollout_patches_release_to_latest() -> None:
     assert "make_latest=true" in rollout
     assert "$env:RELEASE_ID" in rollout
 
+
+def test_rollout_blocks_preview_only_5_2_from_stable() -> None:
+    rollout = job(workflow_text(), "rollout-stable")
+
+    guard = "$normalizedTag = $env:RELEASE_TAG.TrimStart('v')"
+    assert guard in rollout
+    assert r"^5\.2\.\d+([-+].*)?$" in rollout
+    assert "preview-only and cannot be promoted to stable" in rollout
+    assert rollout.index(guard) < rollout.index("--method PATCH")
+
 def test_rollout_performs_gate3_verification() -> None:
     rollout = job(workflow_text(), "rollout-stable")
 

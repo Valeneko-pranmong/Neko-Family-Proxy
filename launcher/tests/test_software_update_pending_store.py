@@ -178,6 +178,70 @@ def test_atomic_promotion_and_exact_update_pending(tmp_path: Path):
     assert store.state(local) == UpdateLifecycleState.IDLE
 
 
+def test_preview_channel_promotes_and_loads(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "Pending update symbols must be implemented"
+    _, _, PendingUpdateStore = symbols
+
+    store = PendingUpdateStore(
+        tmp_path, get_test_key_registry(), updater_protocol=1, channel="preview"
+    )
+    release, env_bytes, staged_files, _, _ = _make_fixture_payload(
+        tmp_path, sequence=2, release_id="r2-preview", channel="preview"
+    )
+
+    pending = store.promote(
+        envelope_bytes=env_bytes,
+        release=release,
+        changed_components=("launcher", "core"),
+        staged_files=staged_files,
+    )
+
+    assert pending.release_id == "r2-preview"
+    admitted = _local_identity_for_pending(pending)
+    assert store.load_verified(admitted) == pending
+
+
+def test_stable_store_rejects_preview_release(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "Pending update symbols must be implemented"
+    _, _, PendingUpdateStore = symbols
+
+    store = PendingUpdateStore(tmp_path, get_test_key_registry(), updater_protocol=1)
+    release, env_bytes, staged_files, _, _ = _make_fixture_payload(
+        tmp_path, sequence=2, release_id="r2-preview", channel="preview"
+    )
+
+    with pytest.raises(ValueError, match="Channel must be 'stable'"):
+        store.promote(
+            envelope_bytes=env_bytes,
+            release=release,
+            changed_components=("launcher", "core"),
+            staged_files=staged_files,
+        )
+
+
+def test_preview_store_rejects_stable_release(tmp_path: Path):
+    ok, symbols = lazy_import()
+    assert ok and symbols is not None, "Pending update symbols must be implemented"
+    _, _, PendingUpdateStore = symbols
+
+    store = PendingUpdateStore(
+        tmp_path, get_test_key_registry(), updater_protocol=1, channel="preview"
+    )
+    release, env_bytes, staged_files, _, _ = _make_fixture_payload(
+        tmp_path, sequence=2, release_id="r2-stable", channel="stable"
+    )
+
+    with pytest.raises(ValueError, match="Channel must be 'preview'"):
+        store.promote(
+            envelope_bytes=env_bytes,
+            release=release,
+            changed_components=("launcher", "core"),
+            staged_files=staged_files,
+        )
+
+
 def test_process_restart_reload(tmp_path: Path):
     ok, symbols = lazy_import()
     assert ok and symbols is not None, "Pending update symbols must be implemented"

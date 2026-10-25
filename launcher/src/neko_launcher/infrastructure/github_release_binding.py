@@ -264,6 +264,13 @@ class GitHubReleaseResolver:
     def _uses_preview_channel(self) -> bool:
         return self._channel_profile is not None and self._channel_profile.is_preview
 
+    def _expected_channel(self) -> str:
+        return (
+            self._channel_profile.channel
+            if self._channel_profile is not None
+            else "stable"
+        )
+
     def resolve(self) -> ResolvedGitHubRelease | None:
         try:
             release = (
@@ -360,7 +367,7 @@ class GitHubReleaseResolver:
         except Exception:
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED") from None
 
-        if release_set_v2.channel != "stable":
+        if release_set_v2.channel != self._expected_channel():
             raise GitHubReleaseResolverError("RELEASE_MANIFEST_REJECTED")
 
         launcher_comp = release_set_v2.components.get("launcher")

@@ -31,6 +31,11 @@ STABLE_RELEASE_EXPECTED_CHANNEL = "stable"
 STABLE_RELEASE_EXPECTED_MIN_SEQUENCE = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MIN = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MAX = 1
+_PREVIEW_VERSION_PATTERN = re.compile(r"^v?5\.2\.\d+(?:[-+].*)?$")
+
+
+def expected_release_channel(expected_tag: str) -> str:
+    return "preview" if _PREVIEW_VERSION_PATTERN.fullmatch(expected_tag.strip()) else "stable"
 
 REQUIRED_UNIFIED_ASSETS: tuple[str, ...] = (
     "NekoFamilyProxy-Installer.exe",
@@ -146,6 +151,8 @@ def verify_unified_release_assets(
             f"Release repository cannot be the retired/superseded repository ({expected_repo})"
         )
 
+    expected_channel = expected_release_channel(expected_tag)
+
     release_path = Path(release_json_path)
     if not release_path.is_file():
         raise GitHubReleaseAssetsVerificationError("Release JSON file not found")
@@ -194,6 +201,10 @@ def verify_unified_release_assets(
     prerelease = release_doc.get("prerelease")
     if type(prerelease) is not bool:
         raise GitHubReleaseAssetsVerificationError("Release prerelease flag must be a boolean")
+    if expected_channel == "preview" and not require_prerelease:
+        raise GitHubReleaseAssetsVerificationError(
+            "5.2.x is preview-only and must be verified with --require-prerelease"
+        )
     if require_prerelease and not prerelease:
         raise GitHubReleaseAssetsVerificationError("Release prerelease flag must be true when require-prerelease is set")
     if not require_prerelease and prerelease:
@@ -368,7 +379,7 @@ def verify_unified_release_assets(
         expected_component_version = expected_tag.lstrip("v")
 
         invariant_checks = (
-            (release_set_v2.channel == STABLE_RELEASE_EXPECTED_CHANNEL, "channel"),
+            (release_set_v2.channel == expected_channel, "channel"),
             (release_set_v2.release_sequence == expected_sequence, "release_sequence"),
             (
                 release_set_v2.minimum_supported_sequence == resolved_minimum_sequence,
@@ -386,20 +397,21 @@ def verify_unified_release_assets(
                 "updater_protocol",
             ),
         )
+        label = "Stable" if expected_channel == "stable" else "Preview"
         for valid, name in invariant_checks:
             if not valid:
                 raise GitHubReleaseAssetsVerificationError(
-                    f"Stable-release {name} invariant mismatch"
+                    f"{label}-release {name} invariant mismatch"
                 )
         for component_name in ("launcher", "updater", "core"):
             component = release_set_v2.components.get(component_name)
             if component is None or component.version != expected_component_version:
                 raise GitHubReleaseAssetsVerificationError(
-                    f"Stable-release {component_name} version invariant mismatch"
+                    f"{label}-release {component_name} version invariant mismatch"
                 )
-    elif release_set_v2.channel != "stable":
+    elif release_set_v2.channel != expected_channel:
         raise GitHubReleaseAssetsVerificationError(
-            f"Release channel must be 'stable', got {release_set_v2.channel!r}"
+            f"Release channel must be {expected_channel!r}, got {release_set_v2.channel!r}"
         )
 
     expected_manifest_tag = f"v{release_set_v2.components['launcher'].version}"

@@ -155,6 +155,7 @@ def run_pending_update_bootstrap(
             root_dir=install_root,
             key_registry=profile.release_public_keys,
             updater_protocol=UPDATER_PROTOCOL_VERSION,
+            channel=profile.channel,
         )
 
         apply_service = compose_update_apply_service(

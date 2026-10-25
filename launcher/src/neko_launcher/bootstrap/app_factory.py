@@ -266,6 +266,7 @@ def compose_update_coordinator(
                 verified_profile.release_public_keys if verified_profile is not None else {}
             ),
             updater_protocol=UPDATER_PROTOCOL_VERSION,
+            channel=verified_profile.channel if verified_profile is not None else "stable",
         )
     )
     staging = (
@@ -329,6 +330,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             root_dir=install_root,
             key_registry=dict(channel_profile.release_public_keys),
             updater_protocol=UPDATER_PROTOCOL_VERSION,
+            channel=channel_profile.channel,
         )
     else:
         shared_resolver = _UnavailableReleaseGateway()

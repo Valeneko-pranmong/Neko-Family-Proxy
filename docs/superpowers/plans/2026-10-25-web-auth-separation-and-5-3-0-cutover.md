@@ -394,6 +394,17 @@ the reproducible signing path without exposing private bytes. Preview
 publication, 5.2.0 auto-apply, and feed-level E2E remain open. Full Launcher
 suite: 2,605 passed / 4 skipped.
 
+**P4 slice 4 status (2026-10-25):** the preview path is now consistent from
+manifest to pending update. Release-v2 manifests accept `channel=preview`;
+the release builder requires a preview profile for 5.2.x and emits a preview
+manifest, the installer builder requires the same binding, and pending-update
+stores are channel-scoped so preview and stable updates cannot cross-load.
+The resolver binds the manifest channel to the installed profile, the
+publisher and hosted verifier require preview manifests to be prereleases, and
+`rollout-stable` now refuses to promote any 5.2.x tag. Cleanup and version
+guards cover 5.2.x suffixes. Full Launcher suite: 2,629 passed / 4 skipped.
+Actual preview publication, 5.2.0 auto-apply, and feed-level E2E remain open.
+
 ### P5 — 5.3.0 Cutover
 
 Deliverables:

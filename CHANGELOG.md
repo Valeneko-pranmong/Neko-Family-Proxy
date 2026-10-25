@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Blocked 5.2.x from non-prerelease stable publication until the preview channel and P4 gates are complete.
 - Added preview-channel release-list discovery and prerelease acceptance for `preview` trust profiles; stable 5.1.6 discovery remains on `/releases/latest`.
 - Added the signed `update-profile-preview-v1.json` (channel `preview`) and a reproducible profile-signing script; it authorizes only `neko-update-prod-2`.
+- Completed the local preview path: release-v2 manifests accept `channel=preview`; 5.2.x release/installer builds require a preview profile and preview manifest; the resolver, pending-update store, publisher, hosted verifier, and stable-rollout workflow enforce the same binding so preview and stable updates cannot cross-load or promote.
 
 ### Changed
 - 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.

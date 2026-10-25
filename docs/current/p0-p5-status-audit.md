@@ -15,7 +15,7 @@ complete** and no 5.2.0/5.3.0 publication is authorized.
 | P1 — identity/bridge | PARTIAL | `launcher_v2` schema/RPC migrations; reference `supabase/functions/launcher_bridge`; JWT/JWKS, JTI, identity-link, web-session and bridge tests | Deploy migrations/bridge to staging; provision accounts/entitlement; full loopback → identity → bridge → Supabase → claim/permit → Core E2E; Auth `session_id` refresh verification |
 | P2 — client web-only | COMPLETE for product path | `NEKO_LAUNCHER_SCHEMA`, server-metadata permit routing, web-only UI, frozen-build enforcement, recovery removal, service-layer password/recovery rejection; UI/config/service tests | Full 5.2.0 staging E2E/Windows package smoke |
 | P3 — installer separation | PARTIAL | `installer/beta.iss` same-AppId guard blocks running processes and any version other than 5.2.0; clean-start policy; contract tests | ISCC rebuild; install/uninstall matrix with 5.1.6 installed/running and 5.2.0 reinstall |
-| P4 — preview safely | PARTIAL | 5.2.x stable publication block; preview release-list discovery; signed `update-profile-preview-v1.json`; feed-isolation tests | Preview publication path; 5.2.0 auto-apply; real feed-level E2E |
+| P4 — preview safely | PARTIAL | 5.2.x stable publication block; preview release-list discovery; signed `update-profile-preview-v1.json`; preview manifest/profile/pending-store binding; stable-rollout block; feed-isolation tests | Real preview publication, 5.2.0 auto-apply, and feed-level E2E |
 | P5 — 5.3.0 cutover | PARTIAL | `docs/current/5.3.0-cutover-runbook.md` with gates, no-transfer, archive, shutdown and rollback | Execute after P1/P3/P4 and owner-approved cutoff |
 
 ## P0 evidence
@@ -88,16 +88,24 @@ Not verified:
 
 Present:
 
-- 5.2.x non-prerelease stable publication is blocked.
+- 5.2.x non-prerelease stable publication is blocked, including 5.2.x
+  suffixes, and `rollout-stable` refuses to promote any 5.2.x tag.
+- Release-v2 manifests accept `channel=preview`; the release and installer
+  builders bind 5.2.x to a preview profile/channel and reject cross-channel
+  combinations.
 - Preview profiles use the release list and accept prereleases; stable profiles
-  use `/releases/latest` and reject prereleases.
+  use `/releases/latest` and reject prereleases. The resolver rejects a
+  manifest whose channel differs from the installed profile.
+- Pending-update stores are channel-scoped, so preview and stable pending
+  updates cannot be promoted or loaded across channels.
 - Signed `trust/update-profile-preview-v1.json` authorizes only
   `neko-update-prod-2` and verifies against the profile authority.
-- Feed-isolation tests pass.
+- Feed-isolation and preview-channel tests pass; full Launcher suite: 2,629
+  passed / 4 skipped.
 
 Not verified:
 
-- No preview publication function/run.
+- No real preview build/publication run.
 - No 5.2.0 auto-apply run from the preview feed.
 - No real feed-level E2E.
 
@@ -129,8 +137,9 @@ Not verified:
    `launcher_bridge` following `launcher-bridge-staging-runbook.md`.
 3. Run the full P1 E2E and verify `auth.sessions.id` across refresh.
 4. Rebuild the installer with ISCC and run the P3 install/uninstall matrix.
-5. Publish a 5.2.0 prerelease, verify preview auto-apply and feed isolation,
-   then run the final 5.2.0 E2E.
+5. Build with the preview profile, publish a 5.2.0 prerelease through the
+   preview path, verify auto-apply and feed isolation, then run the final
+   5.2.0 E2E.
 6. Obtain owner approval for the legacy cutoff and execute
    `5.3.0-cutover-runbook.md`; only then publish 5.3.0 stable.
 

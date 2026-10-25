@@ -63,6 +63,7 @@ def _argv(
     updater_hash: str = HEX_B,
     baseline_envelope: Path | str | None = None,
     trust_profile: Path | str | None = None,
+    release_version: str = "5.1.3",
 ) -> list[str]:
     env_path = str(baseline_envelope if baseline_envelope is not None else stage / "baseline_envelope.json")
     prof_path = str(trust_profile if trust_profile is not None else stage / "trust_profile.json")
@@ -76,7 +77,7 @@ def _argv(
         "--core-authority",
         CORE_AUTHORITY,
         "--release-version",
-        "5.1.3",
+        release_version,
         "--baseline-envelope",
         env_path,
         "--trust-profile",
@@ -931,6 +932,92 @@ def test_builder_stages_envelope_and_profile_byte_identical_and_records_hashes(
     assert record["profile_id"] == "proof-v512"
     assert "keyset_sha256" in record
     assert len(record["keyset_sha256"]) == 64
+
+
+def test_validate_installer_channel_requires_preview_for_5_2() -> None:
+    module = _load_builder()
+
+    with pytest.raises(module.PrebuildGateError, match="preview-only"):
+        module.validate_installer_channel("5.2.0", "stable")
+    with pytest.raises(module.PrebuildGateError, match="preview-only"):
+        module.validate_installer_channel("v5.2.1", "stable")
+
+    module.validate_installer_channel("5.2.0", "preview")
+    module.validate_installer_channel("v5.2.1", "preview")
+
+
+def test_validate_installer_channel_limits_preview_to_5_2() -> None:
+    module = _load_builder()
+
+    for version in ("5.1.6", "v5.3.0"):
+        with pytest.raises(module.PrebuildGateError, match="limited to 5.2.x"):
+            module.validate_installer_channel(version, "preview")
+
+    module.validate_installer_channel("5.1.6", "stable")
+    module.validate_installer_channel("5.3.0", "stable")
+
+
+def test_builder_rejects_5_2_installer_with_stable_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path, channel="stable")
+
+    monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+
+    argv = _argv(
+        stage,
+        _digest(b"launcher"),
+        _digest(b"updater"),
+        baseline_envelope=envelope_path,
+        trust_profile=profile_path,
+        release_version="5.2.0",
+    )
+    with pytest.raises(module.PrebuildGateError, match="preview-only"):
+        build_candidate(parse_args(argv))
+
+
+def test_builder_accepts_5_2_installer_with_preview_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path, channel="preview")
+
+    monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", lambda: "mock_iscc.exe")
+
+    def mock_subprocess_run(args, **kwargs) -> Any:
+        if args and args[0] == "mock_iscc.exe":
+            out_dir = stage / "out"
+            out_dir.mkdir(exist_ok=True)
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
+
+    argv = _argv(
+        stage,
+        _digest(b"launcher"),
+        _digest(b"updater"),
+        baseline_envelope=envelope_path,
+        trust_profile=profile_path,
+        release_version="5.2.0",
+    )
+    assert build_candidate(parse_args(argv)) == 0
+
+    staged_profile = stage / "payload" / "trust" / "update-profile-v1.json"
+    assert staged_profile.read_bytes() == profile_path.read_bytes()
+    record = json.loads((stage / "out" / "build-record.json").read_text(encoding="utf-8"))
+    assert record["embedded_trust_profile_sha256"] == _digest(profile_path.read_bytes())
 
 
 def test_builder_rejects_untrusted_profile_authority_signature(

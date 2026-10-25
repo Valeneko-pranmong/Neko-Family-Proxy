@@ -44,8 +44,27 @@ def test_parse_release_v2_rejects_v1():
 def test_parse_release_v2_rejects_beta_channel():
     doc = sample_valid_v2_doc()
     doc["channel"] = "beta"
-    with pytest.raises(ValueError, match="channel must be 'stable'"):
+    with pytest.raises(ValueError, match="channel must be 'stable' or 'preview'"):
         parse_release_v2(doc)
+
+
+def test_parse_release_v2_accepts_preview_channel():
+    doc = sample_valid_v2_doc()
+    doc["channel"] = "preview"
+    parsed = parse_release_v2(doc)
+    assert parsed.channel == "preview"
+    assert set(parsed.components.keys()) == {"launcher", "updater", "core"}
+
+
+def test_verify_release_envelope_v2_preview_success():
+    doc = sample_valid_v2_doc()
+    doc["channel"] = "preview"
+    envelope = signed_envelope(doc)
+    release_set, payload_sha = verify_release_envelope_v2(
+        envelope, {TEST_KEY_ID: TEST_PUBLIC_KEY}
+    )
+    assert release_set.channel == "preview"
+    assert len(payload_sha) == 64
 
 
 def test_parse_release_v2_rejects_legacy_exact_two_components():

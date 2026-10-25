@@ -200,6 +200,7 @@ def make_stage(
     release_id: str = "stable-0008",
     version: str = "5.1.4",
     mandatory: bool = False,
+    channel: str = "stable",
 ) -> Path:
     core_bytes, actual_core_identity = _make_core_zip(path / "NekoProxyCore.zip")
     payloads = {
@@ -231,7 +232,7 @@ def make_stage(
         }
     payload = {
         "schema_version": 2,
-        "channel": "stable",
+        "channel": channel,
         "release_sequence": sequence,
         "minimum_supported_sequence": minimum_supported_sequence,
         "release_id": release_id,
@@ -327,6 +328,77 @@ def test_public_staging_path_has_no_repository_authority_parameter() -> None:
 
     module = load_module()
     assert "repo" not in inspect.signature(module.stage_draft_release).parameters
+
+
+def test_expected_staging_channel_binds_5_2_to_preview() -> None:
+    module = load_module()
+    assert module.expected_staging_channel("v5.2.0") == "preview"
+    assert module.expected_staging_channel("5.2.1") == "preview"
+    assert module.expected_staging_channel("v5.1.6") == "stable"
+    assert module.expected_staging_channel("v5.3.0") == "stable"
+
+
+def test_validation_accepts_preview_manifest_for_5_2(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(
+        tmp_path,
+        sequence=8,
+        release_id="preview-0008",
+        version="5.2.0",
+        channel="preview",
+    )
+
+    assets = module.validate_staging_preconditions(
+        staging_dir=stage,
+        tag="v5.2.0",
+        target_commit=TARGET,
+        repo_root=SCRIPT.parents[1],
+        executor=FakeExecutor(),
+        expected_channel="preview",
+    )
+
+    assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)
+
+
+def test_validation_rejects_stable_manifest_for_5_2(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(
+        tmp_path,
+        sequence=8,
+        release_id="preview-0008",
+        version="5.2.0",
+        channel="stable",
+    )
+
+    with pytest.raises(module.StageDraftReleaseError, match="Preview-release authority mismatch"):
+        module.validate_staging_preconditions(
+            staging_dir=stage,
+            tag="v5.2.0",
+            target_commit=TARGET,
+            repo_root=SCRIPT.parents[1],
+            executor=FakeExecutor(),
+            expected_channel="preview",
+        )
+
+
+def test_validation_rejects_preview_manifest_for_stable_tag(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(
+        tmp_path,
+        sequence=8,
+        release_id="preview-0008",
+        version="5.1.4",
+        channel="preview",
+    )
+
+    with pytest.raises(module.StageDraftReleaseError, match="Stable-release authority mismatch"):
+        module.validate_staging_preconditions(
+            staging_dir=stage,
+            tag=TAG,
+            target_commit=TARGET,
+            repo_root=SCRIPT.parents[1],
+            executor=FakeExecutor(),
+        )
 
 
 @pytest.mark.parametrize("case", ["dirty", "wrong_sha", "wrong_tag", "missing", "extra", "empty", "large_manifest", "noncanonical"])

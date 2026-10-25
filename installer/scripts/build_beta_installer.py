@@ -71,6 +71,21 @@ def fail(message: str) -> "None":
     raise PrebuildGateError(message)
 
 
+def validate_installer_channel(release_version: str, channel: str) -> None:
+    normalized = str(release_version).strip().lstrip("v")
+    is_5_2 = re.fullmatch(r"5\.2\.\d+", normalized) is not None
+    if is_5_2 and channel != "preview":
+        fail(
+            "5.2.x is preview-only; installer trust profile channel must be "
+            f"'preview', got {channel!r}"
+        )
+    if channel == "preview" and not is_5_2:
+        fail(
+            "preview installers are limited to 5.2.x; "
+            f"got release version {release_version!r}"
+        )
+
+
 def find_iscc() -> str:
     candidates = [
         os.path.join(
@@ -102,7 +117,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--baseline-envelope", required=True)
     parser.add_argument("--trust-profile", required=True)
     args = parser.parse_args(argv)
-    if not re.match(r"^5\.(?:1|2)\.\d+$", args.release_version):
+    if not re.match(r"^5\.[123]\.\d+$", args.release_version):
         parser.error("--release-version must be stable 5.x.y format (e.g., 5.2.0)")
     if not args.core_authority.strip():
         parser.error("--core-authority must not be empty")
@@ -211,6 +226,8 @@ def build_candidate(args: argparse.Namespace) -> int:
         fail(
             f"baseline envelope channel mismatch: {release_set.channel} != {verified_profile.channel}"
         )
+
+    validate_installer_channel(args.release_version, verified_profile.channel)
 
     # Component identity verification against staged bytes
     components = release_set.components

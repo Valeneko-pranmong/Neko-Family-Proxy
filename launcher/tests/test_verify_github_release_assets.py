@@ -941,6 +941,91 @@ def test_verify_assets_succeeds_when_require_prerelease_and_prerelease_is_true(t
     )
 
 
+def test_verify_assets_accepts_5_2_preview_prerelease(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.2.0",
+        release_id="preview-0008",
+        launcher_version="5.2.0",
+        updater_version="5.2.0",
+        core_version="5.2.0",
+        channel="preview",
+        prerelease=True,
+        draft=False,
+    )
+
+    verifier.verify_github_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        public_key_file=bundle["public_key_file"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_prerelease=True,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+
+def test_verify_assets_rejects_5_2_preview_without_require_prerelease(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.2.0",
+        release_id="preview-0008",
+        launcher_version="5.2.0",
+        updater_version="5.2.0",
+        core_version="5.2.0",
+        channel="preview",
+        prerelease=True,
+        draft=False,
+    )
+
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="must be verified with --require-prerelease",
+    ):
+        verifier.verify_github_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            public_key_file=bundle["public_key_file"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
+def test_verify_assets_rejects_5_2_stable_channel_manifest(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.2.0",
+        release_id="preview-0008",
+        launcher_version="5.2.0",
+        updater_version="5.2.0",
+        core_version="5.2.0",
+        channel="stable",
+        prerelease=True,
+        draft=False,
+    )
+
+    with pytest.raises(
+        verifier.GitHubReleaseAssetsVerificationError,
+        match="Preview-release channel invariant mismatch",
+    ):
+        verifier.verify_github_release_assets(
+            release_json_path=bundle["release_json_file"],
+            download_dir=bundle["download_dir"],
+            public_key_file=bundle["public_key_file"],
+            expected_tag=bundle["expected_tag"],
+            expected_target=bundle["expected_target"],
+            require_prerelease=True,
+            expected_key_id=TEST_KEY_ID,
+            trusted_public_keys=get_test_key_registry(),
+        )
+
+
 def test_verify_assets_fails_when_prerelease_is_true(tmp_path: Path) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(tmp_path, prerelease=True)

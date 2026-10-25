@@ -36,13 +36,17 @@ class PendingUpdateStore:
         root_dir: Path,
         key_registry: Mapping[str, bytes],
         updater_protocol: int,
+        channel: str = "stable",
     ) -> None:
+        if channel not in ("stable", "preview"):
+            raise ValueError(f"Unsupported update channel: {channel!r}")
         self.root_dir = Path(root_dir)
         self.base_dir = self.root_dir / "update-pending"
         self.generations_dir = self.base_dir / "generations"
         self.pointer_file = self.base_dir / CURRENT_POINTER_FILENAME
         self.key_registry = key_registry
         self.updater_protocol = updater_protocol
+        self.channel = channel
 
     def _read_active_pointer(self) -> dict[str, object] | None:
         if not self.pointer_file.is_file():
@@ -80,8 +84,10 @@ class PendingUpdateStore:
         changed_components: tuple[str, ...],
         staged_files: Mapping[str, Path],
     ) -> VerifiedPendingUpdate:
-        if release.channel != "stable":
-            raise ValueError(f"Channel must be 'stable', got {release.channel!r}")
+        if release.channel != self.channel:
+            raise ValueError(
+                f"Channel must be {self.channel!r}, got {release.channel!r}"
+            )
 
         if not (
             release.updater_protocol.minimum
@@ -138,8 +144,10 @@ class PendingUpdateStore:
             verified_release, _ = verify_release_envelope_v2(
                 envelope_obj, self.key_registry
             )
-            if verified_release.channel != "stable":
-                raise ValueError(f"Channel must be 'stable', got {verified_release.channel!r}")
+            if verified_release.channel != self.channel:
+                raise ValueError(
+                    f"Channel must be {self.channel!r}, got {verified_release.channel!r}"
+                )
             if verified_release.release_id != release.release_id:
                 raise ValueError("Release ID mismatch between argument and verified envelope")
             if verified_release.release_sequence != release.release_sequence:
@@ -315,7 +323,7 @@ class PendingUpdateStore:
         except Exception:
             return None
 
-        if release.channel != "stable":
+        if release.channel != self.channel:
             return None
         if release.release_id != rel_id:
             return None

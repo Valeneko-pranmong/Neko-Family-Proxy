@@ -71,7 +71,12 @@ class StageDraftReleaseError(Exception):
     """Raised when staging validation or execution fails."""
 
 
-_PREVIEW_ONLY_VERSION = re.compile(r"5\.2\.\d+$")
+_PREVIEW_ONLY_VERSION = re.compile(r"5\.2\.\d+(?:[-+].*)?$")
+
+
+def expected_staging_channel(tag: str) -> str:
+    normalized = str(tag).strip().lstrip("v")
+    return "preview" if _PREVIEW_ONLY_VERSION.fullmatch(normalized) else "stable"
 
 
 def validate_stable_release_channel(
@@ -316,6 +321,7 @@ def _validate_manifest(
     assets: dict[str, Path],
     tag: str,
     *,
+    expected_channel: str = "stable",
     expected_sequence: int | None = None,
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
@@ -352,7 +358,9 @@ def _validate_manifest(
         default_min_seq = target_seq
     elif expected_sequence is not None:
         target_seq = expected_sequence
-        target_rel_id = expected_release_id or f"stable-{target_seq:04d}"
+        target_rel_id = (
+            expected_release_id or f"{expected_channel}-{target_seq:04d}"
+        )
         default_min_seq = 1
     else:
         target_seq = release_set.release_sequence
@@ -373,7 +381,7 @@ def _validate_manifest(
         raise StageDraftReleaseError("Invalid expected mandatory flag")
 
     if (
-        release_set.channel != "stable"
+        release_set.channel != expected_channel
         or release_set.release_sequence != target_seq
         or release_set.minimum_supported_sequence != target_min_seq
         or release_set.release_id != target_rel_id
@@ -382,12 +390,14 @@ def _validate_manifest(
             and release_set.mandatory is not expected_mandatory
         )
     ):
-        raise StageDraftReleaseError("Stable-release authority mismatch")
+        label = "Stable" if expected_channel == "stable" else "Preview"
+        raise StageDraftReleaseError(f"{label}-release authority mismatch")
     if (
         release_set.updater_protocol.minimum != 1
         or release_set.updater_protocol.maximum != 1
     ):
-        raise StageDraftReleaseError("Stable-release protocol or tag mismatch")
+        label = "Stable" if expected_channel == "stable" else "Preview"
+        raise StageDraftReleaseError(f"{label}-release protocol or tag mismatch")
     if set(release_set.components) != set(_COMPONENTS):
         raise StageDraftReleaseError("Manifest component set mismatch")
     for component_name, (file_name, file_format) in _COMPONENTS.items():
@@ -436,6 +446,7 @@ def validate_staging_preconditions(
     target_commit: str,
     repo_root: Path,
     executor: CommandExecutor,
+    expected_channel: str | None = None,
     expected_sequence: int | None = None,
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
@@ -476,6 +487,7 @@ def validate_staging_preconditions(
         assets["release-v2.json"],
         assets,
         tag,
+        expected_channel=expected_channel or expected_staging_channel(tag),
         expected_sequence=expected_sequence,
         expected_release_id=expected_release_id,
         expected_allocation=expected_allocation,

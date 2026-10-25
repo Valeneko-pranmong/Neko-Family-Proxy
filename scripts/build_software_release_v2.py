@@ -44,6 +44,20 @@ EXPECTED_ASSETS = [
 ]
 
 _KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_PREVIEW_VERSION_PATTERN = re.compile(r"^v?5\.2\.\d+$")
+
+
+def expected_release_channel(release_version: str) -> str:
+    return "preview" if _PREVIEW_VERSION_PATTERN.fullmatch(release_version.strip()) else "stable"
+
+
+def validate_release_channel(release_version: str, channel: str) -> None:
+    expected = expected_release_channel(release_version)
+    if channel != expected:
+        raise ValueError(
+            f"Trust profile channel must be {expected!r} for release {release_version}, "
+            f"got {channel!r}"
+        )
 
 
 @dataclass(frozen=True)
@@ -218,8 +232,7 @@ def collect_final_component_set(
         raise ValueError(
             f"Trust profile profile_id must be '{expected_profile_id}', got '{verified_profile.profile_id}'"
         )
-    if verified_profile.channel != "stable":
-        raise ValueError(f"Trust profile channel must be 'stable', got '{verified_profile.channel}'")
+    validate_release_channel(launcher_version, verified_profile.channel)
 
     trust_binding = TrustProfileBinding(
         profile_id=verified_profile.profile_id,
@@ -292,7 +305,7 @@ def build_unsigned_baseline(
         )
 
     payload_obj = {
-        "channel": "stable",
+        "channel": component_set.trust_profile.channel,
         "components": {
             "core": {
                 "artifact_format": component_set.core.artifact_format,
