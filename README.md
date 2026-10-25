@@ -104,10 +104,10 @@ flowchart TD
 
 Neko Family Proxy operates as part of a coordinated multi-repository architecture:
 
-- **[Neko Family Proxy (This Repository)](https://github.com/Valeneko-pranmong/Neko-Family-Proxy)**: The Windows desktop launcher application, local session manager, client telemetry display, database migration suite, and the permanent machine-update channel under the Two-Repo Role Inversion.
+- **[Neko Family Proxy (This Repository)](https://github.com/Valeneko-pranmong/Neko-Family-Proxy)**: The Windows desktop launcher application, local session manager, client telemetry display, database migration suite, and the canonical machine-update and installer release surface.
 - **[NekoProxyCore](https://github.com/Valeneko-pranmong/NekoProxyCore)**: The external, pinned low-level network proxy runtime. It executes fail-closed external traffic translation and is installed separately under `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore`.
 - **[Control Room](https://github.com/Valeneko-pranmong/Neko-Family-Proxy-admin-tool)**: The administrative management web portal utilized by operators to monitor proxy health, audit sessions, issue entitlements, and publish live Runtime Config v1 updates.
-*(Note: Standalone customer setup executables are distributed via a dedicated installer repository.)*
+*(Note: Standalone customer setup executables and machine-update assets are distributed from the canonical repository releases page.)*
 
 ---
 
@@ -219,7 +219,7 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
   - Provisioned machine installation credentials during baseline enrollment.
 - **v5.1.2 (Architecture Revision)**:
   - Deferred Update Lifecycle: Background staging (`SoftwareUpdateStageService`), durable pending store (`PendingUpdateStore`), non-disruptive session guard (`SessionActivityGuard`), and offline apply on explicit update, normal exit, or next launch.
-  - Two-Repo Role Inversion: `Valeneko-pranmong/Neko-Family-Proxy` as the permanent machine-update channel; dedicated installer repository for customer-facing Setup.
+  - Two-Repo Role Inversion (historical; superseded by unified canonical releases in 5.2.0): `Valeneko-pranmong/Neko-Family-Proxy` is now the machine-update and installer surface.
   - Canonical Launcher title bar version binding and dynamic authority propagation.
 - **v5.1.0 (Historical Stable Baseline)**:
   - Runtime Config v1, single-active-session control, bound launch permits, and one-click installer packaging.
