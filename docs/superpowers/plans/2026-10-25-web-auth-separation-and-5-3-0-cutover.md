@@ -269,11 +269,18 @@ Exit gate: full web-auth E2E passes in staging; no production flag enabled yet.
 creates the private `launcher_v2` profiles, identity links, web-session
 allowlist, and audit foundation; the shared Auth trigger routes only
 server-controlled `app_metadata.auth_line = next` users to the next-line
-profile. Contract tests and the full Launcher suite (2,574 passed / 4 skipped)
-pass. The migration has not been applied to production; claim/permit RPCs, the
-bridge, staging accounts, and E2E remain open. P1 must also validate that the
-Supabase Auth `session_id` remains stable across refresh, or update the
-allowlist row during refresh.
+profile.
+
+**P1 slice 2 status (2026-10-25):** `20261025131000_create_launcher_v2_claim_permit.sql`
+adds next-line products, licenses, installations, sessions, and permit
+attempts plus the claim/heartbeat/release/permit RPCs. Every RPC requires the
+web-session allowlist and an active identity link. Contract tests and the full
+Launcher suite (2,579 passed / 4 skipped) pass.
+
+Neither migration has been applied to production. The bridge, staging
+accounts, and E2E remain open. P1 must also validate that the Supabase Auth
+`session_id` remains stable across refresh, or update the allowlist row during
+refresh.
 
 ### P2 — 5.2.0 Web-Only Client
 

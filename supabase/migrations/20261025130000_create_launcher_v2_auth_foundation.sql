@@ -55,6 +55,10 @@ create table launcher_v2.audit_events (
       'identity_unlinked',
       'web_session_minted',
       'web_session_revoked',
+      'session_claimed',
+      'session_revoked',
+      'session_rejected',
+      'license_rejected',
       'policy_rejected'
     )
   ),

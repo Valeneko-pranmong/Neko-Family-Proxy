@@ -83,11 +83,22 @@ The bridge must create new 5.2.0 users with
 `launcher_v2.profiles`; users without that server-controlled marker keep the
 legacy `public.profiles` path.
 
-The schema is added to the Data API schema list for `service_role` access, but
-no `authenticated` or `anon` grants are created in this slice. Claim/permit
-RPCs, the bridge exchange, and staging E2E are still pending. Do not apply this
-migration to production or treat the next line as active until those gates
-pass.
+The schema is added to the Data API schema list for `service_role` access. No
+`authenticated` or `anon` table grants are created; the bridge writes identity
+links and web sessions with `service_role`.
+
+`20261025131000_create_launcher_v2_claim_permit.sql` adds the next-line
+products, licenses, installations, sessions, and permit-attempt tables plus
+`claim_session`, `heartbeat_session`, `release_session`,
+`authorize_launch_permit`, and `consume_permit_attempt`. Every RPC requires a
+live `launcher_v2.web_sessions` allowlist row and an active identity link; a
+password session from the shared Auth pool cannot claim or obtain a 5.2.0
+permit. Tables remain private and the RPCs are authenticated-only.
+
+The existing `issue_launch_permit` Edge Function, Launcher client, bridge
+exchange, staging accounts, and E2E still use the legacy path. Do not apply
+these migrations to production or treat the next line as active until the
+bridge and staging E2E gates pass.
 
 The repository also includes an environment-gated live client test for Auth,
 Coupon replay, and launcher-session takeover. Run the manual
