@@ -170,6 +170,7 @@ Filename: "{app}\NekoLauncher.exe"; \
 [Code]
 const
   HideCmd = 0;
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{D4A7C182-6B3E-4F19-9C05-2E8AF7B31D64}_is1';
 
 var
   g_CoreVerifyOK: Boolean;
@@ -291,13 +292,90 @@ begin
   end;
 end;
 
+function ExistingInstallVersion(): String;
+var
+  InstalledVersion: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', InstalledVersion) then
+    Result := InstalledVersion;
+end;
+
+{ Fail closed when a Launcher/Core/Updater process still holds files. }
+function ProcessesAreRunning(): Boolean;
+var
+  RC: Integer;
+  Ok: Boolean;
+begin
+  Result := True;
+  Ok := Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -WindowStyle Hidden -Command "' +
+    '$p = Get-Process -Name ''NekoLauncher'',''NekoProxyCore'',''NekoUpdater'' ' +
+    '-ErrorAction SilentlyContinue; if ($p) { exit 10 } else { exit 0 }"',
+    '',
+    HideCmd,
+    ewWaitUntilTerminated,
+    RC);
+  if Ok and (RC = 0) then
+    Result := False;
+end;
+
 function InitializeSetup(): Boolean;
+var
+  InstalledLauncher: String;
+  InstalledVersion: String;
 begin
   g_CoreVerifyOK := False;
   g_DriverOK := False;
   g_DotnetOK := False;
   g_EnrollmentOK := False;
   g_Detail := '';
+
+  if ProcessesAreRunning() then
+  begin
+    MsgBox(
+      'NekoLauncher, NekoProxyCore หรือ NekoUpdater ยังทำงานอยู่' + #13#10#13#10 +
+      'กรุณาปิด Neko Family Proxy, proxy session และ PSO2 ก่อนติดตั้ง' + #13#10#13#10 +
+      'Close NekoLauncher, NekoProxyCore, NekoUpdater, the proxy session, ' +
+      'and PSO2 before installing.',
+      mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  InstalledLauncher := ExpandConstant('{localappdata}\NEKO FAMILY\NekoLauncher.exe');
+  if FileExists(InstalledLauncher) then
+  begin
+    InstalledVersion := ExistingInstallVersion();
+    if InstalledVersion = '' then
+    begin
+      MsgBox(
+        'พบไฟล์ NEKO FAMILY PROXY เดิม แต่ตรวจเวอร์ชันไม่ได้' + #13#10#13#10 +
+        'กรุณาถอนการติดตั้งเดิมผ่าน Windows Settings > Apps > Installed apps ' +
+        'ก่อน แล้วรัน installer นี้อีกครั้ง' + #13#10#13#10 +
+        'An existing installation was found but its version could not be ' +
+        'verified. Uninstall it before running this installer.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if InstalledVersion <> '{#MyAppVersion}' then
+    begin
+      MsgBox(
+        'พบ NEKO FAMILY PROXY เวอร์ชัน ' + InstalledVersion + ' อยู่แล้ว' + #13#10#13#10 +
+        '5.2.0 ต้องติดตั้งแยกจาก 5.1.6 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
+        'กรุณาถอนการติดตั้งเวอร์ชันเดิมผ่าน Windows Settings > Apps > Installed apps ' +
+        'ก่อน แล้วรัน installer นี้อีกครั้ง' + #13#10#13#10 +
+        'An existing NEKO FAMILY PROXY ' + InstalledVersion + ' installation ' +
+        'was found. Uninstall it first; in-place and side-by-side installation ' +
+        'are not supported.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+
   Result := True;
 end;
 

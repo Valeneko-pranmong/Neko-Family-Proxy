@@ -46,6 +46,20 @@ Layout:
 
 3. Never commit the generated Setup EXE (`installer/.gitignore` blocks `out/`).
 
+## 5.1.6/5.2.0 separation guard
+
+`beta.iss` now fails closed before installation when any of these is true:
+
+- `NekoLauncher`, `NekoProxyCore`, or `NekoUpdater` is still running.
+- An existing `NekoLauncher.exe` has no verifiable uninstall `DisplayVersion`.
+- The installed version is not exactly the installer's `MyAppVersion` (5.2.0).
+
+A 5.1.6 installation is therefore blocked until it is uninstalled through
+Windows Settings > Apps. A 5.2.0 reinstall is allowed. Local state is a clean
+start; no settings, auth, trust, or session state is carried across the line.
+The source guard has static tests, but ISCC and the full install/uninstall
+matrix are still required before publication.
+
 ## Installer runtime behavior (.NET Desktop Runtime)
 
 - Detection: the post-install step probes

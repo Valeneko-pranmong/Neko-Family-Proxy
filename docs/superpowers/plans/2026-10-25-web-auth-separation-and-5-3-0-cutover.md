@@ -319,6 +319,14 @@ Deliverables:
 Exit gate: installing 5.2.0 over or beside 5.1.6 is impossible; clean
 uninstall/install passes; 5.1.6 remains usable when 5.2.0 is not installed.
 
+**P3 slice 1 status (2026-10-25):** `installer/beta.iss` now fails closed when
+NekoLauncher/NekoProxyCore/NekoUpdater are running, when an existing install
+has no verifiable DisplayVersion, or when the installed version is not exactly
+5.2.0. A 5.1.6 install is therefore blocked until it is uninstalled. Static guard
+tests and the full Launcher suite (2,589 passed / 4 skipped) pass. ISCC is
+unavailable on this host, so the rebuilt installer and full install/uninstall
+matrix remain open.
+
 ### P4 — 5.2.0 Preview
 
 Deliverables:

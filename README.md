@@ -32,7 +32,7 @@
 - **Runtime Config v1**: Real-time proxy configuration managed server-side and issued during authorization, allowing backend routing updates without desktop binary reinstalls.
 - **Single-Active-Session Arbitration**: Prevents permit replay and concurrent conflicting client sessions across installations.
 - **Credential Separation**: The client launcher uses strictly publishable credentials (Supabase URL and Supabase publishable client key). Elevated service keys and administrative authorities remain strictly backend-isolated.
-- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,585 launcher tests passing) and automated repository safety verification.
+- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,589 launcher tests passing) and automated repository safety verification.
 
 ---
 
@@ -205,7 +205,7 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
   - Added per-user permit-issuance rate limiting and pinned CI actions to immutable commits.
   - Rotated production release and profile-authority trust anchors.
   - Target: new-accounts-only web-auth line with no password/recovery fallback, using an isolated schema in the same Supabase project. 5.1.6 remains public stable; 5.2.0 must not auto-update it or be installed over it. Users must uninstall 5.1.6 before a clean 5.2.0 install. 5.2.0 uses a dedicated preview channel; there is no legacy day/coupon transfer, and 5.3.0 legacy shutdown is gate-based on the last active term or an approved cutoff.
-  - The Launcher-side Discord browser flow (loopback + PKCE) is implemented behind a disabled-by-default bridge flag. The proxy bridge, identity mapping, link/claim flow, password removal, installer guard, and E2E are still pending before 5.2.0 publication.
+  - The Launcher-side Discord browser flow (loopback + PKCE) is implemented behind a disabled-by-default bridge flag. The bridge deployment, identity mapping, link/claim flow, password removal, rebuilt installer guard verification, and E2E are still pending before 5.2.0 publication.
   - v5.3.0 is planned as the cutover release that removes the legacy 5.1.6 line.
 - **v5.1.6 (Maintenance Release)**:
   - Added a startup update-check splash window before entering the main program, with automatic apply when no game session is active.
