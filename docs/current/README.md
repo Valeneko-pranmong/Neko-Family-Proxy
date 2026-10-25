@@ -17,6 +17,7 @@ WEB_AUTH_LAUNCHER:              IMPLEMENTED, FLAG OFF; 5.2.0 TARGET IS WEB-ONLY 
 NEXT_CUTOVER:                   v5.3.0 (gate-based legacy shutdown; last active term or approved cutoff)
 SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
 STAGING_RUNBOOK:                docs/current/launcher-bridge-staging-runbook.md
+CUTOVER_RUNBOOK:                docs/current/5.3.0-cutover-runbook.md
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
@@ -25,7 +26,7 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,605 passed / 4 skipped (launcher, 2026-10-25); 71 passed / 1 environment-limited (root)
+TEST_SUITE:                     2,605 passed / 4 skipped (launcher, 2026-10-25); 73 passed / 1 environment-limited (root)
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 

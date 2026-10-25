@@ -408,6 +408,12 @@ Deliverables:
 Exit gate: all acceptance criteria below pass; owner approves publication and
 legacy shutdown.
 
+**P5 runbook status (2026-10-25):** `docs/current/5.3.0-cutover-runbook.md`
+records the hard preconditions, legacy freeze, Control Room/recovery
+retirement, 5.3.0 publication, no-transfer policy, archive/restore, shutdown,
+rollback, and evidence checklist. Execution remains blocked on the P1/P3/P4
+gates and owner-approved cutoff.
+
 ## 6. Acceptance Criteria
 
 ### 5.1.6 Protection
