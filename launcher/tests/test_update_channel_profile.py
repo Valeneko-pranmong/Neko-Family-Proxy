@@ -1,8 +1,30 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
+from neko_launcher.updater.trust_profile import (
+    VerifiedUpdateTrustProfile,
+    verify_update_trust_profile,
+)
+
+
+def test_committed_preview_profile_is_signed_and_preview_only() -> None:
+    profile_path = (
+        Path(__file__).parents[2] / "trust" / "update-profile-preview-v1.json"
+    )
+    verified = verify_update_trust_profile(
+        profile_path.read_bytes(),
+        profile_authority_public_keys=PROFILE_AUTHORITY_PUBLIC_KEYS,
+    )
+
+    assert verified.profile_id == "preview"
+    assert verified.channel == "preview"
+    assert verified.owner == "Valeneko-pranmong"
+    assert verified.repository == "Neko-Family-Proxy"
+    assert set(verified.release_public_keys) == {"neko-update-prod-2"}
 
 
 def test_update_channel_profile_from_verified_happy_path():

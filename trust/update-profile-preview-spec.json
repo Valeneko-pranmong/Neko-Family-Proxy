@@ -1,0 +1,12 @@
+{
+  "profile_id": "preview",
+  "channel": "preview",
+  "owner": "Valeneko-pranmong",
+  "repository": "Neko-Family-Proxy",
+  "release_keys": [
+    {
+      "key_id": "neko-update-prod-2",
+      "public_key_hex": "d17fed34a28fd1a120caf45cf2d75863a55ef76ecebb2538fa729576772b3bda"
+    }
+  ]
+}

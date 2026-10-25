@@ -381,9 +381,15 @@ unchanged.
 newest prerelease from the repository release list, while the stable profile
 continues using `/releases/latest`. The resolver permits a prerelease only for
 a profile whose channel is `preview`; 5.1.6 stable discovery is unchanged.
-The preview profile must still be signed/installed, and preview publication,
-auto-apply, and feed-level E2E remain open. Full Launcher suite: 2,604 passed /
-4 skipped.
+
+**P4 slice 3 status (2026-10-25):** `trust/update-profile-preview-spec.json`
+and the signed `trust/update-profile-preview-v1.json` are committed. The
+preview profile is channel `preview`, profile id `preview`, canonical
+repository, and authorizes only `neko-update-prod-2`; it verifies against
+`neko-update-profile-v520-1`. `scripts/sign_update_trust_profile.py` provides
+the reproducible signing path without exposing private bytes. Preview
+publication, 5.2.0 auto-apply, and feed-level E2E remain open. Full Launcher
+suite: 2,605 passed / 4 skipped.
 
 ### P5 — 5.3.0 Cutover
 
