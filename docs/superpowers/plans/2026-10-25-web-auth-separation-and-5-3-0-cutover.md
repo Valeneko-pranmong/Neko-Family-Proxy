@@ -327,8 +327,14 @@ no bridge is configured.
 **P2 slice 4 status (2026-10-25):** web-only mode does not construct
 `RecoveryView` or the `HttpAccountRecoveryGateway`; recovery entry is guarded
 even if a stale controller state arrives. Source/dev without a bridge keeps
-the legacy recovery path. Full deletion of the remaining password/recovery
-service methods remains open.
+the legacy recovery path.
+
+**P2 slice 5 status (2026-10-25):** `LauncherService` rejects password
+registration, password login, password change, and all recovery methods when
+`web_auth_only` is active. Frozen builds are web-only and cannot re-enable
+password mode. The source/dev legacy methods remain available only for the
+non-frozen reference path and will be deleted at the 5.3.0 cleanup. Full
+Launcher suite: 2,601 passed / 4 skipped. P2 product-path exit gate is met.
 
 ### P3 — Installer Separation
 

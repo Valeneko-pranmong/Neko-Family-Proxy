@@ -55,6 +55,7 @@ class LauncherService:
         installation: InstallationIdentity,
         product_code: str,
         recovery_gateway: AccountRecoveryGateway | None = None,
+        web_auth_only: bool = False,
     ) -> None:
         self._controller = controller
         self._auth_gateway = auth_gateway
@@ -62,6 +63,7 @@ class LauncherService:
         self._installation = installation
         self._product_code = product_code
         self._recovery_gateway = recovery_gateway
+        self._web_auth_only = bool(web_auth_only)
         self._recovery_session: str | None = None
         self._recovery_bound_password: str | None = None
         self._recovery_generation = 0
@@ -82,6 +84,7 @@ class LauncherService:
         username: str,
         password: str,
     ) -> RegistrationResult:
+        self._require_password_auth()
         self._clear_recovery_session()
         username = username.strip().lower()
         self._validate_username(username, password)
@@ -134,6 +137,7 @@ class LauncherService:
             self._complete_sign_in(user)
 
     def _sign_in_locked(self, username: str, password: str) -> None:
+        self._require_password_auth()
         self._clear_recovery_session()
         username = username.strip().lower()
         self._validate_login_identifier(username, password)
@@ -164,6 +168,7 @@ class LauncherService:
 
     def change_password(self, password: str) -> None:
         """Change the password for the currently authenticated user."""
+        self._require_password_auth()
         if self._controller.state.auth_status is not AuthStatus.AUTHENTICATED:
             raise LauncherServiceError("กรุณาเข้าสู่ระบบก่อนเปลี่ยนรหัสผ่าน")
         self._validate_password(password)
@@ -181,6 +186,7 @@ class LauncherService:
         return self._recovery_session is not None
 
     def begin_account_recovery(self) -> None:
+        self._require_password_auth()
         self._clear_recovery_session()
         self._controller.begin_account_recovery()
 
@@ -189,6 +195,7 @@ class LauncherService:
         self._controller.sign_out()
 
     def verify_recovery_code(self, username: str, recovery_code: str) -> None:
+        self._require_password_auth()
         if self._recovery_gateway is None:
             raise LauncherServiceError("ระบบกู้บัญชียังไม่พร้อมใช้งาน")
         if self._controller.state.auth_status is not AuthStatus.RECOVERY_CODE_ENTRY:
@@ -227,6 +234,7 @@ class LauncherService:
         self._controller.recovery_password_change_required()
 
     def change_recovery_password(self, password: str, confirmation: str) -> None:
+        self._require_password_auth()
         if (
             self._controller.state.auth_status
             is not AuthStatus.RECOVERY_PASSWORD_CHANGE
@@ -560,6 +568,12 @@ class LauncherService:
         finally:
             self._heartbeat_failures = 0
             self._controller.sign_out(shutdown_core=shutdown_core)
+
+    def _require_password_auth(self) -> None:
+        if self._web_auth_only:
+            raise LauncherServiceError(
+                "5.2.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
+            )
 
     def _clear_recovery_session(self) -> None:
         with self._recovery_lock:

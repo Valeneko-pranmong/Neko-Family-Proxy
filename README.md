@@ -32,7 +32,7 @@
 - **Runtime Config v1**: Real-time proxy configuration managed server-side and issued during authorization, allowing backend routing updates without desktop binary reinstalls.
 - **Single-Active-Session Arbitration**: Prevents permit replay and concurrent conflicting client sessions across installations.
 - **Credential Separation**: The client launcher uses strictly publishable credentials (Supabase URL and Supabase publishable client key). Elevated service keys and administrative authorities remain strictly backend-isolated.
-- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,600 launcher tests passing) and automated repository safety verification.
+- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,601 launcher tests passing) and automated repository safety verification.
 
 ---
 

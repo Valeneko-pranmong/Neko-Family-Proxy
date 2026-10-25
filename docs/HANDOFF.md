@@ -34,7 +34,7 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 2. Re-check the shared-auth consumer inventory before disabling legacy auth at cutover; add any new consumer.
 3. Installer guard source is implemented in `installer/beta.iss`; rebuild with ISCC and run the install/uninstall matrix with 5.1.6 installed/running and 5.2.0 reinstall.
 4. The reference bridge is implemented in `supabase/functions/launcher_bridge/`; deploy it using `docs/current/launcher-bridge-staging-runbook.md`, provision staging test accounts/entitlement, run the full E2E, and validate Auth `session_id` stability across refresh.
-5. P2 slices 1–4 are in place: next-line schema selection, server-metadata permit routing, bridge-enabled web-only UI, frozen-build bridge enforcement, and no recovery view/gateway in web-only mode. Next: remove the remaining password/recovery service methods and complete the release evidence.
+5. P2 is complete for the product path: next-line schema selection, server-metadata permit routing, web-only UI, frozen-build enforcement, no recovery view/gateway in web-only mode, and service-layer rejection of password/recovery. Source/dev legacy methods remain only for the non-frozen reference path and are scheduled for 5.3.0 deletion.
 6. Run full web-auth E2E, build the 5.2.0 preview with the new Core bundle, refresh all hashes, and distribute it through the dedicated preview channel, not latest stable.
 7. Complete Control Room admin web auth and the 5.3.0 no-transfer expiry/coupon-notice plan; then prepare the 5.3.0 stable cutover and legacy schema/auth retirement.
 8. Back up the new release and profile-authority custody keys to an external, access-controlled medium.

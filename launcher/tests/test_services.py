@@ -256,6 +256,32 @@ def test_sign_in_with_web_failure_leaves_signed_out_state(
     assert controller.state.last_error == "ยกเลิกแล้ว"
 
 
+def test_web_only_service_rejects_password_and_recovery_flows() -> None:
+    bus = EventBus()
+    gateway = FakeGateway()
+    controller = ApplicationController(bus, proxy_gateway=gateway)
+    service = LauncherService(
+        controller,
+        gateway,
+        gateway,
+        FakeInstallation(),
+        "neko-family-proxy",
+        web_auth_only=True,
+    )
+
+    calls = (
+        lambda: service.sign_up("TestUser", "password123"),
+        lambda: service.sign_in("TestUser", "password123"),
+        lambda: service.change_password("password123"),
+        service.begin_account_recovery,
+        lambda: service.verify_recovery_code("TestUser", "AAAA-AAAA-AAAA-AAAA-AAAAAA"),
+        lambda: service.change_recovery_password("password123", "password123"),
+    )
+    for call in calls:
+        with pytest.raises(LauncherServiceError, match="Discord"):
+            call()
+
+
 def test_safe_claim_error_after_valid_credentials_preserves_authenticated_state(
     workflow: tuple[LauncherService, ApplicationController, FakeGateway],
 ) -> None:

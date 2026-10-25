@@ -471,6 +471,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         installation,
         config.product_code,
         recovery_gateway=recovery_gateway,
+        web_auth_only=config.web_auth_only,
     )
     telemetry_client = NamedPipeCoreTelemetryClient(event_publisher=event_bus)
     # Resolve the project Asset directory relative to application_root().
