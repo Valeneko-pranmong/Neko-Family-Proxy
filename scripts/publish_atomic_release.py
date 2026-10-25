@@ -71,6 +71,22 @@ class StageDraftReleaseError(Exception):
     """Raised when staging validation or execution fails."""
 
 
+_PREVIEW_ONLY_VERSION = re.compile(r"5\.2\.\d+$")
+
+
+def validate_stable_release_channel(
+    version: str,
+    *,
+    as_prerelease: bool,
+) -> None:
+    normalized = str(version).strip().lstrip("v")
+    if _PREVIEW_ONLY_VERSION.fullmatch(normalized) and not as_prerelease:
+        raise StageDraftReleaseError(
+            "5.2.x is preview-only; stable publication is blocked until the "
+            "preview channel and P4 gates are complete"
+        )
+
+
 @dataclass(frozen=True)
 class StagedDraftEvidence:
     release_id: int
@@ -531,6 +547,7 @@ def stage_draft_release(
     expected_minimum_sequence: int | None = None,
     expected_mandatory: bool | None = None,
 ) -> StagedDraftEvidence | None:
+    validate_stable_release_channel(tag, as_prerelease=as_prerelease)
     runner = executor or _SubprocessExecutor()
     repo_root = Path(__file__).resolve().parents[1]
     assets = validate_staging_preconditions(

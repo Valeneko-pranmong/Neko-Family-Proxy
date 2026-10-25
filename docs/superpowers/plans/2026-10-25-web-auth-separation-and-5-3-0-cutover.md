@@ -372,6 +372,12 @@ Exit gate: no 5.1.6 breakage in the release feed; preview users can complete
 web-only login and launch; 5.3.0 expiry/cutoff and coupon-notice path is proven
 or explicitly deferred with customer communication.
 
+**P4 slice 1 status (2026-10-25):** `validate_stable_release_channel` blocks
+5.2.x from being staged/published as a non-prerelease stable release, while
+allowing an explicit prerelease stage. 5.1.x and 5.3.x stable behavior is
+unchanged. The dedicated preview channel, preview auto-update path, and
+feed-level E2E remain open.
+
 ### P5 — 5.3.0 Cutover
 
 Deliverables:
