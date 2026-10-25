@@ -123,6 +123,20 @@ def test_frozen_build_requires_web_auth_and_rejects_password_override(
         LauncherConfig.from_environment(tmp_path)
 
 
+def test_app_factory_skips_recovery_gateway_in_web_only_mode() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "src"
+        / "neko_launcher"
+        / "bootstrap"
+        / "app_factory.py"
+    ).read_text(encoding="utf-8")
+
+    assert "None" in source
+    assert "if config.web_auth_only" in source
+    assert "HttpAccountRecoveryGateway" in source
+
+
 def test_web_auth_only_override_requires_bridge(
     monkeypatch: object,
     tmp_path: Path,

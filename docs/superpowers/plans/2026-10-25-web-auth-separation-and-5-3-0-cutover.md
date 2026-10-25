@@ -322,8 +322,13 @@ uses the legacy UI.
 **P2 slice 3 status (2026-10-25):** frozen/release builds now require a
 configured web-auth bridge and are always web-only; `NEKO_WEB_AUTH_ONLY=0` is
 rejected in a frozen build. Source/dev may still use the legacy surface when
-no bridge is configured. Full removal of the password/recovery service paths
-remains open.
+no bridge is configured.
+
+**P2 slice 4 status (2026-10-25):** web-only mode does not construct
+`RecoveryView` or the `HttpAccountRecoveryGateway`; recovery entry is guarded
+even if a stale controller state arrives. Source/dev without a bridge keeps
+the legacy recovery path. Full deletion of the remaining password/recovery
+service methods remains open.
 
 ### P3 — Installer Separation
 

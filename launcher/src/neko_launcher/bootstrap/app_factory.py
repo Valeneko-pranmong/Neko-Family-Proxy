@@ -381,7 +381,11 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         credential_provider=credential_provider,
         launcher_schema=config.launcher_schema,
     )
-    recovery_gateway = HttpAccountRecoveryGateway(config.account_recovery_api_url)
+    recovery_gateway = (
+        None
+        if config.web_auth_only
+        else HttpAccountRecoveryGateway(config.account_recovery_api_url)
+    )
     proxy_status_client = PublicProxyStatusClient(config.proxy_status_api_url)
 
     from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger

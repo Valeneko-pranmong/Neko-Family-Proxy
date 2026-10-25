@@ -2537,3 +2537,6 @@ def test_web_only_mode_wires_web_auth_view_and_hides_password_action() -> None:
     assert "web_auth_only=self._web_auth_only" in source
     assert "web_auth_only=getattr(self, \"_web_auth_only\", False)" in source
     assert "web_auth_only requires an available web auth client" in source
+    assert "self._recovery_view = None" in source
+    assert "if not self._web_auth_only:" in source
+    assert "getattr(self, \"_recovery_view\", None) is None" in source

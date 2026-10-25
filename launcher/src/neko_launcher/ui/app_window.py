@@ -606,16 +606,18 @@ class AppWindow:
             web_auth_enabled=self._web_auth_enabled,
             web_auth_only=self._web_auth_only,
         )
-        self._recovery_view = RecoveryView(
-            self._content,
-            username_var=self._recovery_username,
-            recovery_code_var=self._recovery_code,
-            new_password_var=self._recovery_password,
-            confirm_password_var=self._recovery_password_confirm,
-            on_verify=self._verify_recovery_code,
-            on_change_password=self._change_recovery_password,
-            on_cancel=self._cancel_account_recovery,
-        )
+        self._recovery_view = None
+        if not self._web_auth_only:
+            self._recovery_view = RecoveryView(
+                self._content,
+                username_var=self._recovery_username,
+                recovery_code_var=self._recovery_code,
+                new_password_var=self._recovery_password,
+                confirm_password_var=self._recovery_password_confirm,
+                on_verify=self._verify_recovery_code,
+                on_change_password=self._change_recovery_password,
+                on_cancel=self._cancel_account_recovery,
+            )
         self._dashboard_view = DashboardView(
             self._content,
             self.root,
@@ -966,6 +968,9 @@ class AppWindow:
         self._active_view = "auth"
 
     def _show_recovery_view(self) -> None:
+        if getattr(self, "_recovery_view", None) is None:
+            self._show_auth_view()
+            return
         if getattr(self, "_active_view", None) == "recovery":
             return
         self._auth_view.frame.pack_forget()
@@ -981,6 +986,8 @@ class AppWindow:
         self._active_view = "recovery"
 
     def _show_recovery_code_entry(self) -> None:
+        if getattr(self, "_recovery_view", None) is None:
+            return
         self._recovery_password.set("")
         self._recovery_password_confirm.set("")
         self._recovery_view.show_code_entry()
@@ -1273,6 +1280,8 @@ class AppWindow:
         self._notice.set("กำลังเปิดเบราว์เซอร์เพื่อเข้าสู่ระบบ...")
 
     def _begin_account_recovery(self) -> None:
+        if getattr(self, "_web_auth_only", False):
+            return
         self._error.set("")
         self._notice.set("")
         self._recovery_username.set(self._login_email.get().strip())
@@ -2225,7 +2234,7 @@ class AppWindow:
                 self._settings_window = None
         if signed_in:
             self._show_program_view()
-        elif recovery:
+        elif recovery and getattr(self, "_recovery_view", None) is not None:
             self._show_recovery_view()
             if state.auth_status is AuthStatus.RECOVERY_PASSWORD_CHANGE:
                 self._recovery_view.show_password_change()
@@ -2233,9 +2242,11 @@ class AppWindow:
                 self._show_recovery_code_entry()
         else:
             self._show_auth_view()
-        self._recovery_view.set_busy(
-            state.auth_status is AuthStatus.RECOVERY_VERIFYING
-        )
+        recovery_view = getattr(self, "_recovery_view", None)
+        if recovery_view is not None:
+            recovery_view.set_busy(
+                state.auth_status is AuthStatus.RECOVERY_VERIFYING
+            )
 
         self._set_auth_enabled(
             signed_in=signed_in,
