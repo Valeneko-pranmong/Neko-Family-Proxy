@@ -2533,6 +2533,7 @@ def test_web_only_mode_wires_web_auth_view_and_hides_password_action() -> None:
         / "app_window.py"
     ).read_text(encoding="utf-8")
 
-    assert "self._web_auth_only = self._web_auth_enabled" in source
+    assert "self._web_auth_only = bool(web_auth_only)" in source
     assert "web_auth_only=self._web_auth_only" in source
     assert "web_auth_only=getattr(self, \"_web_auth_only\", False)" in source
+    assert "web_auth_only requires an available web auth client" in source

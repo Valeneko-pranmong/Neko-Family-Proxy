@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,57 @@ def test_next_line_schema_can_be_selected(
     config = LauncherConfig.from_environment(tmp_path)
 
     assert config.launcher_schema == "launcher_v2"
+
+
+def test_source_build_is_web_only_when_the_bridge_is_enabled(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NEKO_WEB_AUTH_ENABLED", "1")  # type: ignore[attr-defined]
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_AUTH_BRIDGE_URL",
+        "https://bridge.example/auth/launcher/exchange",
+    )
+
+    config = LauncherConfig.from_environment(tmp_path)
+    assert config.web_auth_enabled is True
+    assert config.web_auth_only is True
+
+    monkeypatch.setenv("NEKO_WEB_AUTH_ONLY", "0")  # type: ignore[attr-defined]
+    config = LauncherConfig.from_environment(tmp_path)
+    assert config.web_auth_only is False
+
+
+def test_frozen_build_requires_web_auth_and_rejects_password_override(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="require the web auth bridge"):
+        LauncherConfig.from_environment(tmp_path)
+
+    monkeypatch.setenv("NEKO_WEB_AUTH_ENABLED", "1")  # type: ignore[attr-defined]
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_AUTH_BRIDGE_URL",
+        "https://bridge.example/auth/launcher/exchange",
+    )
+    config = LauncherConfig.from_environment(tmp_path)
+    assert config.web_auth_only is True
+
+    monkeypatch.setenv("NEKO_WEB_AUTH_ONLY", "0")  # type: ignore[attr-defined]
+    with pytest.raises(ValueError, match="disabled in frozen builds"):
+        LauncherConfig.from_environment(tmp_path)
+
+
+def test_web_auth_only_override_requires_bridge(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NEKO_WEB_AUTH_ONLY", "1")  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="requires the web auth bridge"):
+        LauncherConfig.from_environment(tmp_path)
 
 
 def test_invalid_next_line_schema_is_rejected(

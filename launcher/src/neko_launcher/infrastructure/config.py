@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -85,6 +86,7 @@ class LauncherConfig:
     identity_base_url: str
     web_auth_bridge_url: str
     web_auth_enabled: bool
+    web_auth_only: bool
     launcher_schema: str
     debug_mode: bool
     debug_log_dir: Path
@@ -120,6 +122,28 @@ class LauncherConfig:
             os.getenv("NEKO_WEB_AUTH_ENABLED") == "1"
             and bool(web_auth_bridge_url)
         )
+        web_auth_only_override = os.getenv("NEKO_WEB_AUTH_ONLY", "").strip()
+        frozen_build = bool(getattr(sys, "frozen", False))
+        if web_auth_only_override == "1":
+            if not web_auth_enabled:
+                raise ValueError(
+                    "NEKO_WEB_AUTH_ONLY requires the web auth bridge"
+                )
+            web_auth_only = True
+        elif web_auth_only_override == "0":
+            if frozen_build:
+                raise ValueError(
+                    "password authentication is disabled in frozen builds"
+                )
+            web_auth_only = False
+        elif frozen_build:
+            if not web_auth_enabled:
+                raise ValueError(
+                    "frozen 5.2.0 builds require the web auth bridge"
+                )
+            web_auth_only = True
+        else:
+            web_auth_only = web_auth_enabled
         launcher_schema = (
             os.getenv("NEKO_LAUNCHER_SCHEMA", "").strip() or "launcher"
         )
@@ -141,6 +165,7 @@ class LauncherConfig:
             identity_base_url=identity_base_url,
             web_auth_bridge_url=web_auth_bridge_url,
             web_auth_enabled=web_auth_enabled,
+            web_auth_only=web_auth_only,
             launcher_schema=launcher_schema,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,

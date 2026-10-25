@@ -317,8 +317,13 @@ behavior is unchanged.
 **P2 slice 2 status (2026-10-25):** when web auth is enabled, the auth view
 becomes web-only (no password, registration, or recovery controls) and the
 Settings password-change action is hidden. Source/dev without a bridge still
-uses the legacy UI. Full removal of the password/recovery service paths and
-the final web-only release enforcement remain open.
+uses the legacy UI.
+
+**P2 slice 3 status (2026-10-25):** frozen/release builds now require a
+configured web-auth bridge and are always web-only; `NEKO_WEB_AUTH_ONLY=0` is
+rejected in a frozen build. Source/dev may still use the legacy surface when
+no bridge is configured. Full removal of the password/recovery service paths
+remains open.
 
 ### P3 — Installer Separation
 

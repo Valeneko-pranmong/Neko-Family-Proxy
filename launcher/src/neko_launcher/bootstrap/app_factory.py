@@ -512,4 +512,5 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         update_coordinator=update_coordinator,
         web_auth_client=web_auth_client,
         web_auth_enabled=web_auth_client is not None,
+        web_auth_only=config.web_auth_only,
     )

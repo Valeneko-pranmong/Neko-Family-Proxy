@@ -131,6 +131,7 @@ class AppWindow:
         update_coordinator: Any = None,
         web_auth_client: Any = None,
         web_auth_enabled: bool = False,
+        web_auth_only: bool = False,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -143,7 +144,9 @@ class AppWindow:
         self._update_coordinator = update_coordinator
         self._web_auth_client = web_auth_client
         self._web_auth_enabled = bool(web_auth_enabled and web_auth_client is not None)
-        self._web_auth_only = self._web_auth_enabled
+        self._web_auth_only = bool(web_auth_only)
+        if self._web_auth_only and not self._web_auth_enabled:
+            raise ValueError("web_auth_only requires an available web auth client")
         self._update_apply_pending = False
         self._update_apply_future: Future[Any] | None = None
         self._last_update_result: UpdateCheckResult | None = None
