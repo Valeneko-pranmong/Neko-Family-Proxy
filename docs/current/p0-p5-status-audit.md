@@ -121,6 +121,19 @@ Not verified:
 3. Preview publication/auto-apply and feed E2E.
 4. Owner-approved legacy cutoff and 5.3.0 execution window.
 
+## Resume checklist
+
+1. Provide staging Supabase/identity access, a test Discord account, and a
+   next-line account with a short-lived entitlement.
+2. Apply the three `launcher_v2` migrations and deploy
+   `launcher_bridge` following `launcher-bridge-staging-runbook.md`.
+3. Run the full P1 E2E and verify `auth.sessions.id` across refresh.
+4. Rebuild the installer with ISCC and run the P3 install/uninstall matrix.
+5. Publish a 5.2.0 prerelease, verify preview auto-apply and feed isolation,
+   then run the final 5.2.0 E2E.
+6. Obtain owner approval for the legacy cutoff and execute
+   `5.3.0-cutover-runbook.md`; only then publish 5.3.0 stable.
+
 ## Publication rule
 
 Do not tag, publish, push release assets, enable web auth in production, or
