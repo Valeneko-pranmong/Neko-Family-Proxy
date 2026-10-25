@@ -297,18 +297,21 @@ legacy shutdown.
 | Authenticode still unavailable | Keep hash verification and signing dependency visible; do not claim signed status |
 | Legal/accounting retention | Export/archive before deletion; define retention period with owner |
 
-## 8. Open Decisions (P0)
+## 8. P0 Decision Register
 
-1. New Supabase project versus another explicitly isolated auth/data authority.
-2. 5.2.0 distribution: GitHub prerelease in the current repository versus a
-   separate next-line repository/channel.
-3. Installer AppId/install-path strategy and uninstall data-preservation policy.
-4. Whether 5.2.0 supports existing 5.1.6 accounts, or only new accounts until
-   5.3.0.
-5. Exact migration/entitlement transfer and coupon policy.
-6. Control web auth scope, owner, and acceptance evidence.
-7. 5.1.6 support window and 5.3.0 sunset date.
-8. Whether the 5.2.0 line receives automatic updates at all before 5.3.0.
+Status values: `PENDING` (owner decision needed), `LOCKED` (approved and
+recorded), `DEFERRED` (explicitly moved to a later gate).
+
+| ID | Decision | Recommended default | Status |
+| --- | --- | --- | --- |
+| D1 | Auth/data authority topology | New Supabase project dedicated to the next line | PENDING |
+| D2 | 5.2.0 distribution | Same repository with a dedicated preview channel; 5.1.6 remains the stable/latest feed | PENDING |
+| D3 | Installer identity and data policy | Same AppId with a hard uninstall/process guard; preserve non-auth preferences through an external migration backup, never preserve auth state | PENDING |
+| D4 | Existing 5.1.6 accounts in 5.2.0 | Support a one-time account link plus remaining-day transfer before the preview | PENDING |
+| D5 | Migration, coupon, and entitlement policy | Transfer remaining days atomically, revoke the old license/session, honor unused coupons, and record a migration ledger | PENDING |
+| D6 | Control web auth scope | Define owner, surfaces, and acceptance evidence before 5.3.0 | PENDING |
+| D7 | 5.1.6 support window and 5.3.0 sunset | No fixed date until gates pass; announce 30/14/7/1 days before shutdown | PENDING |
+| D8 | 5.2.0 automatic updates | Preview channel may update 5.2.0 only; 5.1.6 remains on the stable channel | PENDING |
 
 ## 9. Out of Scope
 
