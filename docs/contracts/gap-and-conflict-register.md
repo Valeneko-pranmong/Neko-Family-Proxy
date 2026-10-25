@@ -145,6 +145,30 @@ P0 does not authorize moving or deleting them. The conflict is recorded so P1
 does not add new-line dependencies on these artifacts and the owning repo can
 plan the move/retirement after `5.1.6` support is no longer needed.
 
+## 2026-10-25 slice-2 dispositions
+
+| ID | Disposition | Evidence / remaining work |
+| --- | --- | --- |
+| G5 | **CLOSED** | Refresh is fail-closed: any refresh failure clears the stored token and requires interactive login; no grace or idempotent refresh in v0. Unit coverage includes ambiguous refresh and store-write failure. |
+| G6 | **CLOSED** | Proxy API v0/OpenAPI specify claim request (`installation_key_hash`, optional `display_name`, `Idempotency-Key`) and latest-claim-wins. `ProxyApiEntitlementGateway` implements it. |
+| G7 | **CLOSED** | Server heartbeat is 30 s and stale after 90 s; claim/heartbeat return a 10–60 s interval, consumed by the launcher and UI. |
+| G8 | **CLOSED (contract)** | Permit request/response is specified; `ProxyApiPermitGateway` preserves the opaque permit and maps Runtime Config v1 strictly. Live permit verification is still blocked because Proxy API has not deployed the route. |
+| G9 | **CLOSED** | Termination reasons come from heartbeat error codes (`session_conflict`, account, license); no direct proxy DB reads. |
+| G10 | **OPEN** | `/public/status` migration remains a later slice. |
+| G11 | **OPEN** | Coupons remain a later slice. |
+| G12 | **CLOSED for Proxy API endpoints** | Proxy API uses the shared envelope; the client maps both the envelope and OAuth-style identity refresh errors. Identity OAuth error shape remains a documented login exception. |
+| G13 | **CLOSED for consumed fields** | `/v1/me` status/display name and claim `license_valid_until` are consumed; nested license/identity-access fields remain unconsumed. |
+| G14 | **CLOSED as a launcher-side decision** | No new proxy schema or migration is added to this repository. Proxy-domain migrations are proposed to live in the Proxy API repository from slice 2; existing `launcher_v2` stays legacy. No production migration was executed. |
+| G15 | **CLOSED for current docs** | Current docs and plan banners mark bridge/session-minting as legacy; historical documents remain for traceability. |
+| G19 | **CLOSED** | Proxy API auth-and-trust defines the endpoint/scope matrix; launcher uses `proxy:read` and `proxy:launch` only. |
+| G20 | **CLOSED** | Proxy mode composes with empty Supabase URL/key, `app_factory` lazy-imports `SupabaseGateway` only in the legacy branch, a subprocess test proves the proxy import graph does not load it, and new proxy modules contain no Supabase/bridge imports. |
+| G16, G17, G18 | **OPEN** | Offline/restore product behavior, client protocol/version negotiation, and exact issuer normalization remain open (non-blocking for source/dev slices). |
+
+**New external blocker (not a launcher code gap):** identity has not deployed the
+refresh grant, and Proxy API has not deployed claim/heartbeat/release/permit.
+Live staging login, permit issuance, and Core E2E remain blocked; do not claim
+them until those endpoints exist.
+
 ## Confirmed aligned with v0
 
 These current behaviors already match contract v0 and should be preserved:
@@ -172,11 +196,12 @@ These current behaviors already match contract v0 and should be preserved:
    the OpenAPI/JWT/error/fixture set in `Neko-Contracts`.
 2. **Identity owner:** update audience, scope, TTL, refresh grant, revocation,
    issuer normalization, and error shape.
-3. **Proxy API owner:** define `/v1/me`, claim, heartbeat, release,
-   permit, coupon, and public-status schemas; implement session binding and
-   error codes.
-4. **Launcher owner:** keep `5.1.6` frozen; do not wire bridge/Supabase into the
-   new line; implement only after the contract freeze.
+3. **Proxy API owner:** implement the planned `/v1/me`, claim, heartbeat,
+   release, permit, coupon, and public-status routes; deploy the session binding
+   and error codes in staging.
+4. **Launcher owner:** keep `5.1.6` frozen; the authorized source/dev slices 1–2
+   are the only implementation exception; do not wire bridge/Supabase into the
+   new line and wait for sign-off for later slices.
 5. **Repo owners:** plan the move/retirement of proxy-domain schema and Edge
    Functions; no production changes in P0/P1.
 

@@ -509,8 +509,23 @@ def test_open_debug_logs_failure_uses_existing_error_toast(
     assert message.startswith("เปิดโฟลเดอร์ Logs ไม่สำเร็จ:")
 
 
-def test_session_heartbeat_polling_interval_is_bounded_to_thirty_seconds() -> None:
+def test_session_heartbeat_default_interval_is_thirty_seconds() -> None:
     assert HEARTBEAT_INTERVAL_MS == 30_000
+
+
+def test_session_heartbeat_interval_uses_server_value_and_bounds() -> None:
+    window = object.__new__(AppWindow)
+    window._service = SimpleNamespace(heartbeat_interval_seconds=45)  # type: ignore[assignment]
+    assert window._heartbeat_interval_ms() == 45_000
+
+    window._service.heartbeat_interval_seconds = 1  # type: ignore[attr-defined]
+    assert window._heartbeat_interval_ms() == 10_000
+
+    window._service.heartbeat_interval_seconds = 99  # type: ignore[attr-defined]
+    assert window._heartbeat_interval_ms() == 60_000
+
+    window._service = SimpleNamespace()  # type: ignore[assignment]
+    assert window._heartbeat_interval_ms() == 30_000
 
 
 def test_login_clears_password_before_background_authentication_finishes() -> None:

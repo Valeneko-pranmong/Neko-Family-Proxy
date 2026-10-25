@@ -239,9 +239,9 @@ def test_missing_required_account_fields_are_rejected() -> None:
             _response(
                 200,
                 {
-                    "identity_user_id": "11111111-1111-4111-8111-111111111111",
                     "proxy_account_id": "proxy-account-fixture",
                     "status": "active",
+                    "display_name": "Neko Tester",
                 },
             )
         ]
@@ -392,3 +392,193 @@ def test_token_set_repr_redacts_tokens() -> None:
 
     assert "access-secret-fixture" not in repr(tokens)
     assert "refresh-secret-fixture" not in repr(tokens)
+
+
+def test_claim_session_uses_idempotency_and_contract_fields() -> None:
+    transport = FakeTransport([_response(200, FIXTURE["claim_success"])])
+    gateway = _gateway(transport)
+
+    claim = gateway.claim_session(
+        "access-fixture",
+        installation_key_hash="a" * 64,
+        display_name="Office PC",
+        idempotency_key="b" * 32,
+    )
+
+    assert claim.session_id == "77777777-7777-4777-8777-777777777777"
+    assert claim.installation_id == "22222222-2222-4222-8222-222222222222"
+    assert claim.runtime_config_version == 42
+    assert claim.heartbeat_interval_seconds == 30
+    assert claim.license_valid_until is not None
+    call = transport.calls[0]
+    assert call["url"] == "https://proxy.test/v1/session/claim"
+    assert call["headers"]["Authorization"] == "Bearer access-fixture"
+    assert call["headers"]["Idempotency-Key"] == "b" * 32
+    assert call["payload"] == {
+        "installation_key_hash": "a" * 64,
+        "display_name": "Office PC",
+    }
+
+
+def test_claim_omits_null_display_name() -> None:
+    transport = FakeTransport([_response(200, FIXTURE["claim_success"])])
+
+    _gateway(transport).claim_session(
+        "access-fixture",
+        installation_key_hash="a" * 64,
+        display_name=None,
+        idempotency_key="b" * 32,
+    )
+
+    assert transport.calls[0]["payload"] == {
+        "installation_key_hash": "a" * 64,
+    }
+
+
+def test_claim_rejects_invalid_installation_hash_before_network() -> None:
+    transport = FakeTransport([])
+
+    with pytest.raises(ProxyApiError) as captured:
+        _gateway(transport).claim_session(
+            "access-fixture",
+            installation_key_hash="not-a-hash",
+            display_name="Office PC",
+            idempotency_key="b" * 32,
+        )
+
+    assert captured.value.code == "invalid_request"
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["license_expired", "session_conflict", "idempotency_key_conflict"],
+)
+def test_claim_endpoint_maps_session_errors(code: str) -> None:
+    transport = FakeTransport([_error_response(code)])
+
+    with pytest.raises(ProxyApiError) as captured:
+        _gateway(transport).claim_session(
+            "access-fixture",
+            installation_key_hash="a" * 64,
+            display_name="Office PC",
+            idempotency_key="b" * 32,
+        )
+
+    assert captured.value.code == code
+
+
+def test_heartbeat_and_release_contracts() -> None:
+    transport = FakeTransport(
+        [
+            _response(200, FIXTURE["heartbeat_success"]),
+            _response(200, FIXTURE["release_success"]),
+        ]
+    )
+    gateway = _gateway(transport)
+    session_id = "77777777-7777-4777-8777-777777777777"
+
+    heartbeat = gateway.heartbeat_session("access-fixture", session_id=session_id)
+    released = gateway.release_session("access-fixture", session_id=session_id)
+
+    assert heartbeat.status == "active"
+    assert heartbeat.next_heartbeat_seconds == 45
+    assert released.released is True
+    assert transport.calls[0]["url"] == "https://proxy.test/v1/session/heartbeat"
+    assert transport.calls[1]["url"] == "https://proxy.test/v1/session/release"
+    assert transport.calls[0]["payload"] == {"session_id": session_id}
+    assert transport.calls[1]["payload"] == {"session_id": session_id}
+
+
+def test_launch_permit_request_and_response() -> None:
+    correlation_id = "0123456789abcdef0123456789abcdef"
+    transport = FakeTransport([_response(200, FIXTURE["permit_success"])])
+    gateway = _gateway(transport)
+
+    permit = gateway.issue_launch_permit(
+        "access-fixture",
+        session_id="77777777-7777-4777-8777-777777777777",
+        challenge="a" * 43,
+        correlation_id=correlation_id,
+        idempotency_key="c" * 32,
+    )
+
+    assert permit.permit == "header-fixture.payload-fixture.signature-fixture"
+    assert permit.correlation_id == correlation_id
+    assert permit.runtime_config["config_version"] == 42
+    call = transport.calls[0]
+    assert call["url"] == "https://proxy.test/v1/launch-permit"
+    assert call["headers"]["Idempotency-Key"] == "c" * 32
+    assert call["payload"] == {
+        "session_id": "77777777-7777-4777-8777-777777777777",
+        "challenge": "a" * 43,
+        "correlation_id": correlation_id,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("token_type", "Bearer"),
+        ("expires_in_seconds", 31),
+        ("correlation_id", "f" * 32),
+        ("runtime_config", []),
+    ],
+)
+def test_launch_permit_rejects_invalid_envelope(field: str, value: object) -> None:
+    document = dict(FIXTURE["permit_success"])
+    document[field] = value
+    transport = FakeTransport([_response(200, document)])
+
+    with pytest.raises(ProxyApiError) as captured:
+        _gateway(transport).issue_launch_permit(
+            "access-fixture",
+            session_id="77777777-7777-4777-8777-777777777777",
+            challenge="a" * 43,
+            correlation_id="0123456789abcdef0123456789abcdef",
+            idempotency_key="c" * 32,
+        )
+
+    assert captured.value.code == "invalid_response"
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        ("account_closed", "บัญชีนี้ถูกปิดการใช้งาน กรุณาติดต่อฝ่ายบริการ"),
+        ("license_inactive", "สิทธิ์ใช้งานยังไม่พร้อมใช้งาน กรุณาติดต่อฝ่ายบริการ"),
+        ("idempotency_key_conflict", "คำขอนี้ถูกใช้ไปแล้ว กรุณาลองใหม่"),
+        ("runtime_config_unavailable", "ระบบตั้งค่าไม่พร้อมใช้งาน กรุณาลองใหม่"),
+        ("invalid_request", "คำขอไม่ถูกต้อง กรุณาลองใหม่"),
+    ],
+)
+def test_additional_proxy_error_codes_map_to_thai(code: str, message: str) -> None:
+    transport = FakeTransport([_error_response(code)])
+
+    with pytest.raises(ProxyApiError) as captured:
+        _gateway(transport).get_me("access-fixture")
+
+    assert captured.value.code == code
+    assert str(captured.value) == message
+
+
+def test_null_display_name_is_allowed() -> None:
+    transport = FakeTransport([_response(200, FIXTURE["me_null_display"])])
+
+    account = _gateway(transport).get_me("access-fixture")
+
+    assert account.display_name is None
+
+
+def test_invalid_heartbeat_interval_is_rejected() -> None:
+    document = dict(FIXTURE["heartbeat_success"])
+    document["next_heartbeat_seconds"] = 61
+    transport = FakeTransport([_response(200, document)])
+
+    with pytest.raises(ProxyApiError) as captured:
+        _gateway(transport).heartbeat_session(
+            "access-fixture",
+            session_id="77777777-7777-4777-8777-777777777777",
+        )
+
+    assert captured.value.code == "invalid_response"

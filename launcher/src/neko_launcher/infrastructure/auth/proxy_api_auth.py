@@ -5,13 +5,7 @@ from typing import Any
 
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.ports import SecureStore
-from neko_launcher.domain.models import (
-    AuthenticatedUser,
-    CouponRedemption,
-    RegistrationResult,
-    SessionClaim,
-    SessionTerminationReason,
-)
+from neko_launcher.domain.models import AuthenticatedUser, RegistrationResult
 
 from .proxy_api_gateway import (
     MAX_TOKEN_CHARS,
@@ -23,7 +17,7 @@ from .proxy_api_gateway import (
 
 REFRESH_TOKEN_STORE_KEY = "proxy-api-refresh-token"
 WEB_ONLY_MESSAGE = "5.3.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
-PENDING_SLICE_MESSAGE = "ฟังก์ชันนี้จะเปิดใช้งานในขั้นถัดไป"
+DEFAULT_DISPLAY_NAME = "Neko Family"
 
 
 class ProxyApiTokenStore:
@@ -130,7 +124,7 @@ class ProxyApiAuthGateway:
             self._account_status = status
             return AuthenticatedUser(
                 user_id=status.identity_user_id,
-                email=status.display_name,
+                email=status.display_name or DEFAULT_DISPLAY_NAME,
             )
 
     def restore_session(self) -> AuthenticatedUser | None:
@@ -142,14 +136,7 @@ class ProxyApiAuthGateway:
             if not refresh_token:
                 return None
             try:
-                tokens = self._client.refresh_access_token(refresh_token)
-                try:
-                    self._token_store.save(tokens.refresh_token)
-                except ProxyApiError:
-                    self._clear_memory_locked()
-                    self._clear_store_quietly()
-                    return None
-                self._access_token = tokens.access_token
+                tokens = self._exchange_refresh_locked(refresh_token)
                 status = self._client.get_me(tokens.access_token)
                 status.require_active()
             except ProxyApiError as error:
@@ -163,7 +150,7 @@ class ProxyApiAuthGateway:
             self._account_status = status
             return AuthenticatedUser(
                 user_id=status.identity_user_id,
-                email=status.display_name,
+                email=status.display_name or DEFAULT_DISPLAY_NAME,
             )
 
     def change_password(self, password: str) -> None:
@@ -182,6 +169,16 @@ class ProxyApiAuthGateway:
             self._clear_memory_locked()
             self._clear_store_quietly()
 
+    def access_token(self) -> str:
+        with self._lock:
+            if not self._access_token:
+                raise ProxyApiError("invalid_token")
+            return self._access_token
+
+    def refresh_access_token(self) -> str:
+        with self._lock:
+            return self._refresh_locked().access_token
+
     def _preflight_locked(self, access_token: str) -> ProxyAccountStatus:
         try:
             return self._client.get_me(access_token)
@@ -195,7 +192,18 @@ class ProxyApiAuthGateway:
         refresh_token = self._token_store.load()
         if not refresh_token:
             raise ProxyApiError("invalid_grant")
-        tokens = self._client.refresh_access_token(refresh_token)
+        return self._exchange_refresh_locked(refresh_token)
+
+    def _exchange_refresh_locked(
+        self,
+        refresh_token: str,
+    ) -> ProxyApiTokenSet:
+        try:
+            tokens = self._client.refresh_access_token(refresh_token)
+        except ProxyApiError:
+            self._clear_memory_locked()
+            self._clear_store_quietly()
+            raise
         try:
             self._token_store.save(tokens.refresh_token)
         except ProxyApiError:
@@ -218,32 +226,6 @@ class ProxyApiAuthGateway:
     def _clear_all_locked(self) -> None:
         self._clear_memory_locked()
         self._clear_store_quietly()
-
-
-class ProxyApiEntitlementStub:
-    """Fail-closed slice-1 stub; claim/heartbeat/permit belong to later slices."""
-
-    def claim_session(
-        self,
-        product_code: str,
-        installation_key_hash: str,
-        display_name: str,
-    ) -> SessionClaim:
-        raise LauncherServiceError(PENDING_SLICE_MESSAGE)
-
-    def heartbeat_session(self, session_id: str) -> bool:
-        return False
-
-    def session_termination_reason(
-        self, session_id: str
-    ) -> SessionTerminationReason:
-        return SessionTerminationReason.REVOKED
-
-    def release_session(self, session_id: str) -> bool:
-        return False
-
-    def redeem_coupon(self, code: str) -> CouponRedemption:
-        raise LauncherServiceError(PENDING_SLICE_MESSAGE)
 
 
 def _identity_tokens(identity_session: Any) -> ProxyApiTokenSet:

@@ -315,7 +315,7 @@ class AppWindow:
         self.root.after(100, lambda: drain_tray_actions(
             self._tray_actions, self.root, self.close,
         ))
-        self.root.after(HEARTBEAT_INTERVAL_MS, self._heartbeat)
+        self.root.after(self._heartbeat_interval_ms(), self._heartbeat)
         self.root.after(1_500, self._refresh_public_proxy_status)
         self.root.after(2_000, self._check_software_update_startup)
         self.root.after(3_000, self._poll_game_process)
@@ -2512,7 +2512,21 @@ class AppWindow:
         if self._controller.state.session_id:
             self._submit(self._service.heartbeat)
         if self.root.winfo_exists():
-            self.root.after(HEARTBEAT_INTERVAL_MS, self._heartbeat)
+            self.root.after(self._heartbeat_interval_ms(), self._heartbeat)
+
+    def _heartbeat_interval_ms(self) -> int:
+        default_seconds = HEARTBEAT_INTERVAL_MS // 1_000
+        try:
+            seconds = int(
+                getattr(
+                    self._service,
+                    "heartbeat_interval_seconds",
+                    default_seconds,
+                )
+            )
+        except (TypeError, ValueError):
+            seconds = default_seconds
+        return min(60, max(10, seconds)) * 1_000
 
     @staticmethod
     def _add_heading(frame: ctk.CTkBaseClass) -> None:

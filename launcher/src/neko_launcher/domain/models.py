@@ -93,6 +93,9 @@ class SessionClaim:
     entitlement: Entitlement
     installation_id: str = ""
     license_id: str = ""
+    runtime_config_version: int = 0
+    heartbeat_interval_seconds: int = 30
+    server_time: datetime | None = None
 
 
 @dataclass(frozen=True)

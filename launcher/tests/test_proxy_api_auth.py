@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,12 +13,21 @@ import neko_launcher.bootstrap.app_factory as app_factory
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.services import LauncherService
-from neko_launcher.domain.models import AuthenticatedUser, CouponRedemption, SessionClaim
+from neko_launcher.domain.models import (
+    AuthenticatedUser,
+    CouponRedemption,
+    Entitlement,
+    EntitlementStatus,
+    SessionClaim,
+    SessionTerminationReason,
+)
 from neko_launcher.infrastructure.auth.proxy_api_auth import (
     REFRESH_TOKEN_STORE_KEY,
     ProxyApiAuthGateway,
-    ProxyApiEntitlementStub,
     ProxyApiTokenStore,
+)
+from neko_launcher.infrastructure.auth.proxy_api_entitlement import (
+    ProxyApiEntitlementGateway,
 )
 from neko_launcher.infrastructure.auth.proxy_api_gateway import (
     ProxyApiError,
@@ -153,6 +164,16 @@ def test_sign_in_preflights_and_stores_only_refresh_token() -> None:
     assert auth.account_status.status == "active"
 
 
+def test_sign_in_uses_safe_display_name_fallback() -> None:
+    store = _store()
+    transport = FakeTransport([_response(200, FIXTURE["me_null_display"])])
+    auth = _auth(transport, store)
+
+    user = auth.sign_in_with_web(FakeIdentityAuthenticator(_identity_tokens()))
+
+    assert user.email == "Neko Family"
+
+
 @pytest.mark.parametrize("code", ["invalid_token", "token_expired"])
 def test_sign_in_refreshes_once_on_auth_error(code: str) -> None:
     store = _store()
@@ -282,14 +303,52 @@ def test_restore_invalid_refresh_clears_token() -> None:
     assert store.values == {}
 
 
-def test_restore_transient_failure_keeps_refresh_token() -> None:
+def test_restore_refresh_failure_clears_ambiguous_token() -> None:
     store = _store()
     store.values[REFRESH_TOKEN_STORE_KEY] = "old-refresh-fixture"
     transport = FakeTransport([_error_response("upstream_unavailable")])
     auth = _auth(transport, store)
 
     assert auth.restore_session() is None
-    assert store.values == {REFRESH_TOKEN_STORE_KEY: "old-refresh-fixture"}
+    assert store.values == {}
+
+
+def test_restore_preflight_transient_after_refresh_keeps_new_token() -> None:
+    store = _store()
+    store.values[REFRESH_TOKEN_STORE_KEY] = "old-refresh-fixture"
+    transport = FakeTransport(
+        [
+            _response(200, FIXTURE["refresh_success"]),
+            _error_response("upstream_unavailable"),
+        ]
+    )
+    auth = _auth(transport, store)
+
+    assert auth.restore_session() is None
+    assert store.values == {REFRESH_TOKEN_STORE_KEY: "refresh-token-fixture-2"}
+
+
+def test_refresh_access_token_failure_clears_stored_token() -> None:
+    store = _store()
+    store.values[REFRESH_TOKEN_STORE_KEY] = "old-refresh-fixture"
+    transport = FakeTransport([_error_response("upstream_unavailable")])
+    auth = _auth(transport, store)
+
+    with pytest.raises(ProxyApiError) as captured:
+        auth.refresh_access_token()
+
+    assert captured.value.code == "upstream_unavailable"
+    assert store.values == {}
+
+
+def test_refresh_access_token_rotates_and_returns_memory_token() -> None:
+    store = _store()
+    store.values[REFRESH_TOKEN_STORE_KEY] = "old-refresh-fixture"
+    transport = FakeTransport([_response(200, FIXTURE["refresh_success"])])
+    auth = _auth(transport, store)
+
+    assert auth.refresh_access_token() == "access-token-fixture-2"
+    assert store.values == {REFRESH_TOKEN_STORE_KEY: "refresh-token-fixture-2"}
 
 
 def test_sign_out_clears_memory_and_refresh_token() -> None:
@@ -340,9 +399,11 @@ def test_logs_do_not_contain_tokens(caplog: pytest.LogCaptureFixture) -> None:
     assert "access-token-fixture-2" not in caplog.text
 
 
-class BombEntitlement:
+class FakeClaimEntitlement:
     def __init__(self) -> None:
         self.claim_calls = 0
+        self.released: list[str] = []
+        self.heartbeat_interval_seconds = 45
 
     def claim_session(
         self,
@@ -351,19 +412,30 @@ class BombEntitlement:
         display_name: str,
     ) -> SessionClaim:
         self.claim_calls += 1
-        raise AssertionError("proxy API mode must not claim a legacy session")
+        return SessionClaim(
+            session_id="77777777-7777-4777-8777-777777777777",
+            entitlement=Entitlement(
+                product_code=product_code,
+                status=EntitlementStatus.ACTIVE,
+                valid_until=None,
+            ),
+            installation_id="22222222-2222-4222-8222-222222222222",
+            runtime_config_version=42,
+            heartbeat_interval_seconds=45,
+        )
 
     def heartbeat_session(self, session_id: str) -> bool:
-        raise AssertionError("proxy API mode must not heartbeat a legacy session")
+        return True
 
     def session_termination_reason(self, session_id: str):
-        raise AssertionError("proxy API mode must not read a legacy session")
+        return SessionTerminationReason.REVOKED
 
     def release_session(self, session_id: str) -> bool:
-        return False
+        self.released.append(session_id)
+        return True
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
-        raise AssertionError("proxy API mode must not redeem through Supabase")
+        raise LauncherServiceError("coupon is a later slice")
 
 
 class FakeWebAuthGateway:
@@ -392,8 +464,8 @@ class FakeWebAuthGateway:
         return
 
 
-def _service_proxy_mode() -> tuple[LauncherService, BombEntitlement]:
-    entitlement = BombEntitlement()
+def _service() -> tuple[LauncherService, FakeClaimEntitlement]:
+    entitlement = FakeClaimEntitlement()
     service = LauncherService(
         ApplicationController(EventBus()),
         FakeWebAuthGateway(),
@@ -401,25 +473,28 @@ def _service_proxy_mode() -> tuple[LauncherService, BombEntitlement]:
         SimpleNamespace(key_hash="a" * 64, display_name="Test PC"),
         "neko-family-proxy",
         web_auth_only=True,
-        proxy_api_mode=True,
     )
     return service, entitlement
 
 
-def test_service_proxy_mode_skips_legacy_claim_on_web_login() -> None:
-    service, entitlement = _service_proxy_mode()
+def test_service_claims_after_web_login_with_injected_gateway() -> None:
+    service, entitlement = _service()
 
     service.sign_in_with_web(object())
 
-    assert entitlement.claim_calls == 0
+    assert entitlement.claim_calls == 1
     assert service._controller.state.auth_status.value == "authenticated"
+    assert service._controller.state.session_id == (
+        "77777777-7777-4777-8777-777777777777"
+    )
+    assert service.heartbeat_interval_seconds == 45
 
 
-def test_service_proxy_mode_skips_legacy_claim_on_restore() -> None:
-    service, entitlement = _service_proxy_mode()
+def test_service_claims_on_restore_with_injected_gateway() -> None:
+    service, entitlement = _service()
 
     assert service.restore_session() is True
-    assert entitlement.claim_calls == 0
+    assert entitlement.claim_calls == 1
     assert service._controller.state.auth_status.value == "authenticated"
 
 
@@ -437,19 +512,71 @@ def test_compose_auth_dependencies_proxy_mode_does_not_build_supabase(
         supabase_publishable_key="",
     )
 
-    def bomb(*args, **kwargs):
-        raise AssertionError("SupabaseGateway must not be constructed")
-
-    monkeypatch.setattr(app_factory, "SupabaseGateway", bomb)
-
     dependencies = app_factory.compose_auth_dependencies(
         config,
         _store(),
         object(),
     )
 
-    assert dependencies.proxy_api_mode is True
     assert isinstance(dependencies.auth_gateway, ProxyApiAuthGateway)
-    assert isinstance(dependencies.entitlement_gateway, ProxyApiEntitlementStub)
+    assert isinstance(dependencies.entitlement_gateway, ProxyApiEntitlementGateway)
+    assert dependencies.proxy_auth_gateway is dependencies.auth_gateway
+    assert dependencies.proxy_entitlement_gateway is dependencies.entitlement_gateway
+    assert dependencies.proxy_client is not None
     assert dependencies.recovery_gateway is None
     assert dependencies.legacy_gateway is None
+
+
+def test_app_factory_imports_supabase_gateway_only_inside_legacy_branch() -> None:
+    source = Path(app_factory.__file__).read_text(encoding="utf-8")
+    top_level_imports = [
+        line
+        for line in source.splitlines()
+        if line.startswith(
+            "from neko_launcher.infrastructure.auth.supabase_gateway import"
+        )
+    ]
+    assert top_level_imports == []
+    assert "    from neko_launcher.infrastructure.auth.supabase_gateway import" in (
+        source
+    )
+
+
+def test_app_factory_import_does_not_load_supabase_gateway() -> None:
+    launcher_root = Path(__file__).parents[1]
+    code = (
+        "import sys; import neko_launcher.bootstrap.app_factory; "
+        "assert 'neko_launcher.infrastructure.auth.supabase_gateway' "
+        "not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=launcher_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_proxy_api_modules_have_no_supabase_or_bridge_dependency() -> None:
+    auth_dir = Path(__file__).parents[1] / (
+        "src/neko_launcher/infrastructure/auth"
+    )
+    for name in (
+        "proxy_api_gateway.py",
+        "proxy_api_auth.py",
+        "proxy_api_entitlement.py",
+        "proxy_api_permit.py",
+        "proxy_api_session.py",
+    ):
+        source = (auth_dir / name).read_text(encoding="utf-8").lower()
+        for forbidden in (
+            "import supabase",
+            "from supabase",
+            "supabase_gateway",
+            "supabaseauthstorage",
+            "launcher_bridge",
+            "web_sessions",
+        ):
+            assert forbidden not in source

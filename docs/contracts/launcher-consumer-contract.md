@@ -8,6 +8,11 @@ Supabase/password backend
 **Companion documents:** [gap-and-conflict-register.md](gap-and-conflict-register.md),
 [p0-signoff-checklist.md](p0-signoff-checklist.md)
 
+> **2026-10-25 slice-2 update:** refresh is fail-closed (section 4.4); claim,
+> heartbeat, release, and launch-permit are now specified and implemented
+> source/dev under [docs/current/proxy-api-launcher-contract.md](../current/proxy-api-launcher-contract.md).
+> Historical PENDING markers below are superseded by that current contract.
+
 The words MUST, MUST NOT, SHOULD, and MAY are used normatively. Items marked
 **PENDING** are not defined in contract baseline v0 and require an owner
 decision before P1 implementation.
@@ -244,13 +249,16 @@ Client obligations:
 5. **No retry on 400/401.** `invalid_token`, `invalid_grant`, or
    `token_expired` on refresh means the stored credential is dead. Clear it and
    sign out.
-6. **Preserve on transport failure.** A network error or retryable 5xx does not
-   invalidate the stored refresh token. Keep it, show a retryable state, and do
-   not authorize a launch.
+6. **Fail closed on any refresh failure.** A network error, timeout, or 5xx
+   during refresh may mean the server rotated the token before the client saw
+   the response. Do not preserve or retry the old token. Clear it and require
+   interactive login. Persist the new token only after a successful refresh
+   response; if persistence fails, clear it and require login. Contract v0 has
+   no idempotent refresh or grace window.
 
-The ambiguous-outcome rule is a direct consequence of rotate-on-use plus
-reuse-revocation. See register items G5/D3 for the requested contract
-resolution (idempotent refresh or a bounded replay grace).
+The contract owner resolved the ambiguity fail-closed: the client never retries
+an old refresh token. See register item G5 and the current implementation
+contract.
 
 ### 4.5 Storage
 

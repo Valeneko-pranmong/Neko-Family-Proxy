@@ -470,8 +470,7 @@ def test_build_window_wires_coordinator_with_admission_and_apply_service_without
     )
 
     monkeypatch.setattr(
-        app_factory,
-        "SupabaseGateway",
+        "neko_launcher.infrastructure.auth.supabase_gateway.SupabaseGateway",
         lambda *args, **kwargs: SimpleNamespace(),
     )
     monkeypatch.setattr(

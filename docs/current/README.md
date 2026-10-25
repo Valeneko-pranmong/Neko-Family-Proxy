@@ -32,9 +32,10 @@ LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
 > **2026-10-25 unified-platform overlay:** the new line now targets
-> Neko-NETWORK-ID access/refresh tokens and Neko Proxy API only. P1 slice 1
-> (source/dev `NEKO_PROXY_API_URL`) implements the account-status preflight
-> and refresh-token storage without a bridge or Supabase session. See
+> Neko-NETWORK-ID access/refresh tokens and Neko Proxy API only. P1 slices 1–2
+> (source/dev `NEKO_PROXY_API_URL`) implement the account-status preflight,
+> refresh-token storage, claim/heartbeat/release, and the permit + Runtime
+> Config v1 Core path without a bridge or Supabase session. See
 > [5.3.0-proxy-api-launcher.md](5.3.0-proxy-api-launcher.md) and
 > [proxy-api-launcher-contract.md](proxy-api-launcher-contract.md). The
 > bridge/session-minting and web-session allowlist parts of the older plan are

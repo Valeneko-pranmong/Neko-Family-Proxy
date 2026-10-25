@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from neko_launcher import __version__
 from neko_launcher.application.authorized_core import (
@@ -33,16 +33,15 @@ from neko_launcher.infrastructure.account_recovery_gateway import (
 )
 from neko_launcher.infrastructure.auth.proxy_api_auth import (
     ProxyApiAuthGateway,
-    ProxyApiEntitlementStub,
     ProxyApiTokenStore,
 )
+from neko_launcher.infrastructure.auth.proxy_api_entitlement import (
+    ProxyApiEntitlementGateway,
+)
 from neko_launcher.infrastructure.auth.proxy_api_gateway import ProxyApiGateway
-from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.auth.proxy_api_permit import ProxyApiPermitGateway
 from neko_launcher.infrastructure.auth.web_auth import WebAuthClient
 from neko_launcher.infrastructure.config import LauncherConfig
-from neko_launcher.infrastructure.unavailable_gateway import (
-    AuthorizationPendingProxyGateway,
-)
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
@@ -94,6 +93,9 @@ from neko_launcher.infrastructure.installation_credential import (
     create_installation_credential_provider,
 )
 from neko_launcher.ui.app_window import AppWindow
+
+if TYPE_CHECKING:
+    from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 
 
 class _UnavailableReleaseGateway:
@@ -326,8 +328,10 @@ class AuthDependencies:
     auth_gateway: AuthGateway
     entitlement_gateway: EntitlementGateway
     recovery_gateway: AccountRecoveryGateway | None
-    proxy_api_mode: bool
     legacy_gateway: SupabaseGateway | None = None
+    proxy_client: ProxyApiGateway | None = None
+    proxy_auth_gateway: ProxyApiAuthGateway | None = None
+    proxy_entitlement_gateway: ProxyApiEntitlementGateway | None = None
 
 
 def compose_auth_dependencies(
@@ -345,13 +349,18 @@ def compose_auth_dependencies(
             client,
             ProxyApiTokenStore(secure_store),
         )
+        entitlement_gateway = ProxyApiEntitlementGateway(client, auth_gateway)
         return AuthDependencies(
             auth_gateway=auth_gateway,
-            entitlement_gateway=ProxyApiEntitlementStub(),
+            entitlement_gateway=entitlement_gateway,
             recovery_gateway=None,
-            proxy_api_mode=True,
             legacy_gateway=None,
+            proxy_client=client,
+            proxy_auth_gateway=auth_gateway,
+            proxy_entitlement_gateway=entitlement_gateway,
         )
+    from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+
     gateway = SupabaseGateway(
         config.supabase_url,
         config.supabase_publishable_key,
@@ -368,8 +377,67 @@ def compose_auth_dependencies(
         auth_gateway=gateway,
         entitlement_gateway=gateway,
         recovery_gateway=recovery_gateway,
-        proxy_api_mode=False,
         legacy_gateway=gateway,
+    )
+
+
+def compose_authorized_proxy_manager(
+    config: LauncherConfig,
+    diagnostics_recorder: Any,
+    installation: BoundInstallationIdentity,
+    state_provider: Any,
+    permits: Any,
+    precondition: OnlineHeartbeatLaunchPrecondition,
+    authenticated_transport: Any,
+) -> AuthorizedProxyGateway:
+    core_process = WindowsCoreProcessAdapter(
+        config.proxy_core_path,
+        diagnostics=diagnostics_recorder,
+        debug_log_dir=config.debug_log_dir if config.debug_mode else None,
+    )
+    core_channel = NamedPipeCoreControlChannel(
+        "NekoProxyCoreControl",
+        expected_server_pid=core_process.owned_process_id,
+    )
+    detector = ExactPso2TargetDetector()
+    timeouts = OrchestrationTimeouts(
+        target=30.0,
+        control_channel=10.0,
+        challenge=5.0,
+        permit=10.0,
+        # Launcher bounds include scheduling/transport margin beyond the
+        # frozen Core's 30-second START and 15-second STOP contracts.
+        start_response=40.0,
+        stop_response=20.0,
+        shutdown_response=20.0,
+        process_exit=10.0,
+    )
+    orchestrator = AuthorizedCoreOrchestrator(
+        process=core_process,
+        channel=core_channel,
+        permits=permits,
+        precondition=precondition,
+        detector=detector,
+        timeouts=timeouts,
+        diagnostics=diagnostics_recorder,
+    )
+
+    def access_context_provider() -> LaunchAccessContext:
+        state = state_provider()
+        return LaunchAccessContext(
+            authenticated=(state.auth_status == AuthStatus.AUTHENTICATED),
+            entitlement_active=(
+                state.entitlement is not None
+                and state.entitlement.status == EntitlementStatus.ACTIVE
+            ),
+            session_id=state.session_id or "",
+            installation_key_hash=installation.key_hash,
+            authenticated_transport=authenticated_transport,
+        )
+
+    return AuthorizedProxyGateway(
+        orchestrator=orchestrator,
+        access_context_provider=access_context_provider,
     )
 
 
@@ -469,65 +537,51 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     diagnostics_recorder = CoreDiagnosticsRecorder(diagnostics_sink)
 
     if config.proxy_api_enabled:
-        # P1 slice 1 stops at account preflight; no claim/permit/Core start.
-        proxy_manager = AuthorizationPendingProxyGateway()
+        proxy_client = auth_dependencies.proxy_client
+        proxy_auth = auth_dependencies.proxy_auth_gateway
+        proxy_entitlement = auth_dependencies.proxy_entitlement_gateway
+        if (
+            proxy_client is None
+            or proxy_auth is None
+            or proxy_entitlement is None
+        ):
+            raise RuntimeError("proxy API dependencies are unavailable")
+        proxy_permit = ProxyApiPermitGateway(
+            proxy_client,
+            proxy_auth,
+            lambda: controller.state.session_id or "",
+        )
+        proxy_precondition = OnlineHeartbeatLaunchPrecondition(
+            lambda session_id, _installation_key_hash, _timeout: (
+                proxy_entitlement.heartbeat_session(session_id)
+            )
+        )
+        proxy_manager = compose_authorized_proxy_manager(
+            config,
+            diagnostics_recorder,
+            installation,
+            lambda: controller.state,
+            proxy_permit,
+            proxy_precondition,
+            proxy_auth,
+        )
     elif CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
         gateway = auth_dependencies.legacy_gateway
         if gateway is None:
             raise RuntimeError("legacy auth gateway is unavailable")
-        core_process = WindowsCoreProcessAdapter(
-            config.proxy_core_path,
-            diagnostics=diagnostics_recorder,
-            debug_log_dir=config.debug_log_dir if config.debug_mode else None,
-        )
-        core_channel = NamedPipeCoreControlChannel(
-            "NekoProxyCoreControl",
-            expected_server_pid=core_process.owned_process_id,
-        )
-        detector = ExactPso2TargetDetector()
-        precondition = OnlineHeartbeatLaunchPrecondition(
+        legacy_precondition = OnlineHeartbeatLaunchPrecondition(
             lambda session_id, _installation_key_hash, timeout: (
                 gateway.heartbeat_session_with_timeout(session_id, timeout)
             )
         )
-        timeouts = OrchestrationTimeouts(
-            target=30.0,
-            control_channel=10.0,
-            challenge=5.0,
-            permit=10.0,
-            # Launcher bounds include scheduling/transport margin beyond the
-            # frozen Core's 30-second START and 15-second STOP contracts.
-            start_response=40.0,
-            stop_response=20.0,
-            shutdown_response=20.0,
-            process_exit=10.0,
-        )
-        orchestrator = AuthorizedCoreOrchestrator(
-            process=core_process,
-            channel=core_channel,
-            permits=gateway,
-            precondition=precondition,
-            detector=detector,
-            timeouts=timeouts,
-            diagnostics=diagnostics_recorder,
-        )
-
-        def access_context_provider() -> LaunchAccessContext:
-            state = controller.state
-            return LaunchAccessContext(
-                authenticated=(state.auth_status == AuthStatus.AUTHENTICATED),
-                entitlement_active=(
-                    state.entitlement is not None
-                    and state.entitlement.status == EntitlementStatus.ACTIVE
-                ),
-                session_id=state.session_id or "",
-                installation_key_hash=installation.key_hash,
-                authenticated_transport=gateway,
-            )
-
-        proxy_manager = AuthorizedProxyGateway(
-            orchestrator=orchestrator,
-            access_context_provider=access_context_provider,
+        proxy_manager = compose_authorized_proxy_manager(
+            config,
+            diagnostics_recorder,
+            installation,
+            lambda: controller.state,
+            gateway,
+            legacy_precondition,
+            gateway,
         )
     else:
         proxy_manager = create_production_proxy_gateway()
@@ -541,7 +595,6 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config.product_code,
         recovery_gateway=recovery_gateway,
         web_auth_only=config.web_auth_only,
-        proxy_api_mode=auth_dependencies.proxy_api_mode,
     )
     telemetry_client = NamedPipeCoreTelemetryClient(event_publisher=event_bus)
     # Resolve the project Asset directory relative to application_root().

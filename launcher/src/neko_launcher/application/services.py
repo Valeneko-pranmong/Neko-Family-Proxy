@@ -57,7 +57,6 @@ class LauncherService:
         product_code: str,
         recovery_gateway: AccountRecoveryGateway | None = None,
         web_auth_only: bool = False,
-        proxy_api_mode: bool = False,
     ) -> None:
         self._controller = controller
         self._auth_gateway = auth_gateway
@@ -66,7 +65,6 @@ class LauncherService:
         self._product_code = product_code
         self._recovery_gateway = recovery_gateway
         self._web_auth_only = bool(web_auth_only)
-        self._proxy_api_mode = bool(proxy_api_mode)
         self._recovery_session: str | None = None
         self._recovery_bound_password: str | None = None
         self._recovery_generation = 0
@@ -160,11 +158,6 @@ class LauncherService:
         self._complete_sign_in(user)
 
     def _complete_sign_in(self, user: AuthenticatedUser) -> None:
-        if self._proxy_api_mode:
-            self._controller.dispatch(
-                AuthSucceeded(user.user_id, user.username)
-            )
-            return
         try:
             claimed = self._claim_session(allow_missing=True)
         except LauncherServiceError:
@@ -195,6 +188,16 @@ class LauncherService:
     @property
     def has_recovery_session(self) -> bool:
         return self._recovery_session is not None
+
+    @property
+    def heartbeat_interval_seconds(self) -> int:
+        """Return the server-provided heartbeat interval, clamped to 10-60 s."""
+        try:
+            raw = getattr(self._entitlement_gateway, "heartbeat_interval_seconds", 30)
+            seconds = int(raw)
+        except (TypeError, ValueError):
+            seconds = 30
+        return min(60, max(10, seconds))
 
     def begin_account_recovery(self) -> None:
         self._require_password_auth()
@@ -307,11 +310,6 @@ class LauncherService:
                 return False
         if user is None:
             return False
-        if self._proxy_api_mode:
-            self._controller.dispatch(
-                AuthSucceeded(user.user_id, user.username)
-            )
-            return True
         try:
             self._claim_session(allow_missing=True)
         except LauncherServiceError as exc:

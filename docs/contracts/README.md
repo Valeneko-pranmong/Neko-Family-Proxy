@@ -74,9 +74,9 @@ The current replacement direction and slice-1 implementation contract are in
 
 P0 is complete only when every blocker in the conflict register has an owner
 decision and the contract owner has frozen the additions listed in the
-sign-off checklist. The owner has explicitly authorized one limited source/dev
-P1 slice 1 (the `NEKO_PROXY_API_URL` account-status preflight described in
-`docs/current/5.3.0-proxy-api-launcher.md`) while those decisions remain open.
-That exception does not close this register, does not authorize
-claim/permit/coupon work, and does not authorize a build, deployment, or
-publication. All other P1 work waits for sign-off.
+sign-off checklist. The owner has explicitly authorized the limited source/dev
+P1 slices 1–2 (the `NEKO_PROXY_API_URL` account preflight, session lifecycle,
+and permit path described in `docs/current/5.3.0-proxy-api-launcher.md`) while
+those decisions remain open. That exception does not close this register, does
+not authorize a release, and does not authorize coupons, `/public/status`,
+legacy removal, or publication. All other P1 work waits for sign-off.

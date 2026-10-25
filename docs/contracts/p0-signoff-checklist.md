@@ -37,12 +37,21 @@ decisions below are recorded and the contract is frozen.
 If a decision cannot be made before P1, the affected endpoint stays out of P1
 scope. Do not implement a guessed default.
 
+**Slice-2 closures (2026-10-25):** D3 (fail-closed refresh), D5 (claim fields +
+latest-claim-wins), D6 (session-bound permit), D7 (Runtime Config v1), D8
+(consumed `/v1/me` fields), D9 (heartbeat-derived termination reasons),
+D14 (heartbeat interval/staleness), and D17 (scope matrix) are resolved by the
+Proxy API v0/OpenAPI contract and the source/dev implementation. D1/D2 identity
+deployment, D4 revocation, D10 status, D11 coupons, D12 identity envelope,
+D13 retry/idempotency details, D15 protocol version, D16 offline behavior, and
+D18 migration execution remain open.
+
 ## 2. P1 entry criteria
 
-**Authorized exception (2026-10-25):** the owner authorized a narrow
-source/dev-only P1 slice 1 for the `NEKO_PROXY_API_URL` account-status
-preflight and refresh-token storage. It is not release-capable, does not close
-this checklist, and does not satisfy the criteria below for any later slice.
+**Authorized exception (2026-10-25):** the owner authorized source/dev-only P1
+slices 1–2 for the `NEKO_PROXY_API_URL` account preflight, session lifecycle,
+and permit path. They are not release-capable, do not close this checklist, and
+do not satisfy the criteria below for any later slice.
 
 P1 (later slices) may start only when all of the following are true:
 
@@ -184,10 +193,10 @@ production credentials.
 ## 6. P0 gate statement
 
 When the decisions in section 1 are recorded and the P1 entry criteria in
-section 2 are met, P0 is complete. The authorized source/dev slice 1 is the
+section 2 are met, P0 is complete. The authorized source/dev slices 1–2 are the
 only exception. Until then:
 
-- do not implement beyond the authorized source/dev slice 1;
+- do not implement beyond the authorized source/dev slices;
 - do not modify `5.1.6`;
 - do not deploy migrations or functions;
 - do not tag, publish, or enable web auth in production;
