@@ -1,9 +1,11 @@
 # Handoff — Neko Family Proxy Launcher
 
-Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
+Updated: 2026-10-25 (Neko Family 5.2.0a1 Alpha Test)
 
 ## Current state
-- Current release line: `v5.2.0` (source; hosted publication pending). `v5.1.6` remains the last published stable until 5.2.0 is released.
+- Current release line: `v5.2.0a1` alpha (source; hosted publication pending). `v5.1.6` remains the last published stable until the 5.2 line is released.
+- Alpha test scope and exit gates: `docs/current/5.2.0-alpha-test.md`.
+- Version surfaces: `launcher/pyproject.toml` and `neko_launcher.__version__` are `5.2.0a1`. `release_target.json` remains armed at `v5.1.6` → `v5.2.0` for the stable line; do not use the stable release controller to publish the alpha.
 - Active branch: `main`.
 - Distribution Architecture: unified canonical releases on `Valeneko-pranmong/Neko-Family-Proxy`; the historical `Neko-Family-Proxy-Updates` identity is superseded.
 - Trust Anchors: `neko-update-prod-2` and `neko-update-profile-v520-1`; the signed profile authorizes only the current release key. Historical public keys remain for verification. The old private key is unavailable.
@@ -32,7 +34,7 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 ## Next work
 1. P0 is complete. P1 slices 1–2 landed: `launcher_v2` profiles, identity links, web-session allowlist, profile routing, entitlement/session tables, claim/heartbeat/release/permit RPCs, and contract tests. Next: the bridge and staging E2E.
 2. Re-check the shared-auth consumer inventory before disabling legacy auth at cutover; add any new consumer.
-3. Installer guard source is implemented in `installer/beta.iss`; rebuild with ISCC and run the install/uninstall matrix with 5.1.6 installed/running and 5.2.0 reinstall.
+3. Installer guard source is implemented in `installer/beta.iss`; ISCC is available at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`. Stage the Core/.NET payloads, rebuild, and run the install/uninstall matrix with 5.1.6 installed/running and 5.2.0a1 reinstall.
 4. The reference bridge is implemented in `supabase/functions/launcher_bridge/`; deploy it using `docs/current/launcher-bridge-staging-runbook.md`, provision staging test accounts/entitlement, run the full E2E, and validate Auth `session_id` stability across refresh.
 5. P2 is complete for the product path: next-line schema selection, server-metadata permit routing, web-only UI, frozen-build enforcement, no recovery view/gateway in web-only mode, and service-layer rejection of password/recovery. Source/dev legacy methods remain only for the non-frozen reference path and are scheduled for 5.3.0 deletion.
 6. Run full web-auth E2E, build the 5.2.0 preview with the new Core bundle, refresh all hashes, and distribute it through the dedicated preview channel, not latest stable. Publisher guard, preview-profile release-list discovery, and the signed preview profile are in place; preview publication, auto-apply, and feed E2E remain.

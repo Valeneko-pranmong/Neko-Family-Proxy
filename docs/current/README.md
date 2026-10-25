@@ -1,21 +1,22 @@
-# NEKO FAMILY PROXY — Current Component Status & 5.2.0 Release Line
+# NEKO FAMILY PROXY — Current Component Status & 5.2.0a1 Alpha Line
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PLANNING 5.2.0 SEPARATE WEB-AUTH LINE (not publishable)
-PRODUCT_BASELINE:               5.2.0 (planning); 5.1.6 remains public stable
-CURRENT_RELEASE_TAG:            v5.2.0 (candidate; not yet published)
+STATUS:                         PREPARING 5.2.0a1 ALPHA TEST (not publishable)
+PRODUCT_BASELINE:               5.2.0a1 (alpha test); 5.1.6 remains public stable
+CURRENT_RELEASE_TAG:            v5.2.0a1 (alpha candidate; not yet published)
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
 INSTALLER_CANDIDATE:            SUPERSEDED (pre-web-auth build; rebuild required)
 ACTIVE_DEV_BRANCH:              main
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
 UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
-RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0 NEW-ACCOUNT WEB-AUTH PREVIEW; CLEAN START; NO SIDE-BY-SIDE
-UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
-WEB_AUTH_LAUNCHER:              IMPLEMENTED, FLAG OFF; 5.2.0 TARGET IS WEB-ONLY (password removal pending)
+RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0a1 ALPHA NEW-ACCOUNT WEB-AUTH PREVIEW; CLEAN START; NO SIDE-BY-SIDE
+UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0a1; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
+WEB_AUTH_LAUNCHER:              IMPLEMENTED; FROZEN BUILD WEB-ONLY; P1/P3/P4 E2E PENDING
 NEXT_CUTOVER:                   v5.3.0 (gate-based legacy shutdown; last active term or approved cutoff)
 SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
+ALPHA_TEST:                     docs/current/5.2.0-alpha-test.md
 STAGING_RUNBOOK:                docs/current/launcher-bridge-staging-runbook.md
 CUTOVER_RUNBOOK:                docs/current/5.3.0-cutover-runbook.md
 STATUS_AUDIT:                   docs/current/p0-p5-status-audit.md
@@ -27,13 +28,15 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,607 passed / 4 skipped (launcher, 2026-10-25); 73 passed / 1 environment-limited (root)
+TEST_SUITE:                     2,631 passed / 4 skipped (launcher, 2026-10-25); 74 passed / 1 environment-limited (root)
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** `main` is planning the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. 5.2.0 is a new-accounts-only manual preview using an isolated schema in the same Supabase project, a dedicated preview channel, and a clean-start install: there is no legacy day/coupon transfer, 5.1.6 remains usable until its existing term expires or an approved cutoff, it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer guard is implemented in source (same AppId, running-process and installed-version checks); the rebuilt installer/install matrix, web-only password removal, bridge deployment, channel support, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
+> **Current-state rule:** `main` is preparing the `5.2.0a1` alpha test of the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. `5.2.0a1` is a new-accounts-only manual alpha using an isolated schema in the same Supabase project, a dedicated preview channel, and a clean-start install: there is no legacy day/coupon transfer, 5.1.6 remains usable until its existing term expires or an approved cutoff, it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer guard and preview-channel binding are implemented in source; the rebuilt installer/install matrix, bridge deployment, real preview publication, auto-apply, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
 >
 > **Development plan:** [5.2.0 web-auth separation and 5.3.0 cutover](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
+>
+> **Alpha test:** [5.2.0a1 alpha test](5.2.0-alpha-test.md).
 
 ---
 

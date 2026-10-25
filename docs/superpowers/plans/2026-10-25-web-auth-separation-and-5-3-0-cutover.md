@@ -350,11 +350,12 @@ uninstall/install passes; 5.1.6 remains usable when 5.2.0 is not installed.
 
 **P3 slice 1 status (2026-10-25):** `installer/beta.iss` now fails closed when
 NekoLauncher/NekoProxyCore/NekoUpdater are running, when an existing install
-has no verifiable DisplayVersion, or when the installed version is not exactly
-5.2.0. A 5.1.6 install is therefore blocked until it is uninstalled. Static guard
-tests and the full Launcher suite (2,589 passed / 4 skipped) pass. ISCC is
-unavailable on this host, so the rebuilt installer and full install/uninstall
-matrix remain open.
+has no verifiable DisplayVersion, or when the installed version does not match
+the installer's declared version. A 5.1.6 install is therefore blocked until it
+is uninstalled. Static guard tests and the full Launcher suite pass. ISCC is
+present at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`; the staged Core
+bundle and pinned .NET bootstrapper are not present, so the rebuilt installer
+and full install/uninstall matrix remain open.
 
 ### P4 — 5.2.0 Preview
 
@@ -404,6 +405,14 @@ publisher and hosted verifier require preview manifests to be prereleases, and
 `rollout-stable` now refuses to promote any 5.2.x tag. Cleanup and version
 guards cover 5.2.x suffixes. Full Launcher suite: 2,629 passed / 4 skipped.
 Actual preview publication, 5.2.0 auto-apply, and feed-level E2E remain open.
+
+**P4 alpha slice status (2026-10-25):** the 5.2 preview candidate is
+re-versioned `5.2.0a1` for an alpha test. The version regexes in the release,
+publisher, verifier, workflow, and installer toolchain accept PEP 440 alpha
+suffixes while keeping the 5.2 line preview-only. Alpha scope, evidence, exit
+criteria, and rollback are recorded in `docs/current/5.2.0-alpha-test.md`.
+No tag/publication exists; staging E2E and staged installer payloads remain
+blocked (ISCC itself is available).
 
 ### P5 — 5.3.0 Cutover
 

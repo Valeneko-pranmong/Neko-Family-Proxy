@@ -334,6 +334,7 @@ def test_expected_staging_channel_binds_5_2_to_preview() -> None:
     module = load_module()
     assert module.expected_staging_channel("v5.2.0") == "preview"
     assert module.expected_staging_channel("5.2.1") == "preview"
+    assert module.expected_staging_channel("v5.2.0a1") == "preview"
     assert module.expected_staging_channel("v5.1.6") == "stable"
     assert module.expected_staging_channel("v5.3.0") == "stable"
 

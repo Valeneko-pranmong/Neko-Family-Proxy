@@ -54,6 +54,9 @@ DOTNET_BOOTSTRAPPER_GLOB = "windowsdesktop-runtime-*-win-x64.exe"
 DOTNET_RUNTIME_VERSION_PIN: str | None = "6.0.36"
 DOTNET_RUNTIME_SHA256_PIN: str | None = "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
 
+_PRODUCT_VERSION_PATTERN = re.compile(r"^5\.[123]\.\d+(?:(?:a|b|rc)\d+)?$")
+_PREVIEW_VERSION_PATTERN = re.compile(r"5\.2\.\d+(?:(?:a|b|rc)\d+|[-+].*)?")
+
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -73,7 +76,7 @@ def fail(message: str) -> "None":
 
 def validate_installer_channel(release_version: str, channel: str) -> None:
     normalized = str(release_version).strip().lstrip("v")
-    is_5_2 = re.fullmatch(r"5\.2\.\d+", normalized) is not None
+    is_5_2 = _PREVIEW_VERSION_PATTERN.fullmatch(normalized) is not None
     if is_5_2 and channel != "preview":
         fail(
             "5.2.x is preview-only; installer trust profile channel must be "
@@ -117,8 +120,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--baseline-envelope", required=True)
     parser.add_argument("--trust-profile", required=True)
     args = parser.parse_args(argv)
-    if not re.match(r"^5\.[123]\.\d+$", args.release_version):
-        parser.error("--release-version must be stable 5.x.y format (e.g., 5.2.0)")
+    if not _PRODUCT_VERSION_PATTERN.fullmatch(args.release_version):
+        parser.error("--release-version must be a 5.x.y release version (e.g., 5.2.0a1)")
     if not args.core_authority.strip():
         parser.error("--core-authority must not be empty")
     return args

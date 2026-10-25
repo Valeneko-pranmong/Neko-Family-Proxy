@@ -1,9 +1,9 @@
 # Project Context — Neko Family Proxy Launcher
 
-Updated: 2026-10-25 (Neko Family 5.1.6 stable + 5.2.0 web-auth preview planning)
+Updated: 2026-10-25 (Neko Family 5.1.6 stable + 5.2.0a1 alpha test planning)
 
 ## Purpose
-This repository is the Windows Launcher/client tier for Neko Family Proxy. It owns user-facing launch/session orchestration, authentication/permit flow integration, installer/updater code, release-controller automation, Supabase client/backend contracts, and the canonical machine-update channel for existing clients. The deferred update lifecycle introduced in 5.1.2 is shipped and maintained on the 5.1.6 stable line; 5.2.0 is a separate web-auth-only preview line.
+This repository is the Windows Launcher/client tier for Neko Family Proxy. It owns user-facing launch/session orchestration, authentication/permit flow integration, installer/updater code, release-controller automation, Supabase client/backend contracts, and the canonical machine-update channel for existing clients. The deferred update lifecycle introduced in 5.1.2 is shipped and maintained on the 5.1.6 stable line; the 5.2 line is a separate web-auth-only alpha/preview line, currently versioned `5.2.0a1`.
 
 ## Architecture Evolution (5.1.2+ Released Architecture)
 
@@ -30,7 +30,7 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - Restricted solely to bootstrap `v5.1.0` and auto-disabled once a newer machine release exists.
 
 ## Current Baseline
-- Current Public Stable: `v5.1.6` on the legacy password/recovery backend. `v5.2.0` is a new-accounts-only web-auth preview using an isolated schema in the same Supabase project. It is not published and must not become the latest stable while 5.1.6 is supported; it uses a dedicated preview channel.
+- Current Public Stable: `v5.1.6` on the legacy password/recovery backend. The 5.2 line is a new-accounts-only web-auth alpha/preview using an isolated schema in the same Supabase project, currently versioned `5.2.0a1`. It is not published and must not become the latest stable while 5.1.6 is supported; it uses a dedicated preview channel.
 - Active Branch: `main`.
 - Distribution: unified canonical releases on `Valeneko-pranmong/Neko-Family-Proxy`; the former updates-repository identity is superseded.
 - Trust Anchors: release key `neko-update-prod-2` and profile authority `neko-update-profile-v520-1`. The signed profile authorizes only the current release key. New private custody material was generated on 2026-10-24; the historical `neko-update-prod-1` private key is unavailable.

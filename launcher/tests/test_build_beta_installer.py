@@ -937,13 +937,12 @@ def test_builder_stages_envelope_and_profile_byte_identical_and_records_hashes(
 def test_validate_installer_channel_requires_preview_for_5_2() -> None:
     module = _load_builder()
 
-    with pytest.raises(module.PrebuildGateError, match="preview-only"):
-        module.validate_installer_channel("5.2.0", "stable")
-    with pytest.raises(module.PrebuildGateError, match="preview-only"):
-        module.validate_installer_channel("v5.2.1", "stable")
+    for version in ("5.2.0", "v5.2.1", "5.2.0a1"):
+        with pytest.raises(module.PrebuildGateError, match="preview-only"):
+            module.validate_installer_channel(version, "stable")
 
-    module.validate_installer_channel("5.2.0", "preview")
-    module.validate_installer_channel("v5.2.1", "preview")
+    for version in ("5.2.0", "v5.2.1", "5.2.0a1"):
+        module.validate_installer_channel(version, "preview")
 
 
 def test_validate_installer_channel_limits_preview_to_5_2() -> None:
@@ -955,6 +954,21 @@ def test_validate_installer_channel_limits_preview_to_5_2() -> None:
 
     module.validate_installer_channel("5.1.6", "stable")
     module.validate_installer_channel("5.3.0", "stable")
+
+
+def test_builder_accepts_alpha_release_version(tmp_path: Path) -> None:
+    module = _load_builder()
+    parse_args, _ = _candidate_api(module)
+    stage = _stage(tmp_path)
+
+    args = parse_args(
+        _argv(
+            stage,
+            release_version="5.2.0a1",
+        )
+    )
+
+    assert args.release_version == "5.2.0a1"
 
 
 def test_builder_rejects_5_2_installer_with_stable_profile(
