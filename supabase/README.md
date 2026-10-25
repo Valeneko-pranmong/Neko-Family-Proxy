@@ -95,10 +95,20 @@ live `launcher_v2.web_sessions` allowlist row and an active identity link; a
 password session from the shared Auth pool cannot claim or obtain a 5.2.0
 permit. Tables remain private and the RPCs are authenticated-only.
 
-The existing `issue_launch_permit` Edge Function, Launcher client, bridge
-exchange, staging accounts, and E2E still use the legacy path. Do not apply
-these migrations to production or treat the next line as active until the
-bridge and staging E2E gates pass.
+`20261025132000_add_launcher_v2_bridge_support.sql` adds service-role-only
+JTI replay, identity lookup/link, and web-session recording helpers for the
+bridge. A reference Edge Function lives in
+[`functions/launcher_bridge/`](functions/launcher_bridge/README.md); it
+validates the custom identity JWT/JWKS, consumes `jti`, creates a no-password
+next-line user, mints a Supabase session, and records the web-session
+allowlist. It runs with gateway JWT verification disabled and must never
+expose the service-role key to a client.
+
+The existing `issue_launch_permit` Edge Function and Launcher client still use
+the legacy path. The reference bridge has not been deployed, staging accounts
+are not provisioned, and the full E2E remains open. Do not apply these
+migrations to production or treat the next line as active until those gates
+pass.
 
 The repository also includes an environment-gated live client test for Auth,
 Coupon replay, and launcher-session takeover. Run the manual

@@ -274,13 +274,21 @@ profile.
 **P1 slice 2 status (2026-10-25):** `20261025131000_create_launcher_v2_claim_permit.sql`
 adds next-line products, licenses, installations, sessions, and permit
 attempts plus the claim/heartbeat/release/permit RPCs. Every RPC requires the
-web-session allowlist and an active identity link. Contract tests and the full
-Launcher suite (2,579 passed / 4 skipped) pass.
+web-session allowlist and an active identity link.
 
-Neither migration has been applied to production. The bridge, staging
-accounts, and E2E remain open. P1 must also validate that the Supabase Auth
+**P1 slice 3 status (2026-10-25):** `20261025132000_add_launcher_v2_bridge_support.sql`
+adds service-role-only JTI replay, identity lookup/link, and web-session
+recording. A reference `supabase/functions/launcher_bridge/` validates the
+identity RS256/JWKS token, consumes `jti`, creates a no-password next-line
+user, mints a Supabase session, and records the allowlist. Node bridge tests
+(14) and SQL/config contract tests (5) pass; the full Launcher suite is
+2,584 passed / 4 skipped.
+
+None of these migrations or the bridge has been applied/deployed. Staging
+accounts and E2E remain open. P1 must also validate that the Supabase Auth
 `session_id` remains stable across refresh, or update the allowlist row during
-refresh.
+refresh, and confirm that the project's email-provider settings permit
+admin-generated magiclink verification.
 
 ### P2 — 5.2.0 Web-Only Client
 

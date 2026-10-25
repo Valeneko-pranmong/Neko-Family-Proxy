@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added the private `launcher_v2` schema foundation and next-line claim, heartbeat, release, permit, and rate-limit RPCs. These require a bridge-written `web_sessions` allowlist and an active identity link; the migrations are not applied to production.
+- Added a reference `supabase/functions/launcher_bridge` that validates the identity RS256/JWKS token, consumes JTI, creates a no-password next-line user, mints a Supabase session, and records the web-session allowlist. It is not deployed.
 
 ### Changed
 - 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.

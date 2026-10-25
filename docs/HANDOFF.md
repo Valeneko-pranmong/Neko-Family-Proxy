@@ -33,7 +33,7 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 1. P0 is complete. P1 slices 1–2 landed: `launcher_v2` profiles, identity links, web-session allowlist, profile routing, entitlement/session tables, claim/heartbeat/release/permit RPCs, and contract tests. Next: the bridge and staging E2E.
 2. Re-check the shared-auth consumer inventory before disabling legacy auth at cutover; add any new consumer.
 3. Implement the installer uninstall/process guard and prove 5.1.6 remains untouched when 5.2.0 is not installed; no side-by-side.
-4. Build the proxy bridge, new-account link/claim flow, no-password user creation, staging bridge/test accounts, and validate Auth `session_id` stability across refresh.
+4. The reference bridge is implemented in `supabase/functions/launcher_bridge/`. Deploy it to staging, provision test accounts/entitlement, run the full E2E, and validate Auth `session_id` stability across refresh.
 5. Remove password/recovery from the 5.2.0 client, keep a clean local start, and add web-only regression tests.
 6. Run full web-auth E2E, build the 5.2.0 preview with the new Core bundle, refresh all hashes, and distribute it through the dedicated preview channel, not latest stable.
 7. Complete Control Room admin web auth and the 5.3.0 no-transfer expiry/coupon-notice plan; then prepare the 5.3.0 stable cutover and legacy schema/auth retirement.

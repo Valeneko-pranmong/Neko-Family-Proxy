@@ -1,6 +1,6 @@
 # Launcher Web Auth — Implementation Status
 
-**Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging; the proxy bridge and identity→proxy mapping are not available yet, so end-to-end login is not complete. **Policy decision (2026-10-25):** 5.2.0 is a new-accounts-only web-auth line using an isolated schema in the same Supabase project; 5.1.6 remains on legacy password/recovery until the 5.3.0 cutover; there is no day/coupon transfer. See the separation plan.
+**Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging. A reference proxy bridge is implemented in `supabase/functions/launcher_bridge/` (identity JWT/JWKS validation, JTI replay, identity link, session mint, web-session allowlist) but is not deployed; identity→proxy mapping and E2E are not complete. **Policy decision (2026-10-25):** 5.2.0 is a new-accounts-only web-auth line using an isolated schema in the same Supabase project; 5.1.6 remains on legacy password/recovery until the 5.3.0 cutover; there is no day/coupon transfer. See the separation plan.
 
 ## Live identity contract
 
@@ -58,8 +58,8 @@ The Launcher maps `401 invalid_token`, `409 token_replayed`, `409 identity_not_l
 
 ## Remaining blockers before E2E
 
-- Bridge staging endpoint is not deployed.
-- `launcher.identity_links` mapping is not created and no test mapping exists.
+- The reference bridge is not deployed to staging.
+- `launcher_v2.identity_links` migrations exist but are not applied and no test mapping exists.
 - Discord test account and proxy test account with entitlement are not available.
 - The one-time link/claim flow is agreed in principle but `/launcher/link` and the bridge-side create/consume operations are not implemented.
 - Product decisions remain for new users without a proxy account, unlink, Discord ban, and legacy password recovery.
