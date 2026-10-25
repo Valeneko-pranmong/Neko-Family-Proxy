@@ -164,10 +164,10 @@ plan the move/retirement after `5.1.6` support is no longer needed.
 | G20 | **CLOSED** | Proxy mode composes with empty Supabase URL/key, `app_factory` lazy-imports `SupabaseGateway` only in the legacy branch, a subprocess test proves the proxy import graph does not load it, and new proxy modules contain no Supabase/bridge imports. |
 | G16, G17, G18 | **OPEN** | Offline/restore product behavior, client protocol/version negotiation, and exact issuer normalization remain open (non-blocking for source/dev slices). |
 
-**New external blocker (not a launcher code gap):** identity has not deployed the
-refresh grant, and Proxy API has not deployed claim/heartbeat/release/permit.
-Live staging login, permit issuance, and Core E2E remain blocked; do not claim
-them until those endpoints exist.
+**New external blocker (not a launcher code gap):** identity slice 1 code exists
+but is not deployed, and Proxy API slice 2A implements claim/heartbeat/release
+without deployment; permit is slice 2B. Live staging login, permit issuance, and
+Core E2E remain blocked; do not claim them until those endpoints exist.
 
 ## Confirmed aligned with v0
 

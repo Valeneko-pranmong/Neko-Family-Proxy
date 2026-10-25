@@ -9,9 +9,9 @@
 This document is the launcher-side contract for the code shipped in P1 slice 2.
 The future `Neko-Contracts` repository remains the authority for the shared
 OpenAPI/JWT/error schema; this file records the exact client behavior already
-implemented here. The Proxy API claim/heartbeat/release/permit routes are
-planned but not deployed in the Proxy API repository; live verification is an
-open item.
+implemented here. The Proxy API repository implements claim/heartbeat/release in
+slice 2A; launch-permit, coupons, and `/public/status` remain slice 2B. Nothing
+is deployed, so live verification remains an open item.
 
 ## 1. Endpoints and exact requests
 
@@ -59,8 +59,9 @@ Success requires `token_type=Bearer`, non-empty access and refresh tokens, and
 `expires_in` in `1..3600`. The returned refresh token replaces the stored token
 before the new access token is used. The access token stays in memory.
 
-The live identity service currently implements only `authorization_code`; this
-request is blocked until identity ships the refresh grant (open item 1).
+Identity slice 1 code implements the `refresh_token` grant and rotation in its
+repo, but it is not deployed; staging still serves the old token. This request
+is blocked until the identity deploy (open item 1).
 
 ### 1.3 Authorization-code login (unchanged identity flow)
 
@@ -385,10 +386,10 @@ release gates allow it.
 
 ## 10. Open questions
 
-1. Identity must ship the `refresh_token` grant/rotation before a real staging
-   login can complete.
-2. Proxy API slice 2A must deploy claim/heartbeat/release/permit before live
-   permit and Core E2E can be verified.
+1. Identity must deploy the `refresh_token` grant/rotation (code exists) before a
+   real staging login can complete.
+2. Proxy API slice 2A must deploy claim/heartbeat/release; slice 2B must add and
+   deploy launch-permit before live permit and Core E2E can be verified.
 3. Freeze the `/public/status` shape and coupon error schema for later slices.
 4. Define refresh-token revocation/logout; sign-out is local-only.
 5. Confirm `Retry-After` and final idempotency replay semantics; the client
