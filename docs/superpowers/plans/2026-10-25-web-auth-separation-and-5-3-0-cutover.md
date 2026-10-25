@@ -352,10 +352,11 @@ uninstall/install passes; 5.1.6 remains usable when 5.2.0 is not installed.
 NekoLauncher/NekoProxyCore/NekoUpdater are running, when an existing install
 has no verifiable DisplayVersion, or when the installed version does not match
 the installer's declared version. A 5.1.6 install is therefore blocked until it
-is uninstalled. Static guard tests and the full Launcher suite pass. ISCC is
-present at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`; the staged Core
-bundle and pinned .NET bootstrapper are not present, so the rebuilt installer
-and full install/uninstall matrix remain open.
+is uninstalled. Static guard tests and the full Launcher suite pass. ISCC and
+the pinned .NET bootstrapper are present; the canonical Core bundle
+(`CoreBundle` + `core-manifest.json`) is absent and the `dotnet` SDK is not
+installed, so the rebuilt installer and full install/uninstall matrix remain
+open.
 
 ### P4 — 5.2.0 Preview
 

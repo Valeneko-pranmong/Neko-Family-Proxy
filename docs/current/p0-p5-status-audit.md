@@ -87,9 +87,9 @@ Present:
 
 Not verified:
 
-- The staged Core bundle, pinned .NET bootstrapper, and installer candidate
-  payloads are not present on this host, so the rebuilt installer does not
-  exist.
+- The canonical Core bundle (`CoreBundle` + `core-manifest.json`) and the
+  staging candidate payload are not present on this host, and the `dotnet` SDK
+  is not installed, so the rebuilt installer does not exist.
 - No install/uninstall matrix on Windows with 5.1.6 and 5.2.0a1 states.
 - No Authenticode signature.
 
@@ -135,8 +135,8 @@ Not verified:
 ## External blockers
 
 1. Staging Supabase + identity bridge/test accounts/entitlement and E2E.
-2. Staged Core/.NET installer payloads and the Windows install/uninstall matrix
-   (ISCC itself is available).
+2. Canonical Core installer bundle/staging payloads and the Windows
+   install/uninstall matrix (ISCC and the .NET bootstrapper are available).
 3. Preview publication/auto-apply and feed E2E.
 4. Owner-approved legacy cutoff and 5.3.0 execution window.
 
@@ -147,8 +147,8 @@ Not verified:
 2. Apply the three `launcher_v2` migrations and deploy
    `launcher_bridge` following `launcher-bridge-staging-runbook.md`.
 3. Run the full P1 E2E and verify `auth.sessions.id` across refresh.
-4. Provide the staged Core/.NET installer payloads, rebuild with the available
-   ISCC, and run the P3 install/uninstall matrix.
+4. Provide the canonical Core installer bundle/staging payloads, rebuild with
+   the available ISCC, and run the P3 install/uninstall matrix.
 5. Build `5.2.0a1` with the preview profile, publish it as a GitHub
    prerelease through the preview path, verify auto-apply and feed isolation,
    then run the alpha test matrix in `docs/current/5.2.0-alpha-test.md`.
