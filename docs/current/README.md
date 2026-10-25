@@ -31,6 +31,15 @@ TEST_SUITE:                     2,607 passed / 4 skipped (launcher, 2026-10-25);
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
+> **2026-10-25 unified-platform overlay:** the new line now targets
+> Neko-NETWORK-ID access/refresh tokens and Neko Proxy API only. P1 slice 1
+> (source/dev `NEKO_PROXY_API_URL`) implements the account-status preflight
+> and refresh-token storage without a bridge or Supabase session. See
+> [5.3.0-proxy-api-launcher.md](5.3.0-proxy-api-launcher.md) and
+> [proxy-api-launcher-contract.md](proxy-api-launcher-contract.md). The
+> bridge/session-minting and web-session allowlist parts of the older plan are
+> superseded for the new line; `5.1.6` remains unchanged.
+>
 > **Current-state rule:** `main` is planning the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. 5.2.0 is a new-accounts-only manual preview using an isolated schema in the same Supabase project, a dedicated preview channel, and a clean-start install: there is no legacy day/coupon transfer, 5.1.6 remains usable until its existing term expires or an approved cutoff, it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer guard is implemented in source (same AppId, running-process and installed-version checks); the rebuilt installer/install matrix, web-only password removal, bridge deployment, channel support, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
 >
 > **Development plan:** [5.2.0 web-auth separation and 5.3.0 cutover](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).

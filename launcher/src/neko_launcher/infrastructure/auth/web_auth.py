@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
@@ -11,7 +11,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -30,6 +30,8 @@ HTTP_TIMEOUT_SECONDS = 10.0
 MAX_RESPONSE_BYTES = 65_536
 MAX_OPAQUE_CODE_CHARS = 4096
 MAX_TOKEN_CHARS = 16_384
+
+T = TypeVar("T")
 
 
 class WebAuthError(LauncherServiceError):
@@ -60,6 +62,15 @@ class BridgeSession:
     refresh_token: str
     expires_in: int
     token_type: str = "Bearer"
+
+
+@dataclass(frozen=True)
+class IdentityTokenSet:
+    access_token: str = field(repr=False)
+    refresh_token: str = field(repr=False)
+    expires_in: int
+    token_type: str = "Bearer"
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -438,6 +449,29 @@ class WebAuthClient:
         self._server: LoopbackCallbackServer | None = None
 
     def authenticate(self) -> BridgeSession:
+        if not self._bridge_exchange_url:
+            raise WebAuthError(
+                "ยังไม่ได้ตั้งค่าบริการเชื่อมบัญชี Discord",
+                code="bridge_not_configured",
+            )
+        return self._authenticate_flow(
+            require_refresh=False,
+            finalize=lambda tokens: self._exchange_bridge(tokens.access_token),
+        )
+
+    def authenticate_identity(self) -> IdentityTokenSet:
+        """Return identity tokens without the legacy bridge/session exchange."""
+        return self._authenticate_flow(
+            require_refresh=True,
+            finalize=lambda tokens: tokens,
+        )
+
+    def _authenticate_flow(
+        self,
+        *,
+        require_refresh: bool,
+        finalize: Callable[[IdentityTokenSet], T],
+    ) -> T:
         if not self._active.acquire(blocking=False):
             raise WebAuthError(
                 "กำลังเข้าสู่ระบบผ่านเว็บอยู่ กรุณารอสักครู่",
@@ -446,11 +480,6 @@ class WebAuthClient:
         server: LoopbackCallbackServer | None = None
         try:
             self._cancelled.clear()
-            if not self._bridge_exchange_url:
-                raise WebAuthError(
-                    "ยังไม่ได้ตั้งค่าบริการเชื่อมบัญชี Discord",
-                    code="bridge_not_configured",
-                )
             pkce = generate_pkce()
             server = LoopbackCallbackServer(
                 expected_state=pkce.state,
@@ -489,14 +518,15 @@ class WebAuthClient:
                     code="callback_missing",
                 )
 
-            identity_token = self._exchange_identity_code(
+            tokens = self._exchange_identity_code_tokens(
                 callback.code,
                 pkce.verifier,
                 server.redirect_uri,
+                require_refresh=require_refresh,
             )
             if self._cancelled.is_set():
                 raise WebAuthError("ยกเลิกการเข้าสู่ระบบแล้ว", code="cancelled")
-            return self._exchange_bridge(identity_token)
+            return finalize(tokens)
         finally:
             self._server = None
             if server is not None:
@@ -509,12 +539,14 @@ class WebAuthClient:
         if server is not None:
             server.cancel()
 
-    def _exchange_identity_code(
+    def _exchange_identity_code_tokens(
         self,
         code: str,
         code_verifier: str,
         redirect_uri: str,
-    ) -> str:
+        *,
+        require_refresh: bool,
+    ) -> IdentityTokenSet:
         response = self._transport.post_json(
             f"{self._identity_base_url}{TOKEN_PATH}",
             {
@@ -546,6 +578,19 @@ class WebAuthClient:
                 "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
                 code="invalid_token_response",
             )
+        refresh_token = document.get("refresh_token")
+        if require_refresh:
+            if (
+                not isinstance(refresh_token, str)
+                or not refresh_token
+                or len(refresh_token) > MAX_TOKEN_CHARS
+            ):
+                raise WebAuthError(
+                    "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
+                    code="invalid_token_response",
+                )
+        else:
+            refresh_token = ""
         expires_in = document.get("expires_in")
         if (
             type(expires_in) is not int
@@ -556,7 +601,19 @@ class WebAuthClient:
                 "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
                 code="invalid_token_response",
             )
-        return access_token
+        scope = document.get("scope", "")
+        if not isinstance(scope, str) or len(scope) > 512:
+            raise WebAuthError(
+                "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
+                code="invalid_token_response",
+            )
+        return IdentityTokenSet(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+            token_type="Bearer",
+            scope=scope,
+        )
 
     def _exchange_bridge(self, identity_token: str) -> BridgeSession:
         response = self._transport.post_json(

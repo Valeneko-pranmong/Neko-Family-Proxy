@@ -39,7 +39,12 @@ scope. Do not implement a guessed default.
 
 ## 2. P1 entry criteria
 
-P1 may start only when all of the following are true:
+**Authorized exception (2026-10-25):** the owner authorized a narrow
+source/dev-only P1 slice 1 for the `NEKO_PROXY_API_URL` account-status
+preflight and refresh-token storage. It is not release-capable, does not close
+this checklist, and does not satisfy the criteria below for any later slice.
+
+P1 (later slices) may start only when all of the following are true:
 
 - Every **BLOCKER** in the gap register is closed or explicitly deferred with a
   named owner and a P1 exclusion.
@@ -179,9 +184,10 @@ production credentials.
 ## 6. P0 gate statement
 
 When the decisions in section 1 are recorded and the P1 entry criteria in
-section 2 are met, P0 is complete. Until then:
+section 2 are met, P0 is complete. The authorized source/dev slice 1 is the
+only exception. Until then:
 
-- do not implement the new Launcher line;
+- do not implement beyond the authorized source/dev slice 1;
 - do not modify `5.1.6`;
 - do not deploy migrations or functions;
 - do not tag, publish, or enable web auth in production;

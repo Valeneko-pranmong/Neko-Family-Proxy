@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,11 @@ from neko_launcher.application.authorized_core import (
     OrchestrationTimeouts,
 )
 from neko_launcher.application.controller import ApplicationController
+from neko_launcher.application.ports import (
+    AccountRecoveryGateway,
+    AuthGateway,
+    EntitlementGateway,
+)
 from neko_launcher.application.production_authorization import (
     CURRENT_PRODUCTION_AUTHORIZATION,
     create_production_proxy_gateway,
@@ -25,9 +31,18 @@ from neko_launcher.domain.models import AuthStatus, EntitlementStatus
 from neko_launcher.infrastructure.account_recovery_gateway import (
     HttpAccountRecoveryGateway,
 )
+from neko_launcher.infrastructure.auth.proxy_api_auth import (
+    ProxyApiAuthGateway,
+    ProxyApiEntitlementStub,
+    ProxyApiTokenStore,
+)
+from neko_launcher.infrastructure.auth.proxy_api_gateway import ProxyApiGateway
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
 from neko_launcher.infrastructure.auth.web_auth import WebAuthClient
 from neko_launcher.infrastructure.config import LauncherConfig
+from neko_launcher.infrastructure.unavailable_gateway import (
+    AuthorizationPendingProxyGateway,
+)
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
 from neko_launcher.infrastructure.core.core_process import WindowsCoreProcessAdapter
@@ -306,6 +321,58 @@ def compose_update_coordinator(
     )
 
 
+@dataclass(frozen=True)
+class AuthDependencies:
+    auth_gateway: AuthGateway
+    entitlement_gateway: EntitlementGateway
+    recovery_gateway: AccountRecoveryGateway | None
+    proxy_api_mode: bool
+    legacy_gateway: SupabaseGateway | None = None
+
+
+def compose_auth_dependencies(
+    config: LauncherConfig,
+    secure_store: Any,
+    credential_provider: Any,
+) -> AuthDependencies:
+    """Compose the source-only Proxy API path or the frozen legacy path."""
+    if config.proxy_api_enabled:
+        client = ProxyApiGateway(
+            proxy_api_base_url=config.proxy_api_url,
+            identity_base_url=config.identity_base_url,
+        )
+        auth_gateway = ProxyApiAuthGateway(
+            client,
+            ProxyApiTokenStore(secure_store),
+        )
+        return AuthDependencies(
+            auth_gateway=auth_gateway,
+            entitlement_gateway=ProxyApiEntitlementStub(),
+            recovery_gateway=None,
+            proxy_api_mode=True,
+            legacy_gateway=None,
+        )
+    gateway = SupabaseGateway(
+        config.supabase_url,
+        config.supabase_publishable_key,
+        secure_store,
+        credential_provider=credential_provider,
+        launcher_schema=config.launcher_schema,
+    )
+    recovery_gateway = (
+        None
+        if config.web_auth_only
+        else HttpAccountRecoveryGateway(config.account_recovery_api_url)
+    )
+    return AuthDependencies(
+        auth_gateway=gateway,
+        entitlement_gateway=gateway,
+        recovery_gateway=recovery_gateway,
+        proxy_api_mode=False,
+        legacy_gateway=gateway,
+    )
+
+
 def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
@@ -376,18 +443,12 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     credential_provider.load_public_identity()
 
     installation = BoundInstallationIdentity(credential_provider)
-    gateway = SupabaseGateway(
-        config.supabase_url,
-        config.supabase_publishable_key,
+    auth_dependencies = compose_auth_dependencies(
+        config,
         secure_store,
-        credential_provider=credential_provider,
-        launcher_schema=config.launcher_schema,
+        credential_provider,
     )
-    recovery_gateway = (
-        None
-        if config.web_auth_only
-        else HttpAccountRecoveryGateway(config.account_recovery_api_url)
-    )
+    recovery_gateway = auth_dependencies.recovery_gateway
     proxy_status_client = PublicProxyStatusClient(config.proxy_status_api_url)
 
     from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
@@ -407,7 +468,13 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
 
     diagnostics_recorder = CoreDiagnosticsRecorder(diagnostics_sink)
 
-    if CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
+    if config.proxy_api_enabled:
+        # P1 slice 1 stops at account preflight; no claim/permit/Core start.
+        proxy_manager = AuthorizationPendingProxyGateway()
+    elif CURRENT_PRODUCTION_AUTHORIZATION.is_ready:
+        gateway = auth_dependencies.legacy_gateway
+        if gateway is None:
+            raise RuntimeError("legacy auth gateway is unavailable")
         core_process = WindowsCoreProcessAdapter(
             config.proxy_core_path,
             diagnostics=diagnostics_recorder,
@@ -468,12 +535,13 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     controller = ApplicationController(event_bus, proxy_manager, game_manager)
     service = LauncherService(
         controller,
-        gateway,
-        gateway,
+        auth_dependencies.auth_gateway,
+        auth_dependencies.entitlement_gateway,
         installation,
         config.product_code,
         recovery_gateway=recovery_gateway,
         web_auth_only=config.web_auth_only,
+        proxy_api_mode=auth_dependencies.proxy_api_mode,
     )
     telemetry_client = NamedPipeCoreTelemetryClient(event_publisher=event_bus)
     # Resolve the project Asset directory relative to application_root().
@@ -492,10 +560,13 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
 
     web_auth_client: WebAuthClient | None = None
     if config.web_auth_enabled:
+        bridge_exchange_url = (
+            "" if config.proxy_api_enabled else config.web_auth_bridge_url
+        )
         try:
             web_auth_client = WebAuthClient(
                 identity_base_url=config.identity_base_url,
-                bridge_exchange_url=config.web_auth_bridge_url,
+                bridge_exchange_url=bridge_exchange_url,
             )
         except Exception:
             web_auth_client = None

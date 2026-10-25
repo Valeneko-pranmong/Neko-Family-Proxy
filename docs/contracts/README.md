@@ -57,6 +57,10 @@ Proxy API only; no bridge session minting; no synthetic proxy auth users; no
 Do not start a new implementation slice from them without reconciling this
 register first.
 
+The current replacement direction and slice-1 implementation contract are in
+`docs/current/5.3.0-proxy-api-launcher.md` and
+`docs/current/proxy-api-launcher-contract.md`.
+
 ## Evidence method
 
 - Read-only review of the Launcher source, tests, `supabase/functions`, and
@@ -70,5 +74,9 @@ register first.
 
 P0 is complete only when every blocker in the conflict register has an owner
 decision and the contract owner has frozen the additions listed in the
-sign-off checklist. Until then, do not implement the new Launcher line and do
-not change `5.1.6`.
+sign-off checklist. The owner has explicitly authorized one limited source/dev
+P1 slice 1 (the `NEKO_PROXY_API_URL` account-status preflight described in
+`docs/current/5.3.0-proxy-api-launcher.md`) while those decisions remain open.
+That exception does not close this register, does not authorize
+claim/permit/coupon work, and does not authorize a build, deployment, or
+publication. All other P1 work waits for sign-off.

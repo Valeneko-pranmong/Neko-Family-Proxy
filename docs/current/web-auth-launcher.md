@@ -2,6 +2,12 @@
 
 **Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging. A reference proxy bridge is implemented in `supabase/functions/launcher_bridge/` (identity JWT/JWKS validation, JTI replay, identity link, session mint, web-session allowlist) but is not deployed; identity→proxy mapping and E2E are not complete. **Policy decision (2026-10-25):** 5.2.0 is a new-accounts-only web-auth line using an isolated schema in the same Supabase project; 5.1.6 remains on legacy password/recovery until the 5.3.0 cutover; there is no day/coupon transfer. See the separation plan.
 
+> **New-line supersession (2026-10-25):** this bridge/session-minting
+> implementation is legacy/5.1.6-only. The new 5.3.0 line uses identity
+> access/refresh tokens and Neko Proxy API only; see
+> [5.3.0-proxy-api-launcher.md](5.3.0-proxy-api-launcher.md) and
+> [proxy-api-launcher-contract.md](proxy-api-launcher-contract.md).
+
 ## Live identity contract
 
 ```text

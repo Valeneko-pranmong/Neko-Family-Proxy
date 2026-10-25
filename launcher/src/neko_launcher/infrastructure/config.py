@@ -6,6 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .defaults import (
     ACCOUNT_RECOVERY_API_URL,
@@ -85,6 +86,8 @@ class LauncherConfig:
     proxy_status_api_url: str
     identity_base_url: str
     web_auth_bridge_url: str
+    proxy_api_url: str
+    proxy_api_enabled: bool
     web_auth_enabled: bool
     web_auth_only: bool
     launcher_schema: str
@@ -116,14 +119,24 @@ class LauncherConfig:
             os.getenv("NEKO_IDENTITY_BASE_URL", "").strip() or IDENTITY_BASE_URL
         )
         web_auth_bridge_url = os.getenv("NEKO_AUTH_BRIDGE_URL", "").strip()
-        # The web path stays hidden until the proxy bridge exists and the owner
-        # explicitly enables it; password login remains the fallback.
-        web_auth_enabled = (
+        proxy_api_url = os.getenv("NEKO_PROXY_API_URL", "").strip()
+        if proxy_api_url:
+            proxy_api_url = _require_https_origin(proxy_api_url, "NEKO_PROXY_API_URL")
+        frozen_build = bool(getattr(sys, "frozen", False))
+        if proxy_api_url and frozen_build:
+            raise ValueError("NEKO_PROXY_API_URL is disabled in frozen builds")
+        if proxy_api_url and web_auth_bridge_url:
+            raise ValueError(
+                "NEKO_PROXY_API_URL and NEKO_AUTH_BRIDGE_URL are mutually exclusive"
+            )
+        proxy_api_enabled = bool(proxy_api_url)
+        legacy_web_auth_enabled = (
             os.getenv("NEKO_WEB_AUTH_ENABLED") == "1"
             and bool(web_auth_bridge_url)
         )
+        # The new source/dev-only path is enabled by NEKO_PROXY_API_URL alone.
+        web_auth_enabled = proxy_api_enabled or legacy_web_auth_enabled
         web_auth_only_override = os.getenv("NEKO_WEB_AUTH_ONLY", "").strip()
-        frozen_build = bool(getattr(sys, "frozen", False))
         if web_auth_only_override == "1":
             if not web_auth_enabled:
                 raise ValueError(
@@ -134,6 +147,10 @@ class LauncherConfig:
             if frozen_build:
                 raise ValueError(
                     "password authentication is disabled in frozen builds"
+                )
+            if proxy_api_enabled:
+                raise ValueError(
+                    "NEKO_PROXY_API_URL requires web-only authentication"
                 )
             web_auth_only = False
         elif frozen_build:
@@ -164,9 +181,26 @@ class LauncherConfig:
             proxy_status_api_url=PROXY_STATUS_API_URL,
             identity_base_url=identity_base_url,
             web_auth_bridge_url=web_auth_bridge_url,
+            proxy_api_url=proxy_api_url,
+            proxy_api_enabled=proxy_api_enabled,
             web_auth_enabled=web_auth_enabled,
             web_auth_only=web_auth_only,
             launcher_schema=launcher_schema,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )
+
+
+def _require_https_origin(value: str, name: str) -> str:
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(f"{name} must be an HTTPS origin")
+    return value.rstrip("/")

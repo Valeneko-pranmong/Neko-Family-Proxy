@@ -7,6 +7,13 @@ production enablement is authorized by this document.
 
 **Owner:** Neko Family Proxy maintainers
 
+> **Superseded for the new line (2026-10-25):** the bridge/session-minting and
+> launcher web-session allowlist portions of this plan are replaced by the
+> identity access/refresh token + Neko Proxy API design in
+> [docs/current/5.3.0-proxy-api-launcher.md](../../current/5.3.0-proxy-api-launcher.md).
+> `5.1.6` remains unchanged; the remainder of this document is historical
+> context for the 5.2.0 line.
+
 **Supersedes:** the in-place 5.1.6 -> 5.2.0 upgrade policy in the 5.2.0 release
 notes and manual-upgrade guide.
 

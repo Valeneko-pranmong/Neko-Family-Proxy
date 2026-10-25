@@ -35,6 +35,7 @@ from .ports import (
     AccountRecoveryGateway,
     AuthGateway,
     EntitlementGateway,
+    IdentityWebAuthenticator,
     InstallationIdentity,
     WebAuthAuthenticator,
 )
@@ -56,6 +57,7 @@ class LauncherService:
         product_code: str,
         recovery_gateway: AccountRecoveryGateway | None = None,
         web_auth_only: bool = False,
+        proxy_api_mode: bool = False,
     ) -> None:
         self._controller = controller
         self._auth_gateway = auth_gateway
@@ -64,6 +66,7 @@ class LauncherService:
         self._product_code = product_code
         self._recovery_gateway = recovery_gateway
         self._web_auth_only = bool(web_auth_only)
+        self._proxy_api_mode = bool(proxy_api_mode)
         self._recovery_session: str | None = None
         self._recovery_bound_password: str | None = None
         self._recovery_generation = 0
@@ -121,7 +124,10 @@ class LauncherService:
         with self._session_lock:
             self._sign_in_locked(username, password)
 
-    def sign_in_with_web(self, authenticator: WebAuthAuthenticator) -> None:
+    def sign_in_with_web(
+        self,
+        authenticator: WebAuthAuthenticator | IdentityWebAuthenticator,
+    ) -> None:
         with self._session_lock:
             self._clear_recovery_session()
             self._controller.dispatch(AuthStarted("discord"))
@@ -154,6 +160,11 @@ class LauncherService:
         self._complete_sign_in(user)
 
     def _complete_sign_in(self, user: AuthenticatedUser) -> None:
+        if self._proxy_api_mode:
+            self._controller.dispatch(
+                AuthSucceeded(user.user_id, user.username)
+            )
+            return
         try:
             claimed = self._claim_session(allow_missing=True)
         except LauncherServiceError:
@@ -296,6 +307,11 @@ class LauncherService:
                 return False
         if user is None:
             return False
+        if self._proxy_api_mode:
+            self._controller.dispatch(
+                AuthSucceeded(user.user_id, user.username)
+            )
+            return True
         try:
             self._claim_session(allow_missing=True)
         except LauncherServiceError as exc:

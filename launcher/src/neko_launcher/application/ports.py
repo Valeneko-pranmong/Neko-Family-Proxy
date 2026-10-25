@@ -55,6 +55,17 @@ class WebAuthAuthenticator(Protocol):
         ...
 
 
+class IdentityWebSession(Protocol):
+    access_token: str
+    refresh_token: str
+    expires_in: int
+
+
+class IdentityWebAuthenticator(Protocol):
+    def authenticate_identity(self) -> IdentityWebSession:
+        ...
+
+
 class AuthGateway(Protocol):
     def sign_up(
         self,
@@ -68,7 +79,7 @@ class AuthGateway(Protocol):
 
     def sign_in_with_web(
         self,
-        authenticator: WebAuthAuthenticator,
+        authenticator: WebAuthAuthenticator | IdentityWebAuthenticator,
     ) -> AuthenticatedUser:
         ...
 

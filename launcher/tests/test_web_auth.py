@@ -13,6 +13,7 @@ import pytest
 
 from neko_launcher.infrastructure.auth.web_auth import (
     BridgeSession,
+    IdentityTokenSet,
     JsonResponse,
     LoopbackCallbackServer,
     UrllibJsonTransport,
@@ -122,6 +123,19 @@ def _bridge_response() -> JsonResponse:
             "access_token": "supabase-access",
             "refresh_token": "supabase-refresh",
             "expires_in": 3600,
+        },
+    )
+
+
+def _identity_token_response() -> JsonResponse:
+    return _response(
+        200,
+        {
+            "token_type": "Bearer",
+            "access_token": "identity-access",
+            "refresh_token": "identity-refresh",
+            "expires_in": 600,
+            "scope": "proxy:launch proxy:read",
         },
     )
 
@@ -311,6 +325,48 @@ def test_client_exchanges_code_and_bridge_session() -> None:
     assert bridge_call["url"] == "https://bridge.test/auth/launcher/exchange"
     assert bridge_call["headers"]["Authorization"] == "Bearer identity-token"
     assert bridge_call["payload"] == {}
+
+
+def test_client_identity_exchange_requires_no_bridge() -> None:
+    transport = FakeTransport([_identity_token_response()])
+    opener, opened = _browser_sends_callback()
+    client = _client(transport, bridge_exchange_url="", browser_opener=opener)
+
+    tokens = client.authenticate_identity()
+
+    assert opened.is_set()
+    assert tokens == IdentityTokenSet(
+        access_token="identity-access",
+        refresh_token="identity-refresh",
+        expires_in=600,
+        scope="proxy:launch proxy:read",
+    )
+    assert len(transport.calls) == 1
+    assert transport.calls[0]["url"] == "https://identity.test/api/launcher/token"
+    assert transport.calls[0]["payload"]["grant_type"] == "authorization_code"
+
+
+def test_identity_exchange_requires_refresh_token() -> None:
+    transport = FakeTransport([_token_response()])
+    opener, _ = _browser_sends_callback()
+    client = _client(transport, bridge_exchange_url="", browser_opener=opener)
+
+    with pytest.raises(WebAuthError) as error:
+        client.authenticate_identity()
+
+    assert error.value.code == "invalid_token_response"
+    assert len(transport.calls) == 1
+
+
+def test_identity_token_set_repr_redacts_tokens() -> None:
+    tokens = IdentityTokenSet(
+        access_token="identity-access-secret",
+        refresh_token="identity-refresh-secret",
+        expires_in=600,
+    )
+
+    assert "identity-access-secret" not in repr(tokens)
+    assert "identity-refresh-secret" not in repr(tokens)
 
 
 def test_client_maps_access_denied_without_exchange() -> None:

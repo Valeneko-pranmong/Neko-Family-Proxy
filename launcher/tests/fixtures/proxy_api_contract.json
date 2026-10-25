@@ -1,0 +1,150 @@
+{
+  "me_active": {
+    "identity_user_id": "11111111-1111-4111-8111-111111111111",
+    "proxy_account_id": "proxy-account-fixture",
+    "status": "active",
+    "display_name": "Neko Tester"
+  },
+  "me_pending": {
+    "identity_user_id": "11111111-1111-4111-8111-111111111111",
+    "proxy_account_id": "proxy-account-fixture",
+    "status": "pending",
+    "display_name": "Neko Tester"
+  },
+  "me_suspended": {
+    "identity_user_id": "11111111-1111-4111-8111-111111111111",
+    "proxy_account_id": "proxy-account-fixture",
+    "status": "suspended",
+    "display_name": "Neko Tester"
+  },
+  "identity_tokens": {
+    "token_type": "Bearer",
+    "access_token": "identity-access-fixture",
+    "refresh_token": "identity-refresh-fixture",
+    "expires_in": 600,
+    "scope": "proxy:launch proxy:read"
+  },
+  "refresh_success": {
+    "token_type": "Bearer",
+    "access_token": "access-token-fixture-2",
+    "refresh_token": "refresh-token-fixture-2",
+    "expires_in": 600,
+    "scope": "proxy:launch proxy:read"
+  },
+  "errors": {
+    "invalid_token": {
+      "status": 401,
+      "body": {
+        "error": {
+          "code": "invalid_token",
+          "message": "invalid access token",
+          "request_id": "req-fixture-invalid-token",
+          "retryable": false
+        }
+      }
+    },
+    "token_expired": {
+      "status": 401,
+      "body": {
+        "error": {
+          "code": "token_expired",
+          "message": "access token expired",
+          "request_id": "req-fixture-token-expired",
+          "retryable": false
+        }
+      }
+    },
+    "insufficient_scope": {
+      "status": 403,
+      "body": {
+        "error": {
+          "code": "insufficient_scope",
+          "message": "scope is insufficient",
+          "request_id": "req-fixture-insufficient-scope",
+          "retryable": false
+        }
+      }
+    },
+    "identity_not_linked": {
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "identity_not_linked",
+          "message": "identity is not linked",
+          "request_id": "req-fixture-identity-not-linked",
+          "retryable": false
+        }
+      }
+    },
+    "account_pending": {
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "account_pending",
+          "message": "account is pending",
+          "request_id": "req-fixture-account-pending",
+          "retryable": false
+        }
+      }
+    },
+    "account_suspended": {
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "account_suspended",
+          "message": "account is suspended",
+          "request_id": "req-fixture-account-suspended",
+          "retryable": false
+        }
+      }
+    },
+    "license_expired": {
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "license_expired",
+          "message": "license is expired",
+          "request_id": "req-fixture-license-expired",
+          "retryable": false
+        }
+      }
+    },
+    "session_conflict": {
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "session_conflict",
+          "message": "session conflict",
+          "request_id": "req-fixture-session-conflict",
+          "retryable": false
+        }
+      }
+    },
+    "rate_limited": {
+      "status": 429,
+      "body": {
+        "error": {
+          "code": "rate_limited",
+          "message": "too many requests",
+          "request_id": "req-fixture-rate-limited",
+          "retryable": true
+        }
+      }
+    },
+    "upstream_unavailable": {
+      "status": 503,
+      "body": {
+        "error": {
+          "code": "upstream_unavailable",
+          "message": "upstream unavailable",
+          "request_id": "req-fixture-upstream-unavailable",
+          "retryable": true
+        }
+      }
+    }
+  },
+  "oauth_invalid_grant": {
+    "error": "invalid_grant",
+    "error_description": "refresh token is no longer valid"
+  }
+}
