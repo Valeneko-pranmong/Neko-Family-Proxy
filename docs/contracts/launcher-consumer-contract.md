@@ -1,7 +1,7 @@
 # Launcher Consumer Contract — Neko Proxy API v1
 
 **Status:** P0 draft for sign-off
-**Applies to:** the new Launcher line (target `5.3.0` cutover line and later)
+**Applies to:** the new Launcher line (unified 5.2.0 release target and later)
 **Does not apply to:** `5.1.6` or any legacy build, which remains on its frozen
 Supabase/password backend
 **Baseline:** NEKO Unified Platform, contract baseline v0 (2026-10-25)

@@ -1,6 +1,6 @@
 # NEKO-AUTH-LITE v1
 
-**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line. 5.1.6 remains public stable on the legacy password/recovery backend. 5.2.0 is a separate web-auth-only preview line; it does not auto-update 5.1.6 and requires a full uninstall before installation. 5.3.0 is the planned legacy cutover.
+**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line. 5.1.6 remains public stable on the legacy password/recovery backend. 5.2.0 is the unified-line release target (preview/manual, clean uninstall-first); it does not auto-update 5.1.6 and requires a full uninstall before installation. `5.3.0` is not a release label; legacy retirement remains a future, separately approved gate.
 
 ```text
 SESSION_POLICY = LATEST_CLAIM_WINS
@@ -120,7 +120,8 @@ LITE CROSS-COMPONENT E2E = PHASE 2.5 TECHNICAL SECURITY GATE PASS
 HOSTED_MIGRATION = 20260821120000_neko_auth_lite_latest_claim_wins
 TEMPORARY_AUTOTEST_USER_ENTITLEMENT = CLEANED UP
 FINAL_ACTIVE_TEST_SESSIONS = 0
-NEXT CUTOVER = v5.3.0 (LEGACY 5.1.6 REMOVAL; PLANNING)
+NEXT_RELEASE = v5.2.0 (UNIFIED PROXY API PREVIEW; CLEAN UNINSTALL-FIRST)
+LEGACY_RETIREMENT = FUTURE, SEPARATELY APPROVED GATE (5.3.0 IS NOT A RELEASE LABEL)
 
 ## Web auth transition (in progress)
 

@@ -198,15 +198,15 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
 
 ## Roadmap
 
-- **v5.2.0 (Separate Web-Auth Preview — planning)**:
+- **v5.2.0 (Unified Proxy API Line — release preparation, blocked)**:
   - Refreshed launcher, auth, dashboard, and Settings presentation.
   - Added atomic committed-generation self-sync, buffered support/debug logging, and one-shot startup update checks.
   - Hardened the installer driver path with pinned hashes and an administrator-only staging directory.
   - Added per-user permit-issuance rate limiting and pinned CI actions to immutable commits.
   - Rotated production release and profile-authority trust anchors.
-  - Target: new-accounts-only web-auth line with no password/recovery fallback, using an isolated schema in the same Supabase project. 5.1.6 remains public stable; 5.2.0 must not auto-update it or be installed over it. Users must uninstall 5.1.6 before a clean 5.2.0 install. 5.2.0 uses a dedicated preview channel; there is no legacy day/coupon transfer, and 5.3.0 legacy shutdown is gate-based on the last active term or an approved cutoff.
-  - The Launcher-side Discord browser flow (loopback + PKCE) is implemented behind a disabled-by-default bridge flag. The bridge deployment, identity mapping, link/claim flow, password removal, rebuilt installer guard verification, and E2E are still pending before 5.2.0 publication.
-  - v5.3.0 is planned as the cutover release that removes the legacy 5.1.6 line.
+  - Target: Neko-NETWORK-ID Discord login and Neko Proxy API only, with no bridge, Supabase session, or proxy database access in the new line. 5.1.6 remains public stable on its legacy backend; 5.2.0 must not auto-update it or be installed over it. Users must uninstall 5.1.6 before a clean 5.2.0 install. 5.2.0 uses the preview channel; there is no legacy day/coupon transfer.
+  - Release status: not a release candidate. Proxy API `/v1/*` is not deployed (HTTP 404), 01c/02d/03c E2E is not passed, no approved `NEKO_PROXY_API_URL` origin exists, and no installer/install matrix evidence exists. See [5.2.0 release notes](docs/current/5.2.0-release-notes.md) and [release runbook](docs/current/5.2.0-release-runbook.md).
+  - `5.3.0` is not a release label; legacy retirement remains a future, separately approved gate.
 - **v5.1.6 (Maintenance Release)**:
   - Added a startup update-check splash window before entering the main program, with automatic apply when no game session is active.
   - Added an in-app update progress dialog and a windowless updater helper.

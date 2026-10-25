@@ -16,7 +16,7 @@ from .proxy_api_gateway import (
 )
 
 REFRESH_TOKEN_STORE_KEY = "proxy-api-refresh-token"
-WEB_ONLY_MESSAGE = "5.3.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
+WEB_ONLY_MESSAGE = "5.2.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
 DEFAULT_DISPLAY_NAME = "Neko Family"
 
 

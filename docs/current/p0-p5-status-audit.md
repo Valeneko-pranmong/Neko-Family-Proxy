@@ -7,6 +7,14 @@ partially complete; the remaining items require staging Supabase/identity
 access, ISCC, and a preview publication/E2E run. The overall cutover is **not
 complete** and no 5.2.0/5.3.0 publication is authorized.
 
+> **2026-10-25 release-target update:** **5.2.0** is the first usable release
+> of the unified line (preview/manual, clean uninstall-first). `5.3.0` is not a
+> release label; the legacy-retirement material below remains future work. The
+> unified Proxy API line is tracked in
+> [5.2.0-release-notes.md](5.2.0-release-notes.md) and
+> [5.2.0-release-runbook.md](5.2.0-release-runbook.md). No 5.2.0 publication is
+> authorized: 01c/02d/03c remain open and the public `/v1/*` routes return 404.
+
 ## Evidence summary
 
 | Phase | Status | Evidence | Missing gate |
@@ -16,7 +24,7 @@ complete** and no 5.2.0/5.3.0 publication is authorized.
 | P2 — client web-only | COMPLETE for product path | `NEKO_LAUNCHER_SCHEMA`, server-metadata permit routing, web-only UI, frozen-build enforcement, recovery removal, service-layer password/recovery rejection; UI/config/service tests | Full 5.2.0 staging E2E/Windows package smoke |
 | P3 — installer separation | PARTIAL | `installer/beta.iss` same-AppId guard blocks running processes and any version other than 5.2.0; clean-start policy; contract tests | ISCC rebuild; install/uninstall matrix with 5.1.6 installed/running and 5.2.0 reinstall |
 | P4 — preview safely | PARTIAL | 5.2.x stable publication block; preview release-list discovery; signed `update-profile-preview-v1.json`; preview manifest/profile/pending-store binding; stable-rollout block; feed-isolation tests | Real preview publication, 5.2.0 auto-apply, and feed-level E2E |
-| P5 — 5.3.0 cutover | PARTIAL | `docs/current/5.3.0-cutover-runbook.md` with gates, no-transfer, archive, shutdown and rollback | Execute after P1/P3/P4 and owner-approved cutoff |
+| P5 — legacy retirement (formerly 5.3.0 cutover) | PARTIAL | `docs/current/5.3.0-cutover-runbook.md` with gates, no-transfer, archive, shutdown and rollback | Execute after P1/P3/P4 and owner-approved cutoff |
 
 ## P0 evidence
 
@@ -66,7 +74,7 @@ Present:
 Not verified:
 
 - Full 5.2.0 E2E and Windows packaged smoke.
-- Source deletion of legacy methods is deferred to the 5.3.0 cleanup.
+- Source deletion of legacy methods is deferred to the legacy-retirement cleanup.
 
 ## P3 evidence and gaps
 
@@ -109,13 +117,13 @@ Not verified:
 - No 5.2.0 auto-apply run from the preview feed.
 - No real feed-level E2E.
 
-## P5 evidence and gaps
+## P5 evidence and gaps (legacy retirement)
 
 Present:
 
 - Runbook covers preconditions, legacy freeze, Control Room/recovery
-  retirement, no-transfer, 5.3.0 publication, archive/restore, shutdown,
-  rollback, and evidence.
+  retirement, no-transfer, unified release publication, archive/restore,
+  shutdown, rollback, and evidence.
 
 Not verified:
 
@@ -127,7 +135,7 @@ Not verified:
 1. Staging Supabase + identity bridge/test accounts/entitlement and E2E.
 2. ISCC and Windows install/uninstall matrix.
 3. Preview publication/auto-apply and feed E2E.
-4. Owner-approved legacy cutoff and 5.3.0 execution window.
+4. Owner-approved legacy cutoff and legacy-retirement execution window.
 
 ## Resume checklist
 
@@ -141,9 +149,9 @@ Not verified:
    preview path, verify auto-apply and feed isolation, then run the final
    5.2.0 E2E.
 6. Obtain owner approval for the legacy cutoff and execute
-   `5.3.0-cutover-runbook.md`; only then publish 5.3.0 stable.
+   `5.3.0-cutover-runbook.md`; only then publish the approved unified release.
 
 ## Publication rule
 
 Do not tag, publish, push release assets, enable web auth in production, or
-claim the 5.3.0 cutover until every missing gate above is evidenced.
+claim the legacy-retirement cutover until every missing gate above is evidenced.

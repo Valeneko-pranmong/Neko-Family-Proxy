@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Completed the local preview path: release-v2 manifests accept `channel=preview`; 5.2.x release/installer builds require a preview profile and preview manifest; the resolver, pending-update store, publisher, hosted verifier, and stable-rollout workflow enforce the same binding so preview and stable updates cannot cross-load or promote.
 
 ### Changed
-- 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.
+- 2026-10-25: **5.2.0 is designated the first usable release of the unified Proxy API line** (preview/manual channel, clean uninstall-first). `5.3.0` is not a release label. Release preparation is blocked on staging deployment/E2E, an approved `NEKO_PROXY_API_URL` origin, installer payload/prerequisites, signing, and the install matrix; see `docs/current/5.2.0-release-notes.md`, `docs/current/5.2.0-release-runbook.md`, and `docs/current/5.2.0-release-preparation-record.md`.
+- 5.2.0 was planned as a separate bridge/web-auth preview line. That plan is superseded by the unified Proxy API line: 5.1.6 remains public stable, 5.2.0 is preview/manual and clean uninstall-first, and `5.3.0` is not a release label.
 - Locked P0 decisions: isolated schema/RPC namespace in the existing Supabase project, dedicated preview channel, same AppId with a hard uninstall/process guard, clean-start uninstall, new-accounts-only 5.2.0, no legacy day/coupon transfer, Control Room admin-only web auth, gate-based sunset, and preview-only auto-updates. The shared-auth consumer audit is recorded; P0 is complete.
 
 ## [5.2.0] - 2026-10-24

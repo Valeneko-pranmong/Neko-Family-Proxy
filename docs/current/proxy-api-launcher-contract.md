@@ -1,10 +1,18 @@
 # Proxy API Launcher Contract — P1 Slice 2
 
+> **Release-label note (2026-10-25):** the first usable release of this line is
+> **5.2.0** (preview/manual, clean uninstall-first). This contract remains
+> source/dev until the release configuration gate passes; frozen builds
+> currently reject `NEKO_PROXY_API_URL`. `5.3.0` is not a release label. See
+> [5.2.0-release-notes.md](5.2.0-release-notes.md) and
+> [5.2.0-release-runbook.md](5.2.0-release-runbook.md).
+
 **Status:** Implemented contract for source/dev slice 2; not a release contract
 **Date:** 2026-10-25
 **Applies to:** `NEKO_PROXY_API_URL` new-line path only
 **Does not apply to:** `5.1.6` and the legacy bridge path
 **Companion:** [5.3.0-proxy-api-launcher.md](5.3.0-proxy-api-launcher.md)
+(design reference; release label superseded)
 
 This document is the launcher-side contract for the code shipped in P1 slice 2.
 The future `Neko-Contracts` repository remains the authority for the shared
@@ -332,7 +340,7 @@ Rollout gate:
 - No production migration or account is used.
 - `5.1.6` remains unchanged and continues to select its legacy path.
 - Coupons, `/public/status`, bridge/Supabase removal, live staging E2E, and the
-  `5.3.0` cutover remain later slices.
+  legacy-retirement gate remain later slices.
 
 ## 7. Supabase-free and bridge-free guard
 
@@ -351,7 +359,7 @@ Rollout gate:
 
 | Artifact | Current state | New-line replacement | Removal gate |
 | --- | --- | --- | --- |
-| `WebAuthClient.authenticate()` and `_exchange_bridge` | Retained legacy | `authenticate_identity()` + `ProxyApiAuthGateway` | After 5.1.6 support ends / 5.3.0 gate |
+| `WebAuthClient.authenticate()` and `_exchange_bridge` | Retained legacy | `authenticate_identity()` + `ProxyApiAuthGateway` | After 5.1.6 support ends / legacy-retirement gate |
 | `SupabaseGateway.sign_in_with_web` | Retained legacy | `ProxyApiAuthGateway.sign_in_with_web` | Same bridge retirement gate |
 | `NEKO_AUTH_BRIDGE_URL` | Retained legacy | `NEKO_PROXY_API_URL` | After 5.1.6 support ends |
 | `launcher_v2.web_sessions` | Retained; never called by new line | Proxy API session ownership | After legacy retirement |

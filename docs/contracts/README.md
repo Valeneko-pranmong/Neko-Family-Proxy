@@ -28,8 +28,9 @@ The new Launcher line:
   `launcher_v2.identity_links`, or any bridge session-minting path.
 
 The frozen `5.1.6` line keeps its existing legacy password/recovery and
-Supabase backend until the `5.3.0` cutover. Its code and tests must remain
-working.
+Supabase backend until the unified line's legacy-retirement gate. Its code and
+tests must remain working. The first usable release of the unified line is
+**5.2.0** (preview, clean uninstall-first); `5.3.0` is not a release label.
 
 ## Artifacts
 
@@ -58,7 +59,8 @@ Do not start a new implementation slice from them without reconciling this
 register first.
 
 The current replacement direction and slice-1 implementation contract are in
-`docs/current/5.3.0-proxy-api-launcher.md` and
+`docs/current/5.3.0-proxy-api-launcher.md` (release label superseded; use
+`docs/current/5.2.0-release-notes.md` for the 5.2.0 target) and
 `docs/current/proxy-api-launcher-contract.md`.
 
 ## Evidence method

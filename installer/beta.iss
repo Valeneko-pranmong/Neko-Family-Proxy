@@ -25,10 +25,10 @@
 
 #define MyAppName "NEKO FAMILY PROXY"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0.1"
+  #define MyAppVersion "5.2.0"
 #endif
 #ifndef MyAppDisplayVersion
-  #define MyAppDisplayVersion "1.0.0-beta.1"
+  #define MyAppDisplayVersion "5.2.0"
 #endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both

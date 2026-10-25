@@ -22,6 +22,13 @@ def test_installer_keeps_single_app_id_and_clean_start_policy() -> None:
     assert "Type: filesandordirs; Name: \"{app}\\ProxyCore\"" in source
 
 
+def test_installer_default_version_is_the_release_version() -> None:
+    source = installer_source()
+
+    assert '#define MyAppVersion "5.2.0"' in source
+    assert '#define MyAppDisplayVersion "5.2.0"' in source
+
+
 def test_installer_blocks_a_different_installed_version() -> None:
     source = installer_source()
 
