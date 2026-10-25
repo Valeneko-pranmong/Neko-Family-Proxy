@@ -2,20 +2,20 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         BLOCKED — 5.2.0 UNIFIED PROXY API RELEASE PREPARATION (NOT A RELEASE CANDIDATE)
+STATUS:                         PREVIEW CANDIDATE BUILT — 5.2.0 INSTALL MATRIX PASSED; INTERACTIVE LOGIN/SIGN-OFF PENDING (NOT A RELEASE CANDIDATE)
 PRODUCT_BASELINE:               5.2.0 (release target); 5.1.6 remains public stable
 CURRENT_RELEASE_TAG:            none; 5.2.0 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
-INSTALLER_CANDIDATE:            NONE (no rebuilt 5.2.0 installer; prior build superseded)
+INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.0 preview, unsigned (SHA-256 eb380f999046c68f079aae3af73b888cfa494e54a5e9d14cb5881ddb5d6781c8)
 ACTIVE_DEV_BRANCH:              feat/proxy-api-launcher-clean-v2
 RELEASE_CHANNEL:                PREVIEW/MANUAL (owner decision 2026-10-25)
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
-UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
+UPDATE_TRUST_ANCHOR:            neko-update-prod-3 / neko-update-profile-v520-2
 RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0 UNIFIED PREVIEW; CLEAN UNINSTALL-FIRST; NO SIDE-BY-SIDE
 UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
-WEB_AUTH_LAUNCHER:              NEW-LINE SOURCE IMPLEMENTED; FROZEN RELEASE CONFIGURATION BLOCKED
-PROXY_API_DEPLOYMENT:           NOT DEPLOYED; /v1/* AND /public/status RETURN HTTP 404
+WEB_AUTH_LAUNCHER:              FROZEN RELEASE CONFIGURATION BUILT; INTERACTIVE DISCORD LOGIN/CORE START PENDING
+PROXY_API_DEPLOYMENT:           STAGING LIVE (https://neko-control-room-staging.vercel.app); /public/status 200, /v1/me 401
 STAGING_E2E:                    NOT PASSED (01c/02d/03c gates open)
 AUTH_FLOW:                      PASS (fail-closed identity refresh + single-session arbitration in source)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision in source)

@@ -67,9 +67,9 @@ Success requires `token_type=Bearer`, non-empty access and refresh tokens, and
 `expires_in` in `1..3600`. The returned refresh token replaces the stored token
 before the new access token is used. The access token stays in memory.
 
-Identity slice 1 code implements the `refresh_token` grant and rotation in its
-repo, but it is not deployed; staging still serves the old token. This request
-is blocked until the identity deploy (open item 1).
+Identity slice 1 implements the `refresh_token` grant and rotation in its
+repo. It is deployed to staging and was exercised by the 2026-10-25 03c E2E;
+the earlier “old token / not deployed” blocker is closed.
 
 ### 1.3 Authorization-code login (unchanged identity flow)
 

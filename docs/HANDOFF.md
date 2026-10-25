@@ -1,12 +1,12 @@
 # Handoff — Neko Family Proxy Launcher
 
-Updated: 2026-10-25 (Neko Family 5.2.0 unified-line release preparation — blocked)
+Updated: 2026-10-26 (5.2.0 preview build and install matrix; interactive login pending)
 
 ## Current state
 - Current release line: `v5.2.0` (source; preview/manual; publication blocked). `v5.1.6` remains the last published stable until 5.2.0 is released.
 - Active branch: `feat/proxy-api-launcher-clean-v2` for release preparation; `main` remains the stable-line integration branch.
 - Distribution Architecture: unified canonical releases on `Valeneko-pranmong/Neko-Family-Proxy`; the historical `Neko-Family-Proxy-Updates` identity is superseded.
-- Trust Anchors: `neko-update-prod-2` and `neko-update-profile-v520-1`; the signed profile authorizes only the current release key. Historical public keys remain for verification. The old private key is unavailable.
+- Trust Anchors: `neko-update-prod-3` and `neko-update-profile-v520-2` (rotated 2026-10-26 because the prior custody material was unavailable); the signed profile authorizes only the current release key. Historical public keys remain for verification.
 - Upgrade Path: 5.1.6 and 5.2.0 are separate lines. 5.1.6 remains public stable on its legacy password/recovery backend. 5.2.0 is the unified-line release target using Neko-NETWORK-ID Discord login and Neko Proxy API only; it cannot auto-update 5.1.6, must not be installed over it, and requires a full 5.1.6 uninstall first (owner decision: clean uninstall-first). Local state is a clean start, there is no side-by-side support, and there is no day/coupon transfer. 5.2.0 uses the preview channel. `5.3.0` is not a release label; legacy retirement remains a future, separately approved gate.
 - Deferred Update Lifecycle (released since 5.1.2, extended through 5.2.0):
   - Background staging (`SoftwareUpdateStageService`) downloads changed components while sessions remain active.
@@ -49,7 +49,7 @@ Core pipe isolation is complete in `ab3b08c`; the bounded permit clock-skew fix 
 - Do not force 5.1.6 users onto 5.2.0; 5.1.6 must remain usable on its legacy backend during 5.2.0 development.
 - Do not publish 5.2.0 as the latest stable or as an auto-update for 5.1.6. Use the approved separate preview/manual path.
 - Do not allow 5.2.0 to be installed over or alongside 5.1.6. The uninstall/process guard is mandatory.
-- Do not publish 5.2.0 until it is rebuilt with the unified-line source, approved Proxy API configuration, the installer guard, E2E, and `neko-update-prod-2` preview trust/profile verification.
+- Do not publish 5.2.0 until it is rebuilt with the unified-line source, approved Proxy API configuration, the installer guard, E2E, and `neko-update-prod-3` preview trust/profile verification.
 - Do not keep password/recovery fallback in 5.2.0; those paths belong only to 5.1.6 until the legacy-retirement gate.
 - Do not bypass the workflow's canonical-repository, immutable release-ID, expected-target, signed-envelope, or asset-verification gates.
 - Do not bypass fail-closed cryptographic verification of the signed manifest or component digests.

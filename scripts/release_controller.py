@@ -1759,10 +1759,10 @@ def process_accepted_commits(
             "channel": "stable",
             "owner": "Valeneko-pranmong",
             "repository": "Neko-Family-Proxy",
-            "profile_authority_key_id": "neko-update-profile-v520-1",
-            "profile_authority_public_key_sha256": "6a0adfacebbdc482c29495ec7cf4d5645a2c5216b2c99004555fd19f926cc5f0",
-            "profile_envelope_sha256": "418b3f442a4a128a1d948ebc7736d1249b3d2a0009fd74a8dd792542834b69e2",
-            "keyset_sha256": "9d9c64a8e3cc02edc5f546e63a809f8b9c5ce915acc010ef2a1e40f41a9994f1",
+            "profile_authority_key_id": "neko-update-profile-v520-2",
+            "profile_authority_public_key_sha256": "41a4c0c7d5023fbbe50d16c9fb6d9d0fd22948393bd45150e79ec5d4728c123a",
+            "profile_envelope_sha256": "380e7df676d14fb16c773e124bdfda68ff83cac8ef7f846eb7ff51d55dd15a1c",
+            "keyset_sha256": "b80183016a2ffb2dca40d1a9f461762be4a933996b3e6ad5b54da1733800ff43",
         }
 
     # Format frozen CoreAuthorityBinding dict

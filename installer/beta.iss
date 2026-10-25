@@ -98,20 +98,27 @@ RestartIfNeededByRun=no
 [InstallDelete]
 ; Clean stale/conflicting updater state slots before baseline enrollment
 Type: filesandordirs; Name: "{app}\state"
+Type: filesandordirs; Name: "{app}\releases"
 Type: files; Name: "{app}\launcher-error.log"
 
 [UninstallDelete]
 ; Clean all runtime state, logs, and metadata upon uninstallation
 Type: filesandordirs; Name: "{app}\state"
+Type: filesandordirs; Name: "{app}\releases"
 Type: filesandordirs; Name: "{app}\baseline"
 Type: filesandordirs; Name: "{app}\trust"
 Type: filesandordirs; Name: "{app}\tools"
 Type: filesandordirs; Name: "{app}\ProxyCore"
 Type: filesandordirs; Name: "{app}\logging"
+Type: filesandordirs; Name: "{localappdata}\NekoFamilyProxy"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\*.json"
 Type: files; Name: "{app}\*.path"
 Type: dirifempty; Name: "{app}"
+
+[UninstallRun]
+; Remove the launcher credential-vault target (refresh token and legacy keys).
+Filename: "{cmd}"; Parameters: "/c cmdkey /delete:""Neko Family Launcher"" >nul 2>&1"; Flags: runhidden; RunOnceId: "ClearLauncherCredentialVault"
 
 [Files]
 ; Approved Launcher EXE (fail-closed hash-gated by build_beta_installer.py).

@@ -107,7 +107,8 @@ Present:
 - Pending-update stores are channel-scoped, so preview and stable pending
   updates cannot be promoted or loaded across channels.
 - Signed `trust/update-profile-preview-v1.json` authorizes only
-  `neko-update-prod-2` and verifies against the profile authority.
+  `neko-update-prod-3` and verifies against profile authority
+  `neko-update-profile-v520-2` (2026-10-26 rotation).
 - Feed-isolation and preview-channel tests pass; full Launcher suite: 2,629
   passed / 4 skipped.
 

@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
+from neko_launcher.updater.trust import (
+    CURRENT_PRODUCTION_RELEASE_KEY_ID,
+    PROFILE_AUTHORITY_PUBLIC_KEYS,
+)
 from neko_launcher.updater.trust_profile import (
     VerifiedUpdateTrustProfile,
     verify_update_trust_profile,
@@ -24,7 +27,7 @@ def test_committed_preview_profile_is_signed_and_preview_only() -> None:
     assert verified.channel == "preview"
     assert verified.owner == "Valeneko-pranmong"
     assert verified.repository == "Neko-Family-Proxy"
-    assert set(verified.release_public_keys) == {"neko-update-prod-2"}
+    assert set(verified.release_public_keys) == {CURRENT_PRODUCTION_RELEASE_KEY_ID}
 
 
 def test_update_channel_profile_from_verified_happy_path():

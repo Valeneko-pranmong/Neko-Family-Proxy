@@ -5,8 +5,8 @@
   "repository": "Neko-Family-Proxy",
   "release_keys": [
     {
-      "key_id": "neko-update-prod-2",
-      "public_key_hex": "d17fed34a28fd1a120caf45cf2d75863a55ef76ecebb2538fa729576772b3bda"
+      "key_id": "neko-update-prod-3",
+      "public_key_hex": "0136d024dff5d2df4d52474fe0c01ac17a223534f0571998413b23e7553bd4d8"
     }
   ]
 }

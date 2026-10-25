@@ -488,6 +488,20 @@ def test_beta_iss_baseline_enrollment_contract() -> None:
     )
 
 
+def test_beta_iss_clean_uninstall_removes_releases_logs_and_credentials() -> None:
+    iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    assert r'{app}\releases' in iss_text.split("[UninstallDelete]")[1].split("[UninstallRun]")[0], (
+        "uninstall must remove updater release generation slots"
+    )
+    assert r'{localappdata}\NekoFamilyProxy' in iss_text, (
+        "uninstall must remove launcher logs outside the app directory"
+    )
+    assert 'cmdkey /delete:""Neko Family Launcher""' in iss_text, (
+        "uninstall must clear the launcher credential-vault target"
+    )
+    assert 'RunOnceId: "ClearLauncherCredentialVault"' in iss_text
+
+
 def test_verify_core_install_no_stale_fixed_authority_in_script() -> None:
     ps1_path = REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1"
     ps1_text = ps1_path.read_text(encoding="utf-8")
