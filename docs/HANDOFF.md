@@ -63,6 +63,7 @@ Core pipe isolation is complete in `ab3b08c`; the bounded permit clock-skew fix 
 - Web auth status/contract: `docs/current/web-auth-launcher.md`
 - 5.2.0 separation / 5.3.0 cutover plan: `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`
 - 5.3.0 execution runbook: `docs/current/5.3.0-cutover-runbook.md`
+- P0–P5 status audit: `docs/current/p0-p5-status-audit.md`
 - Update architecture (historical 5.1.2 design): `docs/superpowers/specs/2026-09-12-neko-family-5-1-2-update-architecture.md`
 - Implementation plan (historical 5.1.2): `docs/superpowers/plans/2026-09-12-neko-family-5-1-2-implementation.md`
 - Controller ledger (historical 5.1.2): `E:\Github\Project manager\current\CONTROLLER_LEDGER_NEKO_FAMILY_5_1_2.md`

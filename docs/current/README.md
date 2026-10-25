@@ -18,6 +18,7 @@ NEXT_CUTOVER:                   v5.3.0 (gate-based legacy shutdown; last active 
 SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
 STAGING_RUNBOOK:                docs/current/launcher-bridge-staging-runbook.md
 CUTOVER_RUNBOOK:                docs/current/5.3.0-cutover-runbook.md
+STATUS_AUDIT:                   docs/current/p0-p5-status-audit.md
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
