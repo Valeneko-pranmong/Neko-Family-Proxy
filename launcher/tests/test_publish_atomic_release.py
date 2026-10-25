@@ -739,8 +739,8 @@ def test_execution_stages_and_returns_immutable_evidence(tmp_path: Path) -> None
         "NekoProxyCore.zip": 14,
     }
     assert evidence.dispatch_command == (
-        f"gh workflow run release.yml --ref {TAG} -f publish_release=true -f release_id=901 "
-        f"-f release_tag={TAG} -f expected_target={TARGET}"
+        f"gh workflow run release.yml --ref {TAG} -f publish_release=true -f rollout_release=false "
+        f"-f release_id=901 -f release_tag={TAG} -f expected_target={TARGET}"
     )
     assert not any(call[:3] == ["gh", "workflow", "run"] for call in executor.calls)
     create = next(call for call in executor.calls if call[:3] == ["gh", "release", "create"])

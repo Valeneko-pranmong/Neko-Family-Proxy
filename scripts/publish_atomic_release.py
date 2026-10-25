@@ -685,7 +685,7 @@ def stage_draft_release(
         raise StageDraftReleaseError("Draft readback does not contain each required asset exactly once")
     dispatch = (
         f"gh workflow run release.yml --ref {tag} -f publish_release=true "
-        f"-f release_id={release_id} -f release_tag={tag} -f expected_target={target_commit}"
+        f"-f rollout_release=false -f release_id={release_id} -f release_tag={tag} -f expected_target={target_commit}"
     )
     evidence = StagedDraftEvidence(release_id, tag, target_commit, bindings, dispatch)
     print(json.dumps({"release_id": release_id, "tag_name": tag, "target_commit": target_commit, "assets": bindings}, sort_keys=True))
