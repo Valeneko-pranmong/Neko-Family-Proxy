@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,6 +85,7 @@ class LauncherConfig:
     identity_base_url: str
     web_auth_bridge_url: str
     web_auth_enabled: bool
+    launcher_schema: str
     debug_mode: bool
     debug_log_dir: Path
 
@@ -118,6 +120,11 @@ class LauncherConfig:
             os.getenv("NEKO_WEB_AUTH_ENABLED") == "1"
             and bool(web_auth_bridge_url)
         )
+        launcher_schema = (
+            os.getenv("NEKO_LAUNCHER_SCHEMA", "").strip() or "launcher"
+        )
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", launcher_schema):
+            raise ValueError("NEKO_LAUNCHER_SCHEMA is invalid")
         # Single debug mode authority: NEKO_DEBUG_MODE=1
         debug_mode = os.getenv("NEKO_DEBUG_MODE") == "1"
         debug_log_dir = local_app_data / "NekoFamilyProxy" / "logs"
@@ -134,6 +141,7 @@ class LauncherConfig:
             identity_base_url=identity_base_url,
             web_auth_bridge_url=web_auth_bridge_url,
             web_auth_enabled=web_auth_enabled,
+            launcher_schema=launcher_schema,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )

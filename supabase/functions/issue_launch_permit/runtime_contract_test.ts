@@ -34,6 +34,15 @@ test("service contract revision is runtime-config-v1", async () => {
   assert.match(service, /runtime-config-v1/);
 });
 
+test("runtime selects the next-line schema only from server app_metadata", async () => {
+  const index = await source("index.ts");
+  assert.match(index, /app_metadata\?\.auth_line === "next"/);
+  assert.match(index, /launcherSchema: "launcher" \| "launcher_v2"/);
+  assert.match(index, /\.schema\(launcherSchema\)/);
+  assert.match(index, /sessionTable = launcherSchema === "launcher_v2"/);
+  assert.doesNotMatch(index, /x-launcher-schema/i);
+});
+
 test("Supabase gateway JWT verification remains enabled", async () => {
   const config = await readFile(
     new URL("../../config.toml", import.meta.url),

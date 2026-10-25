@@ -2,6 +2,7 @@ export type AuthenticatedCaller = {
   userId: string;
   authSessionId: string;
   accessToken?: string;
+  launcherSchema?: "launcher" | "launcher_v2";
 };
 
 export type AuthorizationState = {

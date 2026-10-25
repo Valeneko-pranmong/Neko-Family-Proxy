@@ -218,12 +218,14 @@ class FakeTableClient:
 def build_gateway(
     client: FakeRpcClient,
     store: MemoryStore | None = None,
+    **kwargs: object,
 ) -> SupabaseGateway:
     return SupabaseGateway(
         "https://project.supabase.co",
         "sb_publishable_test",
         store or MemoryStore(),
         client=client,  # type: ignore[arg-type]
+        **kwargs,
     )
 
 
@@ -274,6 +276,35 @@ def test_claim_session_calls_launcher_schema_and_parses_entitlement() -> None:
     assert result.installation_id == "installation-id"
     assert result.license_id == "license-id"
     assert result.entitlement.valid_until is not None
+
+
+def test_claim_session_can_use_the_next_line_schema() -> None:
+    client = FakeRpcClient(
+        {
+            "session_id": "session-id",
+            "installation_id": "installation-id",
+            "license_id": "license-id",
+            "product_code": "neko-family-proxy",
+            "valid_until": "2026-08-24T12:00:00+00:00",
+            "max_devices": 1,
+        }
+    )
+
+    result = build_gateway(
+        client,
+        launcher_schema="launcher_v2",
+    ).claim_session("neko-family-proxy", "a" * 64, "Test PC")
+
+    assert client.schema_name == "launcher_v2"
+    assert client.function_name == "claim_session"
+    assert result.session_id == "session-id"
+
+
+def test_gateway_rejects_invalid_schema_name() -> None:
+    client = FakeRpcClient(None)
+
+    with pytest.raises(ValueError, match="schema"):
+        build_gateway(client, launcher_schema="launcher-v2")
 
 
 @pytest.mark.parametrize("code", ["device_limit_reached", "installation_revoked"])

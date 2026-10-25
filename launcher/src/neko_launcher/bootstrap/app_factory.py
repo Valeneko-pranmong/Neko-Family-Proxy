@@ -379,6 +379,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config.supabase_publishable_key,
         secure_store,
         credential_provider=credential_provider,
+        launcher_schema=config.launcher_schema,
     )
     recovery_gateway = HttpAccountRecoveryGateway(config.account_recovery_api_url)
     proxy_status_client = PublicProxyStatusClient(config.proxy_status_api_url)

@@ -94,8 +94,9 @@ async function consumePermitAttempt(
     throw new Error("authenticated context unavailable");
   }
   const client = clientFor(caller.accessToken);
+  const launcherSchema = caller.launcherSchema ?? "launcher";
   const { data, error } = await client
-    .schema("launcher")
+    .schema(launcherSchema)
     .rpc("consume_permit_attempt", {
       p_limit: PERMIT_RATE_LIMIT,
       p_window_seconds: PERMIT_RATE_WINDOW_SECONDS,
@@ -116,7 +117,16 @@ const handler = createIssueLaunchPermitHandler({
     if (error || !data.user || data.user.is_anonymous === true) return null;
     const authSessionId = decodeValidatedSessionId(accessToken);
     if (!authSessionId) return null;
-    return { userId: data.user.id, authSessionId, accessToken };
+    const launcherSchema: "launcher" | "launcher_v2" =
+      data.user.app_metadata?.auth_line === "next"
+        ? "launcher_v2"
+        : "launcher";
+    return {
+      userId: data.user.id,
+      authSessionId,
+      accessToken,
+      launcherSchema,
+    };
   },
   consumePermitAttempt,
   authorize: async (
@@ -126,6 +136,7 @@ const handler = createIssueLaunchPermitHandler({
     const accessToken = caller.accessToken;
     if (!accessToken) throw new Error("authenticated context unavailable");
     const client = clientFor(accessToken);
+    const launcherSchema = caller.launcherSchema ?? "launcher";
     const challenge = typeof body.challenge === "string" ? body.challenge : "";
 
     if (body.contractRevision === "runtime-config-v1" && body.machineProof) {
@@ -172,7 +183,7 @@ const handler = createIssueLaunchPermitHandler({
     }
 
     const { data, error } = await client
-      .schema("launcher")
+      .schema(launcherSchema)
       .rpc("authorize_launch_permit", {
         p_challenge: challenge,
       });
@@ -204,8 +215,15 @@ const handler = createIssueLaunchPermitHandler({
     if (body.contractRevision === "runtime-config-v1" && body.machineProof) {
       const proof = body.machineProof as Record<string, unknown>;
       const providedHash = typeof proof.keyHash === "string" ? proof.keyHash : "";
+      const sessionSchema = launcherSchema === "launcher_v2"
+        ? "launcher_v2"
+        : "public";
+      const sessionTable = launcherSchema === "launcher_v2"
+        ? "sessions"
+        : "launcher_sessions";
       const { data: sessionData, error: sessionError } = await client
-        .from("launcher_sessions")
+        .schema(sessionSchema)
+        .from(sessionTable)
         .select("installation_id, installations(installation_key_hash)")
         .eq("id", state.launcherSessionId)
         .single();

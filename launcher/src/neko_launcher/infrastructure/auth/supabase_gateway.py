@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -50,20 +51,24 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         secure_store: SecureStore,
         client: Client | None = None,
         credential_provider: Any = None,
+        launcher_schema: str = "launcher",
     ) -> None:
         if not url or not publishable_key:
             raise ValueError("Supabase URL and publishable key are required")
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", launcher_schema):
+            raise ValueError("Launcher schema is invalid")
         hostname = urlparse(url).hostname
         if not hostname:
             raise ValueError("Supabase URL must include a hostname")
         self._auth_identifier_domain = hostname.lower()
         self._auth_storage = SupabaseAuthStorage(secure_store)
         self._credential_provider = credential_provider
+        self._launcher_schema = launcher_schema
         self._client = client or create_client(
             url,
             publishable_key,
             options=ClientOptions(
-                schema="launcher",
+                schema=self._launcher_schema,
                 storage=self._auth_storage,
                 auto_refresh_token=True,
                 persist_session=True,
@@ -195,7 +200,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     ) -> SessionClaim:
         try:
             response = (
-                self._client.schema("launcher")
+                self._client.schema(self._launcher_schema)
                 .rpc(
                     "claim_session",
                     {
@@ -317,7 +322,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     def release_session(self, session_id: str) -> bool:
         try:
             response = (
-                self._client.schema("launcher")
+                self._client.schema(self._launcher_schema)
                 .rpc("release_session", {"p_session_id": session_id})
                 .execute()
             )
@@ -365,7 +370,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
     def redeem_coupon(self, code: str) -> CouponRedemption:
         try:
             response = (
-                self._client.schema("launcher").rpc("redeem_coupon", {"p_code": code}).execute()
+                self._client.schema(self._launcher_schema).rpc("redeem_coupon", {"p_code": code}).execute()
             )
         except Exception as exc:
             raise self._rpc_error(exc, "ใช้คูปองไม่สำเร็จ")

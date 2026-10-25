@@ -34,9 +34,10 @@ Redirect:  http://127.0.0.1:53682/auth/callback (exact)
 NEKO_WEB_AUTH_ENABLED=1
 NEKO_AUTH_BRIDGE_URL=https://<proxy-backend>/auth/launcher/exchange
 NEKO_IDENTITY_BASE_URL=https://neko-network-id.vercel.app   # optional override
+NEKO_LAUNCHER_SCHEMA=launcher_v2                              # next-line 5.2.0 build
 ```
 
-The web button is hidden unless both the enable flag and a non-empty bridge URL are present. There is no remote identity-side feature flag; the Launcher flag is the rollout gate.
+The web button is hidden unless both the enable flag and a non-empty bridge URL are present. There is no remote identity-side feature flag; the Launcher flag is the rollout gate. The Launcher defaults to the legacy `launcher` schema when `NEKO_LAUNCHER_SCHEMA` is unset. The permit Edge Function selects `launcher_v2` only from the server-controlled `app_metadata.auth_line = next`, not from a client header or query parameter.
 
 ## Bridge contract required from the proxy backend
 

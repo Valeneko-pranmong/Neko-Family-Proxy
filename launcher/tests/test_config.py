@@ -70,6 +70,27 @@ def test_runtime_ignores_bundled_neko_proxy_core(
     )
 
 
+def test_next_line_schema_can_be_selected(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NEKO_LAUNCHER_SCHEMA", "launcher_v2")  # type: ignore[attr-defined]
+
+    config = LauncherConfig.from_environment(tmp_path)
+
+    assert config.launcher_schema == "launcher_v2"
+
+
+def test_invalid_next_line_schema_is_rejected(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NEKO_LAUNCHER_SCHEMA", "launcher-v2")  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="NEKO_LAUNCHER_SCHEMA"):
+        LauncherConfig.from_environment(tmp_path)
+
+
 def test_debug_mode_can_be_enabled_by_environment(
     monkeypatch: object,
     tmp_path: Path,

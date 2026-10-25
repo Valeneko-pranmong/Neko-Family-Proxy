@@ -104,9 +104,11 @@ next-line user, mints a Supabase session, and records the web-session
 allowlist. It runs with gateway JWT verification disabled and must never
 expose the service-role key to a client.
 
-The existing `issue_launch_permit` Edge Function and Launcher client still use
-the legacy path. The reference bridge has not been deployed, staging accounts
-are not provisioned, and the full E2E remains open. Do not apply these
+`issue_launch_permit` now selects `launcher_v2` only when the authenticated
+user's server-controlled `app_metadata.auth_line` is `next`; legacy users stay
+on `launcher`. The Launcher selects its claim/session schema through
+`NEKO_LAUNCHER_SCHEMA` (default `launcher`). The reference bridge has not been
+deployed, staging accounts are not provisioned, and the full E2E remains open. Do not apply these
 migrations to production or treat the next line as active until those gates
 pass.
 

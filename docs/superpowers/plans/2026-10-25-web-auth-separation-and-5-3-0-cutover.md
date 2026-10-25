@@ -307,6 +307,14 @@ Deliverables:
 Exit gate: 5.2.0 cannot authenticate with a password; 5.1.6 behavior is
 unchanged.
 
+**P2 slice 1 status (2026-10-25):** the Launcher can select
+`NEKO_LAUNCHER_SCHEMA=launcher_v2` while defaulting to legacy `launcher`; the
+claims/RPC adapter uses that schema. The `issue_launch_permit` Edge Function
+auto-selects `launcher_v2` only from server-controlled
+`app_metadata.auth_line = next` and keeps legacy callers on `launcher`. Default
+behavior is unchanged. Password/recovery removal and web-only UI are still
+open.
+
 ### P3 — Installer Separation
 
 Deliverables:
