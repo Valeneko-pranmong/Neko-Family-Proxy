@@ -16,10 +16,13 @@ notes and manual-upgrade guide.
    existing password/recovery backend throughout 5.2.0 development.
 2. **5.2.0 is a separate line with 100% web authentication.** It does not
    expose password login, registration, password change, or recovery-code
-   login. Its auth authority and local session state are separate from 5.1.6.
+   login. It uses an isolated schema/RPC namespace and local session state.
+   The Supabase `auth.users` pool remains shared with 5.1.6 until the 5.3.0
+   cutover, so a web-session allowlist is mandatory.
 3. **5.1.6 and 5.2.0 must not coexist on one installation.** A user who wants
    5.2.0 must uninstall 5.1.6 first. There is no in-place upgrade and no
-   side-by-side installation.
+   side-by-side installation. Local state is a clean start; auth, trust, and
+   session state are never carried across lines.
 4. **5.2.0 must not be delivered as an automatic update to 5.1.6.** It is a
    manually installed preview line until the 5.3.0 cutover.
 5. **5.3.0 is the cutover release.** It ships only after web auth, control web
@@ -28,12 +31,20 @@ notes and manual-upgrade guide.
    and retires the legacy backend.
 6. **No publication gate may be skipped.** A 5.2.0 or 5.3.0 artifact is not
    releasable while any acceptance gate in this plan is open.
+7. **5.2.0 uses a dedicated preview channel in the same repository.** 5.1.6
+   remains the latest stable feed; 5.2.0 may auto-update only within its
+   dedicated preview channel.
+8. **5.2.0 is for new accounts only.** Legacy 5.1.6 accounts stay on 5.1.6
+   until the 5.3.0 migration/cutover gate; 5.2.0 does not migrate them.
 
 ### สรุปการตัดสินใจ (Thai)
 
 - 5.1.6 ยังเป็น stable และใช้งานได้ตามปกติระหว่างพัฒนา 5.2.0
 - 5.2.0 เป็นอีกสายงานหนึ่ง ใช้ web auth 100% ไม่มี password/recovery ในโปรแกรม
-- ผู้ใช้ 5.1.6 ที่ต้องการใช้ 5.2.0 ต้อง uninstall 5.1.6 ก่อน
+- 5.2.0 ใช้ schema/RPC namespace แยกใน Supabase project เดิม; `auth.users` ยังใช้ร่วมกับ 5.1.6 จนถึง 5.3.0 จึงต้องมี web-session allowlist
+- ผู้ใช้ 5.1.6 ที่ต้องการใช้ 5.2.0 ต้อง uninstall 5.1.6 ก่อน; ข้อมูลในเครื่องเริ่มใหม่ และไม่มีการโอน auth/trust/session ข้าม line
+- 5.2.0 preview เปิดเฉพาะบัญชีใหม่; บัญชี 5.1.6 เดิมจะ migrate ตอน 5.3.0
+- 5.2.0 ใช้ dedicated preview channel ใน repo เดิม; 5.1.6 ยังเป็น stable/latest
 - ห้ามติดตั้ง 5.2.0 ทับ 5.1.6 และห้ามให้ทั้งสองเวอร์ชันอยู่ด้วยกัน
 - 5.2.0 ต้องไม่ถูกส่งเป็น auto-update ให้ 5.1.6
 - 5.3.0 คือรุ่นตัดระบบเก่า หลัง web auth + control web auth + mapping/link + E2E เสร็จครบ
@@ -68,16 +79,19 @@ The following must be distinct between the legacy line and the next line:
 | Boundary | Legacy 5.1.6 | Next 5.2.0 / 5.3.0 |
 | --- | --- | --- |
 | Login | Password + recovery code | Discord web auth only |
-| Auth authority | Existing Supabase project | Separate new auth authority |
-| Local session | Existing credential-store key | New project/session key; legacy token cleared |
-| Backend entitlement | Existing legacy database | New database or explicitly isolated auth/data authority |
+| Auth authority | Existing Supabase project, `launcher` schema | Isolated schema/RPC namespace in the same project; shared `auth.users` until 5.3.0 |
+| Local session | Existing credential-store key | New session key; legacy auth/trust/state cleared; clean start |
+| Backend entitlement | Existing legacy schema | Isolated next-line schema; no table mixing |
 | Installer | Existing 5.1.6 install | Clean install after 5.1.6 uninstall |
-| Update feed | Remains latest 5.1.6 stable | Preview/manual until 5.3.0 stable |
+| Update feed | Latest 5.1.6 stable | Dedicated preview channel; 5.1.6 remains latest stable |
 | Trust profile | Existing 5.1.6 profile | 5.2.0+ profile and release key |
 
-The final database topology remains a P0 decision. A new Supabase project is
-the recommended default because it isolates the auth pool, password provider,
-JWT secret, and project limits from the legacy line.
+**D1 constraint:** the selected isolated-schema topology is **not full auth
+isolation**. `auth.users`, the password provider, the JWT secret, and project
+limits remain shared. Mitigations are mandatory: create 5.2.0 users without a
+password, enforce the web-session allowlist in the new schema RPCs, audit all
+other consumers of the shared auth pool, and disable/revoke legacy password
+auth only at the 5.3.0 gate.
 
 ## 4. Workstreams
 
@@ -86,13 +100,16 @@ JWT secret, and project limits from the legacy line.
 - Deploy the proxy bridge and validate the identity JWT through JWKS.
 - Implement replay protection (`jti`), audience/issuer/expiry validation, and
   rate limits.
-- Add `launcher.identity_links` with unique mappings in both directions,
-  audit events, RLS, and administrative support operations.
-- Implement the one-time link/claim flow for existing proxy accounts.
-- Mint a real Supabase session in the new auth authority and adopt it through
-  `SupabaseGateway.sign_in_with_web()`.
+- Create the isolated next-line schema/RPC namespace (for example
+  `launcher_v2`) with its own tables, grants, and RLS.
+- Add `identity_links` with unique mappings in both directions, audit events,
+  RLS, and administrative support operations.
+- Implement account creation/link for new 5.2.0 accounts. Legacy 5.1.6
+  link/claim is a 5.3.0 gate, not a 5.2.0 feature.
+- Create new 5.2.0 users without a password; mint the Supabase session in the
+  same project and adopt it through `SupabaseGateway.sign_in_with_web()`.
 - Record the minted `auth_session_id` in a web-session allowlist and enforce it
-  in `claim_session` and `authorize_launch_permit`.
+  in the next-line `claim_session` and `authorize_launch_permit` RPCs.
 - Complete control web auth before 5.3.0.
 - Decide and implement new-user, unlink, Discord-ban, lost-Discord, and legacy
   recovery policies.
@@ -106,12 +123,13 @@ JWT secret, and project limits from the legacy line.
 - Remove the password fallback from 5.2.0. The flag may remain only for
   development/test builds; a release build must not be able to re-enable the
   password path.
-- Provide a safe account-migration entry point without restoring password
-  login as a normal product path.
-- Clear legacy Supabase tokens from Windows Credential Manager when the new
-  line starts; use a new storage key for the new project.
+- Do not add a legacy-account migration entry point to 5.2.0. Show clear
+  guidance that existing 5.1.6 users stay on 5.1.6 until the 5.3.0 migration
+  gate.
+- Use a new local session key. Because the install is a clean start, do not
+  attempt to import legacy auth/trust/session state.
 - Update screenshots, release notes, support docs, and error messages to the
-  web-only flow.
+  web-only, new-account flow.
 
 ### C. Installer and Version Isolation
 
@@ -122,9 +140,9 @@ JWT secret, and project limits from the legacy line.
 - Add a running-process guard for `NekoLauncher.exe` and `NekoProxyCore.exe`.
 - Ensure the 5.2.0 installer cannot replace a 5.1.6 trust profile or state in
   place.
-- Define whether uninstall preserves any non-auth local preferences (game
-  path, window preferences) or intentionally starts clean. Do not claim
-  preservation unless it is implemented and tested.
+- Apply the locked clean-start policy: uninstall removes local app state,
+  trust, logs, session data, and preferences. Do not claim settings
+  preservation; only the shared netfilter2 driver remains.
 - Preserve the shared netfilter2 driver as the current uninstaller does.
 - Keep the new trust profile and release-key enrollment in the 5.2.0 payload.
 - Test on clean Windows, 5.1.6-installed Windows, 5.1.6-running, 5.2.0
@@ -133,36 +151,38 @@ JWT secret, and project limits from the legacy line.
 ### D. Release and Distribution Isolation
 
 - Keep 5.1.6 as the latest stable release while 5.2.0 is under development.
-- Publish 5.2.0 as a manual preview/prerelease or from a separated next-line
-  channel. Do not make it the latest stable in the repository that 5.1.6
-  checks.
-- Confirm whether the current release tooling needs an explicit `next`/
-  prerelease path; the current normal resolver rejects prereleases and requires
-  a `stable` manifest.
-- Ensure 5.1.6 update checks continue to see a valid 5.1.6 stable release.
+- Use a dedicated preview channel in the same repository for 5.2.0. Do not
+  make 5.2.0 the latest stable in the feed that 5.1.6 checks.
+- Extend the updater/release tooling for the preview channel; the current
+  normal resolver rejects prereleases and requires a `stable` manifest.
+- Allow 5.2.0 to auto-update only within the preview channel. Ensure 5.1.6
+  update checks continue to see a valid 5.1.6 stable release.
 - Make 5.3.0 the first stable release of the web-only line after all gates
   pass.
 - Keep the 5.1.6 published assets immutable.
 
 ### E. Legacy Data and Entitlement Migration
 
-- Decide whether 5.2.0 supports existing 5.1.6 accounts or only new accounts.
-- If existing users are supported, define a one-time migration proving
-  ownership of the legacy account, transferring remaining days, and revoking
-  the old license/session atomically.
+- 5.2.0 is locked to new accounts only; existing 5.1.6 accounts remain on the
+  legacy line until the 5.3.0 migration gate.
+- For 5.3.0, define a one-time migration proving ownership of the legacy
+  account, transferring remaining days, and revoking the old license/session
+  atomically.
 - Prevent double entitlement: a user must not run a legacy license and a new
   license concurrently for the same entitlement.
 - Migrate or honor unused coupons; define payment/audit/tax retention.
-- Build a migration ledger in the new backend: old user hash, new user ID,
-  migrated-at time, remaining days, method, and operator where applicable.
-- Do not copy legacy passwords into the new auth authority.
+- Build a migration ledger: old user hash, new user ID, migrated-at time,
+  remaining days, method, and operator where applicable.
+- Do not copy legacy passwords into the new auth path.
 
 ### F. Verification, Security, and Operations
 
 - End-to-end: loopback -> identity -> bridge -> new Supabase session ->
-  `claim_session` -> `issue_launch_permit` -> Core start.
+  next-line `claim_session` -> `issue_launch_permit` -> Core start.
 - Regression: 5.1.6 login/proxy/heartbeat/permit behavior is unchanged while
   it remains supported.
+- Shared-auth-pool audit: enumerate all other consumers of `auth.users` and
+  the password provider; confirm 5.3.0 shutdown cannot break an unowned app.
 - Security: no tokens/passwords in logs, JWKS and replay tests, session
   allowlist negative tests, RLS tests, secret scans, `pip-audit`, `bandit`.
 - Installer: clean install, uninstall, reinstall, interrupted install, and
@@ -178,25 +198,33 @@ JWT secret, and project limits from the legacy line.
 
 Deliverables:
 
-- Confirm new database/project topology.
-- Confirm 5.2.0 distribution channel and repository.
-- Confirm installer AppId/install-path and uninstall data policy.
-- Confirm whether 5.2.0 accepts legacy accounts and how migration works.
-- Confirm control web auth scope and acceptance criteria.
-- Update release notes, manual-upgrade guide, handoff, and this plan.
+- Locked: isolated schema/RPC namespace in the existing Supabase project.
+- Locked: dedicated preview channel in the same repository; 5.1.6 remains
+  latest stable.
+- Locked: clean-start uninstall data policy; auth/trust/session/preferences do
+  not cross lines.
+- Locked: 5.2.0 is new-accounts-only; legacy migration is a 5.3.0 gate.
+- Locked: 5.2.0 may auto-update only within the preview channel.
+- Pending: installer AppId/install-path strategy.
+- Pending: 5.3.0 legacy migration, coupon, and entitlement policy.
+- Pending: control web auth scope and acceptance evidence.
+- Pending: 5.1.6 support window and 5.3.0 sunset date.
+- Audit all consumers of the shared `auth.users`/password provider.
+- Update release notes, separation guide, handoff, and this plan.
 
 Exit gate: all P0 decisions recorded; no conflicting "install over 5.1.6"
-instructions remain in current docs.
+instructions remain in current docs; shared-auth-pool consumers are known.
 
 ### P1 — Identity and Bridge Foundation
 
 Deliverables:
 
-- New auth authority and database migrations.
+- Isolated next-line schema/RPC migrations in the existing Supabase project.
 - Bridge, JWKS validation, `jti` replay protection, identity links, and
-  one-time link/claim flow.
-- Web-session allowlist enforcement in claim/permit.
-- Staging Discord account, proxy account with entitlement, and test mapping.
+  new-account link/claim flow.
+- No-password creation for 5.2.0 users; web-session allowlist enforcement in
+  the next-line claim/permit RPCs.
+- Staging Discord account, new 5.2.0 account with entitlement, and test mapping.
 - E2E evidence.
 
 Exit gate: full web-auth E2E passes in staging; no production flag enabled yet.
@@ -206,7 +234,10 @@ Exit gate: full web-auth E2E passes in staging; no production flag enabled yet.
 Deliverables:
 
 - Password/recovery code and UI removed from the 5.2.0 product path.
-- Web-only auth view, migration entry point, new local session storage key.
+- Web-only auth view for new accounts, clean-start local state, new session
+  storage key.
+- Clear guidance for existing 5.1.6 users to stay on 5.1.6 until the 5.3.0
+  migration gate.
 - Updated tests and UI evidence.
 - 5.1.6 regression suite remains green.
 
@@ -229,25 +260,28 @@ uninstall/install passes; 5.1.6 remains usable when 5.2.0 is not installed.
 
 Deliverables:
 
-- Manual/prerelease distribution, not latest stable.
+- Dedicated preview-channel distribution in the same repository, with
+  5.1.6 remaining latest stable.
+- Preview-channel auto-update for 5.2.0 only.
 - Bridge and control web auth monitoring.
-- Migration rehearsal with representative accounts and coupons.
+- New-account onboarding rehearsal; separately rehearse the 5.3.0 legacy
+  migration/coupon path.
 - Support runbook and rollback plan.
 
 Exit gate: no 5.1.6 breakage in the release feed; preview users can complete
-web-only login and launch; migration path is proven or explicitly deferred to
-5.3.0 with customer communication.
+web-only login and launch; 5.3.0 migration/coupon path is proven or explicitly
+deferred with customer communication.
 
 ### P5 — 5.3.0 Cutover
 
 Deliverables:
 
 - Web auth and control web auth complete.
-- Existing-user migration/entitlement decision executed.
+- Existing-user migration/entitlement decision executed for 5.1.6 accounts.
 - 5.3.0 stable release.
-- Legacy 5.1.6 login/recovery disabled and old backend frozen/archived.
-- Legacy project or legacy auth surface decommissioned per the approved
-  retention policy.
+- Legacy 5.1.6 login/recovery disabled and legacy schema/RPCs frozen/archived.
+- Legacy auth surface decommissioned per the approved retention policy, with
+  the shared-auth-pool consumer audit complete.
 - 5.1.6 sunset communication and support plan.
 
 Exit gate: all acceptance criteria below pass; owner approves publication and
@@ -286,12 +320,13 @@ legacy shutdown.
 
 | Risk | Mitigation |
 | --- | --- |
-| 5.1.6 sees 5.2.0 as an update and shows an error | Keep 5.1.6 as latest stable; use prerelease/next channel; test old-client feed behavior |
+| 5.1.6 sees 5.2.0 as an update and shows an error | Keep 5.1.6 as latest stable; use the dedicated preview channel; test old-client feed behavior |
 | Installer silently replaces 5.1.6 | Hard pre-install guard and running-process guard; test with 5.1.6 installed |
-| Uninstall deletes local settings/account state | Approve data policy; back up/migrate non-auth settings; document clean-start behavior |
-| Existing users lose remaining days | Define migration/entitlement transfer before 5.2.0 or defer to 5.3.0 with explicit communication |
-| Double entitlement across two lines | Revoke old license/session at migration; audit both backends |
-| Legacy password remains an attack path | Keep it only on the isolated legacy line; remove it from 5.2.0/5.3.0; revoke at cutover |
+| Uninstall deletes local settings/account state | Clean-start policy is approved; document data loss and do not claim settings preservation |
+| Existing users lose remaining days | 5.2.0 is new accounts only; 5.1.6 stays usable until the 5.3.0 migration gate |
+| Double entitlement across two lines | Revoke old license/session at 5.3.0 migration; audit both schemas |
+| Shared `auth.users`/password pool across lines | No-password 5.2.0 users; web-session allowlist in next-line RPCs; audit all auth consumers; disable legacy password auth only at cutover |
+| Legacy password remains an attack path | Keep it only on the legacy schema/RPC path; remove it from 5.2.0/5.3.0; revoke at cutover |
 | Bridge/identity outage blocks all login | Monitoring, retry/error UX, support runbook, rollback plan |
 | Missing staging bridge/test accounts | P1 release gate; no 5.2.0 preview without E2E |
 | Authenticode still unavailable | Keep hash verification and signing dependency visible; do not claim signed status |
@@ -302,21 +337,25 @@ legacy shutdown.
 Status values: `PENDING` (owner decision needed), `LOCKED` (approved and
 recorded), `DEFERRED` (explicitly moved to a later gate).
 
-| ID | Decision | Recommended default | Status |
+| ID | Decision | Locked value / recommended default | Status |
 | --- | --- | --- | --- |
-| D1 | Auth/data authority topology | New Supabase project dedicated to the next line | PENDING |
-| D2 | 5.2.0 distribution | Same repository with a dedicated preview channel; 5.1.6 remains the stable/latest feed | PENDING |
-| D3 | Installer identity and data policy | Same AppId with a hard uninstall/process guard; preserve non-auth preferences through an external migration backup, never preserve auth state | PENDING |
-| D4 | Existing 5.1.6 accounts in 5.2.0 | Support a one-time account link plus remaining-day transfer before the preview | PENDING |
-| D5 | Migration, coupon, and entitlement policy | Transfer remaining days atomically, revoke the old license/session, honor unused coupons, and record a migration ledger | PENDING |
+| D1 | Auth/data authority topology | Isolated schema/RPC namespace in the existing Supabase project; shared `auth.users` accepted with a mandatory web-session allowlist | LOCKED |
+| D2 | 5.2.0 distribution | Dedicated preview channel in the same repository; 5.1.6 remains latest stable | LOCKED |
+| D3a | Installer AppId/install-path strategy | Same AppId with a hard uninstall/process guard | PENDING |
+| D3b | Uninstall data policy | Clean start; auth/trust/session/preferences do not cross lines; only the shared driver remains | LOCKED |
+| D4 | Existing 5.1.6 accounts in 5.2.0 | New accounts only; no legacy migration in 5.2.0 | LOCKED |
+| D5 | 5.3.0 migration, coupon, and entitlement policy | Transfer remaining days atomically, revoke the old license/session, honor unused coupons, and record a migration ledger | PENDING |
 | D6 | Control web auth scope | Define owner, surfaces, and acceptance evidence before 5.3.0 | PENDING |
 | D7 | 5.1.6 support window and 5.3.0 sunset | No fixed date until gates pass; announce 30/14/7/1 days before shutdown | PENDING |
-| D8 | 5.2.0 automatic updates | Preview channel may update 5.2.0 only; 5.1.6 remains on the stable channel | PENDING |
+| D8 | 5.2.0 automatic updates | Preview channel may update 5.2.0 only; 5.1.6 remains on the stable channel | LOCKED |
+
+D1 guardrail: the shared-auth-pool consumer audit is a P0 exit item; the
+isolated schema is not full auth isolation.
 
 ## 9. Out of Scope
 
-- Implementing the bridge, new database, or installer guard in this planning
-  change.
+- Implementing the bridge, isolated next-line schema, or installer guard in
+  this planning change.
 - Publishing, tagging, or pushing a release.
 - Enabling web auth in production.
 - Modifying published 5.1.6 assets.

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.
+- Locked P0 decisions: isolated schema/RPC namespace in the existing Supabase project, dedicated preview channel, clean-start uninstall, new-accounts-only 5.2.0, and preview-only auto-updates. Remaining P0 decisions are installer AppId/path, 5.3.0 migration/coupon policy, control web auth scope, and the sunset date.
 
 ## [5.2.0] - 2026-10-24
 

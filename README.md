@@ -139,7 +139,7 @@ Starting in `v5.0.0`, the proxy ecosystem utilizes **Runtime Config v1**:
 3. Open Neko Family Proxy and complete the login method for that line.
 4. Start PSO2 through the normal launcher flow.
 
-> **Line separation (v5.2.0 preview):** v5.1.6 remains the public stable line and stays usable on its legacy password/recovery backend. v5.2.0 is a separate web-auth-only preview: it cannot auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. Migration of legacy accounts and remaining days will be announced separately. See [docs/current/5.2.0-manual-upgrade.md](docs/current/5.2.0-manual-upgrade.md) and the [separation/cutover plan](docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
+> **Line separation (v5.2.0 preview):** v5.1.6 remains the public stable line and stays usable on its legacy password/recovery backend. v5.2.0 is a new-accounts-only web-auth preview using an isolated schema in the same Supabase project. It cannot auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. Local state is a clean start; legacy account and remaining-day migration is a 5.3.0 gate. 5.2.0 uses a dedicated preview channel. See [docs/current/5.2.0-manual-upgrade.md](docs/current/5.2.0-manual-upgrade.md) and the [separation/cutover plan](docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
 
 *Note: Users do not need to enter or manage proxy credentials. Configuration and routing are handled automatically during session authorization.*
 
@@ -204,7 +204,7 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
   - Hardened the installer driver path with pinned hashes and an administrator-only staging directory.
   - Added per-user permit-issuance rate limiting and pinned CI actions to immutable commits.
   - Rotated production release and profile-authority trust anchors.
-  - Target: web-auth-only line with no password/recovery fallback. 5.1.6 remains public stable; 5.2.0 must not auto-update it or be installed over it. Users must uninstall 5.1.6 before a clean 5.2.0 install.
+  - Target: new-accounts-only web-auth line with no password/recovery fallback, using an isolated schema in the same Supabase project. 5.1.6 remains public stable; 5.2.0 must not auto-update it or be installed over it. Users must uninstall 5.1.6 before a clean 5.2.0 install. 5.2.0 uses a dedicated preview channel; legacy migration is a 5.3.0 gate.
   - The Launcher-side Discord browser flow (loopback + PKCE) is implemented behind a disabled-by-default bridge flag. The proxy bridge, identity mapping, link/claim flow, password removal, installer guard, and E2E are still pending before 5.2.0 publication.
   - v5.3.0 is planned as the cutover release that removes the legacy 5.1.6 line.
 - **v5.1.6 (Maintenance Release)**:

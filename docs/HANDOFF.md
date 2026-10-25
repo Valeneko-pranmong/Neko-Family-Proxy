@@ -7,7 +7,7 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 - Active branch: `main`.
 - Distribution Architecture: unified canonical releases on `Valeneko-pranmong/Neko-Family-Proxy`; the historical `Neko-Family-Proxy-Updates` identity is superseded.
 - Trust Anchors: `neko-update-prod-2` and `neko-update-profile-v520-1`; the signed profile authorizes only the current release key. Historical public keys remain for verification. The old private key is unavailable.
-- Upgrade Path: 5.1.6 and 5.2.0 are separate lines. 5.1.6 remains public stable on its legacy password/recovery backend. 5.2.0 is a separate web-auth preview; it cannot auto-update 5.1.6, must not be installed over it, and requires a full 5.1.6 uninstall first. There is no side-by-side support. 5.3.0 is the planned legacy cutover.
+- Upgrade Path: 5.1.6 and 5.2.0 are separate lines. 5.1.6 remains public stable on its legacy password/recovery backend. 5.2.0 is a new-accounts-only web-auth preview using an isolated schema in the same Supabase project; it cannot auto-update 5.1.6, must not be installed over it, and requires a full 5.1.6 uninstall first. Local state is a clean start. There is no side-by-side support. 5.2.0 uses a dedicated preview channel; 5.3.0 is the planned legacy migration/cutover.
 - Deferred Update Lifecycle (released since 5.1.2, extended through 5.2.0):
   - Background staging (`SoftwareUpdateStageService`) downloads changed components while sessions remain active.
   - Durable pending store (`PendingUpdateStore`) verifies signed envelopes and reconstructs trust offline.
@@ -30,16 +30,17 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 - The manual release workflow is unlocked for any tag that matches the checked-out launcher version, subject to its existing immutable-ID, SHA, asset, and hosted-verification gates.
 
 ## Next work
-1. Lock the P0 decisions in the separation plan: new database/auth authority, 5.2.0 distribution channel/repository, installer AppId/data policy, legacy-account migration policy, and control web auth scope.
-2. Implement the installer uninstall/process guard and prove 5.1.6 remains untouched when 5.2.0 is not installed; no side-by-side.
-3. Build the proxy bridge + `launcher.identity_links` mapping, one-time link/claim flow, web-session allowlist, and staging bridge/test accounts.
-4. Remove password/recovery from the 5.2.0 client, clear legacy local tokens, and add web-only regression tests.
-5. Run full web-auth E2E, build the 5.2.0 preview with the new Core bundle, refresh all hashes, and distribute it as a manual/prerelease line, not latest stable.
-6. Complete control web auth and the legacy-account/entitlement migration plan; then prepare the 5.3.0 stable cutover and legacy backend retirement.
-7. Back up the new release and profile-authority custody keys to an external, access-controlled medium.
-8. Apply the permit rate-limit migration and deploy the matching Edge Function.
-9. Procure a Windows Authenticode certificate and wire signing into the release pipeline.
-10. Review hosted Supabase/Edge deployment docs against production state.
+1. Lock the remaining P0 decisions: installer AppId/install-path strategy, 5.3.0 legacy migration/coupon/entitlement policy, control web auth scope, and the 5.1.6/5.3.0 sunset date. D1 isolated schema, D2 dedicated preview channel, D3b clean start, and D4 new-accounts-only are locked.
+2. Audit every consumer of the shared `auth.users`/password provider before disabling legacy auth at cutover.
+3. Implement the installer uninstall/process guard and prove 5.1.6 remains untouched when 5.2.0 is not installed; no side-by-side.
+4. Build the proxy bridge + isolated-schema identity links, new-account link/claim flow, web-session allowlist, no-password user creation, and staging bridge/test accounts.
+5. Remove password/recovery from the 5.2.0 client, keep a clean local start, and add web-only regression tests.
+6. Run full web-auth E2E, build the 5.2.0 preview with the new Core bundle, refresh all hashes, and distribute it through the dedicated preview channel, not latest stable.
+7. Complete control web auth and the 5.3.0 legacy-account/entitlement migration plan; then prepare the 5.3.0 stable cutover and legacy schema/auth retirement.
+8. Back up the new release and profile-authority custody keys to an external, access-controlled medium.
+9. Apply the permit rate-limit migration and deploy the matching Edge Function.
+10. Procure a Windows Authenticode certificate and wire signing into the release pipeline.
+11. Review hosted Supabase/Edge deployment docs against production state.
 
 Core pipe isolation is complete in `ab3b08c`; the bounded permit clock-skew fix is in Core `54365f2` (local commit, not pushed). A future image-path check remains optional defense in depth.
 

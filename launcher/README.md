@@ -10,9 +10,11 @@ auth only.
 > remains fail-closed unless Auth, the current Launcher session, ACTIVE
 > entitlement, exact PSO2 identity, fresh challenge/permit, and typed RUNNING
 > checks all succeed. 5.1.6 remains public stable and usable on its legacy
-> backend. 5.2.0 is a separate web-auth preview; it must not auto-update 5.1.6,
-> must not be installed over or alongside it, and requires a full 5.1.6
-> uninstall first. 5.3.0 is the planned cutover.
+> backend. 5.2.0 is a new-accounts-only web-auth preview using an isolated
+> schema in the same Supabase project; it must not auto-update 5.1.6, must not
+> be installed over or alongside it, and requires a full 5.1.6 uninstall first.
+> Local state is a clean start, and 5.2.0 uses a dedicated preview channel.
+> 5.3.0 is the planned legacy migration/cutover.
 
 ## Web auth (development)
 
@@ -25,9 +27,10 @@ NEKO_AUTH_BRIDGE_URL=https://<proxy-backend>/auth/launcher/exchange
 
 The exact loopback callback is `http://127.0.0.1:53682/auth/callback`. The
 5.1.6 legacy line keeps password login; the 5.2.0 release target removes
-password/recovery and uses web auth only. Do not enable or publish 5.2.0 until
-the proxy bridge, identity mapping, link/claim flow, installer separation, and
-staging E2E are complete. See `../docs/current/web-auth-launcher.md` and the
+password/recovery and uses web auth only for new accounts. Do not enable or
+publish 5.2.0 until the proxy bridge, isolated-schema identity mapping,
+new-account link/claim flow, installer separation, and staging E2E are
+complete. See `../docs/current/web-auth-launcher.md` and the
 [separation plan](../docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
 
 ## Set up
