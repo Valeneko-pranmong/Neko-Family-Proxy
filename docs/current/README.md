@@ -26,7 +26,7 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,605 passed / 4 skipped (launcher, 2026-10-25); 73 passed / 1 environment-limited (root)
+TEST_SUITE:                     2,607 passed / 4 skipped (launcher, 2026-10-25); 73 passed / 1 environment-limited (root)
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
@@ -110,7 +110,7 @@ The released line preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Launcher suite**: 2,605 passed, 4 skipped, 7 deselected on 2026-10-25. This includes the new `launcher_v2` auth-foundation, claim/permit, bridge-support, staging-runbook, installer-separation, next-line schema-selection, web-only/frozen-build, and preview-channel tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
+- **Launcher suite**: 2,607 passed, 4 skipped, 7 deselected on 2026-10-25. This includes the new `launcher_v2` auth-foundation, claim/permit, bridge-support, staging-runbook, installer-separation, next-line schema-selection, web-only/frozen-build, preview-channel, and feed-isolation tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
 - **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
 - **Ruff and CI**: `ruff check src tests` PASS; CI enforces the same gate in `.github/workflows/ci.yml`.
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.

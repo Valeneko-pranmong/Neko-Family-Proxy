@@ -381,6 +381,9 @@ unchanged.
 newest prerelease from the repository release list, while the stable profile
 continues using `/releases/latest`. The resolver permits a prerelease only for
 a profile whose channel is `preview`; 5.1.6 stable discovery is unchanged.
+Feed-isolation tests now prove the stable profile never reads the preview list
+and rejects a prerelease, while the preview profile never reads the stable
+latest endpoint.
 
 **P4 slice 3 status (2026-10-25):** `trust/update-profile-preview-spec.json`
 and the signed `trust/update-profile-preview-v1.json` are committed. The

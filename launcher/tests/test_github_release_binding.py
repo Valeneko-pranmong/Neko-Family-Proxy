@@ -44,6 +44,7 @@ class FakeReleaseGateway:
         self.calls = 0
         self.requested_tag: str | None = None
         self.latest_requested: bool = False
+        self.preview_requested: bool = False
 
     def fetch(self) -> GitHubRelease | None:
         self.calls += 1
@@ -54,6 +55,7 @@ class FakeReleaseGateway:
 
     def fetch_preview(self) -> GitHubRelease | None:
         self.calls += 1
+        self.preview_requested = True
         if self.error:
             raise self.error
         return self.release
@@ -540,6 +542,77 @@ def test_resolver_preview_accepts_a_prerelease_release(tmp_path: Path) -> None:
 
     assert resolved is not None
     assert resolved.authenticated_release.channel == "stable"
+    assert env_data["gateway"].preview_requested is True
+    assert env_data["gateway"].latest_requested is False
+
+
+def test_resolver_stable_profile_never_reads_the_preview_list(tmp_path: Path) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    binding_mod = _get_binding_module()
+    env_data = _setup_resolver_environment(tmp_path)
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    resolver = binding_mod.GitHubReleaseResolver(
+        release_gateway=env_data["gateway"],
+        manifest_downloader=env_data["downloader"],
+        channel_profile=UpdateChannelProfile.from_verified(verified),
+        install_root=env_data["install_root"],
+        updater_protocol=1,
+    )
+
+    resolved = resolver.resolve()
+
+    assert resolved is not None
+    assert env_data["gateway"].latest_requested is True
+    assert env_data["gateway"].preview_requested is False
+
+
+def test_resolver_stable_profile_rejects_a_prerelease_release(tmp_path: Path) -> None:
+    from neko_launcher.infrastructure.update_channel_profile import UpdateChannelProfile
+    from neko_launcher.updater.trust_profile import VerifiedUpdateTrustProfile
+
+    binding_mod = _get_binding_module()
+    env_data = _setup_resolver_environment(tmp_path)
+    original = env_data["github_release"]
+    env_data["gateway"].release = GitHubRelease(
+        id=original.id,
+        tag_name=original.tag_name,
+        draft=False,
+        prerelease=True,
+        assets=original.assets,
+    )
+    verified = VerifiedUpdateTrustProfile(
+        profile_id="production",
+        channel="stable",
+        owner="Valeneko-pranmong",
+        repository="Neko-Family-Proxy",
+        release_public_keys={TEST_KEY_ID: TEST_PUBLIC_KEY},
+        keyset_sha256="1" * 64,
+        profile_envelope_sha256="2" * 64,
+        profile_authority_key_id="auth",
+        profile_authority_public_key_sha256="3" * 64,
+    )
+    resolver = binding_mod.GitHubReleaseResolver(
+        release_gateway=env_data["gateway"],
+        manifest_downloader=env_data["downloader"],
+        channel_profile=UpdateChannelProfile.from_verified(verified),
+        install_root=env_data["install_root"],
+        updater_protocol=1,
+    )
+
+    with pytest.raises(binding_mod.GitHubReleaseResolverError):
+        resolver.resolve()
 
 
 def test_corrupt_updater_requires_reinstall(tmp_path: Path) -> None:
