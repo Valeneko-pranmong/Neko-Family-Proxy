@@ -68,6 +68,27 @@ authorization; clients receive HTTP 429 `RateLimited` when the per-user
 client grants. Apply this migration before deploying the matching Edge
 Function.
 
+## 5.2.0 next-line auth foundation (P1, not yet active)
+
+`20261025130000_create_launcher_v2_auth_foundation.sql` adds the
+`launcher_v2` schema used by the separate 5.2.0 web-auth line. It creates
+next-line profiles, identity links, a bridge-written `web_sessions` allowlist,
+and audit events. The existing `auth.users` pool remains shared until the
+5.3.0 cutover; this migration does not enable password removal or the
+5.2.0 client.
+
+The bridge must create new 5.2.0 users with
+`app_metadata.auth_line = "next"` and no password. The shared
+`launcher.handle_new_user()` trigger routes those users to
+`launcher_v2.profiles`; users without that server-controlled marker keep the
+legacy `public.profiles` path.
+
+The schema is added to the Data API schema list for `service_role` access, but
+no `authenticated` or `anon` grants are created in this slice. Claim/permit
+RPCs, the bridge exchange, and staging E2E are still pending. Do not apply this
+migration to production or treat the next line as active until those gates
+pass.
+
 The repository also includes an environment-gated live client test for Auth,
 Coupon replay, and launcher-session takeover. Run the manual
 `Supabase integration` GitHub Actions workflow with disposable credentials.

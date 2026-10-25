@@ -265,6 +265,16 @@ Deliverables:
 
 Exit gate: full web-auth E2E passes in staging; no production flag enabled yet.
 
+**P1 slice 1 status (2026-10-25):** `20261025130000_create_launcher_v2_auth_foundation.sql`
+creates the private `launcher_v2` profiles, identity links, web-session
+allowlist, and audit foundation; the shared Auth trigger routes only
+server-controlled `app_metadata.auth_line = next` users to the next-line
+profile. Contract tests and the full Launcher suite (2,574 passed / 4 skipped)
+pass. The migration has not been applied to production; claim/permit RPCs, the
+bridge, staging accounts, and E2E remain open. P1 must also validate that the
+Supabase Auth `session_id` remains stable across refresh, or update the
+allowlist row during refresh.
+
 ### P2 — 5.2.0 Web-Only Client
 
 Deliverables:
@@ -369,6 +379,7 @@ legacy shutdown.
 | Double entitlement across two lines | Revoke old license/session at the approved 5.3.0 shutdown point; audit both schemas |
 | Shared `auth.users`/password pool across lines | No-password 5.2.0 users; web-session allowlist in next-line RPCs; audit all auth consumers; disable legacy password auth only at cutover |
 | Legacy password remains an attack path | Keep it only on the legacy schema/RPC path; remove it from 5.2.0/5.3.0; revoke at cutover |
+| Auth `session_id` changes on token refresh | Validate in P1 E2E; if it changes, the bridge must rotate the allowlist row before the client refreshes |
 | Bridge/identity outage blocks all login | Monitoring, retry/error UX, support runbook, rollback plan |
 | Missing staging bridge/test accounts | P1 release gate; no 5.2.0 preview without E2E |
 | Authenticode still unavailable | Keep hash verification and signing dependency visible; do not claim signed status |
