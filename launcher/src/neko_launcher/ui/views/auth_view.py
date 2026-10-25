@@ -30,6 +30,8 @@ class AuthView:
         on_login: Callable[[], None],
         on_register: Callable[[], None],
         on_forgot_password: Callable[[], None],
+        on_web_login: Callable[[], None] | None = None,
+        web_auth_enabled: bool = False,
     ) -> None:
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
         intro = card(self.frame)
@@ -103,6 +105,24 @@ class AuthView:
 
         # Login Frame
         login = self._login_frame
+        self._web_login_button: ctk.CTkButton | None = None
+        if web_auth_enabled and on_web_login is not None:
+            self._web_login_button = primary_button(
+                login,
+                "เข้าสู่ระบบด้วย Discord",
+                on_web_login,
+            )
+            self._web_login_button.configure(
+                height=32,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            )
+            self._web_login_button.pack(fill="x", padx=14, pady=(6, 0))
+            ctk.CTkLabel(
+                login,
+                text="หรือใช้บัญชีเดิม",
+                text_color=PALETTE.text_muted,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            ).pack(pady=(2, 0))
         field_label(login, "ชื่อผู้ใช้")
         self._login_email_entry = icon_entry(
             login, "👤", "กรอกชื่อผู้ใช้", login_email_var
@@ -196,6 +216,8 @@ class AuthView:
         state = "normal" if not signed_in and not authenticating else "disabled"
         self._login_button.configure(state=state)
         self._register_button.configure(state=state)
+        if self._web_login_button is not None:
+            self._web_login_button.configure(state=state)
 
     def _switch_tab(self, tab: str) -> None:
         if tab == "login":

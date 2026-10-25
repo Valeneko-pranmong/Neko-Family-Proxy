@@ -45,6 +45,16 @@ class GameGateway(Protocol):
         ...
 
 
+class WebAuthSession(Protocol):
+    access_token: str
+    refresh_token: str
+
+
+class WebAuthAuthenticator(Protocol):
+    def authenticate(self) -> WebAuthSession:
+        ...
+
+
 class AuthGateway(Protocol):
     def sign_up(
         self,
@@ -54,6 +64,12 @@ class AuthGateway(Protocol):
         ...
 
     def sign_in(self, username: str, password: str) -> AuthenticatedUser:
+        ...
+
+    def sign_in_with_web(
+        self,
+        authenticator: WebAuthAuthenticator,
+    ) -> AuthenticatedUser:
         ...
 
     def change_password(self, password: str) -> None:

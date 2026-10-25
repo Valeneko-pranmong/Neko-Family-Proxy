@@ -11,6 +11,19 @@ launcher-session control, and user-selected PSO2 Tweaker configuration.
 > rotates the update trust anchors, so existing 5.1.6 users must install the
 > 5.2.0 setup manually.
 
+## Web auth (development)
+
+The Discord browser flow is hidden by default and requires both variables:
+
+```text
+NEKO_WEB_AUTH_ENABLED=1
+NEKO_AUTH_BRIDGE_URL=https://<proxy-backend>/auth/launcher/exchange
+```
+
+The exact loopback callback is `http://127.0.0.1:53682/auth/callback`. Password
+login remains the fallback until the proxy bridge, identity mapping, and
+staging E2E are complete. See `../docs/current/web-auth-launcher.md`.
+
 ## Set up
 
 ```powershell

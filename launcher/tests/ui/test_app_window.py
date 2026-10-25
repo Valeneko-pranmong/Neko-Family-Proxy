@@ -154,6 +154,7 @@ class FakeService:
         self.proxy_stopped = 0
         self.tweaker_started = 0
         self.sign_ins: list[tuple[str, str]] = []
+        self.web_sign_ins: list[Any] = []
         self.sign_outs = 0
 
     def stop_proxy(self) -> None:
@@ -161,6 +162,9 @@ class FakeService:
 
     def sign_in(self, username: str, password: str) -> None:
         self.sign_ins.append((username, password))
+
+    def sign_in_with_web(self, authenticator: Any) -> None:
+        self.web_sign_ins.append(authenticator)
 
     def launch_tweaker(self, executable: str) -> None:
         self.started.append(executable)
@@ -525,6 +529,26 @@ def test_login_clears_password_before_background_authentication_finishes() -> No
     assert len(submitted) == 1
     submitted[0][0]()
     assert window._service.sign_ins == [("testuser", "password123")]  # type: ignore[attr-defined]
+
+
+def test_web_login_submits_authenticator_and_clears_password() -> None:
+    window = object.__new__(AppWindow)
+    window._update_coordinator = None
+    window._web_auth_client = object()
+    window._service = FakeService()  # type: ignore[assignment]
+    window._login_password = FakeVariable("password123")  # type: ignore[assignment]
+    window._notice = FakeVariable()  # type: ignore[assignment]
+    submitted: list[tuple[Any, Any]] = []
+    window._submit = (  # type: ignore[method-assign]
+        lambda work, on_success=None: submitted.append((work, on_success))
+    )
+
+    window._login_with_web()
+
+    assert window._login_password.get() == ""
+    assert len(submitted) == 1
+    submitted[0][0]()
+    assert window._service.web_sign_ins == [window._web_auth_client]  # type: ignore[attr-defined]
 
 
 def test_empty_notification_restores_default_header_subtitle(monkeypatch: Any) -> None:

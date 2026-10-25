@@ -40,11 +40,12 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - Driver Registration Hardening: the installer pins the Core manifest, `Redirector.bin`, and `nfdriver.sys`; the elevated helper verifies them and loads declared DLLs from an admin-only `%ProgramData%` staging directory.
 - Permit Rate Limit: `issue_launch_permit` consumes a per-user attempt before authorization (10 per 60 seconds) and returns HTTP 429 when exhausted. The migration must be applied before the function deployment.
 - Core Pipe Isolation: NekoProxyCore commit `ab3b08c` keeps `PipeOptions.CurrentUserOnly` on both control and telemetry pipes and binds both to the exact Launcher PID; an image-path check remains optional defense in depth.
-- Pending Security Gates: Authenticode code signing requires an operator certificate. External backup of the new release/profile-authority custody keys is still required.
-- Repository Status (2026-10-24): `main` is ahead of `origin/main` with the 5.2.0 changes; do not push or publish without the owner's approval.
+- Core Clock Skew: NekoProxyCore commit `54365f2` tolerates a bounded 10-minute wall-clock disagreement only while a fresh one-use challenge remains the freshness authority; healthy clocks keep exact 2s/30s checks. Managed suite 344/344. Not pushed.
+- Web Auth: Launcher-side browser/Discord PKCE loopback + identity token + bridge adapter is implemented behind `NEKO_WEB_AUTH_ENABLED` and a required `NEKO_AUTH_BRIDGE_URL`. Password login remains the fallback. The proxy bridge, identity→proxy mapping, one-time link/claim flow, staging test accounts, and E2E are still pending.
+- Pending Security Gates: Authenticode code signing requires an operator certificate. External backup of the new release/profile-authority custody keys is still required. Do not publish the stale pre-web-auth 5.2.0 candidate.
 
 ## Related Projects
-- NekoProxyCore — separate low-level Core/driver/runtime repository used by the Launcher; current pipe-isolation commit `ab3b08c` (control and telemetry pipes bound to the exact Launcher PID).
+- NekoProxyCore — separate low-level Core/driver/runtime repository used by the Launcher; pipe isolation `ab3b08c`, bounded clock-skew fix `54365f2` (local, not pushed).
 - `E:\Github\Neko-Family-Proxy-admin-tool` — operator Control Room / web admin.
 - `E:\Github\Neko-Core AWS` — production server/infrastructure workspace.
 - `E:\Github\Project manager` — cross-project authority, handoff, and history.

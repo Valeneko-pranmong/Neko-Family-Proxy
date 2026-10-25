@@ -89,6 +89,33 @@ def test_debug_mode_can_be_enabled_by_environment(
     assert config_unset.debug_mode is False
 
 
+def test_web_auth_requires_explicit_enable_and_bridge_url(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData"))  # type: ignore[attr-defined]
+    monkeypatch.delenv("NEKO_WEB_AUTH_ENABLED", raising=False)  # type: ignore[attr-defined]
+    monkeypatch.delenv("NEKO_AUTH_BRIDGE_URL", raising=False)  # type: ignore[attr-defined]
+
+    default_config = LauncherConfig.from_environment(tmp_path)
+    assert default_config.identity_base_url == "https://neko-network-id.vercel.app"
+    assert default_config.web_auth_enabled is False
+
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_AUTH_BRIDGE_URL",
+        "https://bridge.example/auth/launcher/exchange",
+    )
+    assert LauncherConfig.from_environment(tmp_path).web_auth_enabled is False
+
+    monkeypatch.setenv("NEKO_WEB_AUTH_ENABLED", "1")  # type: ignore[attr-defined]
+    enabled = LauncherConfig.from_environment(tmp_path)
+    assert enabled.web_auth_enabled is True
+    assert enabled.web_auth_bridge_url.endswith("/auth/launcher/exchange")
+
+    monkeypatch.delenv("NEKO_AUTH_BRIDGE_URL", raising=False)  # type: ignore[attr-defined]
+    assert LauncherConfig.from_environment(tmp_path).web_auth_enabled is False
+
+
 def test_application_root_uses_pyinstaller_extraction_directory(
     monkeypatch: object,
     tmp_path: Path,

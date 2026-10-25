@@ -75,6 +75,7 @@ class FakeAuth:
         self.sign_in_payload: dict[str, str] | None = None
         self.updated_password: str | None = None
         self.sign_out_options: dict[str, str] | None = None
+        self.session_tokens: tuple[str, str] | None = None
 
     def sign_up(self, payload: dict[str, object]) -> SimpleNamespace:
         self.sign_up_payload = payload
@@ -108,6 +109,26 @@ class FakeAuth:
 
     def get_session(self) -> SimpleNamespace:
         return SimpleNamespace(access_token="test-session-value")
+
+    def set_session(self, access_token: str, refresh_token: str) -> SimpleNamespace:
+        self.session_tokens = (access_token, refresh_token)
+        return SimpleNamespace(
+            user=SimpleNamespace(
+                id="web-user-id",
+                email="discord-user@project.supabase.co",
+                user_metadata={"username": "discorduser"},
+            ),
+            session=SimpleNamespace(),
+        )
+
+    def get_user(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            user=SimpleNamespace(
+                id="web-user-id",
+                email="discord-user@project.supabase.co",
+                user_metadata={"username": "discorduser"},
+            )
+        )
 
 
 class FakeFunctions:
@@ -315,6 +336,22 @@ def test_sign_in_derives_internal_identifier_without_rpc() -> None:
         "email": "tester@project.supabase.co",
         "password": "password123",
     }
+
+def test_sign_in_with_web_adopts_bridge_session() -> None:
+    client = FakeRpcClient(None)
+    authenticator = SimpleNamespace(
+        authenticate=lambda: SimpleNamespace(
+            access_token="bridge-access",
+            refresh_token="bridge-refresh",
+        )
+    )
+
+    user = build_gateway(client).sign_in_with_web(authenticator)
+
+    assert client.auth.session_tokens == ("bridge-access", "bridge-refresh")
+    assert user.user_id == "web-user-id"
+    assert user.username == "discorduser"
+
 
 def test_change_password_uses_authenticated_auth_client() -> None:
     client = FakeRpcClient(None)

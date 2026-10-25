@@ -26,6 +26,7 @@ from neko_launcher.infrastructure.account_recovery_gateway import (
     HttpAccountRecoveryGateway,
 )
 from neko_launcher.infrastructure.auth.supabase_gateway import SupabaseGateway
+from neko_launcher.infrastructure.auth.web_auth import WebAuthClient
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
@@ -481,6 +482,16 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         icon_path = root / "icon_app.ico"
         settings_icon_path = root / "setting.png"
 
+    web_auth_client: WebAuthClient | None = None
+    if config.web_auth_enabled:
+        try:
+            web_auth_client = WebAuthClient(
+                identity_base_url=config.identity_base_url,
+                bridge_exchange_url=config.web_auth_bridge_url,
+            )
+        except Exception:
+            web_auth_client = None
+
     return AppWindow(
         controller,
         service,
@@ -498,4 +509,6 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         update_check_service=update_check_service,
         update_apply_service=update_apply_service,
         update_coordinator=update_coordinator,
+        web_auth_client=web_auth_client,
+        web_auth_enabled=web_auth_client is not None,
     )

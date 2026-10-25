@@ -32,7 +32,7 @@
 - **Runtime Config v1**: Real-time proxy configuration managed server-side and issued during authorization, allowing backend routing updates without desktop binary reinstalls.
 - **Single-Active-Session Arbitration**: Prevents permit replay and concurrent conflicting client sessions across installations.
 - **Credential Separation**: The client launcher uses strictly publishable credentials (Supabase URL and Supabase publishable client key). Elevated service keys and administrative authorities remain strictly backend-isolated.
-- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,544 launcher tests passing) and automated repository safety verification.
+- **Robust Quality Baseline**: Maintained with comprehensive automated test coverage (2,568 launcher tests passing) and automated repository safety verification.
 
 ---
 
@@ -201,6 +201,7 @@ Security is central to Neko Family Proxy. Client distributions never contain sec
   - Hardened the installer driver path with pinned hashes and an administrator-only staging directory.
   - Added per-user permit-issuance rate limiting and pinned CI actions to immutable commits.
   - Rotated production release and profile-authority trust anchors; existing 5.1.6 installs require the 5.2.0 installer once.
+  - Added the Launcher-side Discord browser login flow (loopback + PKCE) behind a disabled-by-default bridge flag; password login remains the fallback until identity mapping E2E is complete.
 - **v5.1.6 (Maintenance Release)**:
   - Added a startup update-check splash window before entering the main program, with automatic apply when no game session is active.
   - Added an in-app update progress dialog and a windowless updater helper.

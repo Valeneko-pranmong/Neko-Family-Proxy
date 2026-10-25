@@ -129,6 +129,8 @@ class AppWindow:
         update_check_service: Any = None,
         update_apply_service: Any = None,
         update_coordinator: Any = None,
+        web_auth_client: Any = None,
+        web_auth_enabled: bool = False,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -139,6 +141,8 @@ class AppWindow:
         self._update_check_service = update_check_service
         self._update_apply_service = update_apply_service
         self._update_coordinator = update_coordinator
+        self._web_auth_client = web_auth_client
+        self._web_auth_enabled = bool(web_auth_enabled and web_auth_client is not None)
         self._update_apply_pending = False
         self._update_apply_future: Future[Any] | None = None
         self._last_update_result: UpdateCheckResult | None = None
@@ -594,6 +598,8 @@ class AppWindow:
             on_login=self._login,
             on_register=self._register,
             on_forgot_password=self._begin_account_recovery,
+            on_web_login=self._login_with_web,
+            web_auth_enabled=self._web_auth_enabled,
         )
         self._recovery_view = RecoveryView(
             self._content,
@@ -1212,24 +1218,29 @@ class AppWindow:
     # ------------------------------------------------------------------
     # Auth actions (callbacks → service via _submit)
     # ------------------------------------------------------------------
-    def _login(self) -> None:
+    def _login_gate_open(self) -> bool:
         coordinator = getattr(self, "_update_coordinator", None)
-        if coordinator is not None and not coordinator.can_proceed_to_login():
-            snapshot = coordinator.current()
-            disposition = getattr(snapshot, "disposition", None)
-            err = getattr(self, "_error", None)
-            if disposition == StartupUpdateDisposition.REINSTALL_REQUIRED:
-                if err is not None:
-                    err.set("จำเป็นต้องติดตั้งโปรแกรมใหม่ (ตรวจพบเวอร์ชัน 6.x หรือตัวอัปเดตไม่รองรับ)")
-            elif (
-                getattr(snapshot, "pending", None) is not None
-                or disposition == StartupUpdateDisposition.MANDATORY_UPDATE
-            ):
-                if err is not None:
-                    err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ (กรุณาปิดแล้วเปิดโปรแกรมใหม่)")
-            else:
-                if err is not None:
-                    err.set("ไม่สามารถเข้าสู่ระบบได้เนื่องจากติดสถานะการอัปเดต")
+        if coordinator is None or coordinator.can_proceed_to_login():
+            return True
+        snapshot = coordinator.current()
+        disposition = getattr(snapshot, "disposition", None)
+        err = getattr(self, "_error", None)
+        if disposition == StartupUpdateDisposition.REINSTALL_REQUIRED:
+            if err is not None:
+                err.set("จำเป็นต้องติดตั้งโปรแกรมใหม่ (ตรวจพบเวอร์ชัน 6.x หรือตัวอัปเดตไม่รองรับ)")
+        elif (
+            getattr(snapshot, "pending", None) is not None
+            or disposition == StartupUpdateDisposition.MANDATORY_UPDATE
+        ):
+            if err is not None:
+                err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ (กรุณาปิดแล้วเปิดโปรแกรมใหม่)")
+        else:
+            if err is not None:
+                err.set("ไม่สามารถเข้าสู่ระบบได้เนื่องจากติดสถานะการอัปเดต")
+        return False
+
+    def _login(self) -> None:
+        if not self._login_gate_open():
             return
         username = self._login_email.get()
         password = self._login_password.get()
@@ -1238,6 +1249,22 @@ class AppWindow:
             lambda: self._service.sign_in(username, password),
             self._login_succeeded,
         )
+
+    def _login_with_web(self) -> None:
+        if not self._login_gate_open():
+            return
+        client = getattr(self, "_web_auth_client", None)
+        if client is None:
+            err = getattr(self, "_error", None)
+            if err is not None:
+                err.set("ยังไม่ได้เปิดใช้งานการเข้าสู่ระบบผ่านเว็บ")
+            return
+        self._login_password.set("")
+        self._submit(
+            lambda: self._service.sign_in_with_web(client),
+            self._login_succeeded,
+        )
+        self._notice.set("กำลังเปิดเบราว์เซอร์เพื่อเข้าสู่ระบบ...")
 
     def _begin_account_recovery(self) -> None:
         self._error.set("")
@@ -2758,6 +2785,12 @@ class AppWindow:
             else:
                 update_apply_future.add_done_callback(self._abort_update_apply_future)
         self._cancel_automatic_reconnect(reset_attempts=True)
+        web_auth_client = getattr(self, "_web_auth_client", None)
+        if web_auth_client is not None:
+            try:
+                web_auth_client.cancel()
+            except Exception:
+                pass
         self._clear_recovery_sensitive_fields()
         if getattr(self, "_startup_splash", None) is not None:
             try:

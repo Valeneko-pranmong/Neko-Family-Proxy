@@ -14,6 +14,7 @@ from neko_launcher.domain.events import (
     StartProxyRequested,
 )
 from neko_launcher.domain.models import (
+    AuthenticatedUser,
     AuthStatus,
     CouponRedemption,
     Entitlement,
@@ -35,6 +36,7 @@ from .ports import (
     AuthGateway,
     EntitlementGateway,
     InstallationIdentity,
+    WebAuthAuthenticator,
 )
 
 
@@ -116,6 +118,21 @@ class LauncherService:
         with self._session_lock:
             self._sign_in_locked(username, password)
 
+    def sign_in_with_web(self, authenticator: WebAuthAuthenticator) -> None:
+        with self._session_lock:
+            self._clear_recovery_session()
+            self._controller.dispatch(AuthStarted("discord"))
+            try:
+                user = self._auth_gateway.sign_in_with_web(authenticator)
+            except LauncherServiceError as exc:
+                self._controller.dispatch(AuthFailed(str(exc)))
+                raise
+            except Exception as exc:
+                message = "เข้าสู่ระบบผ่านเว็บไม่สำเร็จ กรุณาลองใหม่"
+                self._controller.dispatch(AuthFailed(message))
+                raise LauncherServiceError(message) from exc
+            self._complete_sign_in(user)
+
     def _sign_in_locked(self, username: str, password: str) -> None:
         self._clear_recovery_session()
         username = username.strip().lower()
@@ -130,6 +147,9 @@ class LauncherService:
             message = "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่"
             self._controller.dispatch(AuthFailed(message))
             raise LauncherServiceError(message) from exc
+        self._complete_sign_in(user)
+
+    def _complete_sign_in(self, user: AuthenticatedUser) -> None:
         try:
             claimed = self._claim_session(allow_missing=True)
         except LauncherServiceError:

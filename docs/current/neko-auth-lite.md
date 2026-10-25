@@ -112,12 +112,17 @@ anti-debugging, and S1 are historical or optional hardening—not Lite blockers.
 ```text
 HOSTED LITE DEPLOYMENT = MIGRATION DEPLOYED AND VERIFIED
 CURRENT RELEASE LINE = v5.2.0 (manual upgrade from v5.1.6)
+WEB AUTH TRANSITION = LAUNCHER IMPLEMENTED, FLAG OFF; BRIDGE/MAPPING PENDING
 LAUNCHER PRODUCTION AUTHORIZATION = ENABLED (NO BLOCKERS)
 CORE LITE MIGRATION = VERIFIED AT CORE AUTHORITY
 LITE CROSS-COMPONENT E2E = PHASE 2.5 TECHNICAL SECURITY GATE PASS
 HOSTED_MIGRATION = 20260821120000_neko_auth_lite_latest_claim_wins
 TEMPORARY_AUTOTEST_USER_ENTITLEMENT = CLEANED UP
 FINAL_ACTIVE_TEST_SESSIONS = 0
+
+## Web auth transition (in progress)
+
+The Launcher now contains the browser + loopback + PKCE flow for NEKO NETWORK ID (Discord) behind `NEKO_WEB_AUTH_ENABLED` and a required `NEKO_AUTH_BRIDGE_URL`. The identity token is a custom 5-minute bearer that must be exchanged by the proxy bridge for a real Supabase session; the existing password login remains the active fallback. Web auth is not enabled in production until the bridge, identity→proxy mapping, one-time link/claim flow, and staging E2E are complete. See [web-auth-launcher.md](web-auth-launcher.md).
 
 ## Phase 2.5 closure
 

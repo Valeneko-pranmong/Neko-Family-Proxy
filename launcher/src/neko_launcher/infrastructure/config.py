@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .defaults import (
     ACCOUNT_RECOVERY_API_URL,
+    IDENTITY_BASE_URL,
     PRODUCT_CODE,
     PROXY_STATUS_API_URL,
     SUPABASE_PUBLISHABLE_KEY,
@@ -80,6 +81,9 @@ class LauncherConfig:
     supabase_publishable_key: str
     account_recovery_api_url: str
     proxy_status_api_url: str
+    identity_base_url: str
+    web_auth_bridge_url: str
+    web_auth_enabled: bool
     debug_mode: bool
     debug_log_dir: Path
 
@@ -104,6 +108,16 @@ class LauncherConfig:
             except OSError:
                 stored_game_exe = ""
         proxy_path = local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
+        identity_base_url = (
+            os.getenv("NEKO_IDENTITY_BASE_URL", "").strip() or IDENTITY_BASE_URL
+        )
+        web_auth_bridge_url = os.getenv("NEKO_AUTH_BRIDGE_URL", "").strip()
+        # The web path stays hidden until the proxy bridge exists and the owner
+        # explicitly enables it; password login remains the fallback.
+        web_auth_enabled = (
+            os.getenv("NEKO_WEB_AUTH_ENABLED") == "1"
+            and bool(web_auth_bridge_url)
+        )
         # Single debug mode authority: NEKO_DEBUG_MODE=1
         debug_mode = os.getenv("NEKO_DEBUG_MODE") == "1"
         debug_log_dir = local_app_data / "NekoFamilyProxy" / "logs"
@@ -117,6 +131,9 @@ class LauncherConfig:
             supabase_publishable_key=SUPABASE_PUBLISHABLE_KEY,
             account_recovery_api_url=ACCOUNT_RECOVERY_API_URL,
             proxy_status_api_url=PROXY_STATUS_API_URL,
+            identity_base_url=identity_base_url,
+            web_auth_bridge_url=web_auth_bridge_url,
+            web_auth_enabled=web_auth_enabled,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )

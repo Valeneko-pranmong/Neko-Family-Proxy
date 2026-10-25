@@ -62,6 +62,7 @@ class FakeGateway:
         self.proxy_host_owned = False
         self.proxy_shutdown_count = 0
         self.proxy_reconnect_error: Exception | None = None
+        self.web_authenticator = None
 
     def sign_up(self, username: str, password: str) -> RegistrationResult:
         self.last_signup = (username, password)
@@ -69,6 +70,11 @@ class FakeGateway:
 
     def sign_in(self, username: str, password: str) -> AuthenticatedUser:
         return AuthenticatedUser("user-id", username)
+
+    def sign_in_with_web(self, authenticator) -> AuthenticatedUser:
+        self.web_authenticator = authenticator
+        authenticator.authenticate()
+        return AuthenticatedUser("discord-user-id", "discorduser")
 
     def restore_session(self) -> AuthenticatedUser | None:
         return AuthenticatedUser("user-id", "user@example.com")
@@ -204,6 +210,50 @@ def test_sign_in_without_license_keeps_account_ready_for_coupon(
     assert controller.state.entitlement is None
     assert controller.state.session_id is None
     assert "เติมวันด้วยคูปอง" in (controller.state.last_error or "")
+
+
+class FakeWebAuthenticator:
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.error = error
+        self.called = False
+
+    def authenticate(self):
+        self.called = True
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(
+            access_token="bridge-access",
+            refresh_token="bridge-refresh",
+        )
+
+
+def test_sign_in_with_web_claims_session_and_authenticates(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    authenticator = FakeWebAuthenticator()
+
+    service.sign_in_with_web(authenticator)
+
+    assert authenticator.called is True
+    assert gateway.web_authenticator is authenticator
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.user_email == "discorduser"
+    assert controller.state.session_id == "session-id"
+
+
+def test_sign_in_with_web_failure_leaves_signed_out_state(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, _ = workflow
+    authenticator = FakeWebAuthenticator(error=LauncherServiceError("ยกเลิกแล้ว"))
+
+    with pytest.raises(LauncherServiceError, match="ยกเลิกแล้ว"):
+        service.sign_in_with_web(authenticator)
+
+    assert controller.state.auth_status is AuthStatus.FAILED
+    assert controller.state.last_error == "ยกเลิกแล้ว"
 
 
 def test_safe_claim_error_after_valid_credentials_preserves_authenticated_state(

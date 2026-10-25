@@ -12,6 +12,7 @@ DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates re
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
 UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
 UPGRADE_PATH_5_1_6:             MANUAL INSTALLER ONLY (old release key cannot sign a transition)
+WEB_AUTH_LAUNCHER:              IMPLEMENTED (flag off; bridge/mapping/E2E pending)
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
@@ -20,7 +21,7 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,544 passed / 4 skipped (launcher, 2026-10-24); 69 passed / 1 environment-limited (root)
+TEST_SUITE:                     2,568 passed / 4 skipped (launcher, 2026-10-25); 69 passed / 1 environment-limited (root)
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
@@ -108,5 +109,5 @@ The released line preserves all fundamental security and product invariants:
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.
 - **Edge permit service**: 31 Node tests PASS, including rate-limit 429 and fail-closed 503 paths.
 - **Installer driver registration**: 30 builder/PowerShell tests PASS, including pinned hash mismatch and secure-stage checks.
-- **Core pipe isolation**: NekoProxyCore `ab3b08c` uses `PipeOptions.CurrentUserOnly` plus exact Launcher-PID binding for both control and telemetry pipes.
+- **Core pipe isolation**: NekoProxyCore `ab3b08c` uses `PipeOptions.CurrentUserOnly` plus exact Launcher-PID binding for both control and telemetry pipes. Core `54365f2` adds the bounded 10-minute permit clock-skew tolerance with fresh-challenge authority; managed Core suite 344/344.
 - **Pending gate**: Authenticode signing requires an operator certificate.

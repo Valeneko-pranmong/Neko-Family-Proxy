@@ -17,7 +17,12 @@ from neko_launcher.application.errors import (
     HeartbeatAuthInvalid,
     LauncherServiceError,
 )
-from neko_launcher.application.ports import AuthGateway, EntitlementGateway, SecureStore
+from neko_launcher.application.ports import (
+    AuthGateway,
+    EntitlementGateway,
+    SecureStore,
+    WebAuthAuthenticator,
+)
 from neko_launcher.domain.models import (
     AuthenticatedUser,
     CouponRedemption,
@@ -109,6 +114,35 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if response.user is None or response.session is None:
             raise LauncherServiceError("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
         return self._to_user(response.user)
+
+    def sign_in_with_web(
+        self,
+        authenticator: WebAuthAuthenticator,
+    ) -> AuthenticatedUser:
+        bridge_session = authenticator.authenticate()
+        try:
+            response = self._client.auth.set_session(
+                bridge_session.access_token,
+                bridge_session.refresh_token,
+            )
+        except Exception as exc:
+            raise self._auth_error(
+                exc,
+                "เข้าสู่ระบบผ่านเว็บไม่สำเร็จ กรุณาลองใหม่",
+            ) from exc
+
+        user = getattr(response, "user", None)
+        if user is None:
+            try:
+                user = self._client.auth.get_user().user
+            except Exception as exc:
+                raise self._auth_error(
+                    exc,
+                    "เข้าสู่ระบบผ่านเว็บไม่สำเร็จ กรุณาลองใหม่",
+                ) from exc
+        if user is None:
+            raise LauncherServiceError("เข้าสู่ระบบผ่านเว็บไม่สำเร็จ กรุณาลองใหม่")
+        return self._to_user(user)
 
     def auth_identifier_for_username(self, username: str) -> str:
         """Derive the non-PII Auth identifier without a database lookup."""

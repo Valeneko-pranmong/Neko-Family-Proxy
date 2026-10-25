@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rotated the production release authority to `neko-update-prod-2` and the profile authority to `neko-update-profile-v520-1`; the signed v5.2.0 trust profile authorizes only the current release key.
 - Added bilingual 5.2.0 release notes and a manual-upgrade guide for existing 5.1.6 users.
 - Added regression coverage for historical trust anchors, editable trusted-key registries, and 5.2.0 minor-release intent parsing.
+- Added the Launcher-side Discord browser login flow with exact loopback callback, PKCE S256, state validation, identity token exchange, and bridge session adoption. It is hidden unless `NEKO_WEB_AUTH_ENABLED=1` and `NEKO_AUTH_BRIDGE_URL` are configured; password login remains the fallback.
+- Added sanitized Core diagnostics for tolerated and exceeded permit clock skew.
 
 ### Security
 - Upgraded Pillow from 12.2.0 to 13.0.0 to remediate known image-parsing CVEs.
@@ -22,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a per-user 10-attempt/60-second rate limit to `issue_launch_permit`; exhausted requests receive HTTP 429 `RateLimited`.
 - Removed personal operator and private-key paths from release tooling; staging, key, trust-profile, and bootstrapper paths are environment-configurable.
 - Core telemetry and control named pipes are bound to the CurrentUserOnly ACL and the exact Launcher process ID.
+- Core still enforces exact 2-second/30-second permit timing on a healthy clock, but tolerates up to 10 minutes of wall-clock disagreement only while a fresh one-use challenge remains the freshness authority; larger skew fails closed.
+- Launcher web auth keeps the 5-minute identity token in memory only; the bridge-returned Supabase session is persisted through the existing Windows Credential Manager store.
 
 ### Changed
 - Reduced the packaged Launcher from ~35 MB to ~27 MB by excluding unused Pillow plugins, the httpx CLI, rich/pygments, and interactive REPL modules.
