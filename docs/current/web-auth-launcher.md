@@ -58,7 +58,7 @@ The Launcher maps `401 invalid_token`, `409 token_replayed`, `409 identity_not_l
 
 ## Remaining blockers before E2E
 
-- The reference bridge is not deployed to staging.
+- The reference bridge is not deployed to staging; use [launcher-bridge-staging-runbook.md](launcher-bridge-staging-runbook.md) for the deployment/E2E sequence.
 - `launcher_v2.identity_links` migrations exist but are not applied and no test mapping exists.
 - Discord test account and proxy test account with entitlement are not available.
 - The one-time link/claim flow is agreed in principle but `/launcher/link` and the bridge-side create/consume operations are not implemented.

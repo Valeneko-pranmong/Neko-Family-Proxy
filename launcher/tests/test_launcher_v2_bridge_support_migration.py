@@ -11,6 +11,7 @@ MIGRATION = (
     / "20261025132000_add_launcher_v2_bridge_support.sql"
 )
 CONFIG = REPO_ROOT / "supabase" / "config.toml"
+RUNBOOK = REPO_ROOT / "docs" / "current" / "launcher-bridge-staging-runbook.md"
 
 
 def migration_sql() -> str:
@@ -84,3 +85,12 @@ def test_bridge_function_disables_gateway_jwt_verification() -> None:
     assert "[functions.launcher_bridge]" in config
     bridge_section = config.split("[functions.launcher_bridge]", 1)[1]
     assert "verify_jwt = false" in bridge_section.split("[", 1)[0]
+
+
+def test_staging_runbook_is_explicitly_non_production() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8").lower()
+
+    assert "staging only" in runbook
+    assert "do not apply these migrations to production" in runbook
+    assert "do not put test data in the production install root" in runbook
+    assert "<test-user-id>" in runbook

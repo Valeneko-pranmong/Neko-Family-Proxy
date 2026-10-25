@@ -16,6 +16,7 @@ UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.
 WEB_AUTH_LAUNCHER:              IMPLEMENTED, FLAG OFF; 5.2.0 TARGET IS WEB-ONLY (password removal pending)
 NEXT_CUTOVER:                   v5.3.0 (gate-based legacy shutdown; last active term or approved cutoff)
 SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
+STAGING_RUNBOOK:                docs/current/launcher-bridge-staging-runbook.md
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
@@ -24,7 +25,7 @@ BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,584 passed / 4 skipped (launcher, 2026-10-25); 69 passed / 1 environment-limited (root)
+TEST_SUITE:                     2,585 passed / 4 skipped (launcher, 2026-10-25); 69 passed / 1 environment-limited (root)
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
@@ -108,7 +109,7 @@ The released line preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Launcher suite**: 2,584 passed, 4 skipped, 7 deselected on 2026-10-25. This includes the new `launcher_v2` auth-foundation, claim/permit, and bridge-support contract tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
+- **Launcher suite**: 2,585 passed, 4 skipped, 7 deselected on 2026-10-25. This includes the new `launcher_v2` auth-foundation, claim/permit, bridge-support, and staging-runbook contract tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
 - **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
 - **Ruff and CI**: `ruff check src tests` PASS; CI enforces the same gate in `.github/workflows/ci.yml`.
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.

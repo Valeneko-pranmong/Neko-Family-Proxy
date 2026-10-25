@@ -281,14 +281,16 @@ adds service-role-only JTI replay, identity lookup/link, and web-session
 recording. A reference `supabase/functions/launcher_bridge/` validates the
 identity RS256/JWKS token, consumes `jti`, creates a no-password next-line
 user, mints a Supabase session, and records the allowlist. Node bridge tests
-(14) and SQL/config contract tests (5) pass; the full Launcher suite is
-2,584 passed / 4 skipped.
+(14) and SQL/config/runbook contract tests (6) pass; the full Launcher suite
+is 2,585 passed / 4 skipped.
 
-None of these migrations or the bridge has been applied/deployed. Staging
-accounts and E2E remain open. P1 must also validate that the Supabase Auth
-`session_id` remains stable across refresh, or update the allowlist row during
-refresh, and confirm that the project's email-provider settings permit
-admin-generated magiclink verification.
+None of these migrations or the bridge has been applied/deployed. The
+staging deployment/E2E sequence is recorded in
+`docs/current/launcher-bridge-staging-runbook.md`. Staging accounts and E2E
+remain open. P1 must also validate that the Supabase Auth `session_id` remains
+stable across refresh, or update the allowlist row during refresh, and confirm
+that the project's email-provider settings permit admin-generated magiclink
+verification.
 
 ### P2 — 5.2.0 Web-Only Client
 
