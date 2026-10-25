@@ -7,14 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.
+
 ## [5.2.0] - 2026-10-24
 
 ### Added
 - Refreshed launcher, authentication, dashboard, and Settings presentation with the new rose/plum visual system; all existing flows and status semantics are preserved.
 - Rotated the production release authority to `neko-update-prod-2` and the profile authority to `neko-update-profile-v520-1`; the signed v5.2.0 trust profile authorizes only the current release key.
-- Added bilingual 5.2.0 release notes and a manual-upgrade guide for existing 5.1.6 users.
+- Added bilingual 5.2.0 release notes and a separation guide for existing 5.1.6 users.
 - Added regression coverage for historical trust anchors, editable trusted-key registries, and 5.2.0 minor-release intent parsing.
-- Added the Launcher-side Discord browser login flow with exact loopback callback, PKCE S256, state validation, identity token exchange, and bridge session adoption. It is hidden unless `NEKO_WEB_AUTH_ENABLED=1` and `NEKO_AUTH_BRIDGE_URL` are configured; password login remains the fallback.
+- Added the Launcher-side Discord browser login flow with exact loopback callback, PKCE S256, state validation, identity token exchange, and bridge session adoption. It is hidden unless `NEKO_WEB_AUTH_ENABLED=1` and `NEKO_AUTH_BRIDGE_URL` are configured. At this checkpoint password login remained the fallback; the 2026-10-25 policy now requires removing it from 5.2.0.
 - Added sanitized Core diagnostics for tolerated and exceeded permit clock skew.
 
 ### Security
@@ -36,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The release intent parser now accepts a single patch increment or a `.0` minor release from the accepted source base; the installer version gate accepts stable 5.1.x and 5.2.x.
 
 ### Upgrade
-- Existing v5.1.6 installations cannot auto-update to v5.2.0 because the old installed trust profile authorizes only `neko-update-prod-1`, whose custody material is unavailable. Run the v5.2.0 installer manually; account and launcher data are preserved.
+- v5.1.6 remains public stable and must stay usable during 5.2.0 development. v5.2.0 is a separate web-auth-only preview and cannot auto-update 5.1.6 because the old installed trust profile authorizes only `neko-update-prod-1`, whose custody material is unavailable. A user who wants 5.2.0 must uninstall 5.1.6 first; in-place and side-by-side installation are not supported. Account/data migration is announced separately; 5.3.0 is the planned legacy cutover.
 
 ## [5.1.6] - 2026-09-21
 

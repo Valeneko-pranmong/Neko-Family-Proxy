@@ -7,7 +7,7 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 - Active branch: `main`.
 - Distribution Architecture: unified canonical releases on `Valeneko-pranmong/Neko-Family-Proxy`; the historical `Neko-Family-Proxy-Updates` identity is superseded.
 - Trust Anchors: `neko-update-prod-2` and `neko-update-profile-v520-1`; the signed profile authorizes only the current release key. Historical public keys remain for verification. The old private key is unavailable.
-- Upgrade Path: existing 5.1.6 installations cannot auto-update and must run the 5.2.0 installer manually; user data under `%LOCALAPPDATA%\NEKO FAMILY` is preserved.
+- Upgrade Path: 5.1.6 and 5.2.0 are separate lines. 5.1.6 remains public stable on its legacy password/recovery backend. 5.2.0 is a separate web-auth preview; it cannot auto-update 5.1.6, must not be installed over it, and requires a full 5.1.6 uninstall first. There is no side-by-side support. 5.3.0 is the planned legacy cutover.
 - Deferred Update Lifecycle (released since 5.1.2, extended through 5.2.0):
   - Background staging (`SoftwareUpdateStageService`) downloads changed components while sessions remain active.
   - Durable pending store (`PendingUpdateStore`) verifies signed envelopes and reconstructs trust offline.
@@ -15,7 +15,7 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
   - Safe apply pathways: explicit Update action, normal exit, and next-launch offline bootstrap (`try_apply_pending_on_launch`).
   - Reuses the existing `NekoUpdater.exe` transactional engine, probation runner, rollback, and anti-downgrade machinery.
 - v5.1.6 additions: startup update-check splash, in-app update progress dialog, windowless updater helper, committed-generation self-sync, Settings version check, and baseline enrollment from a working-directory install root.
-- v5.2.0 additions: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync; buffered support/debug logging; one-shot startup update check; installer driver-path pinning; permit-issuance rate limiting; pinned CI actions; release/profile authority rotation and manual-upgrade documentation; Launcher-side browser/Discord PKCE loopback flow (hidden behind `NEKO_WEB_AUTH_ENABLED` + `NEKO_AUTH_BRIDGE_URL`). Core `54365f2` adds bounded 10-minute permit clock-skew tolerance with fresh-challenge authority; managed Core suite 344/344.
+- v5.2.0 additions: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync; buffered support/debug logging; one-shot startup update check; installer driver-path pinning; permit-issuance rate limiting; pinned CI actions; release/profile authority rotation; Launcher-side browser/Discord PKCE loopback flow (hidden behind `NEKO_WEB_AUTH_ENABLED` + `NEKO_AUTH_BRIDGE_URL`). The 2026-10-25 decision makes 5.2.0 a separate web-auth-only line: password/recovery must be removed from 5.2.0, while 5.1.6 keeps them until 5.3.0. Core `54365f2` adds bounded 10-minute permit clock-skew tolerance with fresh-challenge authority; managed Core suite 344/344.
 - Release workflow: `.github/workflows/release.yml` validates `release_tag` against `launcher/pyproject.toml` at `expected_target`, not a hardcoded version.
 - Release controller: `scripts/release_controller.py` resolves the release version from the exact semver tag at the accepted commit, falling back to the declared `launcher/pyproject.toml` and `__init__.py` versions. For an untagged release, bump both declared versions before running the controller; an exact tag must match them. `release_target.json` is armed at `v5.1.6` → `v5.2.0`; the parser accepts a single patch increment or a `.0` minor release.
 - Installer driver registration pins the Core manifest, `Redirector.bin`, and `nfdriver.sys`, verifies every declared driver DLL, and loads the redirector from an admin-only staging directory. The helper script itself still runs from the per-user app directory; a signed helper in an admin-only location is the remaining hardening step.
@@ -23,27 +23,34 @@ Updated: 2026-10-25 (Neko Family 5.2.0 Release Line)
 - Code signing is still pending a Windows Authenticode certificate. Launcher, Updater, and Installer remain unsigned.
 
 ## User-facing readiness
-- `v5.1.6` remains the last published stable. The earlier 5.2.0 candidate was built before the web-auth and Core clock changes; it is now superseded and must be rebuilt before publication.
-- 5.1.6 users must be told explicitly to install 5.2.0 manually; in-app automatic updates cannot bridge the trust-anchor rotation.
-- Web auth is implemented Launcher-side but disabled by default. Do not enable the Discord button until the proxy bridge, identity→proxy mapping, one-time link/claim flow, staging test accounts, and E2E pass.
+- `v5.1.6` remains the last published stable and must keep working on its legacy backend throughout 5.2.0 development.
+- The earlier 5.2.0 candidate was built before the web-auth and Core clock changes; it is superseded and must be rebuilt before any publication.
+- 5.2.0 is a separate web-auth preview: no automatic update from 5.1.6, no in-place install, no side-by-side installation. Users who want 5.2.0 must uninstall 5.1.6 first. The installer guard for this is not implemented yet.
+- Web auth is implemented Launcher-side but disabled by default. Do not enable the Discord button or publish 5.2.0 until the proxy bridge, identity→proxy mapping, one-time link/claim flow, staging test accounts, E2E, password/recovery removal, and installer separation pass.
 - The manual release workflow is unlocked for any tag that matches the checked-out launcher version, subject to its existing immutable-ID, SHA, asset, and hosted-verification gates.
 
 ## Next work
-1. Back up the new release and profile-authority custody keys to an external, access-controlled medium.
-2. Build the proxy bridge + `launcher.identity_links` mapping and the one-time link/claim flow; provide staging bridge/test accounts.
-3. Run web-auth E2E and enable the Launcher flag for testing, then rebuild the 5.2.0 candidate with the new Core bundle and refresh all hashes.
-4. Publish the verified candidate through the hosted release gate, then announce the manual upgrade path for 5.1.6 users.
-5. Apply the permit rate-limit migration and deploy the matching Edge Function.
-6. Procure a Windows Authenticode certificate and wire signing into the release pipeline.
-7. Review hosted Supabase/Edge deployment docs against production state.
+1. Lock the P0 decisions in the separation plan: new database/auth authority, 5.2.0 distribution channel/repository, installer AppId/data policy, legacy-account migration policy, and control web auth scope.
+2. Implement the installer uninstall/process guard and prove 5.1.6 remains untouched when 5.2.0 is not installed; no side-by-side.
+3. Build the proxy bridge + `launcher.identity_links` mapping, one-time link/claim flow, web-session allowlist, and staging bridge/test accounts.
+4. Remove password/recovery from the 5.2.0 client, clear legacy local tokens, and add web-only regression tests.
+5. Run full web-auth E2E, build the 5.2.0 preview with the new Core bundle, refresh all hashes, and distribute it as a manual/prerelease line, not latest stable.
+6. Complete control web auth and the legacy-account/entitlement migration plan; then prepare the 5.3.0 stable cutover and legacy backend retirement.
+7. Back up the new release and profile-authority custody keys to an external, access-controlled medium.
+8. Apply the permit rate-limit migration and deploy the matching Edge Function.
+9. Procure a Windows Authenticode certificate and wire signing into the release pipeline.
+10. Review hosted Supabase/Edge deployment docs against production state.
 
 Core pipe isolation is complete in `ab3b08c`; the bounded permit clock-skew fix is in Core `54365f2` (local commit, not pushed). A future image-path check remains optional defense in depth.
 
 ## Do not accidentally change
 - Do not mutate or replace published `v5.1.6` release assets.
 - Do not reuse the `neko-update-prod-1` key ID with new key bytes; existing clients verify it against the historical public key.
-- Do not publish 5.2.0 until the installer is rebuilt with the web-auth/Core-clock source, signed with `neko-update-prod-2`, and verified against the new trust profile.
-- Do not enable web auth in production before the bridge/mapping E2E; keep password login as the fallback.
+- Do not force 5.1.6 users onto 5.2.0; 5.1.6 must remain usable on its legacy backend during 5.2.0 development.
+- Do not publish 5.2.0 as the latest stable or as an auto-update for 5.1.6. Use the approved separate preview/manual path.
+- Do not allow 5.2.0 to be installed over or alongside 5.1.6. The uninstall/process guard is mandatory.
+- Do not publish 5.2.0 until it is rebuilt with the web-auth/Core-clock source, web-only password removal, the installer guard, E2E, and `neko-update-prod-2` trust/profile verification.
+- Do not keep password/recovery fallback in 5.2.0; those paths belong only to 5.1.6 until the 5.3.0 cutover.
 - Do not bypass the workflow's canonical-repository, immutable release-ID, expected-target, signed-envelope, or asset-verification gates.
 - Do not bypass fail-closed cryptographic verification of the signed manifest or component digests.
 - Do not modify `launcher/tests/test_config.py` to hide pre-existing baseline asset defects.
@@ -53,6 +60,7 @@ Core pipe isolation is complete in `ab3b08c`; the bounded permit clock-skew fix 
 - Current status: `docs/current/README.md`
 - Current architecture: `docs/current/launcher-architecture.md`
 - Web auth status/contract: `docs/current/web-auth-launcher.md`
+- 5.2.0 separation / 5.3.0 cutover plan: `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`
 - Update architecture (historical 5.1.2 design): `docs/superpowers/specs/2026-09-12-neko-family-5-1-2-update-architecture.md`
 - Implementation plan (historical 5.1.2): `docs/superpowers/plans/2026-09-12-neko-family-5-1-2-implementation.md`
 - Controller ledger (historical 5.1.2): `E:\Github\Project manager\current\CONTROLLER_LEDGER_NEKO_FAMILY_5_1_2.md`

@@ -1,9 +1,9 @@
 # Project Context — Neko Family Proxy Launcher
 
-Updated: 2026-10-24 (Neko Family 5.2.0 Release Line)
+Updated: 2026-10-25 (Neko Family 5.1.6 stable + 5.2.0 web-auth preview planning)
 
 ## Purpose
-This repository is the Windows Launcher/client tier for Neko Family Proxy. It owns user-facing launch/session orchestration, authentication/permit flow integration, installer/updater code, release-controller automation, Supabase client/backend contracts, and the canonical machine-update channel for existing clients. The deferred update lifecycle introduced in 5.1.2 is shipped and maintained on the 5.2.0 line.
+This repository is the Windows Launcher/client tier for Neko Family Proxy. It owns user-facing launch/session orchestration, authentication/permit flow integration, installer/updater code, release-controller automation, Supabase client/backend contracts, and the canonical machine-update channel for existing clients. The deferred update lifecycle introduced in 5.1.2 is shipped and maintained on the 5.1.6 stable line; 5.2.0 is a separate web-auth-only preview line.
 
 ## Architecture Evolution (5.1.2+ Released Architecture)
 
@@ -30,18 +30,18 @@ This repository is the Windows Launcher/client tier for Neko Family Proxy. It ow
 - Restricted solely to bootstrap `v5.1.0` and auto-disabled once a newer machine release exists.
 
 ## Current Baseline
-- Current Release Line: `v5.2.0` (source; hosted publication pending). `v5.1.6` remains the last published stable until 5.2.0 is released.
+- Current Public Stable: `v5.1.6` on the legacy password/recovery backend. `v5.2.0` is a separate web-auth-only preview line in planning; it is not published and must not become the latest stable while 5.1.6 is supported.
 - Active Branch: `main`.
 - Distribution: unified canonical releases on `Valeneko-pranmong/Neko-Family-Proxy`; the former updates-repository identity is superseded.
 - Trust Anchors: release key `neko-update-prod-2` and profile authority `neko-update-profile-v520-1`. The signed profile authorizes only the current release key. New private custody material was generated on 2026-10-24; the historical `neko-update-prod-1` private key is unavailable.
-- Upgrade Path: existing 5.1.6 installations cannot auto-update to 5.2.0 and must run the 5.2.0 installer manually. Account and launcher data under `%LOCALAPPDATA%\NEKO FAMILY` are preserved.
+- Upgrade Path: 5.1.6 and 5.2.0 are separate lines. 5.1.6 cannot auto-update to 5.2.0 and must remain usable during 5.2.0 development. A user who wants 5.2.0 must uninstall 5.1.6 first; in-place and side-by-side installation are unsupported. The installer guard is pending. Account/data migration and 5.3.0 cutover are planned.
 - Update Lifecycle: background staging, durable pending storage, session guard, and offline apply are released and active.
 - Release Automation: `.github/workflows/release.yml` is the manual publication gate. `scripts/release_controller.py` resolves the version from the exact commit tag or the declared `launcher/pyproject.toml` / `__init__.py`; bump both declared versions before an untagged release. `release_target.json` is armed at `v5.1.6` → `v5.2.0`; the intent parser accepts a single patch increment or a `.0` minor release. Staging, custody key, trust-profile, and bootstrapper paths come from environment variables with LocalAppData defaults; no personal paths remain.
 - Driver Registration Hardening: the installer pins the Core manifest, `Redirector.bin`, and `nfdriver.sys`; the elevated helper verifies them and loads declared DLLs from an admin-only `%ProgramData%` staging directory.
 - Permit Rate Limit: `issue_launch_permit` consumes a per-user attempt before authorization (10 per 60 seconds) and returns HTTP 429 when exhausted. The migration must be applied before the function deployment.
 - Core Pipe Isolation: NekoProxyCore commit `ab3b08c` keeps `PipeOptions.CurrentUserOnly` on both control and telemetry pipes and binds both to the exact Launcher PID; an image-path check remains optional defense in depth.
 - Core Clock Skew: NekoProxyCore commit `54365f2` tolerates a bounded 10-minute wall-clock disagreement only while a fresh one-use challenge remains the freshness authority; healthy clocks keep exact 2s/30s checks. Managed suite 344/344. Not pushed.
-- Web Auth: Launcher-side browser/Discord PKCE loopback + identity token + bridge adapter is implemented behind `NEKO_WEB_AUTH_ENABLED` and a required `NEKO_AUTH_BRIDGE_URL`. Password login remains the fallback. The proxy bridge, identity→proxy mapping, one-time link/claim flow, staging test accounts, and E2E are still pending.
+- Web Auth: Launcher-side browser/Discord PKCE loopback + identity token + bridge adapter is implemented behind `NEKO_WEB_AUTH_ENABLED` and a required `NEKO_AUTH_BRIDGE_URL`. The 5.1.6 legacy line keeps password/recovery; 5.2.0 is the web-auth-only target and must remove them. The proxy bridge, identity→proxy mapping, one-time link/claim flow, staging test accounts, installer separation, and E2E are still pending.
 - Pending Security Gates: Authenticode code signing requires an operator certificate. External backup of the new release/profile-authority custody keys is still required. Do not publish the stale pre-web-auth 5.2.0 candidate.
 
 ## Related Projects

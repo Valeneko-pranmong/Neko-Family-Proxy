@@ -1,15 +1,18 @@
 # Neko Family Launcher
 
-Desktop launcher for Supabase username/password membership, entitlement checks,
-launcher-session control, and user-selected PSO2 Tweaker configuration.
+Desktop launcher for Supabase-backed membership, entitlement checks,
+launcher-session control, and user-selected PSO2 Tweaker configuration. The
+legacy 5.1.6 line uses username/password login; the 5.2.0 target is Discord web
+auth only.
 
-> **Current status (24 October 2026, v5.2.0):** the accepted NEKO-AUTH-LITE
-> production composition is active. Core startup remains fail-closed unless
-> Auth, the current Launcher session, ACTIVE entitlement, exact PSO2 identity,
-> fresh challenge/permit, and typed RUNNING checks all succeed. Startup now
-> runs an update-check splash before the main window. The 5.2.0 release line
-> rotates the update trust anchors, so existing 5.1.6 users must install the
-> 5.2.0 setup manually.
+> **Current status (25 October 2026, v5.2.0 planning):** the accepted
+> NEKO-AUTH-LITE production composition is active on 5.1.6. Core startup
+> remains fail-closed unless Auth, the current Launcher session, ACTIVE
+> entitlement, exact PSO2 identity, fresh challenge/permit, and typed RUNNING
+> checks all succeed. 5.1.6 remains public stable and usable on its legacy
+> backend. 5.2.0 is a separate web-auth preview; it must not auto-update 5.1.6,
+> must not be installed over or alongside it, and requires a full 5.1.6
+> uninstall first. 5.3.0 is the planned cutover.
 
 ## Web auth (development)
 
@@ -20,9 +23,12 @@ NEKO_WEB_AUTH_ENABLED=1
 NEKO_AUTH_BRIDGE_URL=https://<proxy-backend>/auth/launcher/exchange
 ```
 
-The exact loopback callback is `http://127.0.0.1:53682/auth/callback`. Password
-login remains the fallback until the proxy bridge, identity mapping, and
-staging E2E are complete. See `../docs/current/web-auth-launcher.md`.
+The exact loopback callback is `http://127.0.0.1:53682/auth/callback`. The
+5.1.6 legacy line keeps password login; the 5.2.0 release target removes
+password/recovery and uses web auth only. Do not enable or publish 5.2.0 until
+the proxy bridge, identity mapping, link/claim flow, installer separation, and
+staging E2E are complete. See `../docs/current/web-auth-launcher.md` and the
+[separation plan](../docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
 
 ## Set up
 

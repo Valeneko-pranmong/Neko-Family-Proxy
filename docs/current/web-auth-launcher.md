@@ -1,6 +1,6 @@
 # Launcher Web Auth — Implementation Status
 
-**Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging; the proxy bridge and identity→proxy mapping are not available yet, so end-to-end login is not complete.
+**Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging; the proxy bridge and identity→proxy mapping are not available yet, so end-to-end login is not complete. **Policy decision (2026-10-25):** 5.2.0 is a separate web-auth-only line; 5.1.6 remains on legacy password/recovery until the 5.3.0 cutover. See the separation plan.
 
 ## Live identity contract
 
@@ -24,7 +24,7 @@ Redirect:  http://127.0.0.1:53682/auth/callback (exact)
 - [`web_auth.py`](file:///D:/Neko-Family-Proxy/launcher/src/neko_launcher/infrastructure/auth/web_auth.py): PKCE/state generation, one-use loopback HTTP receiver bound to `127.0.0.1`, identity token exchange, bridge session exchange, bounded HTTPS JSON transport, and user-safe error mapping.
 - `SupabaseGateway.sign_in_with_web()`: adopts the bridge-returned Supabase access/refresh tokens with `set_session()` and resolves the existing authenticated user.
 - `LauncherService.sign_in_with_web()`: runs the session claim and entitlement flow using the same `claim_session` / `issue_launch_permit` path as password login.
-- `AuthView` / `AppWindow`: optional “เข้าสู่ระบบด้วย Discord” button; password login remains visible as fallback.
+- `AuthView` / `AppWindow`: optional “เข้าสู่ระบบด้วย Discord” button during development. The 5.2.0 release target removes password/recovery from the product; 5.1.6 retains them on the separate legacy line.
 - The identity token is kept only in memory for the bridge exchange. Only the resulting Supabase session is persisted through the existing Windows Credential Manager store.
 - The loopback server suppresses request logging, validates the exact path and `Host`, rejects duplicate query keys, applies no-store/no-referrer-style response headers, and closes after the first valid callback.
 
@@ -65,6 +65,10 @@ The Launcher maps `401 invalid_token`, `409 token_replayed`, `409 identity_not_l
 - Product decisions remain for new users without a proxy account, unlink, Discord ban, and legacy password recovery.
 - A decision is needed on whether unlinked users see a link-code flow or a support/manual path.
 
-## Rollout rule
+## Rollout and line separation
 
-Do not enable the web button in production or publish a release containing the enabled path until the bridge, mapping, claim flow, and staging E2E pass. Password login remains the active fallback. No release/tag/publish is authorized by this document.
+- Do not enable the web button in production or publish a release containing the enabled path until the bridge, mapping, claim flow, and staging E2E pass.
+- 5.1.6 remains the public stable line with password/recovery on the legacy backend; do not force it to 5.2.0.
+- 5.2.0 is a separate preview line and is web-auth-only at release. It must not retain password/recovery fallback, must not be installed over or alongside 5.1.6, and must not become the latest stable update for 5.1.6.
+- 5.3.0 is the cutover release after the bridge, mapping, link/claim, control web auth, and E2E are complete.
+- No release/tag/publish is authorized by this document. The authoritative development sequence is [`../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).

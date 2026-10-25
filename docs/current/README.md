@@ -2,17 +2,20 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         RELEASE CANDIDATE 5.2.0 (installer built + signed; publication pending)
-PRODUCT_BASELINE:               5.2.0
+STATUS:                         PLANNING 5.2.0 SEPARATE WEB-AUTH LINE (not publishable)
+PRODUCT_BASELINE:               5.2.0 (planning); 5.1.6 remains public stable
 CURRENT_RELEASE_TAG:            v5.2.0 (candidate; not yet published)
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
-INSTALLER_CANDIDATE:            PASS (207,758,092 bytes, sha256 0e7aec10...9daad; 2026-10-25)
+INSTALLER_CANDIDATE:            SUPERSEDED (pre-web-auth build; rebuild required)
 ACTIVE_DEV_BRANCH:              main
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
 UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
-UPGRADE_PATH_5_1_6:             MANUAL INSTALLER ONLY (old release key cannot sign a transition)
-WEB_AUTH_LAUNCHER:              IMPLEMENTED (flag off; bridge/mapping/E2E pending)
+RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0 WEB-AUTH PREVIEW; NO SIDE-BY-SIDE
+UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0
+WEB_AUTH_LAUNCHER:              IMPLEMENTED, FLAG OFF; 5.2.0 TARGET IS WEB-ONLY (password removal pending)
+NEXT_CUTOVER:                   v5.3.0 (legacy 5.1.6 removal; planning)
+SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
 AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
 SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
@@ -25,7 +28,9 @@ TEST_SUITE:                     2,568 passed / 4 skipped (launcher, 2026-10-25);
 LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** `main` is the maintained 5.2.0 release candidate. The installer and signed manifest are built and verified locally; `v5.1.6` remains the last published stable until the 5.2.0 release is published. Because the previous release key is unavailable, existing 5.1.6 clients must run the 5.2.0 installer manually. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.2.0. This document describes repository state, not a hosted-backend deployment audit.
+> **Current-state rule:** `main` is planning the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. 5.2.0 is a separate manual preview: it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer uninstall guard, web-only password removal, bridge/mapping/link flow, channel separation, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
+>
+> **Development plan:** [5.2.0 web-auth separation and 5.3.0 cutover](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
 
 ---
 
@@ -57,7 +62,7 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
 - **v5.1.4**: 64-bit WOW64 redirection guard in the elevated driver installer and non-BOM ASCII installer logging.
 - **v5.1.5**: native `ensure-netfilter2.cmd` Sysnative dispatcher and Inno Setup result-file polling guard.
 - **v5.1.6**: startup update-check splash before the main window; in-app update progress dialog; windowless updater helper; committed-generation self-sync; Settings version check; baseline enrollment from a working-directory install root.
-- **v5.2.0**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. Existing 5.1.6 users must install manually.
+- **v5.2.0 (planned preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The line is being converted to web-auth-only with a separate installer/backend; 5.1.6 remains on the legacy line and must be uninstalled before a 5.2.0 installation. See the separation plan.
 
 ---
 

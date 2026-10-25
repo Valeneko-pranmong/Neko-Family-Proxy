@@ -1,6 +1,6 @@
 # NEKO-AUTH-LITE v1
 
-**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line and carried into the `v5.2.0` release line; existing 5.1.6 clients require the 5.2.0 manual installer because the update trust anchors were rotated.
+**Status:** Phase 2.5 technical security gate **CLOSED/PASS**. Released through the 5.1.x production line. 5.1.6 remains public stable on the legacy password/recovery backend. 5.2.0 is a separate web-auth-only preview line; it does not auto-update 5.1.6 and requires a full uninstall before installation. 5.3.0 is the planned legacy cutover.
 
 ```text
 SESSION_POLICY = LATEST_CLAIM_WINS
@@ -111,7 +111,8 @@ anti-debugging, and S1 are historical or optional hardening—not Lite blockers.
 
 ```text
 HOSTED LITE DEPLOYMENT = MIGRATION DEPLOYED AND VERIFIED
-CURRENT RELEASE LINE = v5.2.0 (manual upgrade from v5.1.6)
+CURRENT PUBLIC STABLE = v5.1.6 (legacy password/recovery backend)
+NEXT LINE = v5.2.0 WEB-AUTH-ONLY PREVIEW (SEPARATE INSTALL; UNINSTALL 5.1.6 FIRST)
 WEB AUTH TRANSITION = LAUNCHER IMPLEMENTED, FLAG OFF; BRIDGE/MAPPING PENDING
 LAUNCHER PRODUCTION AUTHORIZATION = ENABLED (NO BLOCKERS)
 CORE LITE MIGRATION = VERIFIED AT CORE AUTHORITY
@@ -119,10 +120,11 @@ LITE CROSS-COMPONENT E2E = PHASE 2.5 TECHNICAL SECURITY GATE PASS
 HOSTED_MIGRATION = 20260821120000_neko_auth_lite_latest_claim_wins
 TEMPORARY_AUTOTEST_USER_ENTITLEMENT = CLEANED UP
 FINAL_ACTIVE_TEST_SESSIONS = 0
+NEXT CUTOVER = v5.3.0 (LEGACY 5.1.6 REMOVAL; PLANNING)
 
 ## Web auth transition (in progress)
 
-The Launcher now contains the browser + loopback + PKCE flow for NEKO NETWORK ID (Discord) behind `NEKO_WEB_AUTH_ENABLED` and a required `NEKO_AUTH_BRIDGE_URL`. The identity token is a custom 5-minute bearer that must be exchanged by the proxy bridge for a real Supabase session; the existing password login remains the active fallback. Web auth is not enabled in production until the bridge, identity→proxy mapping, one-time link/claim flow, and staging E2E are complete. See [web-auth-launcher.md](web-auth-launcher.md).
+The Launcher now contains the browser + loopback + PKCE flow for NEKO NETWORK ID (Discord) behind `NEKO_WEB_AUTH_ENABLED` and a required `NEKO_AUTH_BRIDGE_URL`. The identity token is a custom 5-minute bearer that must be exchanged by the proxy bridge for a real Supabase session. The 5.1.6 legacy line keeps password login; 5.2.0 is the separate web-auth-only preview target and must remove password/recovery. Web auth is not enabled in production until the bridge, identity→proxy mapping, one-time link/claim flow, installer separation, and staging E2E are complete. See [web-auth-launcher.md](web-auth-launcher.md) and the [separation plan](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
 
 ## Phase 2.5 closure
 
