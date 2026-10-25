@@ -100,6 +100,7 @@ class SettingsWindow(ctk.CTkToplevel):
         debug_log_dir: Path | None = None,
         on_close: Callable[[], None] | None = None,
         on_change_password: Callable[[], None] | None = None,
+        web_auth_only: bool = False,
         on_sign_out: Callable[[], None] | None = None,
         on_redeem_coupon: Callable[[], None] | None = None,
         on_choose_game: Callable[[], None] | None = None,
@@ -161,6 +162,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
         self._on_change_password = on_change_password
+        self._web_auth_only = bool(web_auth_only)
         self._on_sign_out = on_sign_out
         self._on_redeem_coupon = on_redeem_coupon
         self._on_choose_game = on_choose_game
@@ -476,12 +478,14 @@ class SettingsWindow(ctk.CTkToplevel):
 
         actions = ctk.CTkFrame(c, fg_color="transparent")
         actions.pack(fill="x", padx=16, pady=(12, 12))
-        self._change_password_button = secondary_button(
-            actions,
-            "เปลี่ยนรหัสผ่าน",
-            self._invoke_change_password,
-        )
-        self._change_password_button.pack(side="left", padx=(0, 8))
+        self._change_password_button: ctk.CTkButton | None = None
+        if not self._web_auth_only:
+            self._change_password_button = secondary_button(
+                actions,
+                "เปลี่ยนรหัสผ่าน",
+                self._invoke_change_password,
+            )
+            self._change_password_button.pack(side="left", padx=(0, 8))
         self._sign_out_button = destructive_button(
             actions,
             "ออกจากระบบ",

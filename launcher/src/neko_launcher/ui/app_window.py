@@ -143,6 +143,7 @@ class AppWindow:
         self._update_coordinator = update_coordinator
         self._web_auth_client = web_auth_client
         self._web_auth_enabled = bool(web_auth_enabled and web_auth_client is not None)
+        self._web_auth_only = self._web_auth_enabled
         self._update_apply_pending = False
         self._update_apply_future: Future[Any] | None = None
         self._last_update_result: UpdateCheckResult | None = None
@@ -600,6 +601,7 @@ class AppWindow:
             on_forgot_password=self._begin_account_recovery,
             on_web_login=self._login_with_web,
             web_auth_enabled=self._web_auth_enabled,
+            web_auth_only=self._web_auth_only,
         )
         self._recovery_view = RecoveryView(
             self._content,
@@ -737,6 +739,7 @@ class AppWindow:
             debug_log_dir=self._debug_log_dir,
             on_close=self._close_settings_window,
             on_change_password=self._open_password_dialog,
+            web_auth_only=getattr(self, "_web_auth_only", False),
             on_sign_out=self._sign_out,
             on_redeem_coupon=self._redeem_coupon,
             on_choose_game=self._choose_game,

@@ -2522,3 +2522,17 @@ def test_app_window_login_proceeds_when_gate_permitted() -> None:
 
     assert service.sign_ins == [("user@example.com", "password123")]
     assert window._login_password.get() == ""
+
+
+def test_web_only_mode_wires_web_auth_view_and_hides_password_action() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src"
+        / "neko_launcher"
+        / "ui"
+        / "app_window.py"
+    ).read_text(encoding="utf-8")
+
+    assert "self._web_auth_only = self._web_auth_enabled" in source
+    assert "web_auth_only=self._web_auth_only" in source
+    assert "web_auth_only=getattr(self, \"_web_auth_only\", False)" in source

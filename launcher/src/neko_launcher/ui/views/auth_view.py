@@ -32,6 +32,7 @@ class AuthView:
         on_forgot_password: Callable[[], None],
         on_web_login: Callable[[], None] | None = None,
         web_auth_enabled: bool = False,
+        web_auth_only: bool = False,
     ) -> None:
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
         intro = card(self.frame)
@@ -58,12 +59,26 @@ class AuthView:
 
         title_frame = ctk.CTkFrame(intro, fg_color="transparent")
         title_frame.pack(fill="x", pady=(2, 2))
+        self._web_auth_only = bool(
+            web_auth_only and web_auth_enabled and on_web_login is not None
+        )
         ctk.CTkLabel(
             title_frame,
-            text="เข้าสู่ระบบและสมัครสมาชิก",
+            text=(
+                "เข้าสู่ระบบด้วย Discord"
+                if self._web_auth_only
+                else "เข้าสู่ระบบและสมัครสมาชิก"
+            ),
             font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
             text_color=PALETTE.text,
         ).pack(anchor="center")
+
+        self._web_login_button: ctk.CTkButton | None = None
+        self._login_button: ctk.CTkButton | None = None
+        self._register_button: ctk.CTkButton | None = None
+        if self._web_auth_only:
+            self._build_web_only(intro, on_web_login)
+            return
 
         self._tab_controls = ctk.CTkFrame(
             intro,
@@ -105,7 +120,6 @@ class AuthView:
 
         # Login Frame
         login = self._login_frame
-        self._web_login_button: ctk.CTkButton | None = None
         if web_auth_enabled and on_web_login is not None:
             self._web_login_button = primary_button(
                 login,
@@ -207,6 +221,40 @@ class AuthView:
 
         self._switch_tab("login")
 
+    def _build_web_only(
+        self,
+        parent: ctk.CTkFrame,
+        on_web_login: Callable[[], None],
+    ) -> None:
+        body = ctk.CTkFrame(parent, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=18, pady=(14, 18))
+        ctk.CTkLabel(
+            body,
+            text="บัญชี Neko Family 5.2.0 ใช้การยืนยันตัวตนผ่าน Discord",
+            text_color=PALETTE.text_muted,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            wraplength=360,
+            justify="center",
+        ).pack(anchor="center", pady=(8, 14))
+        self._web_login_button = primary_button(
+            body,
+            "เข้าสู่ระบบด้วย Discord",
+            on_web_login,
+        )
+        self._web_login_button.configure(
+            height=44,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
+        )
+        self._web_login_button.pack(fill="x", padx=4, pady=(0, 10))
+        ctk.CTkLabel(
+            body,
+            text="เปิดเบราว์เซอร์เพื่อยืนยันตัวตน แล้วกลับมายังหน้าต่างนี้",
+            text_color=PALETTE.text_muted,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            wraplength=360,
+            justify="center",
+        ).pack(anchor="center")
+
     def set_status_signed_in(self, signed_in: bool) -> None:
         self._status_badge.configure(
             text_color=PALETTE.success if signed_in else PALETTE.text_muted,
@@ -214,10 +262,13 @@ class AuthView:
 
     def set_actions_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
         state = "normal" if not signed_in and not authenticating else "disabled"
-        self._login_button.configure(state=state)
-        self._register_button.configure(state=state)
-        if self._web_login_button is not None:
-            self._web_login_button.configure(state=state)
+        for button in (
+            self._login_button,
+            self._register_button,
+            self._web_login_button,
+        ):
+            if button is not None:
+                button.configure(state=state)
 
     def _switch_tab(self, tab: str) -> None:
         if tab == "login":

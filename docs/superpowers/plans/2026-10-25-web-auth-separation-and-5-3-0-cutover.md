@@ -312,8 +312,13 @@ unchanged.
 claims/RPC adapter uses that schema. The `issue_launch_permit` Edge Function
 auto-selects `launcher_v2` only from server-controlled
 `app_metadata.auth_line = next` and keeps legacy callers on `launcher`. Default
-behavior is unchanged. Password/recovery removal and web-only UI are still
-open.
+behavior is unchanged.
+
+**P2 slice 2 status (2026-10-25):** when web auth is enabled, the auth view
+becomes web-only (no password, registration, or recovery controls) and the
+Settings password-change action is hidden. Source/dev without a bridge still
+uses the legacy UI. Full removal of the password/recovery service paths and
+the final web-only release enforcement remain open.
 
 ### P3 — Installer Separation
 

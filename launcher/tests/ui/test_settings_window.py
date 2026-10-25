@@ -111,6 +111,32 @@ def test_account_page_binds_shared_username_and_existing_actions_once() -> None:
             pass
 
 
+def test_web_only_account_page_omits_password_action() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(
+            root,
+            account_var=ctk.StringVar(master=root, value="neko-user"),
+            account_status_var=ctk.StringVar(master=root, value="เข้าสู่ระบบแล้ว"),
+            on_change_password=lambda: None,
+            web_auth_only=True,
+            on_sign_out=lambda: None,
+        )
+
+        assert window._change_password_button is None
+        assert window._sign_out_button is not None
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
 def test_repeated_settings_password_action_reuses_existing_app_dialog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
