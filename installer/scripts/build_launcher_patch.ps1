@@ -37,7 +37,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$expectedSha256 = '61242d24388234ea0b2b5197d5e2e663a4e030f0768678b8252efe3fe6079fb1'
+$expectedSha256 = 'c7ae2c148b9f92f47cbc83401f09c797771bc737c3e65ffc56f3bc57c40e4a2b'
 
 if (-not $LauncherPath) {
     $LauncherPath = Join-Path $repo 'launcher\dist\NekoLauncher-login-fix-py312.exe'
