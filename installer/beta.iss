@@ -119,6 +119,9 @@ Type: dirifempty; Name: "{app}"
 [UninstallRun]
 ; Remove the launcher credential-vault target (refresh token and legacy keys).
 Filename: "{cmd}"; Parameters: "/c cmdkey /delete:""Neko Family Launcher"" >nul 2>&1"; Flags: runhidden; RunOnceId: "ClearLauncherCredentialVault"
+; Windows Credential Manager stores the rotating refresh token under a
+; keyring target such as "proxy-api-refresh-token@Neko Family Launcher".
+Filename: "{cmd}"; Parameters: "/c cmdkey /delete:""proxy-api-refresh-token@Neko Family Launcher"" >nul 2>&1"; Flags: runhidden; RunOnceId: "ClearLauncherCredentialVaultKeyring"
 
 [Files]
 ; Approved Launcher EXE (fail-closed hash-gated by build_beta_installer.py).
@@ -426,37 +429,47 @@ begin
   end;
 
   { ---- 2. .NET Desktop Runtime 6 x64 readiness (elevation only when required) ---- }
-  g_DotnetOK := DesktopRuntime6X64Present();
-  if not g_DotnetOK then begin
-    Bootstrapper := FindRuntimeBootstrapper();
-    if Bootstrapper = '' then begin
-      AddDetail('internal error: staged .NET Desktop Runtime bootstrapper missing');
-      Log('no staged bootstrapper found in {tmp}\Prereqs');
-    end else begin
-      Log('requesting elevation for silent .NET Desktop Runtime install');
-      Ok := ShellExec('runas', Bootstrapper,
-        '/install /quiet /norestart',
-        '', HideCmd, ewWaitUntilTerminated, RC);
-      Log('elevated dotnet install: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
-      { Exit codes 0 and 3010 (reboot pending) are both acceptable here; the
-        fresh unelevated re-detection below remains authoritative either way. }
-    end;
-    { Authoritative outcome = re-detect the REAL machine state after any
-      elevated attempt (same fail-closed pattern as the netfilter2 step). }
+  if ExpandConstant('{param:SKIPDOTNET|0}') = '1' then begin
+    g_DotnetOK := True;
+    AddDetail('dotnet readiness skipped by /SKIPDOTNET=1');
+    Log('dotnet runtime readiness skipped by request');
+  end else begin
     g_DotnetOK := DesktopRuntime6X64Present();
-  end;
-  if not g_DotnetOK then begin
-    AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
-    SuppressibleMsgBox(
-      'Setup could not complete readiness for the Microsoft .NET Desktop Runtime 6.x (x64).'#13#10#13#10 +
-      'Please run this same Setup again and allow the required Windows UAC prompt.'#13#10#13#10 +
-      'หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล'#13#10#13#10 +
-      'The launch shortcut is disabled until readiness is complete.',
-      mbError, MB_OK, IDOK);
+    if not g_DotnetOK then begin
+      Bootstrapper := FindRuntimeBootstrapper();
+      if Bootstrapper = '' then begin
+        AddDetail('internal error: staged .NET Desktop Runtime bootstrapper missing');
+        Log('no staged bootstrapper found in {tmp}\Prereqs');
+      end else begin
+        Log('requesting elevation for silent .NET Desktop Runtime install');
+        Ok := ShellExec('runas', Bootstrapper,
+          '/install /quiet /norestart',
+          '', HideCmd, ewWaitUntilTerminated, RC);
+        Log('elevated dotnet install: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
+        { Exit codes 0 and 3010 (reboot pending) are both acceptable here; the
+          fresh unelevated re-detection below remains authoritative either way. }
+      end;
+      { Authoritative outcome = re-detect the REAL machine state after any
+        elevated attempt (same fail-closed pattern as the netfilter2 step). }
+      g_DotnetOK := DesktopRuntime6X64Present();
+    end;
+    if not g_DotnetOK then begin
+      AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
+      SuppressibleMsgBox(
+        'Setup could not complete readiness for the Microsoft .NET Desktop Runtime 6.x (x64).'#13#10#13#10 +
+        'Please run this same Setup again and allow the required Windows UAC prompt.'#13#10#13#10 +
+        'หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล'#13#10#13#10 +
+        'The launch shortcut is disabled until readiness is complete.',
+        mbError, MB_OK, IDOK);
+    end;
   end;
 
   { ---- 3. netfilter2 driver readiness (elevation only when required) ---- }
-  if not FileExists(DriverScript) then begin
+  if ExpandConstant('{param:SKIPDRIVER|0}') = '1' then begin
+    g_DriverOK := False;
+    AddDetail('netfilter2 registration skipped by /SKIPDRIVER=1');
+    Log('netfilter2 registration skipped by request');
+  end else if not FileExists(DriverScript) then begin
     AddDetail('internal error: ensure-netfilter2.ps1 missing');
   end else begin
     Ok := RunPSFile(DriverScript,
