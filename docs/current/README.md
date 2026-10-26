@@ -2,11 +2,11 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PREVIEW CANDIDATE BUILT — 5.2.0 INSTALL MATRIX PASSED; INTERACTIVE LOGIN/SIGN-OFF PENDING (NOT A RELEASE CANDIDATE)
-PRODUCT_BASELINE:               5.2.0 (release target); 5.1.6 remains public stable
-CURRENT_RELEASE_TAG:            none; 5.2.0 is not tagged or published
+STATUS:                         5.2.1 BUILT — INSTALL MATRIX AND OWNER SIGN-OFF PENDING (NOT PUBLISHED)
+PRODUCT_BASELINE:               5.2.1 (release target); 5.1.6 remains public stable
+CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
-INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.0 preview, unsigned (SHA-256 eb380f999046c68f079aae3af73b888cfa494e54a5e9d14cb5881ddb5d6781c8)
+INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
 ACTIVE_DEV_BRANCH:              feat/proxy-api-launcher-clean-v2
 RELEASE_CHANNEL:                PREVIEW/MANUAL (owner decision 2026-10-25)
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
@@ -25,13 +25,22 @@ BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-25)
-TEST_SUITE:                     2,759 passed / 4 skipped / 7 deselected (launcher, 2026-10-25)
+TEST_SUITE:                     2,789 passed / 5 skipped / 7 deselected (launcher, 2026-10-26)
 RELEASE_RUNBOOK:                docs/current/5.2.0-release-runbook.md
-RELEASE_NOTES:                  docs/current/5.2.0-release-notes.md
+RELEASE_NOTES:                  docs/current/5.2.1-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
-LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-10-26 +07:00 (Asia/Bangkok)
 ```
+
+> **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the
+> 5.2.0 line. Core, the external Core bundle, the preview trust profile, the
+> staging origins, and the Proxy API contract are unchanged. The envelope is
+> `preview-0016` (sequence 16, `minimum_supported_sequence = 16`), signed by
+> `neko-update-prod-3`. Later 5.2.x releases must set
+> `minimum_supported_sequence` to their own sequence so 5.2.1 installations are
+> forced to update on the next Launcher start; the running game/proxy session is
+> never force-closed. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
 
 > **2026-10-25 unified-platform overlay:** the first usable release of the
 > unified line is **5.2.0** on the preview/manual channel. The new line uses

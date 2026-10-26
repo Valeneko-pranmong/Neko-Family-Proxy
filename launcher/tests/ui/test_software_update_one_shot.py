@@ -202,6 +202,8 @@ def build_window(
     window._executor = ForbiddenExecutor()  # type: ignore[assignment]
     window._last_update_result = None
     window._last_lifecycle_snapshot = None
+    window._last_update_check_started_at = None
+    window._last_update_check_source = None
     window._update_notification_var = FakeVariable("")  # type: ignore[assignment]
     window._notice = FakeVariable("")  # type: ignore[assignment]
     window._diagnostics = None
@@ -364,6 +366,8 @@ def test_completed_check_stores_only_result_and_safe_diagnostic_fields() -> None
                 "release_sequence": 73,
                 "changed_components": "launcher,core",
                 "diagnostic_code": UpdateDiagnosticCode.MANIFEST_REJECTED.value,
+                "source": "startup",
+                "elapsed_ms": diagnostics[0][1]["elapsed_ms"],
             },
         )
     ]

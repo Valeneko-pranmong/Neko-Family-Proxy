@@ -1,3 +1,4 @@
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from neko_launcher.domain.models import (
     GameStatus,
     ProxyStatus,
 )
+from neko_launcher.domain.telemetry import TelemetryConnectionState
 from neko_launcher.infrastructure.process.process_detector import (
     ProcessObservationUnavailable,
     TargetProcess,
@@ -189,9 +191,23 @@ class FakeRecoveryService:
 class FakeDiagnostics:
     def __init__(self) -> None:
         self.stages: list[tuple[str, dict[str, Any]]] = []
+        self.events: list[tuple[str, str, dict[str, Any]]] = []
+        self.exceptions: list[tuple[Exception, str, str]] = []
 
     def record_stage(self, stage: str, **details: Any) -> None:
         self.stages.append((stage, details))
+
+    def record_event(self, category: str, event: str, **fields: Any) -> None:
+        self.events.append((category, event, fields))
+
+    def record_exception(
+        self,
+        exc: Exception,
+        stage: str,
+        *,
+        category: str = "CORE",
+    ) -> None:
+        self.exceptions.append((exc, stage, category))
 
 
 class FakeController:
@@ -236,15 +252,20 @@ class FakeAuthView:
     def __init__(self) -> None:
         self.login_button_state = ""
         self.register_button_state = ""
-        self.status_signed_in = False
+        self.progress: tuple[str | None, float | None] | None = None
 
     def set_actions_enabled(self, *, signed_in: bool, authenticating: bool) -> None:
         state = "normal" if not signed_in and not authenticating else "disabled"
         self.login_button_state = state
         self.register_button_state = state
 
-    def set_status_signed_in(self, signed_in: bool) -> None:
-        self.status_signed_in = signed_in
+    def set_auth_progress(
+        self,
+        text: str | None,
+        *,
+        progress: float | None = None,
+    ) -> None:
+        self.progress = (text, progress)
 
 
 def build_password_window() -> AppWindow:
@@ -554,6 +575,8 @@ def test_web_login_submits_authenticator_and_clears_password() -> None:
     window._service = FakeService()  # type: ignore[assignment]
     window._login_password = FakeVariable("password123")  # type: ignore[assignment]
     window._notice = FakeVariable()  # type: ignore[assignment]
+    prewarmed: list[int] = []
+    window._login_prewarm = lambda: prewarmed.append(1)  # type: ignore[method-assign]
     submitted: list[tuple[Any, Any]] = []
     window._submit = (  # type: ignore[method-assign]
         lambda work, on_success=None: submitted.append((work, on_success))
@@ -561,6 +584,7 @@ def test_web_login_submits_authenticator_and_clears_password() -> None:
 
     window._login_with_web()
 
+    assert prewarmed == [1]
     assert window._login_password.get() == ""
     assert len(submitted) == 1
     submitted[0][0]()
@@ -631,7 +655,7 @@ def test_show_program_view_packs_scrollable_frame_with_internal_manager() -> Non
         {"fill": "both", "expand": True, "padx": 6, "pady": (2, 4)}
     ]
     window._settings_button.pack.assert_called_with(side="left")
-    window.root.resizable.assert_called_with(True, True)
+    window.root.resizable.assert_called_with(False, False)
 
 def test_show_auth_view_compacts_window(monkeypatch: Any) -> None:
     from unittest.mock import Mock
@@ -1626,7 +1650,7 @@ def test_close_stops_telemetry_client(tmp_path: Path) -> None:
 
 def test_main_window_is_responsive_and_landscape_first(monkeypatch: Any) -> None:
     source = Path(__file__).parents[2].joinpath('src', 'neko_launcher', 'ui', 'app_window.py').read_text(encoding='utf-8')
-    assert 'self.root.resizable(True, True)' in source
+    assert 'self.root.resizable(False, False)' in source
     assert 'self.root.minsize(480, 580)' in source
 
 
@@ -2272,6 +2296,39 @@ def test_app_window_explicit_apply_requires_prepare_pending_and_never_calls_prep
         executor.shutdown(wait=False)
 
 
+def test_active_game_blocks_update_without_stopping_proxy_or_preparing() -> None:
+    from unittest.mock import Mock
+
+    class FakeService:
+        def __init__(self) -> None:
+            self.stop_proxy_calls = 0
+
+        def stop_proxy(self) -> None:
+            self.stop_proxy_calls += 1
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._update_apply_pending = False
+    window._update_apply_service = Mock()
+    window._service = FakeService()  # type: ignore[assignment]
+    window._notice = FakeVariable()  # type: ignore[assignment]
+    window._controller = SimpleNamespace(  # type: ignore[assignment]
+        state=AppState(
+            game_process_running=True,
+            game_status=GameStatus.RUNNING,
+        )
+    )
+    window._can_apply_software_update = lambda: True  # type: ignore[method-assign]
+    window._get_verified_pending_update = lambda: object()  # type: ignore[method-assign]
+    window._refresh_software_update_apply_action = lambda: None  # type: ignore[method-assign]
+
+    window._apply_software_update()
+
+    assert window._notice.get() == "ตรวจพบว่าเกมกำลังทำงานอยู่ กรุณาปิดเกมก่อนอัปเดต"
+    assert window._service.stop_proxy_calls == 0  # type: ignore[attr-defined]
+    window._update_apply_service.prepare_pending.assert_not_called()  # type: ignore[attr-defined]
+
+
 def test_app_window_safe_close_requires_prepare_pending_and_never_calls_prepare(
     tmp_path: Path,
 ) -> None:
@@ -2660,3 +2717,105 @@ def test_cancel_web_login_stops_the_pending_browser_sign_in() -> None:
 
     assert cancelled == [1]
     assert window._notice.get() == "ยกเลิกการเข้าสู่ระบบแล้ว"
+
+
+def test_auth_transition_records_phase_and_success_timing_without_secrets() -> None:
+    window = object.__new__(AppWindow)
+    diagnostics = FakeDiagnostics()
+    window._diagnostics = diagnostics
+    window._last_auth_status = AuthStatus.AUTHENTICATING
+    window._last_auth_phase = AuthPhase.OPENING_BROWSER
+    window._web_login_started_at = time.monotonic() - 1.0
+    window._web_login_phase_started_at = time.monotonic() - 0.2
+
+    waiting = AppState(
+        auth_status=AuthStatus.AUTHENTICATING,
+        auth_phase=AuthPhase.WAITING_FOR_BROWSER,
+        user_email="customer@example.test",
+    )
+    window._record_auth_transition(
+        AuthStatus.AUTHENTICATING,
+        AuthPhase.OPENING_BROWSER,
+        waiting,
+    )
+    window._record_auth_transition(
+        AuthStatus.AUTHENTICATING,
+        AuthPhase.WAITING_FOR_BROWSER,
+        AppState(
+            auth_status=AuthStatus.AUTHENTICATED,
+            auth_phase=AuthPhase.IDLE,
+            session_id="session-id",
+            user_email="customer@example.test",
+        ),
+    )
+
+    phase_event = next(
+        fields
+        for category, event, fields in diagnostics.events
+        if category == "AUTH" and event == "UI_PHASE"
+    )
+    assert phase_event["phase"] == AuthPhase.WAITING_FOR_BROWSER.value
+    assert phase_event["total_elapsed_ms"] >= 900
+    assert phase_event["phase_elapsed_ms"] >= 150
+    success_event = next(
+        fields
+        for category, event, fields in diagnostics.events
+        if category == "AUTH" and event == "SUCCEEDED"
+    )
+    assert success_event["elapsed_ms"] >= 900
+    assert success_event["session_present"] is True
+    assert (
+        window._pending_dashboard_login_elapsed_ms
+        == success_event["elapsed_ms"]
+    )
+    assert "customer@example.test" not in repr(diagnostics.events)
+    assert "session-id" not in repr(diagnostics.events)
+
+
+def test_telemetry_transition_is_logged_only_when_health_changes() -> None:
+    window = object.__new__(AppWindow)
+    diagnostics = FakeDiagnostics()
+    window._diagnostics = diagnostics
+    snapshot = SimpleNamespace(
+        core_state="running",
+        v2ray_running=True,
+        local_socks_running=True,
+        shadowsocks_connected=True,
+        proxy_rtt_ms=12,
+        tcp_active=3,
+        dns_query_total=4,
+        network_error_total=0,
+        uptime_ms=1000,
+    )
+    state = SimpleNamespace(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        is_stale=False,
+        snapshot=snapshot,
+    )
+
+    window._record_telemetry_transition(state)
+    window._record_telemetry_transition(state)
+
+    events = [
+        fields
+        for category, event, fields in diagnostics.events
+        if category == "TELEMETRY" and event == "STATE"
+    ]
+    assert len(events) == 1
+    assert events[0]["connection_state"] == "connected"
+    assert events[0]["core_state"] == "running"
+    assert events[0]["v2ray"] is True
+    assert events[0]["socks"] is True
+    assert events[0]["upstream"] is True
+    assert events[0]["latency_ms"] == 12
+
+
+def test_background_failure_helper_keeps_exception_sanitization_category() -> None:
+    window = object.__new__(AppWindow)
+    diagnostics = FakeDiagnostics()
+    window._diagnostics = diagnostics
+    error = ValueError("password=do-not-log")
+
+    window._record_exception_support(error, "BACKGROUND_TASK")
+
+    assert diagnostics.exceptions == [(error, "BACKGROUND_TASK", "APP")]

@@ -3,6 +3,10 @@ from __future__ import annotations
 from threading import RLock
 from typing import Any
 
+from neko_launcher.application.diagnostics import (
+    SupportEventSink,
+    safe_exception_fields,
+)
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.ports import SecureStore
 from neko_launcher.domain.models import AuthenticatedUser, RegistrationResult
@@ -82,12 +86,24 @@ class ProxyApiAuthGateway:
         self,
         client: ProxyApiGateway,
         token_store: ProxyApiTokenStore,
+        *,
+        event_sink: SupportEventSink | None = None,
     ) -> None:
         self._client = client
         self._token_store = token_store
+        self._event_sink = event_sink
         self._lock = RLock()
         self._access_token: str | None = None
         self._account_status: ProxyAccountStatus | None = None
+
+    def _support_event(self, event: str, **fields: Any) -> None:
+        sink = self._event_sink
+        if sink is None:
+            return
+        try:
+            sink.record_event("AUTH", event, **fields)
+        except Exception:
+            pass
 
     @property
     def account_status(self) -> ProxyAccountStatus | None:
@@ -131,23 +147,43 @@ class ProxyApiAuthGateway:
         with self._lock:
             try:
                 refresh_token = self._token_store.load()
-            except ProxyApiError:
+            except ProxyApiError as error:
+                self._support_event(
+                    "RESTORE_FAILED",
+                    stage="credential_load",
+                    **safe_exception_fields(error),
+                )
                 return None
             if not refresh_token:
+                self._support_event(
+                    "RESTORE_SKIPPED", reason="no_saved_session"
+                )
                 return None
             try:
                 tokens = self._exchange_refresh_locked(refresh_token)
                 status = self._client.get_me(tokens.access_token)
                 status.require_active()
             except ProxyApiError as error:
+                self._support_event(
+                    "RESTORE_FAILED",
+                    stage="refresh_or_profile",
+                    terminal_auth=error.is_terminal_auth,
+                    **safe_exception_fields(error),
+                )
                 self._clear_memory_locked()
                 if error.is_terminal_auth:
                     self._clear_store_quietly()
                 return None
-            except Exception:
+            except Exception as error:
+                self._support_event(
+                    "RESTORE_FAILED",
+                    stage="refresh_or_profile",
+                    **safe_exception_fields(error),
+                )
                 self._clear_memory_locked()
                 return None
             self._account_status = status
+            self._support_event("RESTORE_SUCCEEDED")
             return AuthenticatedUser(
                 user_id=status.identity_user_id,
                 email=status.display_name or DEFAULT_DISPLAY_NAME,

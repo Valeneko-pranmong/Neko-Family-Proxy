@@ -74,6 +74,47 @@ def safe_authorized_start_details(details: dict[str, Any]) -> dict[str, object]:
 
 
 
+_SAFE_EVENT_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+_SAFE_EXCEPTION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def safe_exception_fields(exc: Exception) -> dict[str, object]:
+    """Return only bounded, non-secret exception attributes for support events."""
+    exc_name = type(exc).__name__
+    fields: dict[str, object] = {
+        "error_type": (
+            exc_name if _SAFE_EXCEPTION_NAME.fullmatch(exc_name) else "Exception"
+        )
+    }
+
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and _SAFE_EVENT_CODE.fullmatch(code):
+        fields["error_code"] = code
+
+    status = getattr(exc, "status", None)
+    if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+        fields["http_status"] = status
+
+    request_id = getattr(exc, "request_id", None)
+    if isinstance(request_id, str) and _SAFE_REQUEST_ID.fullmatch(request_id):
+        fields["request_id"] = request_id
+
+    retryable = getattr(exc, "retryable", None)
+    if isinstance(retryable, bool):
+        fields["retryable"] = retryable
+
+    winerror = getattr(exc, "winerror", None)
+    if isinstance(winerror, int) and not isinstance(winerror, bool):
+        fields["winerror"] = winerror
+
+    diagnostic_code = getattr(exc, "diagnostic_code", None)
+    code_value = getattr(diagnostic_code, "value", diagnostic_code)
+    if isinstance(code_value, str) and _SAFE_EVENT_CODE.fullmatch(code_value):
+        fields.setdefault("diagnostic_code", code_value)
+    return fields
+
+
 def sanitize_diagnostic_text(text: str) -> str:
     """Redact sensitive patterns (tokens, JWTs, PEM keys, passwords, challenges) before writing."""
     if not text:
@@ -123,6 +164,11 @@ def format_safe_diagnostic_metadata(exc: Exception) -> str:
     }
     if code_value in safe_diagnostic_codes:
         parts.append(f"diagnostic_code={code_value}")
+
+    safe_fields = safe_exception_fields(exc)
+    for key in ("error_code", "http_status", "request_id", "retryable"):
+        if key in safe_fields:
+            parts.append(f"{key}={safe_fields[key]}")
     diagnostic_context = getattr(exc, "diagnostic_context", None)
     if isinstance(diagnostic_context, dict):
         if diagnostic_context.get("function") == "issue_launch_permit":
@@ -179,11 +225,21 @@ class CoreDiagnosticsSnapshot:
     authorized_start_core_error_code: str | None = None
 
 
-class DiagnosticsSink(Protocol):
+class SupportEventSink(Protocol):
+    def record_event(self, category: str, event: str, **fields: Any) -> None: ...
+
+
+class DiagnosticsSink(SupportEventSink, Protocol):
     def begin_attempt(self, attempt_id: str) -> None: ...
     def record_stage(self, stage: str, **kwargs: Any) -> None: ...
     def record_process_event(self, event: str, **kwargs: Any) -> None: ...
-    def record_exception(self, exc: Exception, stage: str) -> None: ...
+    def record_exception(
+        self,
+        exc: Exception,
+        stage: str,
+        *,
+        category: str = "CORE",
+    ) -> None: ...
 
 
 class CoreDiagnosticsRecorder:
@@ -296,7 +352,18 @@ class CoreDiagnosticsRecorder:
                 self._exit_code = kwargs["exit_code"]
             self._sink.record_process_event(event, **kwargs)
 
-    def record_exception(self, exc: Exception, stage: str) -> None:
+    def record_event(self, category: str, event: str, **fields: Any) -> None:
+        record_event = getattr(self._sink, "record_event", None)
+        if callable(record_event):
+            record_event(category, event, **fields)
+
+    def record_exception(
+        self,
+        exc: Exception,
+        stage: str,
+        *,
+        category: str = "CORE",
+    ) -> None:
         with self._lock:
             self._stage = stage
             winerror = getattr(exc, "winerror", None)
@@ -316,7 +383,10 @@ class CoreDiagnosticsRecorder:
             sanitized_tb = sanitize_diagnostic_text(tb)
             self._last_diagnostic = f"{diagnostic_msg}\n{sanitized_tb}"
 
-            self._sink.record_exception(exc, stage)
+            try:
+                self._sink.record_exception(exc, stage, category=category)
+            except TypeError:
+                self._sink.record_exception(exc, stage)
 
 
 class NoopDiagnosticsSink:
@@ -329,5 +399,14 @@ class NoopDiagnosticsSink:
     def record_process_event(self, event: str, **kwargs: Any) -> None:
         pass
 
-    def record_exception(self, exc: Exception, stage: str) -> None:
+    def record_event(self, category: str, event: str, **fields: Any) -> None:
+        pass
+
+    def record_exception(
+        self,
+        exc: Exception,
+        stage: str,
+        *,
+        category: str = "CORE",
+    ) -> None:
         pass

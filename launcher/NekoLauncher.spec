@@ -12,6 +12,7 @@ datas = [
     (str(repository_root / "Asset" / "icon_app.ico"), "."),
     (str(repository_root / "Asset" / "computer.png"), "."),
     (str(repository_root / "Asset" / "internet.png"), "."),
+    (str(repository_root / "Asset" / "discord-icon-svgrepo-com.png"), "."),
     (str(repository_root / "Asset" / "Sarabun-Regular.ttf"), "."),
     (str(repository_root / "Asset" / "Sarabun-Bold.ttf"), "."),
     (str(repository_root / "Asset" / "Sarabun-OFL.txt"), "."),

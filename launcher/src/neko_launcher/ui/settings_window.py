@@ -111,6 +111,11 @@ class SettingsWindow(ctk.CTkToplevel):
         on_repair: Callable[[FileIntegrityReport], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        self.withdraw()
+        # We style the native title bar ourselves. CustomTkinter's Windows
+        # titlebar-color helper withdraws and re-maps the window, which shows
+        # a partial first paint (labels appearing progressively).
+        self._deactivate_windows_window_header_manipulation = True
         self._on_close_callback = on_close
         self._logo_path = logo_path
         self._icon_path = icon_path
@@ -206,13 +211,37 @@ class SettingsWindow(ctk.CTkToplevel):
         except Exception:
             pass
 
+        # Keep the first mapped frame fully transparent until every widget has
+        # been laid out and drawn once, then reveal the finished frame.
+        alpha_hidden = False
+        try:
+            self.attributes("-alpha", 0.0)
+            alpha_hidden = True
+        except Exception:
+            pass
+
         self._build_layout()
         self.bind("<Control-f>", self._focus_search)
+        self.update_idletasks()
+        self.update()
         style_native_title_bar(self, PALETTE)
         apply_rounded_window_shape(self, radius=20)
-        self.lift()
-        self.focus_force()
-        self.after(20, self._ensure_window_focus_and_lift)
+        self.deiconify()
+        self.update_idletasks()
+        if alpha_hidden:
+            self.update()
+            self.after(30, self._reveal_settings_window)
+        else:
+            self.update()
+            self._ensure_window_focus_and_lift()
+
+    def _reveal_settings_window(self) -> None:
+        try:
+            if self.winfo_exists():
+                self.attributes("-alpha", 1.0)
+        except (tk.TclError, RuntimeError):
+            pass
+        self._ensure_window_focus_and_lift()
 
     def _ensure_window_focus_and_lift(self) -> None:
         try:

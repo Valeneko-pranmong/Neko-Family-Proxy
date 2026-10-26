@@ -25,8 +25,8 @@ def test_installer_keeps_single_app_id_and_clean_start_policy() -> None:
 def test_installer_default_version_is_the_release_version() -> None:
     source = installer_source()
 
-    assert '#define MyAppVersion "5.2.0"' in source
-    assert '#define MyAppDisplayVersion "5.2.0"' in source
+    assert '#define MyAppVersion "5.2.1"' in source
+    assert '#define MyAppDisplayVersion "5.2.1"' in source
 
 
 def test_installer_blocks_a_different_installed_version() -> None:
@@ -36,7 +36,7 @@ def test_installer_blocks_a_different_installed_version() -> None:
     assert "function ExistingInstallVersion(): String;" in source
     assert "RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion'" in source
     assert "InstalledVersion <> '{#MyAppVersion}'" in source
-    assert "5.2.0 ต้องติดตั้งแยกจาก 5.1.6" in source
+    assert "5.2.1 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0" in source
     assert "An existing NEKO FAMILY PROXY ' + InstalledVersion" in source
     assert "Result := False;" in source
 
@@ -49,6 +49,18 @@ def test_installer_blocks_running_launcher_core_and_updater() -> None:
     assert "ewWaitUntilTerminated" in source
     assert "if ProcessesAreRunning() then" in source
     assert "Exit;" in source
+
+
+def test_uninstaller_blocks_running_launcher_core_and_updater() -> None:
+    source = installer_source()
+
+    uninstall_start = source.index("function InitializeUninstall(): Boolean;")
+    setup_start = source.index("function InitializeSetup(): Boolean;")
+    guard = source[uninstall_start:setup_start]
+
+    assert "ProcessesAreRunning()" in guard
+    assert "Result := False;" in guard
+    assert "กรุณาปิด Neko Family Proxy และ proxy session ก่อนถอนการติดตั้ง" in guard
 
 
 def test_installer_guard_runs_before_copying_or_deleting_files() -> None:

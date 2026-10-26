@@ -75,13 +75,18 @@ def test_startup_error_report_does_not_persist_or_display_exception_detail(
     try:
         raise RuntimeError(sentinel)
     except RuntimeError as exc:
-        _report_startup_error(exc)
+        _report_startup_error(
+            exc,
+            phases=("main_entry", "window_build"),
+        )
 
     log_text = (tmp_path / "NEKO FAMILY" / "launcher-error.log").read_text(
         encoding="utf-8"
     )
     assert sentinel not in log_text
     assert "Traceback" not in log_text
+    assert "EXCEPTION_CLASS=RuntimeError" in log_text
+    assert "BOOT_PHASES=main_entry,window_build" in log_text
     assert messages and sentinel not in messages[0]
 
 

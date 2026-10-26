@@ -57,6 +57,16 @@ class MemoryStore:
         self.values.pop(key, None)
 
 
+class RecordingSupportSink:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict[str, object]]] = []
+
+    def record_event(
+        self, category: str, event: str, **fields: object
+    ) -> None:
+        self.events.append((category, event, fields))
+
+
 class FakeTransport:
     def __init__(self, responses: list[object]) -> None:
         self.responses = list(responses)
@@ -133,13 +143,19 @@ def _store() -> MemoryStore:
 def _auth(
     transport: FakeTransport,
     store: MemoryStore,
+    *,
+    event_sink: RecordingSupportSink | None = None,
 ) -> ProxyApiAuthGateway:
     client = ProxyApiGateway(
         proxy_api_base_url="https://proxy.test",
         identity_base_url="https://identity.test",
         transport=transport,
     )
-    return ProxyApiAuthGateway(client, ProxyApiTokenStore(store))
+    return ProxyApiAuthGateway(
+        client,
+        ProxyApiTokenStore(store),
+        event_sink=event_sink,
+    )
 
 
 def test_sign_in_preflights_and_stores_only_refresh_token() -> None:
@@ -260,6 +276,62 @@ def test_login_timeout_clears_refresh_token() -> None:
 
     assert captured.value.code == "timeout"
     assert store.values == {}
+
+
+def test_restore_emits_safe_support_events_without_tokens() -> None:
+    store = _store()
+    store.values[REFRESH_TOKEN_STORE_KEY] = "old-refresh-fixture"
+    transport = FakeTransport(
+        [
+            _response(200, FIXTURE["refresh_success"]),
+            _response(200, FIXTURE["me_active"]),
+        ]
+    )
+    sink = RecordingSupportSink()
+    auth = _auth(transport, store, event_sink=sink)
+
+    assert auth.restore_session() is not None
+
+    assert ("AUTH", "RESTORE_SUCCEEDED", {}) in sink.events
+    serialized = repr(sink.events)
+    assert "old-refresh-fixture" not in serialized
+    assert "refresh-token-fixture-2" not in serialized
+    assert "access-token-fixture-2" not in serialized
+
+
+def test_restore_without_token_logs_only_a_safe_reason() -> None:
+    sink = RecordingSupportSink()
+    auth = _auth(FakeTransport([]), _store(), event_sink=sink)
+
+    assert auth.restore_session() is None
+
+    assert sink.events == [
+        ("AUTH", "RESTORE_SKIPPED", {"reason": "no_saved_session"})
+    ]
+
+
+def test_restore_failure_logs_sanitized_error_category_and_status() -> None:
+    store = _store()
+    store.values[REFRESH_TOKEN_STORE_KEY] = "old-refresh-fixture"
+    sink = RecordingSupportSink()
+    auth = _auth(
+        FakeTransport([_response(400, FIXTURE["oauth_invalid_grant"])]),
+        store,
+        event_sink=sink,
+    )
+
+    assert auth.restore_session() is None
+
+    _, event, fields = next(
+        item for item in sink.events if item[1] == "RESTORE_FAILED"
+    )
+    assert event == "RESTORE_FAILED"
+    assert fields["stage"] == "refresh_or_profile"
+    assert fields["error_code"] == "invalid_grant"
+    assert fields["http_status"] == 400
+    serialized = repr(sink.events)
+    assert "old-refresh-fixture" not in serialized
+    assert "access-token-fixture" not in serialized
 
 
 def test_restore_refreshes_and_replaces_rotated_token() -> None:

@@ -13,6 +13,10 @@ from supabase_auth.errors import (
     AuthSessionMissingError,
 )
 
+from neko_launcher.application.diagnostics import (
+    SupportEventSink,
+    safe_exception_fields,
+)
 from neko_launcher.application.errors import (
     EntitlementUnavailable,
     HeartbeatAuthInvalid,
@@ -52,6 +56,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         client: Client | None = None,
         credential_provider: Any = None,
         launcher_schema: str = "launcher",
+        event_sink: SupportEventSink | None = None,
     ) -> None:
         if not url or not publishable_key:
             raise ValueError("Supabase URL and publishable key are required")
@@ -64,6 +69,7 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         self._auth_storage = SupabaseAuthStorage(secure_store)
         self._credential_provider = credential_provider
         self._launcher_schema = launcher_schema
+        self._event_sink = event_sink
         self._client = client or create_client(
             url,
             publishable_key,
@@ -165,15 +171,48 @@ class SupabaseGateway(AuthGateway, EntitlementGateway):
         if getattr(response, "user", None) is None:
             raise LauncherServiceError("กรุณาเข้าสู่ระบบใหม่แล้วลองอีกครั้ง")
 
+    def _support_event(self, event: str, **fields: Any) -> None:
+        sink = self._event_sink
+        if sink is None:
+            return
+        try:
+            sink.record_event("AUTH", event, **fields)
+        except Exception:
+            pass
+
     def restore_session(self) -> AuthenticatedUser | None:
         try:
             session = self._client.auth.get_session()
-            if session is None:
-                return None
-            response = self._client.auth.get_user()
-        except Exception:
+        except Exception as error:
+            self._support_event(
+                "RESTORE_FAILED",
+                stage="session_lookup",
+                **safe_exception_fields(error),
+            )
             return None
-        return self._to_user(response.user) if response.user else None
+        if session is None:
+            self._support_event(
+                "RESTORE_SKIPPED", reason="no_saved_session"
+            )
+            return None
+        try:
+            response = self._client.auth.get_user()
+        except Exception as error:
+            self._support_event(
+                "RESTORE_FAILED",
+                stage="profile_lookup",
+                **safe_exception_fields(error),
+            )
+            return None
+        if not response.user:
+            self._support_event(
+                "RESTORE_FAILED",
+                stage="profile_lookup",
+                reason="missing_user",
+            )
+            return None
+        self._support_event("RESTORE_SUCCEEDED")
+        return self._to_user(response.user)
 
     def sign_out(self) -> None:
         try:

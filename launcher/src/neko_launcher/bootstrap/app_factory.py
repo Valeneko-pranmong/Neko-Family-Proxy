@@ -13,6 +13,7 @@ from neko_launcher.application.authorized_core import (
     OrchestrationTimeouts,
 )
 from neko_launcher.application.controller import ApplicationController
+from neko_launcher.application.diagnostics import SupportEventSink
 from neko_launcher.application.ports import (
     AccountRecoveryGateway,
     AuthGateway,
@@ -40,7 +41,10 @@ from neko_launcher.infrastructure.auth.proxy_api_entitlement import (
 )
 from neko_launcher.infrastructure.auth.proxy_api_gateway import ProxyApiGateway
 from neko_launcher.infrastructure.auth.proxy_api_permit import ProxyApiPermitGateway
-from neko_launcher.infrastructure.auth.web_auth import WebAuthClient
+from neko_launcher.infrastructure.auth.web_auth import (
+    WebAuthClient,
+    prewarm_login_stack,
+)
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.core.authorized_proxy_gateway import AuthorizedProxyGateway
 from neko_launcher.infrastructure.core.core_control_channel import NamedPipeCoreControlChannel
@@ -53,6 +57,7 @@ from neko_launcher.application.software_update_models import (
 from neko_launcher.infrastructure.authenticated_release_identity import (
     AuthenticatedReleaseIdentityReader,
 )
+from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
 from neko_launcher.infrastructure.event_bus import EventBus
 from neko_launcher.infrastructure.github_asset_downloader import (
     GitHubAssetDownloader,
@@ -338,6 +343,8 @@ def compose_auth_dependencies(
     config: LauncherConfig,
     secure_store: Any,
     credential_provider: Any,
+    *,
+    event_sink: SupportEventSink | None = None,
 ) -> AuthDependencies:
     """Compose the source-only Proxy API path or the frozen legacy path."""
     if config.proxy_api_enabled:
@@ -348,6 +355,7 @@ def compose_auth_dependencies(
         auth_gateway = ProxyApiAuthGateway(
             client,
             ProxyApiTokenStore(secure_store),
+            event_sink=event_sink,
         )
         entitlement_gateway = ProxyApiEntitlementGateway(client, auth_gateway)
         return AuthDependencies(
@@ -367,6 +375,7 @@ def compose_auth_dependencies(
         secure_store,
         credential_provider=credential_provider,
         launcher_schema=config.launcher_schema,
+        event_sink=event_sink,
     )
     recovery_gateway = (
         None
@@ -445,12 +454,48 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
     root = workspace_root or application_root()
     config = LauncherConfig.from_environment(root)
     install_root = get_expected_install_root()
+
+    # Support diagnostics are always-on. Debug mode only increases verbosity
+    # and exposes the advanced diagnostics UI; it no longer gates log creation.
+    diagnostics_sink = DevelopmentLogger(
+        config.debug_log_dir,
+        verbose=config.debug_mode,
+    )
+    diagnostics_sink.log_session_header(
+        core_path=str(config.proxy_core_path),
+        workspace_root=str(root),
+        install_root=str(install_root),
+    )
+    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
+
+    diagnostics_recorder = CoreDiagnosticsRecorder(diagnostics_sink)
+
     try:
         verified_profile = load_installed_update_trust_profile(install_root)
         channel_profile = UpdateChannelProfile.from_verified(verified_profile)
     except Exception:
         verified_profile = None
         channel_profile = None
+    try:
+        diagnostics_sink.record_event(
+            "SYSTEM",
+            "RUNTIME_CONFIG",
+            proxy_api_enabled=config.proxy_api_enabled,
+            web_auth_only=config.web_auth_only,
+            update_channel=(
+                getattr(
+                    channel_profile.channel,
+                    "value",
+                    channel_profile.channel,
+                )
+                if channel_profile
+                else "unavailable"
+            ),
+            debug_mode=config.debug_mode,
+            game_configured=bool(config.game_exe),
+        )
+    except Exception:
+        pass
 
     if channel_profile is not None:
         shared_resolver = GitHubReleaseResolver(
@@ -515,26 +560,10 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         config,
         secure_store,
         credential_provider,
+        event_sink=diagnostics_sink,
     )
     recovery_gateway = auth_dependencies.recovery_gateway
     proxy_status_client = PublicProxyStatusClient(config.proxy_status_api_url)
-
-    from neko_launcher.infrastructure.diagnostics_logger import DevelopmentLogger
-
-    # Support diagnostics are always-on. Debug mode only increases verbosity
-    # and exposes the advanced diagnostics UI; it no longer gates log creation.
-    diagnostics_sink = DevelopmentLogger(
-        config.debug_log_dir,
-        verbose=config.debug_mode,
-    )
-    diagnostics_sink.log_session_header(
-        core_path=str(config.proxy_core_path),
-        workspace_root=str(root),
-    )
-
-    from neko_launcher.application.diagnostics import CoreDiagnosticsRecorder
-
-    diagnostics_recorder = CoreDiagnosticsRecorder(diagnostics_sink)
 
     if config.proxy_api_enabled:
         proxy_client = auth_dependencies.proxy_client
@@ -606,12 +635,15 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         logo_path = asset_dir / "logo.png"
         icon_path = asset_dir / "icon_app.ico"
         settings_icon_path = asset_dir / "setting.png"
+        web_login_icon_path = asset_dir / "discord-icon-svgrepo-com.png"
     else:
         logo_path = root / "logo.png"
         icon_path = root / "icon_app.ico"
         settings_icon_path = root / "setting.png"
+        web_login_icon_path = root / "discord-icon-svgrepo-com.png"
 
     web_auth_client: WebAuthClient | None = None
+    login_prewarm = None
     if config.web_auth_enabled:
         bridge_exchange_url = (
             "" if config.proxy_api_enabled else config.web_auth_bridge_url
@@ -620,7 +652,13 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
             web_auth_client = WebAuthClient(
                 identity_base_url=config.identity_base_url,
                 bridge_exchange_url=bridge_exchange_url,
+                event_sink=diagnostics_sink,
             )
+            def login_prewarm() -> None:
+                prewarm_login_stack(
+                    config.identity_base_url,
+                    config.proxy_api_url,
+                )
         except Exception:
             web_auth_client = None
 
@@ -631,6 +669,7 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         logo_path=logo_path,
         icon_path=icon_path,
         settings_icon_path=settings_icon_path,
+        web_login_icon_path=web_login_icon_path,
         game_default_path=config.game_exe,
         game_path_store=config.game_path_store,
         diagnostics=diagnostics_recorder,
@@ -644,4 +683,5 @@ def build_window(workspace_root: Path | None = None) -> AppWindow:
         web_auth_client=web_auth_client,
         web_auth_enabled=web_auth_client is not None,
         web_auth_only=config.web_auth_only,
+        login_prewarm=login_prewarm,
     )

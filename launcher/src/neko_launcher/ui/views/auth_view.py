@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import tkinter as tk
+import webbrowser
+from pathlib import Path
 from typing import Callable
 
 import customtkinter as ctk
+from PIL import Image
 
 from neko_launcher.ui.theme import CONTROL_RADIUS, FONT_FAMILY, PALETTE
 from neko_launcher.ui.components.buttons import (
@@ -13,6 +16,25 @@ from neko_launcher.ui.components.buttons import (
     primary_button,
     secondary_button,
 )
+
+WEB_LOGIN_LABEL = "ล็อคอินด้วย Neko Family Network ID"
+DISCORD_HELP_URL = "https://discord.gg/fkjXW9AJ6a"
+
+
+def _load_login_icon(path: Path | None) -> ctk.CTkImage | None:
+    if path is None or not Path(path).is_file():
+        return None
+    try:
+        with Image.open(path) as source:
+            image = source.convert("RGBA")
+        return ctk.CTkImage(image, size=(18, 18))
+    except (OSError, ValueError):
+        return None
+
+
+def _apply_login_icon(button: ctk.CTkButton, icon: ctk.CTkImage | None) -> None:
+    if icon is not None:
+        button.configure(image=icon, compound="left")
 
 
 class AuthView:
@@ -35,20 +57,39 @@ class AuthView:
         on_cancel_web_login: Callable[[], None] | None = None,
         web_auth_enabled: bool = False,
         web_auth_only: bool = False,
+        web_login_icon_path: Path | None = None,
     ) -> None:
         self.frame = ctk.CTkFrame(parent, fg_color="transparent")
         self._on_cancel_web_login = on_cancel_web_login
+        self._web_login_icon = _load_login_icon(web_login_icon_path)
         self._progress_panel: ctk.CTkFrame | None = None
         self._progress_text: ctk.CTkLabel | None = None
         self._progress_bar: ctk.CTkProgressBar | None = None
         self._cancel_button: ctk.CTkButton | None = None
         self._progress_pack_kwargs: dict[str, object] = {}
         self._progress_visible = False
+        self._progress_overlay = False
+        self._progress_host: ctk.CTkFrame | None = None
+        self._help_label: ctk.CTkLabel | None = None
+        self._web_auth_only = bool(
+            web_auth_only and web_auth_enabled and on_web_login is not None
+        )
         intro = card(self.frame)
         intro.pack(fill="both", expand=True, padx=8, pady=(0, 4))
 
         top_row = ctk.CTkFrame(intro, fg_color="transparent")
         top_row.pack(fill="x", padx=14, pady=(6, 0))
+
+        layout = intro
+        content = intro
+        if self._web_auth_only:
+            # Keep the status row pinned at the top; center only the content.
+            # The full-height layout also gives the floating progress panel
+            # room below the content without reflowing the login controls.
+            layout = ctk.CTkFrame(intro, fg_color="transparent")
+            layout.pack(fill="both", expand=True, padx=18)
+            content = ctk.CTkFrame(layout, fg_color="transparent")
+            content.pack(fill="x", expand=True)
 
         self._auth_hint = ctk.CTkLabel(
             top_row,
@@ -66,15 +107,12 @@ class AuthView:
         )
         self._status_badge.pack(side="right")
 
-        title_frame = ctk.CTkFrame(intro, fg_color="transparent")
+        title_frame = ctk.CTkFrame(content, fg_color="transparent")
         title_frame.pack(fill="x", pady=(2, 2))
-        self._web_auth_only = bool(
-            web_auth_only and web_auth_enabled and on_web_login is not None
-        )
         ctk.CTkLabel(
             title_frame,
             text=(
-                "เข้าสู่ระบบด้วย Discord"
+                WEB_LOGIN_LABEL
                 if self._web_auth_only
                 else "เข้าสู่ระบบและสมัครสมาชิก"
             ),
@@ -86,7 +124,11 @@ class AuthView:
         self._login_button: ctk.CTkButton | None = None
         self._register_button: ctk.CTkButton | None = None
         if self._web_auth_only:
-            self._build_web_only(intro, on_web_login)
+            self._build_web_only(
+                content,
+                on_web_login,
+                overlay_host=layout,
+            )
             return
 
         self._tab_controls = ctk.CTkFrame(
@@ -132,13 +174,14 @@ class AuthView:
         if web_auth_enabled and on_web_login is not None:
             self._web_login_button = primary_button(
                 login,
-                "เข้าสู่ระบบด้วย Discord",
+                WEB_LOGIN_LABEL,
                 on_web_login,
             )
             self._web_login_button.configure(
                 height=32,
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             )
+            _apply_login_icon(self._web_login_button, self._web_login_icon)
             self._web_login_button.pack(fill="x", padx=14, pady=(6, 0))
             ctk.CTkLabel(
                 login,
@@ -235,36 +278,49 @@ class AuthView:
         self,
         parent: ctk.CTkFrame,
         on_web_login: Callable[[], None],
+        *,
+        overlay_host: ctk.CTkFrame,
     ) -> None:
         body = ctk.CTkFrame(parent, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=18, pady=(14, 18))
+        body.pack(fill="x", pady=(14, 18))
         ctk.CTkLabel(
             body,
-            text="ใช้งาน Neko Family ได้ด้วยบัญชี Discord เท่านั้น ไม่ต้องสมัครสมาชิกใหม่",
+            text="ยินดีต้อนรับสู่ Neko Family Proxy",
             text_color=PALETTE.text_muted,
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             wraplength=360,
             justify="center",
         ).pack(anchor="center", pady=(8, 14))
         self._web_login_button = primary_button(
             body,
-            "เข้าสู่ระบบด้วย Discord",
+            WEB_LOGIN_LABEL,
             on_web_login,
         )
         self._web_login_button.configure(
             height=44,
             font=ctk.CTkFont(family=FONT_FAMILY, size=14, weight="bold"),
         )
+        _apply_login_icon(self._web_login_button, self._web_login_icon)
         self._web_login_button.pack(fill="x", padx=4, pady=(0, 10))
-        ctk.CTkLabel(
+        self._help_label = ctk.CTkLabel(
             body,
-            text="เบราว์เซอร์จะเปิดขึ้นเอง ยืนยันเสร็จแล้วกลับมาที่หน้าต่างนี้",
+            text=f"มีปัญหาการใช้งานติดต่อ ที่ดิสคอส {DISCORD_HELP_URL}",
             text_color=PALETTE.text_muted,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             wraplength=360,
             justify="center",
-        ).pack(anchor="center")
-        self._build_progress_panel(body, padx=4)
+            cursor="hand2",
+        )
+        self._help_label.pack(anchor="center")
+        self._help_label.bind(
+            "<Button-1>", lambda _event: webbrowser.open(DISCORD_HELP_URL)
+        )
+        self._build_progress_panel(
+            body,
+            padx=4,
+            overlay=True,
+            overlay_host=overlay_host,
+        )
 
     def _build_progress_panel(
         self,
@@ -272,15 +328,22 @@ class AuthView:
         *,
         padx: int,
         side: str = "top",
+        overlay: bool = False,
+        overlay_host: ctk.CTkFrame | None = None,
     ) -> None:
+        panel_parent = (
+            overlay_host if overlay and overlay_host is not None else parent
+        )
         panel = ctk.CTkFrame(
-            parent,
+            panel_parent,
             fg_color=PALETTE.surface_accent,
             border_color=PALETTE.border_accent,
             border_width=1,
             corner_radius=CONTROL_RADIUS,
         )
         self._progress_panel = panel
+        self._progress_overlay = bool(overlay)
+        self._progress_host = panel_parent if overlay else None
         self._progress_pack_kwargs = {
             "side": side,
             "fill": "x",
@@ -333,12 +396,33 @@ class AuthView:
         if text is None:
             if self._progress_bar is not None:
                 self._progress_bar.stop()
-            panel.pack_forget()
+            if self._progress_overlay:
+                panel.place_forget()
+            else:
+                panel.pack_forget()
             self._progress_visible = False
             return
         if self._progress_text is not None:
             self._progress_text.configure(text=text)
-        if not self._progress_visible:
+        if self._progress_overlay:
+            self.frame.update_idletasks()
+            host = self._progress_host
+            help_label = self._help_label
+            if host is not None and help_label is not None:
+                top = (
+                    help_label.winfo_rooty()
+                    + help_label.winfo_height()
+                    + 10
+                    - host.winfo_rooty()
+                )
+                panel.place(
+                    in_=host,
+                    x=0,
+                    y=top,
+                    relwidth=1.0,
+                )
+            self._progress_visible = True
+        elif not self._progress_visible:
             panel.pack(**self._progress_pack_kwargs)
             self._progress_visible = True
         if self._progress_bar is not None:

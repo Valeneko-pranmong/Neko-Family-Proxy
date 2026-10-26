@@ -34,7 +34,6 @@ AUTH_PROGRESS_TEXT: dict[AuthPhase, str] = {
     AuthPhase.CHECKING_ENTITLEMENT: "เชื่อมต่อบัญชีแล้ว กำลังตรวจวันใช้งาน",
 }
 
-
 def describe_auth_progress(phase: AuthPhase) -> str:
     """Return the customer-facing label for a sign-in step."""
     return AUTH_PROGRESS_TEXT.get(phase, "กำลังเข้าสู่ระบบ")
@@ -54,7 +53,7 @@ def translate_customer_status(
     if state.auth_status is AuthStatus.SIGNED_OUT:
         return CustomerStatus(
             title="ยังไม่ได้เข้าสู่ระบบ",
-            subtitle="เข้าสู่ระบบด้วย Discord เพื่อเริ่มใช้งาน",
+            subtitle="ล็อกอินด้วย Neko Family Network ID เพื่อเริ่มใช้งาน",
             role="neutral",
             is_ready=False,
         )

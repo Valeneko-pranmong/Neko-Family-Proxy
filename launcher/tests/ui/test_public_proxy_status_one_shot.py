@@ -74,7 +74,9 @@ def test_one_shot_none_result_normalizes_to_offline_without_exception_or_resched
     assert (window._server_avg_download, "—") in updated_values
     assert (window._server_avg_upload, "—") in updated_values
     assert (window._server_average_window, "เฉลี่ย 30 นาที") in updated_values
-    assert debug_events == [("PUBLIC_PROXY_STATUS_UNAVAILABLE", {"error": "no_result"})]
+    assert debug_events[0][0] == "PUBLIC_PROXY_STATUS_UNAVAILABLE"
+    assert debug_events[0][1]["error"] == "no_result"
+    assert isinstance(debug_events[0][1]["elapsed_ms"], int)
 
 
 def test_public_proxy_status_fetch_is_one_shot_without_30_second_reschedule() -> None:

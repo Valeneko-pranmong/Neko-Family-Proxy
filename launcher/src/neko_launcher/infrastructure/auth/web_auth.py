@@ -16,8 +16,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from neko_launcher.application.diagnostics import (
+    SupportEventSink,
+    safe_exception_fields,
+)
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.domain.models import AuthPhase
+from neko_launcher.infrastructure.auth.proxy_api_gateway import (
+    PROXY_CLAIM_PATH,
+    PROXY_ME_PATH,
+)
 
 DEFAULT_IDENTITY_BASE_URL = "https://neko-network-id.vercel.app"
 AUTHORIZE_PATH = "/launcher/authorize"
@@ -31,6 +39,8 @@ HTTP_TIMEOUT_SECONDS = 10.0
 MAX_RESPONSE_BYTES = 65_536
 MAX_OPAQUE_CODE_CHARS = 4096
 MAX_TOKEN_CHARS = 16_384
+PREWARM_TIMEOUT_SECONDS = 3.0
+PREWARM_MAX_RESPONSE_BYTES = 4096
 
 T = TypeVar("T")
 
@@ -216,6 +226,97 @@ def _normalized_https_base(value: str) -> str:
             code="identity_endpoint_invalid",
         )
     return value.rstrip("/")
+
+
+def _prewarm_targets(
+    identity_base_url: str,
+    proxy_api_base_url: str,
+) -> list[tuple[str, str, bytes | None]]:
+    try:
+        identity_base = _normalized_https_base(identity_base_url)
+    except WebAuthError:
+        return []
+    targets: list[tuple[str, str, bytes | None]] = [
+        (f"{identity_base}{TOKEN_PATH}", "POST", b"{}"),
+    ]
+    if proxy_api_base_url:
+        parsed = urlparse(proxy_api_base_url)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname
+            and parsed.path in ("", "/")
+            and not parsed.query
+            and not parsed.fragment
+            and parsed.username is None
+            and parsed.password is None
+        ):
+            proxy_base = proxy_api_base_url.rstrip("/")
+            targets.append((f"{proxy_base}{PROXY_ME_PATH}", "GET", None))
+            targets.append((f"{proxy_base}{PROXY_CLAIM_PATH}", "POST", b"{}"))
+    return targets
+
+
+def _send_prewarm_request(
+    url: str,
+    method: str,
+    body: bytes | None,
+    opener: Any,
+    timeout: float,
+) -> None:
+    headers = {
+        "Accept": "application/json",
+        "Cache-Control": "no-store",
+        "User-Agent": "NekoLauncherWarmup/1",
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = Request(url, data=body, headers=headers, method=method)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            response.read(PREWARM_MAX_RESPONSE_BYTES)
+    except Exception:
+        pass
+
+
+def prewarm_login_stack(
+    identity_base_url: str,
+    proxy_api_base_url: str = "",
+    *,
+    opener: Any = None,
+    timeout: float = PREWARM_TIMEOUT_SECONDS,
+) -> threading.Thread | None:
+    """Wake the auth endpoints while the browser/Discord step is in progress."""
+    targets = _prewarm_targets(identity_base_url, proxy_api_base_url)
+    if not targets:
+        return None
+
+    def run() -> None:
+        workers = [
+            threading.Thread(
+                target=_send_prewarm_request,
+                args=(
+                    url,
+                    method,
+                    body,
+                    opener if opener is not None else build_opener(),
+                    timeout,
+                ),
+                daemon=True,
+            )
+            for url, method, body in targets
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout + 1.0)
+
+    thread = threading.Thread(
+        target=run,
+        name="neko-auth-prewarm",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 class _LoopbackHTTPServer(ThreadingHTTPServer):
@@ -425,6 +526,7 @@ class WebAuthClient:
         http_timeout: float = HTTP_TIMEOUT_SECONDS,
         transport: JsonTransport | None = None,
         browser_opener: Callable[[str], bool] | None = None,
+        event_sink: SupportEventSink | None = None,
     ) -> None:
         self._identity_base_url = _normalized_https_base(identity_base_url)
         self._bridge_exchange_url = bridge_exchange_url.strip()
@@ -445,12 +547,30 @@ class WebAuthClient:
         self._http_timeout = http_timeout
         self._transport = transport or UrllibJsonTransport()
         self._browser_opener = browser_opener or webbrowser.open
+        self._event_sink = event_sink
         self._active = threading.Lock()
         self._cancelled = threading.Event()
         self._server: LoopbackCallbackServer | None = None
         self._teardown: threading.Thread | None = None
         self._observer_lock = threading.Lock()
         self._progress_observer: Callable[[AuthPhase], None] | None = None
+        self._flow_started_at: float | None = None
+        self._flow_phase_started_at: float | None = None
+
+    def _support_event(self, event: str, **fields: Any) -> None:
+        sink = self._event_sink
+        if sink is None:
+            return
+        try:
+            sink.record_event("AUTH", event, **fields)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _elapsed_ms(started_at: float | None) -> int | None:
+        if started_at is None:
+            return None
+        return max(0, int((time.monotonic() - started_at) * 1000))
 
     def attach_progress_observer(
         self,
@@ -461,6 +581,15 @@ class WebAuthClient:
             self._progress_observer = observer
 
     def _emit_progress(self, phase: AuthPhase) -> None:
+        now = time.monotonic()
+        phase_elapsed = self._elapsed_ms(self._flow_phase_started_at)
+        self._flow_phase_started_at = now
+        self._support_event(
+            "FLOW_PHASE",
+            phase=phase.value,
+            elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            phase_elapsed_ms=phase_elapsed,
+        )
         with self._observer_lock:
             observer = self._progress_observer
         if observer is None:
@@ -502,6 +631,12 @@ class WebAuthClient:
         server: LoopbackCallbackServer | None = None
         try:
             self._cancelled.clear()
+            self._flow_started_at = time.monotonic()
+            self._flow_phase_started_at = None
+            self._support_event(
+                "FLOW_STARTED",
+                mode="identity" if require_refresh else "bridge",
+            )
             self._await_previous_teardown()
             pkce = generate_pkce()
             server = LoopbackCallbackServer(
@@ -510,6 +645,11 @@ class WebAuthClient:
             )
             self._server = server
             server.start()
+            self._support_event(
+                "LOOPBACK_READY",
+                port=server.port,
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
             redirect_uri = server.redirect_uri
             authorize_url = build_authorize_url(
                 self._identity_base_url,
@@ -531,9 +671,19 @@ class WebAuthClient:
                     code="browser_open_failed",
                     retryable=True,
                 )
+            self._support_event(
+                "BROWSER_OPENED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
 
             self._emit_progress(AuthPhase.WAITING_FOR_BROWSER)
             callback = server.wait(self._callback_timeout)
+            self._support_event(
+                "CALLBACK_RECEIVED",
+                code_present=bool(callback.code),
+                error_present=callback.error is not None,
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
             if self._cancelled.is_set():
                 raise WebAuthError("ยกเลิกการเข้าสู่ระบบแล้ว", code="cancelled")
             if callback.error is not None:
@@ -547,19 +697,49 @@ class WebAuthClient:
             self._release_loopback_async(server)
             server = None
             self._emit_progress(AuthPhase.CONNECTING)
+            self._support_event(
+                "TOKEN_EXCHANGE_STARTED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
             tokens = self._exchange_identity_code_tokens(
                 callback.code,
                 pkce.verifier,
                 redirect_uri,
                 require_refresh=require_refresh,
             )
+            self._support_event(
+                "TOKEN_EXCHANGE_SUCCEEDED",
+                expires_in=tokens.expires_in,
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
             if self._cancelled.is_set():
                 raise WebAuthError("ยกเลิกการเข้าสู่ระบบแล้ว", code="cancelled")
-            return finalize(tokens)
+            result = finalize(tokens)
+            self._support_event(
+                "FLOW_SUCCEEDED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
+            return result
+        except WebAuthError as error:
+            self._support_event(
+                "FLOW_FAILED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+                **safe_exception_fields(error),
+            )
+            raise
+        except Exception as error:
+            self._support_event(
+                "FLOW_FAILED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+                **safe_exception_fields(error),
+            )
+            raise
         finally:
             self._server = None
             if server is not None:
                 server.close()
+            self._flow_started_at = None
+            self._flow_phase_started_at = None
             self._active.release()
 
     def _await_previous_teardown(self) -> None:

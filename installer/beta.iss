@@ -25,10 +25,10 @@
 
 #define MyAppName "NEKO FAMILY PROXY"
 #ifndef MyAppVersion
-  #define MyAppVersion "5.2.0"
+  #define MyAppVersion "5.2.1"
 #endif
 #ifndef MyAppDisplayVersion
-  #define MyAppDisplayVersion "5.2.0"
+  #define MyAppDisplayVersion "5.2.1"
 #endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both
@@ -331,6 +331,21 @@ begin
     Result := False;
 end;
 
+{ Match the install guard: never remove files under a live Launcher/Core/Updater. }
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  if ProcessesAreRunning() then
+  begin
+    MsgBox(
+      'NekoLauncher, NekoProxyCore หรือ NekoUpdater ยังทำงานอยู่' + #13#10#13#10 +
+      'กรุณาปิด Neko Family Proxy และ proxy session ก่อนถอนการติดตั้ง' + #13#10#13#10 +
+      'Close NekoLauncher, NekoProxyCore, and NekoUpdater before uninstalling.',
+      mbError, MB_OK);
+    Result := False;
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 var
   InstalledLauncher: String;
@@ -374,7 +389,7 @@ begin
     begin
       MsgBox(
         'พบ NEKO FAMILY PROXY เวอร์ชัน ' + InstalledVersion + ' อยู่แล้ว' + #13#10#13#10 +
-        '5.2.0 ต้องติดตั้งแยกจาก 5.1.6 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
+        '5.2.1 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
         'กรุณาถอนการติดตั้งเวอร์ชันเดิมผ่าน Windows Settings > Apps > Installed apps ' +
         'ก่อน แล้วรัน installer นี้อีกครั้ง' + #13#10#13#10 +
         'An existing NEKO FAMILY PROXY ' + InstalledVersion + ' installation ' +

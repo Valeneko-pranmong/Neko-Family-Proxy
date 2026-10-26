@@ -53,6 +53,7 @@ from neko_launcher.domain.events import (
 )
 from neko_launcher.domain.models import (
     AppState,
+    AuthPhase,
     AuthStatus,
     EntitlementStatus,
     GameStatus,
@@ -124,6 +125,7 @@ class AppWindow:
         logo_path: Path | None = None,
         icon_path: Path | None = None,
         settings_icon_path: Path | None = None,
+        web_login_icon_path: Path | None = None,
         game_default_path: str = "",
         game_path_store: Path | None = None,
         diagnostics: Any = None,
@@ -137,6 +139,7 @@ class AppWindow:
         web_auth_client: Any = None,
         web_auth_enabled: bool = False,
         web_auth_only: bool = False,
+        login_prewarm: Callable[[], None] | None = None,
     ) -> None:
         apply_theme()
         self._controller = controller
@@ -150,6 +153,8 @@ class AppWindow:
         self._web_auth_client = web_auth_client
         self._web_auth_enabled = bool(web_auth_enabled and web_auth_client is not None)
         self._web_auth_only = bool(web_auth_only)
+        self._web_login_icon_path = web_login_icon_path
+        self._login_prewarm = login_prewarm
         self._attach_auth_progress_observer()
         if self._web_auth_only and not self._web_auth_enabled:
             raise ValueError("web_auth_only requires an available web auth client")
@@ -201,6 +206,19 @@ class AppWindow:
         self._diagnostics = diagnostics
         self._debug_mode = debug_mode
         self._debug_log_dir = debug_log_dir
+        self._started_at_monotonic = time.monotonic()
+        self._last_auth_status: AuthStatus | None = None
+        self._last_auth_phase: AuthPhase | None = None
+        self._last_proxy_status: ProxyStatus | None = None
+        self._last_game_status: GameStatus | None = None
+        self._web_login_started_at: float | None = None
+        self._web_login_phase_started_at: float | None = None
+        self._pending_dashboard_login_elapsed_ms: int | None = None
+        self._restore_started_at: float | None = None
+        self._last_entitlement_signature: tuple[Any, ...] | None = None
+        self._last_telemetry_signature: tuple[Any, ...] | None = None
+        self._last_update_check_started_at: float | None = None
+        self._last_update_check_source: str | None = None
         self._debug_retry_pending = False
         self._bound_target: TargetProcess | None = None
         self._proxy_start_attempted_for_detected_game = False
@@ -223,11 +241,18 @@ class AppWindow:
             support_log="enabled",
             debug_verbose=self._debug_mode,
         )
+        self._record_support_event(
+            "APP",
+            "STARTED",
+            launcher_version=__version__,
+            debug_verbose=self._debug_mode,
+            packaged=bool(getattr(sys, "frozen", False)),
+        )
 
         self.root = ctk.CTk()
         self.root.withdraw()
         self.root.title(get_main_window_title())
-        self.root.resizable(True, True)
+        self.root.resizable(False, False)
         self.root.configure(fg_color=PALETTE.background)
         if icon_path and icon_path.is_file():
             try:
@@ -311,6 +336,19 @@ class AppWindow:
             self._telemetry_client.start()
 
         self._build_layout(logo_path)
+        try:
+            ui_scaling = round(float(self.root.tk.call("tk", "scaling")), 2)
+        except Exception:
+            ui_scaling = 0.0
+        self._record_support_event(
+            "APP",
+            "WINDOW_CONTEXT",
+            window_width=self._window_size[0],
+            window_height=self._window_size[1],
+            screen_width=self.root.winfo_screenwidth(),
+            screen_height=self.root.winfo_screenheight(),
+            ui_scaling=ui_scaling,
+        )
         self.root.after(50, self._show_startup_splash_window)
         self.root.after(6_000, self._dismiss_startup_splash)
         self.root.after(250, lambda: center_window(self.root, self._window_size))
@@ -325,6 +363,8 @@ class AppWindow:
         self.root.after(1_500, self._refresh_public_proxy_status)
         self.root.after(2_000, self._check_software_update_startup)
         self.root.after(3_000, self._poll_game_process)
+        self._restore_started_at = time.monotonic()
+        self._record_support_event("AUTH", "RESTORE_STARTED")
         self._submit(self._service.restore_session, self._restore_completed)
 
     # ------------------------------------------------------------------
@@ -609,6 +649,7 @@ class AppWindow:
             on_cancel_web_login=self._cancel_web_login,
             web_auth_enabled=self._web_auth_enabled,
             web_auth_only=self._web_auth_only,
+            web_login_icon_path=self._web_login_icon_path,
         )
         self._recovery_view = None
         if not self._web_auth_only:
@@ -763,6 +804,7 @@ class AppWindow:
             self._settings_window.lift()
         if hasattr(self._settings_window, "focus_force"):
             self._settings_window.focus_force()
+        self._record_support_event("APP", "SETTINGS_OPENED")
 
     def _handle_file_check(self) -> FileIntegrityReport | None:
         """User-invoked diagnostic file check against the installed bound release."""
@@ -822,16 +864,39 @@ class AppWindow:
                 pass
 
         if release is None:
+            self._record_support_event(
+                "FILE",
+                "CHECK_UNAVAILABLE",
+                reason="release_identity_unavailable",
+            )
             return None
 
         from neko_launcher.application.file_integrity import check_installed_files
 
-        return check_installed_files(install_root=install_root, release=release)
+        report = check_installed_files(install_root=install_root, release=release)
+        component_statuses = ", ".join(
+            f"{item.component}={item.status.value}" for item in report.items
+        )
+        self._record_support_event(
+            "FILE",
+            "CHECK_RESULT",
+            version=report.version,
+            reinstall_required=report.reinstall_required,
+            repairable_count=len(report.repairable_components),
+            component_statuses=component_statuses,
+        )
+        return report
 
     def _handle_file_repair(self, report: FileIntegrityReport) -> None:
         """User-invoked repair of damaged launcher or core components."""
         if self._update_coordinator is None:
             return
+        self._record_support_event(
+            "FILE",
+            "REPAIR_REQUESTED",
+            repairable_count=len(report.repairable_components),
+            reinstall_required=report.reinstall_required,
+        )
 
         def do_repair() -> Any:
             from neko_launcher.application.file_repair import (
@@ -860,8 +925,17 @@ class AppWindow:
         def on_complete(future: Future[Any]) -> None:
             try:
                 future.result()
-            except Exception:
-                pass
+            except Exception as exc:
+                self._record_exception_support(
+                    exc, "FILE_REPAIR", category="UPDATE"
+                )
+                self._record_support_event(
+                    "FILE",
+                    "REPAIR_FAILED",
+                    error_type=type(exc).__name__,
+                )
+            else:
+                self._record_support_event("FILE", "REPAIR_SUCCEEDED")
             if self._settings_window is not None and self._settings_window.winfo_exists():
                 try:
                     self.root.after(0, self._settings_window.run_file_check)
@@ -875,6 +949,17 @@ class AppWindow:
         else:
             try:
                 do_repair()
+            except Exception as exc:
+                self._record_exception_support(
+                    exc, "FILE_REPAIR", category="UPDATE"
+                )
+                self._record_support_event(
+                    "FILE",
+                    "REPAIR_FAILED",
+                    error_type=type(exc).__name__,
+                )
+            else:
+                self._record_support_event("FILE", "REPAIR_SUCCEEDED")
             finally:
                 if self._settings_window is not None and self._settings_window.winfo_exists():
                     try:
@@ -898,6 +983,7 @@ class AppWindow:
 
     def _close_settings_window(self) -> None:
         self._settings_window = None
+        self._record_support_event("APP", "SETTINGS_CLOSED")
 
     # ------------------------------------------------------------------
     # Tray
@@ -970,6 +1056,7 @@ class AppWindow:
             self._window_size = fit_portrait_window(self.root)
         self._auth_view.frame.pack(fill="both", expand=True, padx=8, pady=(0, 3))
         self._active_view = "auth"
+        self._record_support_event("APP", "VIEW_ROUTE", view="auth")
 
     def _show_recovery_view(self) -> None:
         if getattr(self, "_recovery_view", None) is None:
@@ -988,6 +1075,7 @@ class AppWindow:
             fill="both", expand=True, padx=8, pady=(0, 3)
         )
         self._active_view = "recovery"
+        self._record_support_event("APP", "VIEW_ROUTE", view="recovery")
 
     def _show_recovery_code_entry(self) -> None:
         if getattr(self, "_recovery_view", None) is None:
@@ -1008,11 +1096,10 @@ class AppWindow:
         if hasattr(self, "root") and hasattr(self.root, "resizable"):
             width, height = (500, 640)
             self.root.minsize(480, 580)
-            self.root.resizable(True, True)
-            self.root.maxsize(
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+            self.root.maxsize(width, height)
+            self.root.resizable(False, False)
+            if isinstance(self.root, (tk.Tk, tk.Toplevel)):
+                style_native_title_bar(self.root, PALETTE)
             screen_w = int(self.root.winfo_screenwidth())
             screen_h = int(self.root.winfo_screenheight())
             x = max(0, (screen_w - width) // 2)
@@ -1022,6 +1109,7 @@ class AppWindow:
             self.root.geometry(f"{width}x{height}+{x}+{y}")
         self._dashboard_view.frame.pack(fill="both", expand=True, padx=6, pady=(2, 4))
         self._active_view = "program"
+        self._record_support_event("APP", "VIEW_ROUTE", view="program")
 
     # ------------------------------------------------------------------
     # Password dialog
@@ -1287,6 +1375,19 @@ class AppWindow:
                 err.set("การเข้าสู่ระบบด้วย Discord ไม่พร้อมใช้งาน กรุณาเปิดโปรแกรมใหม่")
             return
         self._login_password.set("")
+        self._web_login_started_at = time.monotonic()
+        self._web_login_phase_started_at = None
+        self._record_support_event(
+            "AUTH",
+            "WEB_LOGIN_REQUESTED",
+            auth_method="discord_identity",
+        )
+        prewarm = getattr(self, "_login_prewarm", None)
+        if prewarm is not None:
+            try:
+                prewarm()
+            except Exception:
+                pass
         self._submit(
             lambda: self._service.sign_in_with_web(client),
             self._login_succeeded,
@@ -1311,6 +1412,14 @@ class AppWindow:
             client.cancel()
         except Exception:
             return
+        self._record_support_event(
+            "AUTH",
+            "CANCEL_REQUESTED",
+            elapsed_ms=self._elapsed_ms(
+                getattr(self, "_web_login_started_at", None)
+            ),
+        )
+        self._clear_web_login_timing()
         self._notice.set("ยกเลิกการเข้าสู่ระบบแล้ว")
 
     def _begin_account_recovery(self) -> None:
@@ -1375,7 +1484,21 @@ class AppWindow:
 
     def _restore_completed(self, restored: bool) -> None:
         coordinator = getattr(self, "_update_coordinator", None)
-        if coordinator is not None and not coordinator.can_proceed_to_login():
+        gate_blocked = (
+            coordinator is not None
+            and not coordinator.can_proceed_to_login()
+        )
+        self._record_support_event(
+            "AUTH",
+            "RESTORE_RESULT",
+            restored=bool(restored),
+            update_gate_blocked=gate_blocked,
+            elapsed_ms=self._elapsed_ms(
+                getattr(self, "_restore_started_at", None)
+            ),
+        )
+        self._restore_started_at = None
+        if gate_blocked:
             return
         if restored:
             self._notice.set("กู้คืนการเข้าสู่ระบบสำเร็จ")
@@ -1433,7 +1556,11 @@ class AppWindow:
             getattr(getattr(self, "_controller", None), "state", AppState()).game_process_running
             and not self._confirm_game_active_action("ออกจากระบบ")
         ):
+            self._record_support_event(
+                "AUTH", "SIGN_OUT_BLOCKED", reason="game_active"
+            )
             return
+        self._record_support_event("AUTH", "SIGN_OUT_REQUESTED")
         self._cancel_automatic_reconnect(reset_attempts=True)
         self._controller.suppress_proxy_reconnect()
         self._submit(self._service.sign_out, self._signed_out)
@@ -1442,12 +1569,14 @@ class AppWindow:
         self._close_password_dialog()
         self._close_debug_dialog()
         self._coupon_code.set("")
+        self._record_support_event("AUTH", "SIGN_OUT_SUCCEEDED")
         self._notice.set("ออกจากระบบแล้ว")
 
     def _redeem_coupon(self) -> None:
         if self._redeem_in_flight:
             return
         self._redeem_in_flight = True
+        self._record_support_event("UI", "COUPON_REDEEM_REQUESTED")
         self._set_redeem_busy(True)
         self._submit(
             lambda: self._service.redeem_coupon(self._coupon_code.get()),
@@ -1459,14 +1588,24 @@ class AppWindow:
         self._redeem_in_flight = False
         self._set_redeem_busy(False)
         self._coupon_code.set("")
+        self._record_support_event(
+            "UI",
+            "COUPON_REDEEM_SUCCEEDED",
+            days_added=getattr(result, "days_added", None),
+        )
         self._notice.set(
             f"เติมวันสำเร็จ +{result.days_added} วัน "
             f"หมดอายุ {result.valid_until:%d/%m/%Y %H:%M}"
         )
 
-    def _coupon_redeem_failed(self, _error: Exception) -> None:
+    def _coupon_redeem_failed(self, error: Exception) -> None:
         self._redeem_in_flight = False
         self._set_redeem_busy(False)
+        self._record_support_event(
+            "UI",
+            "COUPON_REDEEM_FAILED",
+            error_type=type(error).__name__,
+        )
 
     def _set_redeem_busy(self, busy: bool) -> None:
         settings = self._settings_window
@@ -1494,14 +1633,22 @@ class AppWindow:
             ],
         )
         if not selected:
+            self._record_support_event(
+                "GAME", "PATH_SELECTION_CANCELLED"
+            )
             return
         self._game_path.set(selected)
+        persisted = False
         if self._game_path_store:
             try:
                 self._game_path_store.parent.mkdir(parents=True, exist_ok=True)
                 self._game_path_store.write_text(selected, encoding="utf-8")
+                persisted = True
             except OSError:
                 pass
+        self._record_support_event(
+            "GAME", "PATH_SELECTED", persisted=persisted
+        )
         self._notice.set("บันทึกไฟล์เปิดเกมแล้ว")
 
     def _launch_game(self) -> None:
@@ -1586,7 +1733,8 @@ class AppWindow:
             return
         self._auto_launch_tweaker()
 
-    def _startup_route_failed(self, _error: Exception, generation: int) -> None:
+    def _startup_route_failed(self, error: Exception, generation: int) -> None:
+        self._record_exception_support(error, "STARTUP_PROCESS_PROBE")
         self._complete_startup_route(None, generation)
 
     def _launch_tweaker_only(self) -> None:
@@ -1596,18 +1744,26 @@ class AppWindow:
             return
         self._error.set("")
         self._persist_game_path(executable)
+        self._record_support_event("GAME", "LAUNCH_REQUESTED")
         self._service.launch_tweaker(executable)
         if self._controller.state.game_status is GameStatus.RUNNING:
+            self._record_support_event("GAME", "LAUNCH_SUCCEEDED")
             self._notice.set("เปิดโปรแกรม PSO2 Tweaker แล้ว")
 
     def _selected_tweaker_executable(self) -> str | None:
         raw_path = self._game_path.get().strip().strip('"')
         if not raw_path:
+            self._record_support_event(
+                "GAME", "LAUNCH_BLOCKED", reason="no_game_path"
+            )
             self._error.set("กรุณาเลือกไฟล์ Tweaker.exe ก่อน")
             return None
 
         executable = Path(os.path.expandvars(raw_path)).expanduser()
         if not executable.is_file():
+            self._record_support_event(
+                "GAME", "LAUNCH_BLOCKED", reason="executable_not_found"
+            )
             self._error.set(
                 "ไม่พบไฟล์ Tweaker.exe กรุณากด Browse แล้วเลือกไฟล์ใหม่"
             )
@@ -1685,6 +1841,7 @@ class AppWindow:
                     self._record_debug_status(
                         "PUBLIC_PROXY_STATUS_UNAVAILABLE",
                         error="ui_deadline",
+                        elapsed_ms=self._elapsed_ms(started_at),
                     )
                     future.cancel()
                     return
@@ -1703,6 +1860,7 @@ class AppWindow:
                 self._record_debug_status(
                     "PUBLIC_PROXY_STATUS_UNAVAILABLE",
                     error=type(exc).__name__,
+                    elapsed_ms=self._elapsed_ms(started_at),
                 )
             else:
                 if status is None:
@@ -1714,6 +1872,7 @@ class AppWindow:
                     self._record_debug_status(
                         "PUBLIC_PROXY_STATUS_UNAVAILABLE",
                         error="no_result",
+                        elapsed_ms=self._elapsed_ms(started_at),
                     )
                     return
 
@@ -1737,6 +1896,7 @@ class AppWindow:
                     load_level=status.load_level,
                     sample_count=status.sample_count,
                     age_seconds=status.age_seconds if status.age_seconds is not None else "unknown",
+                    elapsed_ms=self._elapsed_ms(started_at),
                 )
 
         self.root.after(100, finish)
@@ -1747,22 +1907,30 @@ class AppWindow:
         self._startup_update_check_submitted = True
         coordinator = getattr(self, "_update_coordinator", None)
         if coordinator is not None:
-            self._submit_software_update_check(coordinator.startup)
+            self._submit_software_update_check(
+                coordinator.startup, source="startup"
+            )
             return
         service = getattr(self, "_update_check_service", None)
         if service is not None:
-            self._submit_software_update_check(service.check_startup)
+            self._submit_software_update_check(
+                service.check_startup, source="startup"
+            )
 
     def _check_software_update_manual(self) -> None:
         if self._closing:
             return
         coordinator = getattr(self, "_update_coordinator", None)
         if coordinator is not None:
-            self._submit_software_update_check(coordinator.manual_check)
+            self._submit_software_update_check(
+                coordinator.manual_check, source="manual"
+            )
             return
         service = getattr(self, "_update_check_service", None)
         if service is not None:
-            self._submit_software_update_check(service.check_manual)
+            self._submit_software_update_check(
+                service.check_manual, source="manual"
+            )
 
     @staticmethod
     def _state_value(value: Any) -> Any:
@@ -1893,6 +2061,9 @@ class AppWindow:
             return
         pending = self._get_verified_pending_update()
         if pending is None:
+            self._record_support_event(
+                "UPDATE", "APPLY_SKIPPED", reason="no_verified_pending_update"
+            )
             return
 
         controller = getattr(self, "_controller", None)
@@ -1905,12 +2076,28 @@ class AppWindow:
             UpdateApplyBlocker.GAME_ACTIVE,
             UpdateApplyBlocker.GAME_TRANSITION,
         }:
+            self._record_support_event(
+                "UPDATE",
+                "APPLY_BLOCKED",
+                reason=safety.blocker.value,
+            )
             self._notice.set("ตรวจพบว่าเกมกำลังทำงานอยู่ กรุณาปิดเกมก่อนอัปเดต")
             return
 
         if safety.blocker == UpdateApplyBlocker.UPDATE_BUSY:
+            self._record_support_event(
+                "UPDATE", "APPLY_SKIPPED", reason="update_busy"
+            )
             return
 
+        self._record_support_event(
+            "UPDATE",
+            "APPLY_REQUESTED",
+            release_sequence=getattr(pending, "release_sequence", None),
+            changed_components=",".join(
+                getattr(pending, "changed_components", ()) or ()
+            ),
+        )
         self._update_apply_pending = True
         self._refresh_software_update_apply_action()
         update_dialog_info = self._show_update_progress_dialog()
@@ -1979,6 +2166,21 @@ class AppWindow:
                     self._update_apply_future = None
                 self._update_apply_pending = False
                 err_msg = str(exc)
+                self._record_exception_support(
+                    exc, "UPDATE_APPLY", category="UPDATE"
+                )
+                self._record_support_event(
+                    "UPDATE",
+                    "APPLY_FAILED",
+                    error_type=type(exc).__name__,
+                    reason=(
+                        "game_active"
+                        if "GAME_ACTIVE" in err_msg
+                        else "proxy_stop_failed"
+                        if "PROXY_STOP_FAILED" in err_msg
+                        else "preparation_failed"
+                    ),
+                )
                 if "GAME_ACTIVE" in err_msg:
                     self._notice.set("ตรวจพบว่าเกมกำลังทำงานอยู่ กรุณาปิดเกมก่อนอัปเดต")
                 elif "PROXY_STOP_FAILED" in err_msg:
@@ -1987,6 +2189,14 @@ class AppWindow:
                     self._error.set("ไม่สามารถเตรียมการอัปเดตได้ กรุณาลองใหม่")
                 self._refresh_software_update_apply_action()
                 return
+
+            self._record_support_event(
+                "UPDATE",
+                "APPLY_PREPARED",
+                release_sequence=getattr(
+                    prepared, "release_sequence", None
+                ),
+            )
 
             if update_dialog_info:
                 try:
@@ -2067,9 +2277,21 @@ class AppWindow:
             diagnostic_code=(
                 UpdateDiagnosticCode.UPDATE_CHECK_INTERNAL_FAILURE.value
             ),
+            source=getattr(self, "_last_update_check_source", None) or "unknown",
+            elapsed_ms=self._elapsed_ms(
+                getattr(self, "_last_update_check_started_at", None)
+            ),
         )
+        self._last_update_check_started_at = None
+        self._last_update_check_source = None
 
     def _handle_software_update_result(self, result: Any) -> None:
+        check_elapsed_ms = self._elapsed_ms(
+            getattr(self, "_last_update_check_started_at", None)
+        )
+        check_source = (
+            getattr(self, "_last_update_check_source", None) or "unknown"
+        )
         if not isinstance(result, (UpdateLifecycleSnapshot, UpdateCheckResult)):
             self._record_software_update_internal_failure()
             return
@@ -2089,6 +2311,8 @@ class AppWindow:
                 state=result.state.value,
                 has_pending=result.pending is not None,
                 diagnostic_code=result.diagnostic_code,
+                source=check_source,
+                elapsed_ms=check_elapsed_ms,
             )
             if result.check_result is not None:
                 diagnostic_code = (
@@ -2102,6 +2326,8 @@ class AppWindow:
                     release_sequence=result.check_result.release_sequence,
                     changed_components=",".join(result.check_result.changed_components),
                     diagnostic_code=diagnostic_code,
+                    source=check_source,
+                    elapsed_ms=check_elapsed_ms,
                 )
             elif result.pending is not None:
                 self._record_debug_status(
@@ -2110,6 +2336,8 @@ class AppWindow:
                     release_sequence=result.pending.release_sequence,
                     changed_components=",".join(result.pending.changed_components),
                     diagnostic_code=result.diagnostic_code,
+                    source=check_source,
+                    elapsed_ms=check_elapsed_ms,
                 )
         elif isinstance(result, UpdateCheckResult):
             self._last_update_result = result
@@ -2127,7 +2355,11 @@ class AppWindow:
                 release_sequence=release_sequence,
                 changed_components=changed_components,
                 diagnostic_code=diagnostic_code,
+                source=check_source,
+                elapsed_ms=check_elapsed_ms,
             )
+        self._last_update_check_started_at = None
+        self._last_update_check_source = None
         self._refresh_software_update_apply_action()
         if getattr(self, "_startup_check_in_progress", False):
             self._on_startup_check_completed(result)
@@ -2135,10 +2367,16 @@ class AppWindow:
     def _submit_software_update_check(
         self,
         work: Callable[[], Any],
+        *,
+        source: str = "unknown",
     ) -> None:
+        self._last_update_check_started_at = time.monotonic()
+        self._last_update_check_source = source
+        self._record_support_event("UPDATE", "CHECK_STARTED", source=source)
         try:
             future = self._update_executor.submit(work)
-        except RuntimeError:
+        except RuntimeError as exc:
+            self._record_exception_support(exc, "UPDATE_CHECK", category="UPDATE")
             self._record_software_update_internal_failure()
             if getattr(self, "_startup_check_in_progress", False):
                 self._dismiss_startup_splash()
@@ -2153,8 +2391,22 @@ class AppWindow:
                 return
             try:
                 result = future.result()
-            except Exception:
+            except Exception as exc:
+                self._record_exception_support(
+                    exc, "UPDATE_CHECK", category="UPDATE"
+                )
+                self._record_support_event(
+                    "UPDATE",
+                    "CHECK_FAILED",
+                    source=source,
+                    elapsed_ms=self._elapsed_ms(
+                        self._last_update_check_started_at
+                    ),
+                    error_type=type(exc).__name__,
+                )
                 self._record_software_update_internal_failure()
+                self._last_update_check_started_at = None
+                self._last_update_check_source = None
                 if getattr(self, "_startup_check_in_progress", False):
                     self._dismiss_startup_splash()
                 return
@@ -2185,10 +2437,12 @@ class AppWindow:
             try:
                 result = future.result()
             except LauncherServiceError as exc:
+                self._record_exception_support(exc, "BACKGROUND_TASK")
                 self._error.set(str(exc))
                 if on_failure:
                     on_failure(exc)
             except Exception as exc:
+                self._record_exception_support(exc, "BACKGROUND_TASK")
                 self._error.set("เกิดข้อผิดพลาด กรุณาลองใหม่")
                 if on_failure:
                     on_failure(exc)
@@ -2218,6 +2472,8 @@ class AppWindow:
     # State rendering
     # ------------------------------------------------------------------
     def _render_state(self, state: AppState) -> None:
+        previous_auth_status = getattr(self, "_last_auth_status", None)
+        previous_auth_phase = getattr(self, "_last_auth_phase", None)
         signed_in = state.auth_status is AuthStatus.AUTHENTICATED
         self._status.set(
             {
@@ -2233,6 +2489,10 @@ class AppWindow:
         self._account.set(state.user_email or "")
         self._auth_view.set_status_signed_in(signed_in)
         self._render_entitlement(state)
+        self._record_auth_transition(
+            previous_auth_status, previous_auth_phase, state
+        )
+        self._record_proxy_game_transition(state)
 
         # Update customer status presentation
         cust_status = translate_customer_status(
@@ -2276,6 +2536,18 @@ class AppWindow:
                 self._show_recovery_code_entry()
         else:
             self._show_auth_view()
+        if signed_in:
+            dashboard_elapsed_ms = getattr(
+                self, "_pending_dashboard_login_elapsed_ms", None
+            )
+            if dashboard_elapsed_ms is not None:
+                self._record_support_event(
+                    "AUTH",
+                    "DASHBOARD_READY",
+                    elapsed_ms=dashboard_elapsed_ms,
+                    source="web_login",
+                )
+                self._pending_dashboard_login_elapsed_ms = None
         recovery_view = getattr(self, "_recovery_view", None)
         if recovery_view is not None:
             recovery_view.set_busy(
@@ -2310,6 +2582,7 @@ class AppWindow:
             self._error.set(state.last_error)
 
     def _render_entitlement(self, state: AppState) -> None:
+        self._record_entitlement_transition(state)
         entitlement = state.entitlement
         if entitlement is None:
             self._entitlement.set(
@@ -2380,6 +2653,241 @@ class AppWindow:
     # ------------------------------------------------------------------
     # Auto-connect: poll for the actual pso2.exe client process.
     # ------------------------------------------------------------------
+    @staticmethod
+    def _elapsed_ms(started_at: float | None) -> int | None:
+        if started_at is None:
+            return None
+        return max(0, int((time.monotonic() - started_at) * 1000))
+
+    def _record_support_event(
+        self, category: str, event: str, **fields: Any
+    ) -> None:
+        diagnostics = getattr(self, "_diagnostics", None)
+        record_event = getattr(diagnostics, "record_event", None)
+        if not callable(record_event):
+            return
+        try:
+            record_event(category, event, **fields)
+        except Exception:
+            pass
+
+    def _record_exception_support(
+        self,
+        exc: Exception,
+        stage: str,
+        *,
+        category: str = "APP",
+    ) -> None:
+        diagnostics = getattr(self, "_diagnostics", None)
+        record_exception = getattr(diagnostics, "record_exception", None)
+        if not callable(record_exception):
+            return
+        try:
+            record_exception(exc, stage, category=category)
+        except TypeError:
+            try:
+                record_exception(exc, stage)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _clear_web_login_timing(self) -> None:
+        self._web_login_started_at = None
+        self._web_login_phase_started_at = None
+
+    def _record_auth_transition(
+        self,
+        previous_status: AuthStatus | None,
+        previous_phase: AuthPhase | None,
+        state: AppState,
+    ) -> None:
+        status = state.auth_status
+        phase = getattr(state, "auth_phase", None)
+        if status is not previous_status:
+            self._record_support_event(
+                "AUTH",
+                "STATUS_CHANGED",
+                from_status=getattr(previous_status, "value", previous_status),
+                to_status=getattr(status, "value", status),
+            )
+        if status is AuthStatus.AUTHENTICATING and phase is not previous_phase:
+            self._record_support_event(
+                "AUTH",
+                "UI_PHASE",
+                phase=getattr(phase, "value", phase),
+                total_elapsed_ms=self._elapsed_ms(
+                    getattr(self, "_web_login_started_at", None)
+                ),
+                phase_elapsed_ms=self._elapsed_ms(
+                    getattr(self, "_web_login_phase_started_at", None)
+                ),
+            )
+            self._web_login_phase_started_at = time.monotonic()
+        if (
+            previous_status is AuthStatus.AUTHENTICATING
+            and status is not previous_status
+        ):
+            elapsed_ms = self._elapsed_ms(
+                getattr(self, "_web_login_started_at", None)
+            )
+            if elapsed_ms is not None:
+                if status is AuthStatus.AUTHENTICATED:
+                    self._record_support_event(
+                        "AUTH",
+                        "SUCCEEDED",
+                        elapsed_ms=elapsed_ms,
+                        session_present=(
+                            getattr(state, "session_id", None) is not None
+                        ),
+                    )
+                    self._pending_dashboard_login_elapsed_ms = elapsed_ms
+                elif status is AuthStatus.FAILED:
+                    self._record_support_event(
+                        "AUTH",
+                        "FAILED",
+                        elapsed_ms=elapsed_ms,
+                        reason=(getattr(state, "last_error", "") or "")[:200],
+                    )
+                elif status is AuthStatus.SIGNED_OUT:
+                    self._record_support_event(
+                        "AUTH", "CANCELLED", elapsed_ms=elapsed_ms
+                    )
+            self._clear_web_login_timing()
+        if (
+            previous_status is AuthStatus.AUTHENTICATED
+            and status is AuthStatus.SIGNED_OUT
+        ):
+            self._record_support_event("AUTH", "SIGNED_OUT")
+        self._last_auth_status = status
+        self._last_auth_phase = phase
+
+    def _record_proxy_game_transition(self, state: AppState) -> None:
+        proxy_status = getattr(state, "proxy_status", None)
+        last_proxy_status = getattr(self, "_last_proxy_status", None)
+        if proxy_status is not last_proxy_status:
+            self._record_support_event(
+                "PROXY",
+                "STATE_CHANGED",
+                from_state=getattr(last_proxy_status, "value", None),
+                to_state=getattr(proxy_status, "value", proxy_status),
+                retry_safe=bool(
+                    getattr(state, "proxy_start_retry_safe", False)
+                ),
+            )
+            self._last_proxy_status = proxy_status
+        game_status = getattr(state, "game_status", None)
+        last_game_status = getattr(self, "_last_game_status", None)
+        if game_status is not last_game_status:
+            self._record_support_event(
+                "GAME",
+                "STATUS_CHANGED",
+                from_status=getattr(last_game_status, "value", None),
+                to_status=getattr(game_status, "value", game_status),
+                process_running=bool(
+                    getattr(state, "game_process_running", False)
+                ),
+            )
+            self._last_game_status = game_status
+
+    def _record_entitlement_transition(self, state: AppState) -> None:
+        entitlement = getattr(state, "entitlement", None)
+        status = getattr(entitlement, "status", None)
+        valid_until = getattr(entitlement, "valid_until", None)
+        try:
+            active = entitlement_is_active(entitlement)
+        except Exception:
+            active = False
+        expiry_value = None
+        if valid_until is not None:
+            try:
+                expiry_value = valid_until.isoformat()
+            except Exception:
+                expiry_value = str(valid_until)[:64]
+        signature = (
+            getattr(status, "value", status),
+            expiry_value,
+            active,
+        )
+        if signature == getattr(
+            self, "_last_entitlement_signature", None
+        ):
+            return
+        self._last_entitlement_signature = signature
+        days_remaining = None
+        if valid_until is not None:
+            try:
+                days_remaining = max(
+                    0,
+                    int(
+                        (
+                            valid_until
+                            - datetime.now(valid_until.tzinfo)
+                        ).total_seconds()
+                        // 86400
+                    ),
+                )
+            except Exception:
+                days_remaining = None
+        self._record_support_event(
+            "ENTITLEMENT",
+            "STATE",
+            status=getattr(status, "value", status) or "none",
+            active=active,
+            days_remaining=days_remaining,
+            expiry=expiry_value,
+        )
+
+    def _record_telemetry_transition(self, state: Any) -> None:
+        snapshot = getattr(state, "snapshot", None)
+        connection_state = getattr(state, "connection_state", None)
+        signature = (
+            getattr(connection_state, "value", connection_state),
+            bool(getattr(state, "is_stale", False)),
+            getattr(snapshot, "core_state", None),
+            bool(getattr(snapshot, "v2ray_running", False)),
+            bool(getattr(snapshot, "local_socks_running", False)),
+            bool(getattr(snapshot, "shadowsocks_connected", False)),
+        )
+        if signature == getattr(self, "_last_telemetry_signature", None):
+            return
+        self._last_telemetry_signature = signature
+        fields: dict[str, Any] = {
+            "connection_state": getattr(
+                connection_state, "value", connection_state
+            ),
+            "stale": bool(getattr(state, "is_stale", False)),
+        }
+        if snapshot is not None:
+            fields.update(
+                {
+                    "core_state": getattr(snapshot, "core_state", None),
+                    "v2ray": bool(
+                        getattr(snapshot, "v2ray_running", False)
+                    ),
+                    "socks": bool(
+                        getattr(snapshot, "local_socks_running", False)
+                    ),
+                    "upstream": bool(
+                        getattr(snapshot, "shadowsocks_connected", False)
+                    ),
+                    "latency_ms": getattr(
+                        snapshot, "proxy_rtt_ms", None
+                    ),
+                    "tcp_active": getattr(
+                        snapshot, "tcp_active", None
+                    ),
+                    "dns_queries": getattr(
+                        snapshot, "dns_query_total", None
+                    ),
+                    "network_errors": getattr(
+                        snapshot, "network_error_total", None
+                    ),
+                    "uptime_ms": getattr(snapshot, "uptime_ms", None),
+                }
+            )
+        self._record_support_event("TELEMETRY", "STATE", **fields)
+
     def _record_debug_status(self, stage: str, **details: Any) -> None:
         """Write useful launcher state transitions without flooding the log."""
         diagnostics = getattr(self, "_diagnostics", None)
@@ -2392,7 +2900,9 @@ class AppWindow:
         if getattr(self, "_last_debug_status", None) == signature:
             return
         self._last_debug_status = signature
-        diagnostics.record_stage(stage, **details)
+        record_stage = getattr(diagnostics, "record_stage", None)
+        if callable(record_stage):
+            record_stage(stage, **details)
 
     def _poll_game_process(self) -> None:
         """Every 3 seconds, check if a PSO2 process appeared."""
@@ -2456,6 +2966,12 @@ class AppWindow:
         detection_changed = state.game_process_running is not detected
         if detection_changed:
             self._controller.dispatch(GameProcessStateChanged(detected))
+            self._record_support_event(
+                "GAME",
+                "PROCESS_STATE_CHANGED",
+                process="pso2.exe",
+                running=detected,
+            )
         state = self._controller.state
         startup_authority_ready = (
             state.auth_status is AuthStatus.AUTHENTICATED
@@ -2586,6 +3102,7 @@ class AppWindow:
         )
 
         self._last_telemetry_state = state
+        self._record_telemetry_transition(state)
         self._observe_runtime_health(state)
 
         # Refresh server status before any telemetry early-return so stale or
@@ -2854,6 +3371,54 @@ class AppWindow:
                 self._abort_update_apply_future(update_apply_future)
             else:
                 update_apply_future.add_done_callback(self._abort_update_apply_future)
+        pre_close_entitlement = getattr(
+            pre_close_state, "entitlement", None
+        )
+        pre_close_telemetry = getattr(self, "_last_telemetry_state", None)
+        try:
+            pre_close_entitlement_active = entitlement_is_active(
+                pre_close_entitlement
+            )
+        except Exception:
+            pre_close_entitlement_active = False
+        self._record_support_event(
+            "APP",
+            "SHUTDOWN",
+            uptime_ms=self._elapsed_ms(
+                getattr(self, "_started_at_monotonic", None)
+            ),
+            last_view=getattr(self, "_active_view", None),
+            auth_status=getattr(
+                getattr(pre_close_state, "auth_status", None),
+                "value",
+                None,
+            ),
+            entitlement_status=getattr(
+                getattr(pre_close_entitlement, "status", None),
+                "value",
+                None,
+            ),
+            entitlement_active=pre_close_entitlement_active,
+            proxy_status=getattr(
+                getattr(pre_close_state, "proxy_status", None),
+                "value",
+                None,
+            ),
+            game_status=getattr(
+                getattr(pre_close_state, "game_status", None),
+                "value",
+                None,
+            ),
+            game_running=bool(
+                getattr(pre_close_state, "game_process_running", False)
+            ),
+            telemetry_connection=getattr(
+                getattr(pre_close_telemetry, "connection_state", None),
+                "value",
+                getattr(pre_close_telemetry, "connection_state", None),
+            ),
+            update_pending=bool(update_apply_pending),
+        )
         self._cancel_automatic_reconnect(reset_attempts=True)
         web_auth_client = getattr(self, "_web_auth_client", None)
         if web_auth_client is not None:

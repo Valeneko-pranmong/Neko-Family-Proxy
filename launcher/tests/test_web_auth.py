@@ -22,7 +22,18 @@ from neko_launcher.infrastructure.auth.web_auth import (
     WebAuthError,
     build_authorize_url,
     generate_pkce,
+    prewarm_login_stack,
 )
+
+
+class RecordingSupportSink:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict[str, object]]] = []
+
+    def record_event(
+        self, category: str, event: str, **fields: object
+    ) -> None:
+        self.events.append((category, event, fields))
 
 
 class FakeTransport:
@@ -93,6 +104,7 @@ def _client(
     bridge_exchange_url: str = "https://bridge.test/auth/launcher/exchange",
     browser_opener=None,
     callback_timeout: float = 2.0,
+    event_sink: RecordingSupportSink | None = None,
 ) -> WebAuthClient:
     return WebAuthClient(
         identity_base_url="https://identity.test",
@@ -101,6 +113,7 @@ def _client(
         callback_timeout=callback_timeout,
         transport=transport,
         browser_opener=browser_opener,
+        event_sink=event_sink,
     )
 
 
@@ -328,6 +341,68 @@ def test_client_exchanges_code_and_bridge_session() -> None:
     assert bridge_call["payload"] == {}
 
 
+def test_identity_flow_emits_timing_events_without_codes_or_tokens() -> None:
+    sink = RecordingSupportSink()
+    transport = FakeTransport([_identity_token_response()])
+    opener, opened = _browser_sends_callback()
+    client = _client(
+        transport,
+        bridge_exchange_url="",
+        browser_opener=opener,
+        event_sink=sink,
+    )
+
+    tokens = client.authenticate_identity()
+
+    assert opened.is_set()
+    assert tokens.access_token == "identity-access"
+    names = [event for _, event, _ in sink.events]
+    for expected in (
+        "FLOW_STARTED",
+        "LOOPBACK_READY",
+        "BROWSER_OPENED",
+        "FLOW_PHASE",
+        "CALLBACK_RECEIVED",
+        "TOKEN_EXCHANGE_STARTED",
+        "TOKEN_EXCHANGE_SUCCEEDED",
+        "FLOW_SUCCEEDED",
+    ):
+        assert expected in names
+    callback = next(
+        fields for _, event, fields in sink.events if event == "CALLBACK_RECEIVED"
+    )
+    assert callback["code_present"] is True
+    assert callback["error_present"] is False
+    token_event = next(
+        fields
+        for _, event, fields in sink.events
+        if event == "TOKEN_EXCHANGE_SUCCEEDED"
+    )
+    assert token_event["expires_in"] == 600
+    serialized = repr(sink.events)
+    assert "identity-access" not in serialized
+    assert "identity-refresh" not in serialized
+    assert "code-123" not in serialized
+
+
+def test_failed_flow_emits_error_category_without_token_material() -> None:
+    sink = RecordingSupportSink()
+    transport = FakeTransport([])
+    opener, _ = _browser_sends_callback(error="access_denied")
+    client = _client(transport, event_sink=sink, browser_opener=opener)
+
+    with pytest.raises(WebAuthError):
+        client.authenticate_identity()
+
+    failure = next(
+        fields for _, event, fields in sink.events if event == "FLOW_FAILED"
+    )
+    assert failure["error_code"] == "access_denied"
+    assert failure["error_type"] == "WebAuthError"
+    assert failure["elapsed_ms"] >= 0
+    assert "identity-access" not in repr(sink.events)
+
+
 def test_client_identity_exchange_requires_no_bridge() -> None:
     transport = FakeTransport([_identity_token_response()])
     opener, opened = _browser_sends_callback()
@@ -546,6 +621,7 @@ def test_sign_in_failure_copy_avoids_technical_terms() -> None:
         "พอร์ต",
         "ล็อกอิน",
         "5.2.0",
+        "5.2.1",
     )
     errors = [
         WebAuthClient._callback_error("access_denied"),
@@ -571,3 +647,54 @@ def test_sign_in_failure_copy_avoids_technical_terms() -> None:
         text = str(error).lower()
         offending = [term for term in banned_terms if term in text]
         assert not offending, f"{error} leaks {offending}"
+
+
+class _FakePrewarmResponse:
+    def __enter__(self) -> "_FakePrewarmResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+    def read(self, _size: int = -1) -> bytes:
+        return b"{}"
+
+
+class _RecordingPrewarmOpener:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, bytes | None, float]] = []
+        self._lock = threading.Lock()
+
+    def open(self, request: object, timeout: float) -> _FakePrewarmResponse:
+        method = str(getattr(request, "get_method")())
+        url = str(getattr(request, "full_url"))
+        body = getattr(request, "data", None)
+        with self._lock:
+            self.calls.append((method, url, body, timeout))
+        return _FakePrewarmResponse()
+
+
+def test_prewarm_login_stack_warms_identity_and_proxy_endpoints() -> None:
+    opener = _RecordingPrewarmOpener()
+    thread = prewarm_login_stack(
+        "https://identity.example",
+        "https://proxy.example",
+        opener=opener,
+        timeout=1.5,
+    )
+
+    assert thread is not None
+    thread.join(timeout=5.0)
+
+    calls = {(method, url) for method, url, _body, _timeout in opener.calls}
+    assert ("POST", "https://identity.example/api/launcher/token") in calls
+    assert ("GET", "https://proxy.example/v1/me") in calls
+    assert ("POST", "https://proxy.example/v1/session/claim") in calls
+    assert all(timeout == 1.5 for *_rest, timeout in opener.calls)
+
+
+def test_prewarm_login_stack_skips_invalid_origins() -> None:
+    opener = _RecordingPrewarmOpener()
+
+    assert prewarm_login_stack("http://identity.example", opener=opener) is None
+    assert opener.calls == []
