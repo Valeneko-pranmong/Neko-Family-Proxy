@@ -460,10 +460,7 @@ class AppWindow:
         if isinstance(result, UpdateLifecycleSnapshot):
             has_update = (
                 result.pending is not None
-                or result.disposition in (
-                    StartupUpdateDisposition.UPDATE_AVAILABLE,
-                    StartupUpdateDisposition.MANDATORY_UPDATE,
-                )
+                or result.disposition == StartupUpdateDisposition.MANDATORY_UPDATE
             )
         elif isinstance(result, UpdateCheckResult):
             has_update = result.state in (UpdateState.AVAILABLE, UpdateState.MANDATORY)
@@ -1249,7 +1246,14 @@ class AppWindow:
                 err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ (กรุณาปิดแล้วเปิดโปรแกรมใหม่)")
         else:
             if err is not None:
-                err.set("ไม่สามารถเข้าสู่ระบบได้เนื่องจากติดสถานะการอัปเดต")
+                detail = getattr(snapshot, "diagnostic_code", None)
+                if detail:
+                    err.set(
+                        f"ตรวจสอบอัปเดตไม่สำเร็จ ({detail}) "
+                        "กรุณาลองใหม่หรือติดต่อผู้ดูแล"
+                    )
+                else:
+                    err.set("กำลังตรวจสอบอัปเดต กรุณารอสักครู่แล้วลองใหม่")
         return False
 
     def _login(self) -> None:

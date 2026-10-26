@@ -2517,6 +2517,80 @@ def test_app_window_restore_and_route_blocked_when_gate_not_permitted() -> None:
     assert window._notice.get() == ""
 
 
+def test_app_window_login_shows_update_diagnostic_when_gate_blocks() -> None:
+    from neko_launcher.application.software_update_coordinator import (
+        UpdateLifecycleSnapshot,
+    )
+    from neko_launcher.application.software_update_models import UpdateLifecycleState
+
+    window = object.__new__(AppWindow)
+    window._login_email = FakeVariable("user@example.com")
+    window._login_password = FakeVariable("password123")
+    window._error = FakeVariable()
+    window._notice = FakeVariable()
+    service = FakeService()
+    window._service = service
+    window._submit = lambda action, on_success: action()
+
+    class FakeCoordinator:
+        def can_proceed_to_login(self) -> bool:
+            return False
+
+        def current(self) -> UpdateLifecycleSnapshot:
+            return UpdateLifecycleSnapshot(
+                state=UpdateLifecycleState.IDLE,
+                check_result=None,
+                pending=None,
+                diagnostic_code="MANIFEST_UNAVAILABLE",
+                disposition=None,
+            )
+
+    window._update_coordinator = FakeCoordinator()
+
+    window._login()
+
+    assert service.sign_ins == []
+    assert window._login_password.get() == "password123"
+    assert "MANIFEST_UNAVAILABLE" in window._error.get()
+
+
+def test_startup_splash_handles_current_snapshot_without_missing_disposition() -> None:
+    from neko_launcher.application.software_update_coordinator import (
+        UpdateLifecycleSnapshot,
+    )
+    from neko_launcher.application.software_update_models import UpdateLifecycleState
+    from neko_launcher.application.software_update_policy import (
+        StartupUpdateDisposition,
+    )
+
+    window = object.__new__(AppWindow)
+    window._startup_check_in_progress = True
+    window._startup_splash = None
+    window._startup_splash_status_var = FakeVariable()
+    window._startup_splash_sub_var = FakeVariable()
+    window._startup_splash_pbar = SimpleNamespace(
+        stop=lambda: None,
+        configure=lambda **_kwargs: None,
+        set=lambda _value: None,
+    )
+    dismissed: list[str] = []
+    window._dismiss_startup_splash = lambda: dismissed.append("dismissed")
+    window.root = FakeRoot()
+    window.root.after = lambda _delay, callback: callback()
+
+    result = UpdateLifecycleSnapshot(
+        state=UpdateLifecycleState.IDLE,
+        check_result=None,
+        pending=None,
+        diagnostic_code=None,
+        disposition=StartupUpdateDisposition.CURRENT,
+    )
+    window._on_startup_check_completed(result)
+
+    assert window._startup_splash_status_var.get() == "เป็นเวอร์ชันล่าสุดแล้ว (OK)"
+    assert dismissed == ["dismissed"]
+
+
 def test_app_window_login_proceeds_when_gate_permitted() -> None:
     window = object.__new__(AppWindow)
     window._login_email = FakeVariable("user@example.com")
