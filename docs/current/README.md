@@ -2,8 +2,9 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.1 BUILT — INSTALL MATRIX AND OWNER SIGN-OFF PENDING (NOT PUBLISHED)
+STATUS:                         5.2.1 BUILT — INSTALL MATRIX AND OWNER SIGN-OFF PENDING (NOT PUBLISHED); 5.2.2 SOURCE PREP COMMITTED
 PRODUCT_BASELINE:               5.2.1 (release target); 5.1.6 remains public stable
+SOURCE_5_2_2_PREP:              COMMITTED 81f8c8b + 72270c7; version still 5.2.1; not built, installed, or published
 CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
@@ -24,11 +25,12 @@ NEXT_LAUNCH_APPLY:              PASS (offline verified bootstrap before window c
 BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; historical bootstrap)
 LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
-REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-25)
-TEST_SUITE:                     2,789 passed / 5 skipped / 7 deselected (launcher, 2026-10-26)
+REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-26)
+TEST_SUITE:                     2,809 passed / 5 skipped / 7 deselected (launcher source, 2026-10-26)
 RELEASE_RUNBOOK:                docs/current/5.2.0-release-runbook.md
 RELEASE_NOTES:                  docs/current/5.2.1-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
+PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
 LAST_VERIFIED:                  2026-10-26 +07:00 (Asia/Bangkok)
 ```
@@ -41,6 +43,15 @@ LAST_VERIFIED:                  2026-10-26 +07:00 (Asia/Bangkok)
 > `minimum_supported_sequence` to their own sequence so 5.2.1 installations are
 > forced to update on the next Launcher start; the running game/proxy session is
 > never force-closed. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
+>
+> **2026-10-26 5.2.2 source preparation:** the release branch now contains
+> structured support diagnostics, a centered login layout with a pinned top
+> status row and a non-shifting pending panel, one-frame Settings rendering, and
+> a startup splash that waits for session restore. The last change removes the
+> 2–4 second login-screen flash that made users think their session had been
+> lost. These are source-only commits `81f8c8b` and `72270c7`; the installed
+> 5.2.1 artifacts do not include them, and no 5.2.2 build, tag, or publication
+> exists. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
 
 > **2026-10-25 unified-platform overlay:** the first usable release of the
 > unified line is **5.2.0** on the preview/manual channel. The new line uses
@@ -97,12 +108,14 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
   - Disabled once a newer accepted machine release existed on GitHub.
 - The bootstrap path is retained for traceability; it is not the release path for the current line.
 
-### 1.3 Release Line 5.1.3–5.2.0
+### 1.3 Release Line 5.1.3–5.2.2 (source)
 - **v5.1.3**: installed-file integrity check and repair in Settings; update-notification and Settings-focus refinements; clean uninstall/state cleanup; machine credential provisioned during baseline enrollment.
 - **v5.1.4**: 64-bit WOW64 redirection guard in the elevated driver installer and non-BOM ASCII installer logging.
 - **v5.1.5**: native `ensure-netfilter2.cmd` Sysnative dispatcher and Inno Setup result-file polling guard.
 - **v5.1.6**: startup update-check splash before the main window; in-app update progress dialog; windowless updater helper; committed-generation self-sync; Settings version check; baseline enrollment from a working-directory install root.
 - **v5.2.0 (unified-line release target, preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The new line uses Neko-NETWORK-ID and Neko Proxy API only; 5.1.6 remains on the legacy line and must be uninstalled before a clean 5.2.0 installation. See [5.2.0-release-notes.md](5.2.0-release-notes.md) and [5.2.0-release-runbook.md](5.2.0-release-runbook.md).
+- **v5.2.1 (preview/manual; built and installed, not published)**: login copy and Discord icon, login-endpoint pre-warm, fixed 500×640 window, one-frame Settings render, and an uninstall-time process guard. Envelope `preview-0016`, sequence 16, `minimum_supported_sequence = 16`. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
+- **v5.2.2 (source preparation; not built or published)**: schema-2 support diagnostics with privacy-safe auth/restore timing, pinned-status centered login layout with a floating pending panel, and a startup splash that waits for session restore so auto-login does not flash the login screen. Source version remains 5.2.1; the release must use sequence 17 and `minimum_supported_sequence = 17`. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
 
 ---
 
@@ -148,8 +161,8 @@ The released line preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Launcher suite**: 2,607 passed, 4 skipped, 7 deselected on 2026-10-25. This includes the new `launcher_v2` auth-foundation, claim/permit, bridge-support, staging-runbook, installer-separation, next-line schema-selection, web-only/frozen-build, preview-channel, and feed-isolation tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
-- **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
+- **Launcher suite**: 2,809 passed, 5 skipped, 7 deselected on 2026-10-26 (source). This includes the `launcher_v2` auth-foundation, claim/permit, bridge-support, staging-runbook, installer-separation, next-line schema-selection, web-only/frozen-build, preview-channel, and feed-isolation tests, plus the 5.2.2 support-diagnostics and startup splash/session-restore tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
+- **Repository safety**: PASS on 2026-10-26 (`scripts/check_repository_safety.py`).
 - **Ruff and CI**: `ruff check src tests` PASS; CI enforces the same gate in `.github/workflows/ci.yml`.
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.
 - **Edge permit service**: 31 Node tests PASS, including rate-limit 429 and fail-closed 503 paths.
