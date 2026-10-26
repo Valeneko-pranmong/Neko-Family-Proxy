@@ -37,10 +37,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$expectedSha256 = 'c55782e428496bc5724f2c86e2ad8d93e66ecf128c9251a5dea6e16aef78527f'
+$expectedSha256 = '61242d24388234ea0b2b5197d5e2e663a4e030f0768678b8252efe3fe6079fb1'
 
 if (-not $LauncherPath) {
-    $LauncherPath = Join-Path $repo 'launcher\dist\NekoLauncher-6d6461f-py312.exe'
+    $LauncherPath = Join-Path $repo 'launcher\dist\NekoLauncher-login-fix-py312.exe'
 }
 if (-not (Test-Path -LiteralPath $LauncherPath)) {
     throw "Patched launcher not found: $LauncherPath"

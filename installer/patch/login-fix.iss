@@ -14,7 +14,7 @@
 #endif
 
 #ifndef ExpectedPatchSha256
-  #define ExpectedPatchSha256 "c55782e428496bc5724f2c86e2ad8d93e66ecf128c9251a5dea6e16aef78527f"
+  #define ExpectedPatchSha256 "61242d24388234ea0b2b5197d5e2e663a4e030f0768678b8252efe3fe6079fb1"
 #endif
 
 [Setup]

@@ -16,7 +16,7 @@ from .defaults import (
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
 )
-from .release_config import RELEASE_PROXY_API_URL
+from .release_config import RELEASE_IDENTITY_BASE_URL, RELEASE_PROXY_API_URL
 
 
 class ProgramPreferences:
@@ -116,11 +116,23 @@ class LauncherConfig:
             except OSError:
                 stored_game_exe = ""
         proxy_path = local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
-        identity_base_url = (
-            os.getenv("NEKO_IDENTITY_BASE_URL", "").strip() or IDENTITY_BASE_URL
-        )
-        web_auth_bridge_url = os.getenv("NEKO_AUTH_BRIDGE_URL", "").strip()
         frozen_build = bool(getattr(sys, "frozen", False))
+        env_identity_base_url = os.getenv("NEKO_IDENTITY_BASE_URL", "").strip()
+        if frozen_build:
+            if env_identity_base_url:
+                raise ValueError(
+                    "NEKO_IDENTITY_BASE_URL is disabled in frozen builds"
+                )
+            if not RELEASE_IDENTITY_BASE_URL:
+                raise ValueError(
+                    "frozen 5.2.0 builds require a release identity base URL"
+                )
+            identity_base_url = _require_https_origin(
+                RELEASE_IDENTITY_BASE_URL, "RELEASE_IDENTITY_BASE_URL"
+            )
+        else:
+            identity_base_url = env_identity_base_url or IDENTITY_BASE_URL
+        web_auth_bridge_url = os.getenv("NEKO_AUTH_BRIDGE_URL", "").strip()
         env_proxy_api_url = os.getenv("NEKO_PROXY_API_URL", "").strip()
         if env_proxy_api_url and frozen_build:
             raise ValueError("NEKO_PROXY_API_URL is disabled in frozen builds")

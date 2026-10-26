@@ -107,6 +107,7 @@ def test_frozen_build_uses_release_proxy_api_url(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.delenv("NEKO_IDENTITY_BASE_URL", raising=False)  # type: ignore[attr-defined]
     monkeypatch.setattr(  # type: ignore[attr-defined]
         config_module,
         "RELEASE_PROXY_API_URL",
@@ -123,6 +124,7 @@ def test_frozen_build_uses_release_proxy_api_url(
     )
     config = LauncherConfig.from_environment(tmp_path)
     assert config.proxy_api_url == "https://proxy.example"
+    assert config.identity_base_url == "https://neko-network-id-staging.vercel.app"
     assert config.proxy_api_enabled is True
     assert config.web_auth_enabled is True
     assert config.web_auth_only is True
@@ -137,6 +139,46 @@ def test_frozen_build_uses_release_proxy_api_url(
     monkeypatch.delenv("NEKO_PROXY_API_URL", raising=False)  # type: ignore[attr-defined]
     monkeypatch.setenv("NEKO_WEB_AUTH_ONLY", "0")  # type: ignore[attr-defined]
     with pytest.raises(ValueError, match="password authentication is disabled"):
+        LauncherConfig.from_environment(tmp_path)
+
+
+def test_frozen_build_requires_release_identity_base_url(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.delenv("NEKO_IDENTITY_BASE_URL", raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        config_module,
+        "RELEASE_PROXY_API_URL",
+        "https://proxy.example",
+    )
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        config_module,
+        "RELEASE_IDENTITY_BASE_URL",
+        "",
+    )
+
+    with pytest.raises(ValueError, match="require a release identity base URL"):
+        LauncherConfig.from_environment(tmp_path)
+
+
+def test_frozen_build_rejects_identity_base_url_override(
+    monkeypatch: object,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        config_module,
+        "RELEASE_PROXY_API_URL",
+        "https://proxy.example",
+    )
+    monkeypatch.setenv(  # type: ignore[attr-defined]
+        "NEKO_IDENTITY_BASE_URL",
+        "https://identity.example",
+    )
+
+    with pytest.raises(ValueError, match="NEKO_IDENTITY_BASE_URL is disabled in frozen builds"):
         LauncherConfig.from_environment(tmp_path)
 
 

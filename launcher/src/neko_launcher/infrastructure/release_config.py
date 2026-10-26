@@ -6,4 +6,5 @@ reject that environment override.
 """
 
 RELEASE_PROXY_API_URL = "https://neko-control-room-staging.vercel.app"
+RELEASE_IDENTITY_BASE_URL = "https://neko-network-id-staging.vercel.app"
 RELEASE_CHANNEL = "preview"
