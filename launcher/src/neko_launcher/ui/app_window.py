@@ -331,9 +331,16 @@ class AppWindow:
         self._startup_splash_pbar: Any = None
         self._startup_check_in_progress = True
         self._startup_update_check_submitted = False
+        self._startup_splash_held_for_restore = False
 
         if self._telemetry_client is not None:
             self._telemetry_client.start()
+
+        # Start session restore before building the widgets so the network
+        # round-trip overlaps UI construction instead of following it.
+        self._restore_started_at = time.monotonic()
+        self._record_support_event("AUTH", "RESTORE_STARTED")
+        self._submit(self._service.restore_session, self._restore_completed)
 
         self._build_layout(logo_path)
         try:
@@ -350,7 +357,7 @@ class AppWindow:
             ui_scaling=ui_scaling,
         )
         self.root.after(50, self._show_startup_splash_window)
-        self.root.after(6_000, self._dismiss_startup_splash)
+        self.root.after(6_000, self._startup_splash_timeout)
         self.root.after(250, lambda: center_window(self.root, self._window_size))
         self.root.after(350, self._show_initial_window)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -363,9 +370,6 @@ class AppWindow:
         self.root.after(1_500, self._refresh_public_proxy_status)
         self.root.after(2_000, self._check_software_update_startup)
         self.root.after(3_000, self._poll_game_process)
-        self._restore_started_at = time.monotonic()
-        self._record_support_event("AUTH", "RESTORE_STARTED")
-        self._submit(self._service.restore_session, self._restore_completed)
 
     # ------------------------------------------------------------------
     # Window lifecycle
@@ -389,7 +393,36 @@ class AppWindow:
         if self.root.winfo_exists() and not self._closing:
             self.root.attributes("-topmost", self._always_on_top.get())
 
-    def _dismiss_startup_splash(self) -> None:
+    def _session_restore_pending(self) -> bool:
+        return getattr(self, "_restore_started_at", None) is not None
+
+    def _dismiss_startup_splash(self, *, force: bool = False) -> None:
+        if not getattr(self, "_startup_check_in_progress", False):
+            return
+        # Keep the splash up until session restoration resolves. Otherwise the
+        # login screen flashes for a few seconds before auto-login replaces it,
+        # which reads to users as an unexpected sign-out.
+        if (
+            not force
+            and self._session_restore_pending()
+            and getattr(self, "_startup_splash", None) is not None
+        ):
+            if not getattr(self, "_startup_splash_held_for_restore", False):
+                self._startup_splash_held_for_restore = True
+                self._record_support_event(
+                    "APP",
+                    "STARTUP_SPLASH_HELD",
+                    reason="session_restore",
+                    restore_elapsed_ms=self._elapsed_ms(
+                        getattr(self, "_restore_started_at", None)
+                    ),
+                )
+            sub_var = getattr(self, "_startup_splash_sub_var", None)
+            if sub_var is not None:
+                sub_var.set("กำลังตรวจสอบการเข้าสู่ระบบ...")
+            return
+
+        self._startup_splash_held_for_restore = False
         self._startup_check_in_progress = False
         splash = getattr(self, "_startup_splash", None)
         if splash is not None:
@@ -399,7 +432,42 @@ class AppWindow:
                     splash.destroy()
             except Exception:
                 pass
+        self._record_support_event(
+            "APP",
+            "STARTUP_SPLASH_CLOSED",
+            forced=bool(force),
+            restore_pending=self._session_restore_pending(),
+            elapsed_ms=self._elapsed_ms(
+                getattr(self, "_started_at_monotonic", None)
+            ),
+        )
         self._show_initial_window()
+
+    def _startup_splash_timeout(self) -> None:
+        if not getattr(self, "_startup_check_in_progress", False):
+            return
+        if (
+            self._session_restore_pending()
+            and getattr(self, "_startup_splash", None) is not None
+        ):
+            self._record_support_event(
+                "APP",
+                "STARTUP_SPLASH_EXTENDED",
+                reason="session_restore_pending",
+                restore_elapsed_ms=self._elapsed_ms(
+                    getattr(self, "_restore_started_at", None)
+                ),
+            )
+            sub_var = getattr(self, "_startup_splash_sub_var", None)
+            if sub_var is not None:
+                sub_var.set("กำลังตรวจสอบการเข้าสู่ระบบ...")
+            self.root.after(4_000, self._force_dismiss_startup_splash)
+            return
+        self._dismiss_startup_splash(force=True)
+
+    def _force_dismiss_startup_splash(self) -> None:
+        if getattr(self, "_startup_check_in_progress", False):
+            self._dismiss_startup_splash(force=True)
 
     def _show_startup_splash_window(self) -> None:
         if self._closing or not getattr(self, "_startup_check_in_progress", False):
@@ -554,7 +622,11 @@ class AppWindow:
         if status_var is not None:
             status_var.set("เป็นเวอร์ชันล่าสุดแล้ว (OK)")
         if sub_var is not None:
-            sub_var.set("กำลังเข้าสู่โปรแกรม...")
+            sub_var.set(
+                "กำลังตรวจสอบการเข้าสู่ระบบ..."
+                if self._session_restore_pending()
+                else "กำลังเข้าสู่โปรแกรม..."
+            )
         if pbar is not None:
             try:
                 pbar.stop()
@@ -1496,8 +1568,19 @@ class AppWindow:
             elapsed_ms=self._elapsed_ms(
                 getattr(self, "_restore_started_at", None)
             ),
+            startup_elapsed_ms=self._elapsed_ms(
+                getattr(self, "_started_at_monotonic", None)
+            ),
         )
         self._restore_started_at = None
+        if getattr(self, "_startup_splash_held_for_restore", False):
+            # Defer one tick so the queued StateChanged event can switch the
+            # view to the dashboard before the window becomes visible.
+            root = getattr(self, "root", None)
+            if root is None:
+                self._dismiss_startup_splash()
+            else:
+                root.after(0, self._dismiss_startup_splash)
         if gate_blocked:
             return
         if restored:
