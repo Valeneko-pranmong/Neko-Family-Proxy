@@ -270,34 +270,61 @@ function Backup-NekoLogs {
     }
 }
 
-function Remove-NekoCredentialTarget {
+function Get-NekoCredentialTargets {
     $cmdkey = Join-Path $env:SystemRoot 'System32\cmdkey.exe'
-    if (-not (Test-Path -LiteralPath $cmdkey)) { return }
+    if (-not (Test-Path -LiteralPath $cmdkey)) { return @() }
 
     try {
         $listing = (& $cmdkey /list 2>&1 | Out-String)
     }
     catch {
         Write-Log "Could not list Windows credentials: $($_.Exception.Message)" 'WARN'
-        return
+        return @()
     }
 
-    if ($listing -notmatch [regex]::Escape($script:CredentialTarget)) {
+    $targets = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($listing -split "`r?`n")) {
+        if ($line -match 'target=(.+?)\s*$') {
+            $target = $Matches[1].Trim()
+            if ($target -like '*Neko Family Launcher*') {
+                $targets.Add($target) | Out-Null
+            }
+        }
+    }
+    if ($targets.Count -eq 0 -and $listing -match [regex]::Escape($script:CredentialTarget)) {
+        $targets.Add($script:CredentialTarget) | Out-Null
+    }
+    return @($targets | Sort-Object -Unique)
+}
+
+function Remove-NekoCredentialTarget {
+    $targets = @(Get-NekoCredentialTargets)
+    if ($targets.Count -eq 0) {
         Write-Log "Credential target not present: $($script:CredentialTarget)"
         return
     }
 
-    if ($DryRun) {
-        Write-Log "DRY-RUN would delete credential target: $($script:CredentialTarget)"
-        return
+    foreach ($target in $targets) {
+        if ($DryRun) {
+            Write-Log "DRY-RUN would delete credential target: $target"
+            continue
+        }
+        try {
+            $null = & $env:ComSpec /c ('cmdkey /delete:"{0}"' -f $target) 2>&1
+            Write-Log "Requested credential target deletion: $target"
+        }
+        catch {
+            Write-Log "Could not delete credential target '$target': $($_.Exception.Message)" 'WARN'
+            $script:Problems.Add("Credential target could not be deleted: $target") | Out-Null
+        }
     }
 
-    try {
-        $null = & $env:ComSpec /c ('cmdkey /delete:"{0}"' -f $script:CredentialTarget) 2>&1
-        Write-Log "Requested credential target deletion: $($script:CredentialTarget)"
-    }
-    catch {
-        Write-Log "Could not delete credential target: $($_.Exception.Message)" 'WARN'
+    if (-not $DryRun) {
+        $remaining = @(Get-NekoCredentialTargets)
+        if ($remaining.Count -gt 0) {
+            Write-Log "Credential target still present: $($remaining -join ', ')" 'ERROR'
+            $script:Problems.Add("Credential target remains: $($remaining -join ', ')") | Out-Null
+        }
     }
 }
 
@@ -389,7 +416,11 @@ try {
 
     if ($null -eq $entry -and -not (Test-Path -LiteralPath $script:AppRoot) -and -not (Test-Path -LiteralPath $script:LogRoot)) {
         Write-Log 'No NEKO installation or known leftovers were found for this user.'
+        Remove-NekoCredentialTarget
         Show-UninstallSummary -Version $version -Uninstaller $null -LogBackup $null
+        if (-not $DryRun -and $script:Problems.Count -gt 0) {
+            exit 1
+        }
         exit 0
     }
 
