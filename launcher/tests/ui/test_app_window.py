@@ -9,9 +9,10 @@ from neko_launcher.application.reconnect import (
     AutomaticProxyReconnectController,
     ReconnectCompletion,
 )
-from neko_launcher.domain.events import GameProcessStateChanged
+from neko_launcher.domain.events import AuthProgress, GameProcessStateChanged
 from neko_launcher.domain.models import (
     AppState,
+    AuthPhase,
     AuthStatus,
     Entitlement,
     EntitlementStatus,
@@ -2446,7 +2447,7 @@ def test_app_window_login_blocked_when_mandatory_update_required() -> None:
 
     assert service.sign_ins == []
     assert window._login_password.get() == "password123"
-    assert "จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ" in window._error.get()
+    assert "กรุณาอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ" in window._error.get()
 
 
 def test_app_window_login_blocked_when_reinstall_required() -> None:
@@ -2629,3 +2630,33 @@ def test_web_only_mode_wires_web_auth_view_and_hides_password_action() -> None:
     assert "self._recovery_view = None" in source
     assert "if not self._web_auth_only:" in source
     assert "getattr(self, \"_recovery_view\", None) is None" in source
+
+
+def test_sign_in_steps_from_the_browser_flow_reach_the_controller() -> None:
+    window = object.__new__(AppWindow)
+    dispatched: list[Any] = []
+    window._controller = SimpleNamespace(dispatch=dispatched.append)  # type: ignore[assignment]
+    observers: list[Any] = []
+    window._web_auth_client = SimpleNamespace(  # type: ignore[assignment]
+        attach_progress_observer=observers.append
+    )
+
+    window._attach_auth_progress_observer()
+
+    assert len(observers) == 1
+    observers[0](AuthPhase.CONNECTING)
+    assert dispatched == [AuthProgress(AuthPhase.CONNECTING)]
+
+
+def test_cancel_web_login_stops_the_pending_browser_sign_in() -> None:
+    window = object.__new__(AppWindow)
+    cancelled: list[int] = []
+    window._web_auth_client = SimpleNamespace(  # type: ignore[assignment]
+        cancel=lambda: cancelled.append(1)
+    )
+    window._notice = FakeVariable()  # type: ignore[assignment]
+
+    window._cancel_web_login()
+
+    assert cancelled == [1]
+    assert window._notice.get() == "ยกเลิกการเข้าสู่ระบบแล้ว"

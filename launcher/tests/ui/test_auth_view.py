@@ -120,3 +120,55 @@ def test_register_cta_has_real_visual_height() -> None:
         assert view._register_button.winfo_height() >= 50
     finally:
         root.destroy()
+
+
+def test_web_only_view_shows_live_step_and_cancel_while_authenticating() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        cancelled: list[int] = []
+        view = AuthView(
+            root,
+            status_var=tk.StringVar(master=root, value="กำลังเข้าสู่ระบบ"),
+            login_email_var=tk.StringVar(master=root),
+            login_password_var=tk.StringVar(master=root),
+            register_username_var=tk.StringVar(master=root),
+            register_password_var=tk.StringVar(master=root),
+            register_password_confirm_var=tk.StringVar(master=root),
+            on_login=lambda: None,
+            on_register=lambda: None,
+            on_forgot_password=lambda: None,
+            on_web_login=lambda: None,
+            on_cancel_web_login=lambda: cancelled.append(1),
+            web_auth_enabled=True,
+            web_auth_only=True,
+        )
+        root.geometry("440x592")
+        view.frame.pack(fill="both", expand=True)
+        root.deiconify()
+        root.update()
+
+        assert view._progress_panel is not None
+        assert view._progress_panel.winfo_manager() == ""
+
+        view.set_auth_progress("กำลังรอการยืนยันจากเบราว์เซอร์")
+        root.update()
+        assert view._progress_panel.winfo_manager() == "pack"
+        assert (
+            view._progress_text.cget("text")
+            == "กำลังรอการยืนยันจากเบราว์เซอร์"
+        )
+
+        assert view._cancel_button is not None
+        view._cancel_button.invoke()
+        assert cancelled == [1]
+
+        view.set_auth_progress(None)
+        root.update()
+        assert view._progress_panel.winfo_manager() == ""
+    finally:
+        root.destroy()

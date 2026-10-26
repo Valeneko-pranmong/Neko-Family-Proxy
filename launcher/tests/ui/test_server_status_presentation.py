@@ -20,7 +20,7 @@ def telemetry(*, connected: bool = True, stale: bool = False, healthy: bool = Tr
 
 
 def test_server_status_offline_connecting_and_failure() -> None:
-    assert get_server_status(AppState()) == ("OFFLINE", "danger")
+    assert get_server_status(AppState()) == ("ยังไม่เชื่อมต่อ", "danger")
     assert get_server_status(AppState(proxy_status=ProxyStatus.STARTING)) == ("กำลังเชื่อมต่อ", "warning")
     assert get_server_status(AppState(proxy_status=ProxyStatus.RECONNECTING)) == ("กำลังเชื่อมต่อ", "warning")
     assert get_server_status(AppState(game_process_running=True, proxy_status=ProxyStatus.STOPPED)) == ("กำลังเชื่อมต่อ", "warning")
@@ -30,8 +30,8 @@ def test_server_status_offline_connecting_and_failure() -> None:
 
 def test_server_status_online_requires_fresh_complete_runtime_health() -> None:
     running = AppState(proxy_status=ProxyStatus.RUNNING, game_process_running=True)
-    assert get_server_status(running, telemetry()) == ("ONLINE", "success")
+    assert get_server_status(running, telemetry()) == ("ปกติ", "success")
     assert get_server_status(running, None)[1] == "warning"
     assert get_server_status(running, telemetry(connected=False))[1] == "warning"
     assert get_server_status(running, telemetry(stale=True))[1] == "warning"
-    assert get_server_status(running, telemetry(healthy=False)) == ("เชื่อมต่อไม่สมบูรณ์", "warning")
+    assert get_server_status(running, telemetry(healthy=False)) == ("ไม่เสถียร", "warning")

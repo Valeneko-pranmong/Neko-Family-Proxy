@@ -46,6 +46,7 @@ from neko_launcher.application.software_update_policy import (
     StartupUpdateDisposition,
 )
 from neko_launcher.domain.events import (
+    AuthProgress,
     GameProcessStateChanged,
     StateChanged,
     TelemetryUpdated,
@@ -80,7 +81,11 @@ from .platform.window_chrome import (
 )
 from .platform.window_scaling import center_window, fit_portrait_window
 from .settings_window import SettingsWindow
-from .status_presentation import get_server_status, translate_customer_status
+from .status_presentation import (
+    describe_auth_progress,
+    get_server_status,
+    translate_customer_status,
+)
 from .theme import FONT_FAMILY, PALETTE, apply_theme
 from .views.auth_view import AuthView
 from .views.dashboard_view import DashboardView, open_password_dialog
@@ -145,6 +150,7 @@ class AppWindow:
         self._web_auth_client = web_auth_client
         self._web_auth_enabled = bool(web_auth_enabled and web_auth_client is not None)
         self._web_auth_only = bool(web_auth_only)
+        self._attach_auth_progress_observer()
         if self._web_auth_only and not self._web_auth_enabled:
             raise ValueError("web_auth_only requires an available web auth client")
         self._update_apply_pending = False
@@ -239,7 +245,7 @@ class AppWindow:
         self._entitlement = tk.StringVar(value="ยังไม่มีวันใช้งาน")
         self._status_title = tk.StringVar(value="กำลังเตรียมข้อมูล…")
         self._status_subtitle = tk.StringVar(value="กำลังตรวจสอบการเข้าสู่ระบบ")
-        self._server_status = tk.StringVar(value="OFFLINE")
+        self._server_status = tk.StringVar(value="กำลังตรวจสอบ")
         self._entitlement_days = tk.StringVar(value="0 วัน")
         self._entitlement_expiry = tk.StringVar(value="ยังไม่มีวันใช้งาน")
         self._download_speed = tk.StringVar(value="—")
@@ -600,6 +606,7 @@ class AppWindow:
             on_register=self._register,
             on_forgot_password=self._begin_account_recovery,
             on_web_login=self._login_with_web,
+            on_cancel_web_login=self._cancel_web_login,
             web_auth_enabled=self._web_auth_enabled,
             web_auth_only=self._web_auth_only,
         )
@@ -1237,23 +1244,26 @@ class AppWindow:
         err = getattr(self, "_error", None)
         if disposition == StartupUpdateDisposition.REINSTALL_REQUIRED:
             if err is not None:
-                err.set("จำเป็นต้องติดตั้งโปรแกรมใหม่ (ตรวจพบเวอร์ชัน 6.x หรือตัวอัปเดตไม่รองรับ)")
+                err.set("จำเป็นต้องติดตั้งโปรแกรมใหม่ กรุณาติดต่อผู้ดูแล")
         elif (
             getattr(snapshot, "pending", None) is not None
             or disposition == StartupUpdateDisposition.MANDATORY_UPDATE
         ):
             if err is not None:
-                err.set("จำเป็นต้องอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ (กรุณาปิดแล้วเปิดโปรแกรมใหม่)")
+                err.set(
+                    "กรุณาอัปเดตเป็นเวอร์ชันล่าสุดก่อนเข้าสู่ระบบ "
+                    "โดยปิดแล้วเปิดโปรแกรมใหม่"
+                )
         else:
             if err is not None:
                 detail = getattr(snapshot, "diagnostic_code", None)
                 if detail:
                     err.set(
-                        f"ตรวจสอบอัปเดตไม่สำเร็จ ({detail}) "
+                        f"ตรวจสอบเวอร์ชันไม่สำเร็จ ({detail}) "
                         "กรุณาลองใหม่หรือติดต่อผู้ดูแล"
                     )
                 else:
-                    err.set("กำลังตรวจสอบอัปเดต กรุณารอสักครู่แล้วลองใหม่")
+                    err.set("กำลังตรวจสอบเวอร์ชัน กรุณารอสักครู่แล้วลองใหม่")
         return False
 
     def _login(self) -> None:
@@ -1274,14 +1284,34 @@ class AppWindow:
         if client is None:
             err = getattr(self, "_error", None)
             if err is not None:
-                err.set("ยังไม่ได้เปิดใช้งานการเข้าสู่ระบบผ่านเว็บ")
+                err.set("การเข้าสู่ระบบด้วย Discord ไม่พร้อมใช้งาน กรุณาเปิดโปรแกรมใหม่")
             return
         self._login_password.set("")
         self._submit(
             lambda: self._service.sign_in_with_web(client),
             self._login_succeeded,
         )
-        self._notice.set("กำลังเปิดเบราว์เซอร์เพื่อเข้าสู่ระบบ...")
+
+    def _attach_auth_progress_observer(self) -> None:
+        """Publish the browser sign-in steps so the login screen never looks stuck."""
+        client = self._web_auth_client
+        if client is None:
+            return
+        attach = getattr(client, "attach_progress_observer", None)
+        if not callable(attach):
+            return
+        attach(lambda phase: self._controller.dispatch(AuthProgress(phase)))
+
+    def _cancel_web_login(self) -> None:
+        """Stop a pending browser sign-in without leaving the button frozen."""
+        client = getattr(self, "_web_auth_client", None)
+        if client is None:
+            return
+        try:
+            client.cancel()
+        except Exception:
+            return
+        self._notice.set("ยกเลิกการเข้าสู่ระบบแล้ว")
 
     def _begin_account_recovery(self) -> None:
         if getattr(self, "_web_auth_only", False):
@@ -1607,10 +1637,10 @@ class AppWindow:
         if state.proxy_status is ProxyStatus.STOPPED and not state.game_process_running:
             public_status = getattr(self, "_public_server_host_status", None)
             if public_status is None:
-                return "กำลังเช็ค", "warning"
+                return "กำลังตรวจสอบ", "warning"
             if public_status == "ONLINE":
-                return "ONLINE", "success"
-            return "OFFLINE", "danger"
+                return "ปกติ", "success"
+            return "ขัดข้อง", "danger"
         return get_server_status(state, telemetry)
 
     def _set_public_server_host_status(self, host_status: str | None) -> None:
@@ -2252,6 +2282,11 @@ class AppWindow:
                 state.auth_status is AuthStatus.RECOVERY_VERIFYING
             )
 
+        self._auth_view.set_auth_progress(
+            describe_auth_progress(state.auth_phase)
+            if state.auth_status is AuthStatus.AUTHENTICATING
+            else None
+        )
         self._set_auth_enabled(
             signed_in=signed_in,
             authenticating=state.auth_status is AuthStatus.AUTHENTICATING,

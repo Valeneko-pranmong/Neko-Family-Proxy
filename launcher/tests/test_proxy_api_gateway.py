@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from neko_launcher.infrastructure.auth.proxy_api_gateway import (
+    GENERIC_ERROR_MESSAGE,
+    INTERNAL_ERROR_MESSAGES,
     SHARED_ERROR_MESSAGES,
     ProxyAccountStatus,
     ProxyApiError,
@@ -582,3 +584,20 @@ def test_invalid_heartbeat_interval_is_rejected() -> None:
         )
 
     assert captured.value.code == "invalid_response"
+
+
+def test_customer_error_copy_avoids_technical_terms() -> None:
+    """Sign-in and status failures reach the customer verbatim, so they stay plain."""
+    banned_terms = ("pkce", "verifier", "ไคลเอนต์", "ล็อกอิน", "endpoint", "payload")
+
+    messages = [
+        *SHARED_ERROR_MESSAGES.values(),
+        *INTERNAL_ERROR_MESSAGES.values(),
+        GENERIC_ERROR_MESSAGE,
+    ]
+    assert messages
+
+    for message in messages:
+        lowered = message.lower()
+        offending = [term for term in banned_terms if term in lowered]
+        assert not offending, f"{message} leaks {offending}"

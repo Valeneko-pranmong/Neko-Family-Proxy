@@ -5,6 +5,7 @@ from threading import Event, RLock, Thread
 
 from neko_launcher.domain.events import (
     AuthFailed,
+    AuthProgress,
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
@@ -15,6 +16,7 @@ from neko_launcher.domain.events import (
 )
 from neko_launcher.domain.models import (
     AuthenticatedUser,
+    AuthPhase,
     AuthStatus,
     CouponRedemption,
     Entitlement,
@@ -158,6 +160,7 @@ class LauncherService:
         self._complete_sign_in(user)
 
     def _complete_sign_in(self, user: AuthenticatedUser) -> None:
+        self._controller.dispatch(AuthProgress(AuthPhase.CHECKING_ENTITLEMENT))
         try:
             claimed = self._claim_session(allow_missing=True)
         except LauncherServiceError:
@@ -586,7 +589,7 @@ class LauncherService:
     def _require_password_auth(self) -> None:
         if self._web_auth_only:
             raise LauncherServiceError(
-                "5.2.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
+                "โปรแกรมนี้อนุญาตให้เข้าสู่ระบบด้วยบัญชี Discord เท่านั้น"
             )
 
     def _clear_recovery_session(self) -> None:

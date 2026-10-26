@@ -11,6 +11,7 @@ from urllib.request import urlopen
 
 import pytest
 
+from neko_launcher.domain.models import AuthPhase
 from neko_launcher.infrastructure.auth.web_auth import (
     BridgeSession,
     IdentityTokenSet,
@@ -182,7 +183,7 @@ def test_authorize_url_uses_exact_loopback_contract() -> None:
 def test_authorize_url_rejects_non_https_or_path_base() -> None:
     pkce = generate_pkce()
     for base in ("http://identity.test", "https://identity.test/extra"):
-        with pytest.raises(WebAuthError, match="ที่อยู่ระบบล็อกอินไม่ถูกต้อง"):
+        with pytest.raises(WebAuthError, match="ระบบตั้งค่าการเข้าสู่ระบบไม่ถูกต้อง"):
             build_authorize_url(base, "http://127.0.0.1:53682/auth/callback", pkce)
 
 
@@ -482,3 +483,91 @@ def test_urllib_transport_rejects_insecure_endpoint() -> None:
             "http://identity.test/token", {}, {}, 1.0
         )
     assert error.value.code == "insecure_endpoint"
+
+
+def test_progress_observer_reports_each_sign_in_step() -> None:
+    transport = FakeTransport([_identity_token_response()])
+    opener, _opened = _browser_sends_callback()
+    client = _client(transport, browser_opener=opener)
+    phases: list[AuthPhase] = []
+    client.attach_progress_observer(phases.append)
+
+    client.authenticate_identity()
+
+    assert phases == [
+        AuthPhase.OPENING_BROWSER,
+        AuthPhase.WAITING_FOR_BROWSER,
+        AuthPhase.CONNECTING,
+    ]
+
+
+def test_sign_in_finishes_while_the_callback_listener_is_still_closing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: listener teardown must not stall the steps after the callback."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_close(self: LoopbackCallbackServer) -> None:
+        entered.set()
+        release.wait(timeout=5.0)
+
+    monkeypatch.setattr(LoopbackCallbackServer, "close", blocking_close)
+    transport = FakeTransport([_identity_token_response()])
+    opener, _opened = _browser_sends_callback()
+    client = _client(transport, browser_opener=opener)
+    tokens: list[IdentityTokenSet] = []
+    finished = threading.Event()
+
+    def run() -> None:
+        tokens.append(client.authenticate_identity())
+        finished.set()
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+
+    assert entered.wait(timeout=3.0), "callback listener was never released"
+    assert finished.wait(timeout=3.0), (
+        "sign-in waited for the callback listener to close"
+    )
+    release.set()
+    worker.join(timeout=5.0)
+    assert tokens[0].access_token == "identity-access"
+
+
+def test_sign_in_failure_copy_avoids_technical_terms() -> None:
+    """Every sign-in failure the customer can see must read like product copy."""
+    banned_terms = (
+        "pkce",
+        "verifier",
+        "redirect",
+        "client",
+        "ไคลเอนต์",
+        "พอร์ต",
+        "ล็อกอิน",
+        "5.2.0",
+    )
+    errors = [
+        WebAuthClient._callback_error("access_denied"),
+        WebAuthClient._callback_error("server_error"),
+        WebAuthClient._callback_error("unknown"),
+        WebAuthClient._identity_http_error(_response(400, {"error": "invalid_grant"})),
+        WebAuthClient._identity_http_error(_response(400, {})),
+        WebAuthClient._identity_http_error(_response(401, {})),
+        WebAuthClient._identity_http_error(_response(429, {})),
+        WebAuthClient._identity_http_error(_response(503, {})),
+        WebAuthClient._identity_http_error(_response(418, {})),
+        WebAuthClient._bridge_http_error(_response(401, {})),
+        WebAuthClient._bridge_http_error(_response(409, {"error": "token_replayed"})),
+        WebAuthClient._bridge_http_error(
+            _response(409, {"error": "identity_not_linked"})
+        ),
+        WebAuthClient._bridge_http_error(_response(429, {})),
+        WebAuthClient._bridge_http_error(_response(500, {})),
+        WebAuthClient._bridge_http_error(_response(404, {})),
+    ]
+
+    for error in errors:
+        text = str(error).lower()
+        offending = [term for term in banned_terms if term in text]
+        assert not offending, f"{error} leaks {offending}"

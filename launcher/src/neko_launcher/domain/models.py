@@ -15,6 +15,16 @@ class AuthStatus(str, Enum):
     RECOVERY_PASSWORD_CHANGE = "recovery_password_change"
 
 
+class AuthPhase(str, Enum):
+    """Which step of a sign-in attempt is running, for customer-facing feedback."""
+
+    IDLE = "idle"
+    OPENING_BROWSER = "opening_browser"
+    WAITING_FOR_BROWSER = "waiting_for_browser"
+    CONNECTING = "connecting"
+    CHECKING_ENTITLEMENT = "checking_entitlement"
+
+
 class EntitlementStatus(str, Enum):
     UNKNOWN = "unknown"
     NONE = "none"
@@ -108,6 +118,7 @@ class CouponRedemption:
 @dataclass(frozen=True)
 class AppState:
     auth_status: AuthStatus = AuthStatus.SIGNED_OUT
+    auth_phase: AuthPhase = AuthPhase.IDLE
     user_id: str | None = None
     user_email: str | None = None
     entitlement: Entitlement | None = None

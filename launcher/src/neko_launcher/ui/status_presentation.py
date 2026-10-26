@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from neko_launcher.domain.models import (
     AppState,
+    AuthPhase,
     AuthStatus,
     EntitlementStatus,
     GameStatus,
@@ -25,6 +27,19 @@ class CustomerStatus:
     is_ready: bool = False
 
 
+AUTH_PROGRESS_TEXT: dict[AuthPhase, str] = {
+    AuthPhase.OPENING_BROWSER: "กำลังเปิดเบราว์เซอร์",
+    AuthPhase.WAITING_FOR_BROWSER: "กำลังรอการยืนยันจากเบราว์เซอร์",
+    AuthPhase.CONNECTING: "ยืนยันแล้ว กำลังเชื่อมต่อบัญชี",
+    AuthPhase.CHECKING_ENTITLEMENT: "เชื่อมต่อบัญชีแล้ว กำลังตรวจวันใช้งาน",
+}
+
+
+def describe_auth_progress(phase: AuthPhase) -> str:
+    """Return the customer-facing label for a sign-in step."""
+    return AUTH_PROGRESS_TEXT.get(phase, "กำลังเข้าสู่ระบบ")
+
+
 def translate_customer_status(
     state: AppState,
     telemetry: TelemetryState | None = None,
@@ -39,14 +54,14 @@ def translate_customer_status(
     if state.auth_status is AuthStatus.SIGNED_OUT:
         return CustomerStatus(
             title="ยังไม่ได้เข้าสู่ระบบ",
-            subtitle="กรุณาเข้าสู่ระบบเพื่อเริ่มใช้งาน",
+            subtitle="เข้าสู่ระบบด้วย Discord เพื่อเริ่มใช้งาน",
             role="neutral",
             is_ready=False,
         )
     if state.auth_status is AuthStatus.AUTHENTICATING:
         return CustomerStatus(
-            title="กำลังเข้าสู่ระบบ...",
-            subtitle="กำลังตรวจสอบข้อมูลผู้ใช้",
+            title="กำลังเข้าสู่ระบบ",
+            subtitle=describe_auth_progress(state.auth_phase),
             role="neutral",
             is_ready=False,
         )
@@ -56,15 +71,15 @@ def translate_customer_status(
         AuthStatus.RECOVERY_PASSWORD_CHANGE,
     }:
         return CustomerStatus(
-            title="กู้คืนบัญชี",
-            subtitle="กำลังอยู่ในขั้นตอนการกู้รหัสผ่าน",
+            title="กำลังกู้คืนบัญชี",
+            subtitle="ทำตามขั้นตอนบนหน้าจอเพื่อตั้งรหัสผ่านใหม่",
             role="neutral",
             is_ready=False,
         )
     if state.auth_status is AuthStatus.FAILED:
         return CustomerStatus(
             title="เข้าสู่ระบบไม่สำเร็จ",
-            subtitle=state.last_error or "กรุณาตรวจสอบชื่อผู้ใช้และรหัสผ่าน",
+            subtitle=state.last_error or "กรุณาลองอีกครั้ง หรือติดต่อผู้ดูแล",
             role="danger",
             is_ready=False,
         )
@@ -72,7 +87,7 @@ def translate_customer_status(
     # 2. Session Revoked / Replaced
     if state.deferred_session_revocation_reason:
         return CustomerStatus(
-            title="เซสชันหมดอายุ",
+            title="ถูกตัดการเชื่อมต่อ",
             subtitle=state.deferred_session_revocation_reason,
             role="danger",
             is_ready=False,
@@ -81,12 +96,15 @@ def translate_customer_status(
     # 3. Entitlement Inactive / Expired
     if not entitlement_is_active(state.entitlement):
         if state.entitlement and state.entitlement.status is EntitlementStatus.EXPIRED:
-            subtitle = "วันใช้งานหมดอายุแล้ว กรุณาเติมวันในเมนูการตั้งค่า"
-        else:
-            subtitle = "ยังไม่มีวันใช้งาน กรุณาเติมวันด้วยคูปองในเมนูการตั้งค่า"
+            return CustomerStatus(
+                title="วันใช้งานหมดอายุ",
+                subtitle="เติมวันในเมนูการตั้งค่าเพื่อเชื่อมต่ออีกครั้ง",
+                role="danger",
+                is_ready=False,
+            )
         return CustomerStatus(
-            title="วันใช้งานหมดอายุ",
-            subtitle=subtitle,
+            title="ยังไม่มีวันใช้งาน",
+            subtitle="กรอกรหัสคูปองในเมนูการตั้งค่าเพื่อเริ่มใช้งาน",
             role="danger",
             is_ready=False,
         )
@@ -95,14 +113,14 @@ def translate_customer_status(
     if state.proxy_status is ProxyStatus.RECONNECTING:
         return CustomerStatus(
             title="กำลังเชื่อมต่อใหม่",
-            subtitle="การเชื่อมต่อสะดุดนิดหน่อย กำลังต่อให้ใหม่อัตโนมัติ",
+            subtitle="การเชื่อมต่อขัดข้องชั่วขณะ ระบบกำลังต่อให้อัตโนมัติ",
             role="warning",
             is_ready=False,
         )
     if state.proxy_status is ProxyStatus.FAILED or state.game_status is GameStatus.FAILED:
         return CustomerStatus(
             title="เชื่อมต่อไม่ได้",
-            subtitle="ลองใหม่อีกครั้ง หรือดูรายละเอียดที่ Settings > Status",
+            subtitle="กดเชื่อมต่อใหม่ หรือตรวจดูรายละเอียดในเมนูการตั้งค่า",
             role="danger",
             is_ready=False,
         )
@@ -119,7 +137,7 @@ def translate_customer_status(
                 )
             return CustomerStatus(
                 title="เชื่อมต่อแล้ว",
-                subtitle="Neko Core และ Neko Proxy ทำงานอย่างสมบูรณ์ Enjoy!",
+                subtitle="เข้าเกมได้แล้ว ระบบเชื่อมต่อให้ครบทุกขั้น",
                 role="success",
                 is_ready=False,
             )
@@ -137,7 +155,7 @@ def translate_customer_status(
     ):
         return CustomerStatus(
             title="กำลังเชื่อมต่อ",
-            subtitle="พบ pso2.exe แล้ว กำลังเชื่อมต่อ Neko Core",
+            subtitle="พบตัวเกมแล้ว กำลังเชื่อมต่อให้",
             role="warning",
             is_ready=False,
         )
@@ -147,15 +165,15 @@ def translate_customer_status(
     ):
         return CustomerStatus(
             title="กำลังเชื่อมต่อ",
-            subtitle="กำลังเริ่มทำงาน",
+            subtitle="กำลังเตรียมระบบเชื่อมต่อ กรุณารอสักครู่",
             role="warning",
             is_ready=False,
         )
 
     # 7. Idle / Ready State (Healthy authenticated session with active entitlement, waiting for game)
     return CustomerStatus(
-        title="กำลังรอ PSO2",
-        subtitle="กำลังรอ pso2.exe",
+        title="พร้อมใช้งาน",
+        subtitle="เปิดตัวเกมแล้วระบบจะเชื่อมต่อให้อัตโนมัติ",
         role="success",
         is_ready=True,
     )
@@ -181,7 +199,7 @@ def get_server_status(
             or telemetry.connection_state != TelemetryConnectionState.CONNECTED
             or telemetry.is_stale
         ):
-            return "ข้อมูลสถานะไม่พร้อม", "warning"
+            return "ตรวจสอบไม่ได้", "warning"
 
         snap = telemetry.snapshot
         if (
@@ -190,8 +208,8 @@ def get_server_status(
             and snap.local_socks_running
             and snap.shadowsocks_connected
         ):
-            return "ONLINE", "success"
+            return "ปกติ", "success"
         else:
-            return "เชื่อมต่อไม่สมบูรณ์", "warning"
+            return "ไม่เสถียร", "warning"
 
-    return "OFFLINE", "danger"
+    return "ยังไม่เชื่อมต่อ", "danger"

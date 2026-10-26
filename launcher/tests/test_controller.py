@@ -1,5 +1,7 @@
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.domain.events import (
+    AuthFailed,
+    AuthProgress,
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
@@ -21,6 +23,7 @@ from neko_launcher.application.authorized_core import (
     AuthorizedCoreErrorCode,
 )
 from neko_launcher.domain.models import (
+    AuthPhase,
     AuthStatus,
     Entitlement,
     EntitlementStatus,
@@ -538,3 +541,34 @@ def test_proxy_stops_when_pso2_exits_while_entitlement_is_still_valid() -> None:
     assert proxy.stop_count == 1
     assert proxy.shutdown_count == 0
     assert proxy.host_owned is True
+
+
+def test_auth_progress_tracks_each_sign_in_step() -> None:
+    controller = ApplicationController(EventBus(), FakeProxy())
+    controller.dispatch(AuthStarted("discorduser"))
+    assert controller.state.auth_phase is AuthPhase.OPENING_BROWSER
+
+    controller.dispatch(AuthProgress(AuthPhase.WAITING_FOR_BROWSER))
+    assert controller.state.auth_phase is AuthPhase.WAITING_FOR_BROWSER
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATING
+
+    controller.dispatch(AuthProgress(AuthPhase.CONNECTING))
+    assert controller.state.auth_phase is AuthPhase.CONNECTING
+
+    controller.dispatch(AuthSucceeded("user-id", "discorduser"))
+    assert controller.state.auth_phase is AuthPhase.IDLE
+
+
+def test_failed_and_signed_out_states_clear_the_sign_in_step() -> None:
+    controller = ApplicationController(EventBus(), FakeProxy())
+    controller.dispatch(AuthStarted("discorduser"))
+    controller.dispatch(AuthProgress(AuthPhase.CHECKING_ENTITLEMENT))
+    controller.dispatch(AuthFailed("หมดเวลาเข้าสู่ระบบ กรุณากดปุ่มอีกครั้ง"))
+    assert controller.state.auth_phase is AuthPhase.IDLE
+    assert controller.state.auth_status is AuthStatus.FAILED
+
+    controller.dispatch(AuthStarted("discorduser"))
+    controller.dispatch(AuthProgress(AuthPhase.CONNECTING))
+    controller.sign_out()
+    assert controller.state.auth_phase is AuthPhase.IDLE
+    assert controller.state.auth_status is AuthStatus.SIGNED_OUT

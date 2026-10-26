@@ -5,6 +5,7 @@ from threading import Event as CancellationEvent, RLock
 
 from neko_launcher.domain.events import (
     AuthFailed,
+    AuthProgress,
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
@@ -20,6 +21,7 @@ from neko_launcher.domain.events import (
 )
 from neko_launcher.domain.models import (
     AppState,
+    AuthPhase,
     AuthStatus,
     EntitlementStatus,
     GameStatus,
@@ -56,12 +58,16 @@ class ApplicationController:
         if isinstance(event, AuthStarted):
             self._update(
                 auth_status=AuthStatus.AUTHENTICATING,
+                auth_phase=AuthPhase.OPENING_BROWSER,
                 user_email=event.email,
                 last_error=None,
             )
+        elif isinstance(event, AuthProgress):
+            self._update(auth_phase=event.phase)
         elif isinstance(event, AuthSucceeded):
             self._update(
                 auth_status=AuthStatus.AUTHENTICATED,
+                auth_phase=AuthPhase.IDLE,
                 user_id=event.user_id,
                 user_email=event.email,
                 proxy_reconnect_suppressed=False,
@@ -69,7 +75,11 @@ class ApplicationController:
                 last_error=None,
             )
         elif isinstance(event, AuthFailed):
-            self._update(auth_status=AuthStatus.FAILED, last_error=event.message)
+            self._update(
+                auth_status=AuthStatus.FAILED,
+                auth_phase=AuthPhase.IDLE,
+                last_error=event.message,
+            )
         elif isinstance(event, EntitlementLoaded):
             status = (
                 event.entitlement.status
@@ -131,6 +141,7 @@ class ApplicationController:
         shutdown_error = self._shutdown_proxy_host() if shutdown_core else None
         self._update(
             auth_status=AuthStatus.SIGNED_OUT,
+            auth_phase=AuthPhase.IDLE,
             user_id=None,
             user_email=None,
             entitlement=None,
@@ -154,6 +165,7 @@ class ApplicationController:
         shutdown_error = self._shutdown_proxy_host()
         self._update(
             auth_status=AuthStatus.RECOVERY_CODE_ENTRY,
+            auth_phase=AuthPhase.IDLE,
             user_id=None,
             user_email=None,
             entitlement=None,
@@ -171,11 +183,16 @@ class ApplicationController:
         )
 
     def recovery_verification_started(self) -> None:
-        self._update(auth_status=AuthStatus.RECOVERY_VERIFYING, last_error=None)
+        self._update(
+            auth_status=AuthStatus.RECOVERY_VERIFYING,
+            auth_phase=AuthPhase.IDLE,
+            last_error=None,
+        )
 
     def recovery_code_entry_required(self, message: str | None = None) -> None:
         self._update(
             auth_status=AuthStatus.RECOVERY_CODE_ENTRY,
+            auth_phase=AuthPhase.IDLE,
             user_id=None,
             user_email=None,
             entitlement=None,

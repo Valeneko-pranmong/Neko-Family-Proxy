@@ -16,7 +16,7 @@ from .proxy_api_gateway import (
 )
 
 REFRESH_TOKEN_STORE_KEY = "proxy-api-refresh-token"
-WEB_ONLY_MESSAGE = "5.2.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
+WEB_ONLY_MESSAGE = "โปรแกรมนี้อนุญาตให้เข้าสู่ระบบด้วยบัญชี Discord เท่านั้น"
 DEFAULT_DISPLAY_NAME = "Neko Family"
 
 
@@ -108,7 +108,7 @@ class ProxyApiAuthGateway:
         authenticate = getattr(authenticator, "authenticate_identity", None)
         if not callable(authenticate):
             raise LauncherServiceError(
-                "ไคลเอนต์ล็อกอินไม่รองรับการเชื่อมต่อ Proxy API"
+                "วิธีเข้าสู่ระบบไม่รองรับ กรุณาอัปเดตโปรแกรมหรือติดต่อผู้ดูแล"
             )
         identity_session = authenticate()
         tokens = _identity_tokens(identity_session)
@@ -245,7 +245,7 @@ def _identity_tokens(identity_session: Any) -> ProxyApiTokenSet:
         or expires_in <= 0
         or expires_in > 3_600
     ):
-        raise LauncherServiceError("คำตอบจากระบบล็อกอินไม่ถูกต้อง")
+        raise LauncherServiceError("เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่")
     return ProxyApiTokenSet(
         access_token=access_token,
         refresh_token=refresh_token,
