@@ -511,6 +511,7 @@ def test_expected_release_channel_binds_5_2_to_preview() -> None:
 
     assert expected_release_channel("5.2.0") == "preview"
     assert expected_release_channel("v5.2.1") == "preview"
+    assert expected_release_channel("5.2.2a") == "preview"
     assert expected_release_channel("5.1.6") == "stable"
     assert expected_release_channel("5.3.0") == "stable"
 

@@ -958,6 +958,7 @@ def test_validate_installer_channel_requires_preview_for_5_2() -> None:
 
     module.validate_installer_channel("5.2.0", "preview")
     module.validate_installer_channel("v5.2.1", "preview")
+    module.validate_installer_channel("v5.2.2a", "preview")
 
 
 def test_validate_installer_channel_limits_preview_to_5_2() -> None:

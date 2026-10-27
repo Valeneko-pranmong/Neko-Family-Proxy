@@ -7,7 +7,7 @@ from pathlib import Path
 import neko_launcher
 
 
-EXPECTED_STABLE_VERSION = "5.2.1"
+EXPECTED_STABLE_VERSION = "5.2.2a"
 
 
 def test_phase3_product_tree_has_exact_stable_identity() -> None:

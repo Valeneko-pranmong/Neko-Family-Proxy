@@ -125,7 +125,7 @@ class LauncherConfig:
                 )
             if not RELEASE_IDENTITY_BASE_URL:
                 raise ValueError(
-                    "frozen 5.2.1 builds require a release identity base URL"
+                    "frozen 5.2.2a builds require a release identity base URL"
                 )
             identity_base_url = _require_https_origin(
                 RELEASE_IDENTITY_BASE_URL, "RELEASE_IDENTITY_BASE_URL"
@@ -139,7 +139,7 @@ class LauncherConfig:
         if frozen_build:
             if not RELEASE_PROXY_API_URL:
                 raise ValueError(
-                    "frozen 5.2.1 builds require a release proxy API URL"
+                    "frozen 5.2.2a builds require a release proxy API URL"
                 )
             proxy_api_url = _require_https_origin(
                 RELEASE_PROXY_API_URL, "RELEASE_PROXY_API_URL"
@@ -182,7 +182,7 @@ class LauncherConfig:
         elif frozen_build:
             if not web_auth_enabled:
                 raise ValueError(
-                    "frozen 5.2.1 builds require web authentication"
+                    "frozen 5.2.2a builds require web authentication"
                 )
             web_auth_only = True
         else:

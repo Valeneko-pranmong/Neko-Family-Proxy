@@ -73,7 +73,7 @@ def fail(message: str) -> "None":
 
 def validate_installer_channel(release_version: str, channel: str) -> None:
     normalized = str(release_version).strip().lstrip("v")
-    is_5_2 = re.fullmatch(r"5\.2\.\d+", normalized) is not None
+    is_5_2 = re.fullmatch(r"5\.2\.\d+(?:a\d*)?", normalized) is not None
     if is_5_2 and channel != "preview":
         fail(
             "5.2.x is preview-only; installer trust profile channel must be "
@@ -117,8 +117,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--baseline-envelope", required=True)
     parser.add_argument("--trust-profile", required=True)
     args = parser.parse_args(argv)
-    if not re.match(r"^5\.[123]\.\d+$", args.release_version):
-        parser.error("--release-version must be stable 5.x.y format (e.g., 5.2.0)")
+    if not re.match(r"^5\.[123]\.\d+(?:a\d*)?$", args.release_version):
+        parser.error("--release-version must be 5.x.y or 5.x.ya alpha format (e.g., 5.2.2a)")
     if not args.core_authority.strip():
         parser.error("--core-authority must not be empty")
     return args
