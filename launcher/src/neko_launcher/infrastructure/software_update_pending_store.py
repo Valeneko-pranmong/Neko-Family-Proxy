@@ -28,6 +28,15 @@ CURRENT_POINTER_FILENAME = "current.json"
 
 _RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _HEX64_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class PendingUpdateStore:
@@ -365,7 +374,7 @@ class PendingUpdateStore:
             try:
                 if l_path.stat().st_size != expected_comp.artifact_size:
                     return None
-                if hashlib.sha256(l_path.read_bytes()).hexdigest() != expected_comp.artifact_sha256:
+                if _sha256_file(l_path) != expected_comp.artifact_sha256:
                     return None
             except Exception:
                 return None
@@ -381,7 +390,7 @@ class PendingUpdateStore:
             try:
                 if c_path.stat().st_size != expected_comp.artifact_size:
                     return None
-                if hashlib.sha256(c_path.read_bytes()).hexdigest() != expected_comp.artifact_sha256:
+                if _sha256_file(c_path) != expected_comp.artifact_sha256:
                     return None
             except Exception:
                 return None

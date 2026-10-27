@@ -98,6 +98,49 @@ def test_handle_begin_request_success(tmp_path: Path) -> None:
     assert inc_dir.is_dir()
 
 
+def test_handle_begin_prunes_superseded_evidence(tmp_path: Path) -> None:
+    committed_binding = Binding(
+        release_sequence=1, release_id="rel-1", payload_sha256="1" * 64
+    )
+    committed_gen = Generation(
+        binding=committed_binding,
+        launcher_identity_sha256="a" * 64,
+        core_identity_sha256="b" * 64,
+    )
+    stale_sha = "e" * 64
+    current_state = State(
+        schema_version=1,
+        revision=5,
+        installation_id="1" * 32,
+        helper_protocol=1,
+        enrollment_complete=True,
+        phase="IDLE",
+        committed=committed_gen,
+        previous=None,
+        highwater=committed_binding,
+        observed=committed_binding,
+        failed=None,
+        transaction=None,
+        cleanup=None,
+        rollback=None,
+        last_error=None,
+        evidence={
+            committed_binding.payload_sha256: "committed-envelope",
+            stale_sha: "superseded-envelope",
+        },
+    )
+    keys = {TEST_KEY_ID: TEST_PUBLIC_KEY}
+    env_b64 = _make_signed_envelope_b64(2, "rel-2", "2" * 64, "3" * 64)
+
+    ready_res, next_state = handle_begin_request(tmp_path, current_state, env_b64, keys)
+
+    assert ready_res.accepted
+    assert next_state is not None
+    assert stale_sha not in next_state.evidence
+    assert committed_binding.payload_sha256 in next_state.evidence
+    assert len(next_state.evidence) == 2
+
+
 def test_handle_begin_rejects_downgrade(tmp_path: Path) -> None:
     initial_binding = Binding(release_sequence=5, release_id="rel-5", payload_sha256="5" * 64)
     committed_gen = Generation(

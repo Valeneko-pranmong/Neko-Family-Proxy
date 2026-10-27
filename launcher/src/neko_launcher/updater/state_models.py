@@ -360,6 +360,34 @@ class EnrollmentMarker:
             raise ValueError(f"Invalid enrollment status: {self.enrollment_status}")
 
 
+def prune_unreferenced_evidence(state: State) -> State:
+    """Drop authenticated evidence that no current binding references."""
+    referenced: set[str] = set()
+
+    def add(binding: Binding | None) -> None:
+        if binding is not None:
+            referenced.add(binding.payload_sha256)
+
+    if state.committed is not None:
+        add(state.committed.binding)
+    if state.previous is not None:
+        add(state.previous.binding)
+    add(state.highwater)
+    add(state.observed)
+    add(state.failed)
+    if state.transaction is not None:
+        add(state.transaction.candidate.binding)
+        if state.transaction.old is not None:
+            add(state.transaction.old.binding)
+    if state.rollback is not None:
+        add(state.rollback.target.binding)
+
+    pruned = {key: value for key, value in state.evidence.items() if key in referenced}
+    if pruned == state.evidence:
+        return state
+    return replace(state, evidence=pruned)
+
+
 # --- Serialization & Deserialization Helpers ---
 
 STATE_ALLOWED_KEYS = {

@@ -17,8 +17,19 @@ from neko_launcher.updater.state_models import (
     Generation,
     State,
     Transaction,
+    prune_unreferenced_evidence,
 )
 from neko_launcher.updater.win32_directory import create_incoming_container
+
+_HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -303,6 +314,7 @@ def handle_begin_request(
         last_error=None,
         evidence=next_evidence,
     )
+    next_state = prune_unreferenced_evidence(next_state)
 
     try:
         validate_transition(current_state, next_state)
@@ -363,13 +375,16 @@ def handle_apply_request(
     )
     if launcher_needs_check:
         launcher_file = incoming_dir / "launcher.artifact"
-        if not launcher_file.exists():
+        if not launcher_file.is_file():
             return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
-        data = launcher_file.read_bytes()
         expected_launcher = rel_set.components["launcher"]
-        if len(data) != expected_launcher.artifact_size:
-            return ApplyResult(accepted=False, error="PACKAGE_INVALID")
-        if hashlib.sha256(data).hexdigest() != expected_launcher.artifact_sha256:
+        try:
+            if launcher_file.stat().st_size != expected_launcher.artifact_size:
+                return ApplyResult(accepted=False, error="PACKAGE_INVALID")
+            matches = _sha256_file(launcher_file) == expected_launcher.artifact_sha256
+        except OSError:
+            return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
+        if not matches:
             return ApplyResult(accepted=False, error="HASH_MISMATCH")
         expected_files.add("launcher.artifact")
 
@@ -384,13 +399,16 @@ def handle_apply_request(
     )
     if core_needs_check:
         core_file = incoming_dir / "core.artifact.zip"
-        if not core_file.exists():
+        if not core_file.is_file():
             return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
-        core_data = core_file.read_bytes()
         expected_core = rel_set.components["core"]
-        if len(core_data) != expected_core.artifact_size:
-            return ApplyResult(accepted=False, error="PACKAGE_INVALID")
-        if hashlib.sha256(core_data).hexdigest() != expected_core.artifact_sha256:
+        try:
+            if core_file.stat().st_size != expected_core.artifact_size:
+                return ApplyResult(accepted=False, error="PACKAGE_INVALID")
+            matches = _sha256_file(core_file) == expected_core.artifact_sha256
+        except OSError:
+            return ApplyResult(accepted=False, error="ARTIFACT_MISSING")
+        if not matches:
             return ApplyResult(accepted=False, error="HASH_MISMATCH")
         expected_files.add("core.artifact.zip")
 

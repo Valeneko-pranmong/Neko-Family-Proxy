@@ -12,6 +12,14 @@ from neko_launcher.updater.slot_store import SlotStore
 from neko_launcher.updater.trust_profile import load_installed_update_trust_profile
 
 
+# Launcher-side artifact hashing/copying can take minutes for a Core update.
+APPLY_REQUEST_TIMEOUT_SECONDS = 900.0
+# The launcher closes the IPC channel as it exits; keep a bounded grace period.
+SESSION_RELEASE_TIMEOUT_SECONDS = 120.0
+ADMISSION_RELEASE_TIMEOUT_SECONDS = 30.0
+INITIAL_MESSAGE_TIMEOUT_SECONDS = 30.0
+
+
 class SessionDisposition(Enum):
     ADMISSION_ONLY = "ADMISSION_ONLY"
     APPLY_VERIFIED = "APPLY_VERIFIED"
@@ -20,7 +28,7 @@ class SessionDisposition(Enum):
 
 def serve_session(channel, coordinator) -> SessionDisposition:
     try:
-        msg = channel.receive_message(timeout_s=5.0)
+        msg = channel.receive_message(timeout_s=INITIAL_MESSAGE_TIMEOUT_SECONDS)
         if msg.type == "ADMIT_AUTHORITY":
             if not isinstance(msg.body, dict) or set(msg.body.keys()) != {"envelope_b64"}:
                 return SessionDisposition.FAILED
@@ -43,7 +51,7 @@ def serve_session(channel, coordinator) -> SessionDisposition:
                     },
                 )
                 try:
-                    channel.receive_message(timeout_s=5.0)
+                    channel.receive_message(timeout_s=ADMISSION_RELEASE_TIMEOUT_SECONDS)
                     return SessionDisposition.FAILED
                 except IpcProtocolError as e:
                     if str(e) == "EOF reached on IPC read handle":
@@ -113,7 +121,7 @@ def serve_session(channel, coordinator) -> SessionDisposition:
             if not begin_res.accepted:
                 return SessionDisposition.FAILED
 
-            msg2 = channel.receive_message(timeout_s=5.0)
+            msg2 = channel.receive_message(timeout_s=APPLY_REQUEST_TIMEOUT_SECONDS)
             if msg2.type != "APPLY":
                 return SessionDisposition.FAILED
             if not isinstance(msg2.body, dict) or set(msg2.body.keys()) != {
@@ -142,7 +150,7 @@ def serve_session(channel, coordinator) -> SessionDisposition:
                 return SessionDisposition.FAILED
 
             try:
-                channel.receive_message(timeout_s=5.0)
+                channel.receive_message(timeout_s=SESSION_RELEASE_TIMEOUT_SECONDS)
                 return SessionDisposition.FAILED
             except IpcProtocolError as e:
                 if str(e) == "EOF reached on IPC read handle":

@@ -99,9 +99,9 @@ $ExpectedRedirectorSha256 = Assert-Sha256 $ExpectedRedirectorSha256 'redirector.
 $ExpectedNfDriverSha256 = Assert-Sha256 $ExpectedNfDriverSha256 'nfdriver.sha256'
 
 if (-not $StageRoot) {
-    $programData = $env:ProgramData
-    if (-not $programData) { $programData = 'C:\ProgramData' }
-    $StageRoot = Join-Path $programData 'NekoFamily\driver-stage'
+    $programFiles = $env:ProgramFiles
+    if (-not $programFiles) { $programFiles = 'C:\Program Files' }
+    $StageRoot = Join-Path $programFiles 'NekoFamily\driver-stage'
 }
 
 $coreRoot = Split-Path -Parent $CoreBinDir
@@ -110,12 +110,27 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     Out-Result "FAIL: core-manifest.json missing in $CoreBinDir"
     exit 25
 }
-if ((Get-Sha256 $manifestPath) -ne $ExpectedCoreManifestSha256) {
+try {
+    # Hash and parse the exact same bytes so a user-writable manifest cannot be
+    # swapped between verification and use.
+    $manifestBytes = [System.IO.File]::ReadAllBytes($manifestPath)
+    $manifestHasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $manifestActual = ([System.BitConverter]::ToString(
+            $manifestHasher.ComputeHash($manifestBytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $manifestHasher.Dispose()
+    }
+} catch {
+    Out-Result "FAIL: core-manifest.json unreadable: $($_.Exception.Message)"
+    exit 26
+}
+if ($manifestActual -ne $ExpectedCoreManifestSha256) {
     Out-Result 'FAIL: core-manifest.json hash mismatch'
     exit 25
 }
 try {
-    $manifest = [System.IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
+    $manifest = [System.Text.Encoding]::UTF8.GetString($manifestBytes) | ConvertFrom-Json
 } catch {
     Out-Result "FAIL: core-manifest.json unreadable: $($_.Exception.Message)"
     exit 26
@@ -178,9 +193,21 @@ $bundleBytes = $ExpectedNfDriverSha256
 $sysDriver = Join-Path $env:SystemRoot 'System32\drivers\netfilter2.sys'
 $svcName = 'netfilter2'
 
+function Assert-NoReparsePoint([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "reparse point is not allowed: $Path"
+    }
+}
+
 function New-SecureStage([string]$Root) {
     $rootFull = [System.IO.Path]::GetFullPath($Root)
+    $parent = Split-Path -Parent $rootFull
+    if ($parent -and (Test-Path -LiteralPath $parent)) {
+        Assert-NoReparsePoint $parent
+    }
     New-Item -ItemType Directory -Path $rootFull -Force | Out-Null
+    Assert-NoReparsePoint $rootFull
     $acl = New-Object System.Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
     foreach ($sidValue in @('S-1-5-32-544', 'S-1-5-18')) {
@@ -192,6 +219,7 @@ function New-SecureStage([string]$Root) {
     Set-Acl -LiteralPath $rootFull -AclObject $acl
     $stage = Join-Path $rootFull ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
+    Assert-NoReparsePoint $stage
     return $stage
 }
 

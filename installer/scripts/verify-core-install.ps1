@@ -45,6 +45,14 @@ if ([string]::IsNullOrWhiteSpace($ExpectedCommit) -or ($manifest.source_commit -
         "$($manifest.source_commit)")
 }
 
+# --- protected settings present, plaintext key absent ---
+if (-not (Test-Path -LiteralPath (Join-Path $CoreDir 'runtime-settings.nkps'))) {
+    Fail 8 'FAIL: runtime-settings.nkps missing'
+}
+if (Test-Path -LiteralPath (Join-Path $CoreDir 'runtime-settings.key')) {
+    Fail 8 'FAIL: plaintext runtime-settings.key present'
+}
+
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
 function Get-Sha256([string]$Path) {
     $stream = [System.IO.File]::OpenRead($Path)
@@ -157,7 +165,7 @@ foreach ($entry in $fileEntries) {
         Fail 6 "FAIL: path escapes CoreDir: $rawPath"
     }
 
-    $normalizedRel = $rel.ToLowerInvariant()
+    $normalizedRel = ($rel -replace '\\', '/').ToLowerInvariant()
     if ($seenPaths.Contains($normalizedRel)) {
         Fail 6 "FAIL: duplicate path declared in manifest: $rawPath"
     }
@@ -198,7 +206,7 @@ if ($bad.Count -gt 0) {
 # --- v2ray-sn.exe pinned approved hash ---
 $v2rayExpected = 'a219f435671fb214c0c530084c65e576fdc1404f40b187b5586e869d2a3e4dff'
 $v2rayRel = 'bin\v2ray-sn.exe'
-$v2rayKey = $v2rayRel.ToLowerInvariant()
+$v2rayKey = 'bin/v2ray-sn.exe'
 if (-not $declaredHashes.ContainsKey($v2rayKey)) {
     Fail 7 'FAIL: v2ray-sn.exe not declared by manifest'
 }
@@ -222,14 +230,6 @@ if ($manifest.v2ray_sn_exe_hash -and (([string]$manifest.v2ray_sn_exe_hash).ToLo
     Fail 7 "FAIL: manifest v2ray_sn_exe_hash mismatch"
 }
 
-# --- protected settings present, plaintext key absent ---
-if (-not (Test-Path -LiteralPath (Join-Path $CoreDir 'runtime-settings.nkps'))) {
-    Fail 8 'FAIL: runtime-settings.nkps missing'
-}
-if (Test-Path -LiteralPath (Join-Path $CoreDir 'runtime-settings.key')) {
-    Fail 8 'FAIL: plaintext runtime-settings.key present'
-}
-
 # --- no plaintext settings payloads anywhere in the installed tree ---
 $plaintextHits = Get-ChildItem -LiteralPath $CoreDir -Recurse -File |
     Where-Object {
@@ -240,6 +240,22 @@ if ($plaintextHits) {
     $names = ($plaintextHits | Select-Object -First 5 |
         ForEach-Object { $_.Name }) -join ', '
     Fail 9 "FAIL: plaintext settings/key-like files present: $names"
+}
+
+# --- no undeclared files anywhere in the installed Core tree ---
+$extraFiles = New-Object 'System.Collections.Generic.List[string]'
+foreach ($diskFile in (Get-ChildItem -LiteralPath $resolvedCore -Recurse -File -Force)) {
+    $diskRel = $diskFile.FullName.Substring($resolvedCoreWithSep.Length).Replace('\', '/').ToLowerInvariant()
+    if ($diskRel -eq 'core-manifest.json' -or $diskRel -eq 'canonical-core-manifest.json') {
+        continue
+    }
+    if (-not $seenPaths.Contains($diskRel)) {
+        $extraFiles.Add($diskRel) | Out-Null
+    }
+}
+if ($extraFiles.Count -gt 0) {
+    $extraNames = ($extraFiles | Select-Object -First 8) -join ', '
+    Fail 10 "FAIL: undeclared files in Core tree: $extraNames"
 }
 
 Write-Output "PASS: core manifest verified: $total/$total files OK; v2ray OK; nkps present; no plaintext settings"

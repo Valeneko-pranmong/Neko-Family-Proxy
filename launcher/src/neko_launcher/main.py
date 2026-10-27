@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from neko_launcher import __version__
@@ -173,6 +174,30 @@ def _maybe_sync_committed_generation(install_root: Path) -> None:
         pass
 
 
+def _run_tk_self_test() -> int:
+    """Verify this frozen launcher can create and service a Tk event loop."""
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        callbacks = 0
+
+        def _tick() -> None:
+            nonlocal callbacks
+            callbacks += 1
+
+        root.after(5, _tick)
+        root.after(10, _tick)
+        root.update()
+        time.sleep(0.02)
+        root.update()
+        root.destroy()
+        return 0 if callbacks >= 2 else 1
+    except Exception:
+        return 1
+
+
 _BOOT_PHASES: list[str] = []
 
 
@@ -185,6 +210,8 @@ def _record_boot_phase(phase: str) -> None:
 def main() -> None:
     _BOOT_PHASES.clear()
     _record_boot_phase("main_entry")
+    if sys.argv[1:] == ["--tk-self-test"]:
+        sys.exit(_run_tk_self_test())
     if any(arg == "--enroll-baseline" or arg.startswith("--enroll-baseline") for arg in sys.argv[1:]):
         sys.exit(dispatch_baseline_enrollment(sys.argv))
 

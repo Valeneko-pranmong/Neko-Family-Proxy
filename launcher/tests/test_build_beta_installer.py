@@ -105,7 +105,9 @@ def _stage(tmp_path: Path) -> Path:
         '{"path": "bin/Redirector.bin", "sha256": "' + _digest(b"redirector")
         + '", "size": 10}, '
         '{"path": "bin/nfdriver.sys", "sha256": "' + _digest(b"nfdriver")
-        + '", "size": 8}], '
+        + '", "size": 8}, '
+        '{"path": "runtime-settings.nkps", "sha256": "' + _digest(b"sealed")
+        + '", "size": 6}], '
         '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
     ).encode("utf-8")
     (core / "core-manifest.json").write_bytes(core_manifest_bytes)
@@ -267,9 +269,29 @@ def test_core_manifest_list_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             {
                 "path": "dummy.dll",
                 "size": 5,
-                "sha256": _digest(b"dummy")
-            }
-        ]
+                "sha256": _digest(b"dummy"),
+            },
+            {
+                "path": "bin/v2ray-sn.exe",
+                "size": len(b"v2ray"),
+                "sha256": _digest(b"v2ray"),
+            },
+            {
+                "path": "bin/Redirector.bin",
+                "size": len(b"redirector"),
+                "sha256": _digest(b"redirector"),
+            },
+            {
+                "path": "bin/nfdriver.sys",
+                "size": len(b"nfdriver"),
+                "sha256": _digest(b"nfdriver"),
+            },
+            {
+                "path": "runtime-settings.nkps",
+                "size": len(b"sealed"),
+                "sha256": _digest(b"sealed"),
+            },
+        ],
     }
     (core / "core-manifest.json").write_text(json.dumps(list_manifest), encoding="utf-8")
 
@@ -334,8 +356,14 @@ def test_static_beta_iss_inspection() -> None:
 
 def test_beta_iss_64bit_powershell_redirection_guard() -> None:
     iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
-    assert "ensure-netfilter2.cmd" in iss_text, "beta.iss must install and reference ensure-netfilter2.cmd"
-    assert "ExpandConstant('{cmd}')" in iss_text, "beta.iss must invoke cmd.exe for elevated driver registration"
+    assert "ensure-netfilter2.cmd" in iss_text, "beta.iss must still install the manual helper"
+    assert "ExpandConstant('{sysnative}\\WindowsPowerShell\\v1.0\\powershell.exe')" in iss_text, (
+        "elevated driver registration must use 64-bit Sysnative PowerShell"
+    )
+    assert "RunPSVerifiedElevated(" in iss_text
+    assert "ExpandConstant('{cmd}')" not in iss_text, (
+        "the elevated path must not execute a user-writable batch file"
+    )
 
     cmd_text = (REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.cmd").read_text(encoding="utf-8")
     assert r"%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" in cmd_text, (
@@ -349,6 +377,7 @@ def test_driver_registration_uses_pinned_hashes_and_secure_stage() -> None:
         "ExpectedCoreManifestSha256",
         "ExpectedRedirectorSha256",
         "ExpectedNfDriverSha256",
+        "ExpectedDriverScriptSha256",
     ):
         assert f"#ifndef {define}" in iss_text
         assert f'#define {define} ""' in iss_text
@@ -362,7 +391,9 @@ def test_driver_registration_uses_pinned_hashes_and_secure_stage() -> None:
         "ExpectedRedirectorSha256",
         "ExpectedNfDriverSha256",
         "New-SecureStage",
+        "Assert-NoReparsePoint",
         "SetDllDirectory($stage)",
+        "[System.IO.File]::ReadAllBytes($manifestPath)",
     ):
         assert token in ps1_text
     assert "SetDllDirectory($CoreBinDir)" not in ps1_text
@@ -490,8 +521,19 @@ def test_beta_iss_baseline_enrollment_contract() -> None:
 
 def test_beta_iss_clean_uninstall_removes_releases_logs_and_credentials() -> None:
     iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
-    assert r'{app}\releases' in iss_text.split("[UninstallDelete]")[1].split("[UninstallRun]")[0], (
+    uninstall_section = iss_text.split("[UninstallDelete]")[1].split("[UninstallRun]")[0]
+    assert r'{app}\releases' in uninstall_section, (
         "uninstall must remove updater release generation slots"
+    )
+    for scratch_dir in ("update-pending", "incoming", "staging"):
+        assert rf'{{app}}\{scratch_dir}' in uninstall_section, (
+            f"uninstall must remove updater scratch directory {scratch_dir}"
+        )
+    assert r'{app}\NekoLauncher.exe.new' in uninstall_section, (
+        "uninstall must remove interrupted launcher replacement files"
+    )
+    assert r'{app}\NekoLauncher.exe.old' in uninstall_section, (
+        "uninstall must remove the launcher rollback backup"
     )
     assert r'{localappdata}\NekoFamilyProxy' in iss_text, (
         "uninstall must remove launcher logs outside the app directory"
@@ -539,7 +581,12 @@ def _setup_verified_core_dir(
                 "path": "bin/v2ray-sn.exe",
                 "size": len(v2ray_bytes),
                 "sha256": v2ray_hash,
-            }
+            },
+            {
+                "path": "runtime-settings.nkps",
+                "size": len(b"nkps-content"),
+                "sha256": hashlib.sha256(b"nkps-content").hexdigest(),
+            },
         ],
     }
     (core_dir / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -640,6 +687,13 @@ def test_post_install_verifier_accepts_matching_candidate_authority_and_rejects_
     assert rc == 7, f"Expected 7 on v2ray hash mismatch, got {rc}: {out}"
     assert "FAIL: v2ray-sn.exe hash mismatch" in out
 
+    # 8. Undeclared files in the installed Core tree fail closed
+    extra = tmp_path / "ProxyCore" / "bin" / "extra.dll"
+    extra.write_bytes(b"undeclared")
+    rc, out = _run_verify_ps1(core_dir, candidate_commit, "-ExpectedCommit", expected_v2ray_hash=v2ray_hash)
+    assert rc == 10, f"Expected 10 on undeclared file, got {rc}: {out}"
+    assert "undeclared files in Core tree" in out
+
 
 def test_candidate_build_record_and_post_install_verification_agree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -685,6 +739,11 @@ def test_candidate_build_record_and_post_install_verification_agree(
                 "path": "bin/nfdriver.sys",
                 "size": len(nfdriver_bytes),
                 "sha256": _digest(nfdriver_bytes),
+            },
+            {
+                "path": "runtime-settings.nkps",
+                "size": len(b"sealed"),
+                "sha256": _digest(b"sealed"),
             },
         ],
     }
@@ -846,7 +905,9 @@ def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path,
             '{"path": "bin/Redirector.bin", "sha256": "' + _digest(b"redirector")
             + '", "size": 10}, '
             '{"path": "bin/nfdriver.sys", "sha256": "' + _digest(b"nfdriver")
-            + '", "size": 8}], '
+            + '", "size": 8}, '
+            '{"path": "runtime-settings.nkps", "sha256": "' + _digest(b"sealed")
+            + '", "size": 6}], '
             '"v2ray_sn_exe_hash": "' + _digest(b"v2ray") + '"}'
         ).encode("utf-8")
 

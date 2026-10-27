@@ -40,6 +40,16 @@ a = Analysis(
         "pygments",
         "pydoc_data",
         "_pyrepl",
+        # Frozen release builds always use the Proxy API + web authentication;
+        # the legacy Supabase gateway is source/dev-only and drags in pydantic.
+        "supabase",
+        "supabase_auth",
+        "postgrest",
+        "storage3",
+        "realtime",
+        "gotrue",
+        "pydantic",
+        "pydantic_core",
     ],
     noarchive=False,
     optimize=0,

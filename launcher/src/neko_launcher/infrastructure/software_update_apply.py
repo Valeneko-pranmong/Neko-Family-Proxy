@@ -20,6 +20,12 @@ from neko_launcher.updater.ipc_channel import FramedIpcChannel
 from neko_launcher.updater.manifest_v2 import parse_release_v2
 
 
+REQUEST_READY_TIMEOUT_SECONDS = 30.0
+# Applying a Core update copies, hashes, extracts, and verifies up to 1 GiB.
+# A five-second deadline made every real Core update fail on ordinary disks.
+APPLY_RESPONSE_TIMEOUT_SECONDS = 900.0
+
+
 class SoftwareUpdateApplyError(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
@@ -175,7 +181,7 @@ class SoftwareUpdateApplyService:
             )
 
             # Wait for REQUEST_READY
-            resp = channel.receive_message(timeout_s=5.0)
+            resp = channel.receive_message(timeout_s=REQUEST_READY_TIMEOUT_SECONDS)
             if resp.type != "REQUEST_READY":
                 raise SoftwareUpdateApplyError("UNEXPECTED_RESPONSE")
             if resp.message_id != msg_id:
@@ -279,7 +285,7 @@ class SoftwareUpdateApplyService:
                 body={"transaction_id": tx_id, "request_id": req_id},
             )
 
-            apply_resp = channel.receive_message(timeout_s=5.0)
+            apply_resp = channel.receive_message(timeout_s=APPLY_RESPONSE_TIMEOUT_SECONDS)
             if apply_resp.type != "APPLY_RESULT":
                 raise SoftwareUpdateApplyError("UNEXPECTED_RESPONSE")
             if apply_resp.message_id != apply_msg_id:

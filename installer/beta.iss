@@ -57,6 +57,9 @@
 #ifndef ExpectedNfDriverSha256
   #define ExpectedNfDriverSha256 ""
 #endif
+#ifndef ExpectedDriverScriptSha256
+  #define ExpectedDriverScriptSha256 ""
+#endif
 
 [Setup]
 AppId={{D4A7C182-6B3E-4F19-9C05-2E8AF7B31D64}
@@ -99,12 +102,20 @@ RestartIfNeededByRun=no
 ; Clean stale/conflicting updater state slots before baseline enrollment
 Type: filesandordirs; Name: "{app}\state"
 Type: filesandordirs; Name: "{app}\releases"
+Type: filesandordirs; Name: "{app}\update-pending"
+Type: filesandordirs; Name: "{app}\incoming"
+Type: filesandordirs; Name: "{app}\staging"
 Type: files; Name: "{app}\launcher-error.log"
+Type: files; Name: "{app}\NekoLauncher.exe.new"
+Type: files; Name: "{app}\NekoLauncher.exe.old"
 
 [UninstallDelete]
 ; Clean all runtime state, logs, and metadata upon uninstallation
 Type: filesandordirs; Name: "{app}\state"
 Type: filesandordirs; Name: "{app}\releases"
+Type: filesandordirs; Name: "{app}\update-pending"
+Type: filesandordirs; Name: "{app}\incoming"
+Type: filesandordirs; Name: "{app}\staging"
 Type: filesandordirs; Name: "{app}\baseline"
 Type: filesandordirs; Name: "{app}\trust"
 Type: filesandordirs; Name: "{app}\tools"
@@ -114,6 +125,8 @@ Type: filesandordirs; Name: "{localappdata}\NekoFamilyProxy"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\*.json"
 Type: files; Name: "{app}\*.path"
+Type: files; Name: "{app}\NekoLauncher.exe.new"
+Type: files; Name: "{app}\NekoLauncher.exe.old"
 Type: dirifempty; Name: "{app}"
 
 [UninstallRun]
@@ -204,6 +217,50 @@ end;
 function PSExePath(): String;
 begin
   Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+end;
+
+function PSNativeExePath(): String;
+begin
+  Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe');
+  if not FileExists(Result) then
+    Result := PSExePath();
+end;
+
+function PSQuote(const S: String): String;
+var
+  T: String;
+begin
+  T := S;
+  StringChangeEx(T, '''', '''''', True);
+  Result := '''' + T + '''';
+end;
+
+{ Run the helper only after proving the exact bytes executed match the
+  build-time hash. Reading and hashing the same in-memory byte array closes
+  the user-writable-file swap window; the script is never re-read. }
+function RunPSVerifiedElevated(
+  const ScriptPath, ScriptArgs, ExpectedSha: String;
+  var ExitCode: Integer
+): Boolean;
+var
+  Wrapper: String;
+begin
+  Wrapper :=
+    '$ErrorActionPreference=''Stop'';' +
+    '$p=' + PSQuote(ScriptPath) + ';' +
+    '$want=' + PSQuote(ExpectedSha) + ';' +
+    '$b=[IO.File]::ReadAllBytes($p);' +
+    '$h=[Security.Cryptography.SHA256]::Create();' +
+    '$s=([BitConverter]::ToString($h.ComputeHash($b))).Replace(''-'',[string]::Empty).ToLowerInvariant();' +
+    '$h.Dispose();' +
+    'if($s -ne $want){exit 21};' +
+    '& ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString($b)))' + ScriptArgs;
+  Result := ShellExec('runas', PSNativeExePath(),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command "' +
+    Wrapper + '"',
+    '', HideCmd, ewWaitUntilTerminated, ExitCode);
+  if not Result then
+    ExitCode := -1;
 end;
 
 function RunPSFile(const PSFile, ExtraArgs: String; var ExitCode: Integer): Boolean;
@@ -407,9 +464,9 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   AppDir, CoreDir, BinDir, ToolsDir, LauncherExe: String;
-  VerifyScript, DriverScript, DriverCmd, ResFile: String;
+  VerifyScript, DriverScript, PSArgs: String;
   Bootstrapper: String;
-  RC, I: Integer;
+  RC: Integer;
   Ok: Boolean;
   Msg: String;
 begin
@@ -422,7 +479,6 @@ begin
   ToolsDir := AppDir + '\tools\installer';
   VerifyScript := ToolsDir + '\verify-core-install.ps1';
   DriverScript := ToolsDir + '\ensure-netfilter2.ps1';
-  DriverCmd := ToolsDir + '\ensure-netfilter2.cmd';
 
   { ---- 1. External Core manifest verification (unelevated) ---- }
   if not FileExists(VerifyScript) then begin
@@ -496,22 +552,15 @@ begin
     case RC of
       0: g_DriverOK := True; { already valid and running; no elevation needed }
       10: begin
-            ResFile := ToolsDir + '\nf-result.txt';
-            DeleteFile(ResFile);
-            Log('requesting elevation for netfilter2 registration');
-            Ok := ShellExec('runas', ExpandConstant('{cmd}'),
-              '/c ""' + DriverCmd + '" -CoreBinDir "' + BinDir + '" -Apply -ResultFile "' +
-              ResFile + '" -ExpectedCoreManifestSha256 "{#ExpectedCoreManifestSha256}"' +
-              ' -ExpectedRedirectorSha256 "{#ExpectedRedirectorSha256}"' +
-              ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '"',
-              ExtractFileDir(DriverCmd), HideCmd, ewWaitUntilTerminated, RC);
+            Log('requesting elevation for verified netfilter2 registration');
+            PSArgs :=
+              ' -CoreBinDir ' + PSQuote(BinDir) + ' -Apply' +
+              ' -ExpectedCoreManifestSha256 ' + PSQuote('{#ExpectedCoreManifestSha256}') +
+              ' -ExpectedRedirectorSha256 ' + PSQuote('{#ExpectedRedirectorSha256}') +
+              ' -ExpectedNfDriverSha256 ' + PSQuote('{#ExpectedNfDriverSha256}');
+            Ok := RunPSVerifiedElevated(
+              DriverScript, PSArgs, '{#ExpectedDriverScriptSha256}', RC);
             Log('elevated apply: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
-            { Wait up to 15 seconds for ResFile to appear from elevated process }
-            for I := 1 to 30 do begin
-              if FileExists(ResFile) then
-                Break;
-              Sleep(500);
-            end;
             { Authoritative outcome = fresh unelevated re-check of real state. }
             Ok := RunPSFile(DriverScript,
       ' -CoreBinDir "' + BinDir + '" -CheckOnly' +
@@ -526,13 +575,12 @@ begin
     end;
 
     if not g_DriverOK then begin
-      Msg := ReadSmallFile(ToolsDir + '\nf-result.txt');
-      if Msg <> '' then
-        AddDetail(Msg);
+      Msg := 'netfilter2 check exit code: ' + IntToStr(RC);
+      AddDetail(Msg);
       SuppressibleMsgBox(
         'Setup could not prepare the netfilter2 network driver.'#13#10#13#10 +
         'Installation files are in place, but game traffic proxying will not ' +
-        'work until the driver is ready. Resolve the cause below and re-run ' +
+        'work until the driver is ready. Resolve the cause and re-run ' +
         'setup if needed.'#13#10#13#10 +
         'Detail: ' + Msg,
         mbError, MB_OK, IDOK);

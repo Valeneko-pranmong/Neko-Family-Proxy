@@ -215,8 +215,10 @@ def _verify_guarded_stream(f: io.BufferedReader, expected_size: int, expected_sh
             _fail("SIZE_MISMATCH")
 
         f.seek(0)
-        digest = hashlib.sha256(f.read()).hexdigest()
-        if digest != expected_sha:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+        if digest.hexdigest() != expected_sha:
             _fail("HASH_MISMATCH")
 
         f.seek(0)
@@ -408,7 +410,11 @@ def _validate_authority(
             _fail("STATE_CORRUPT")
         required.add(state.previous.binding.payload_sha256)
 
-    if set(state.evidence) != required:
+    # Superseded admissions, failed attempts, and pre-commit aborts can leave
+    # authenticated evidence behind. Extra entries are verified below and are
+    # never trusted for the candidate identity, so they must not brick the
+    # next update build.
+    if not required.issubset(state.evidence):
         _fail("STATE_CORRUPT")
 
     authenticated: dict[str, tuple[ReleaseSetV2, str, bytes]] = {}

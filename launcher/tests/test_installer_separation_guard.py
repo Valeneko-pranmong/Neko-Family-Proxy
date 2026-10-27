@@ -41,17 +41,15 @@ def test_installer_blocks_a_different_installed_version() -> None:
     assert "Result := False;" in source
 
 
-def test_elevated_driver_command_preserves_the_last_pinned_hash() -> None:
+def test_elevated_driver_command_verifies_script_bytes_before_execution() -> None:
     source = installer_source()
 
-    assert (
-        """' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '"',"""
-        in source
-    )
-    assert (
-        """' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '""',"""
-        not in source
-    )
+    assert "RunPSVerifiedElevated(" in source
+    assert "ExpectedDriverScriptSha256" in source
+    assert "[IO.File]::ReadAllBytes($p)" in source
+    assert "if($s -ne $want){exit 21};" in source
+    assert "ScriptBlock]::Create([Text.Encoding]::UTF8.GetString($b))" in source
+    assert "ShellExec('runas', ExpandConstant('{cmd}')" not in source
 
 
 def test_installer_blocks_running_launcher_core_and_updater() -> None:

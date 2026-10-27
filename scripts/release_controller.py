@@ -1644,6 +1644,13 @@ def process_accepted_commits(
 
         core_bundle_dir = payload_dir / "CoreBundle"
         core_bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle_root = core_bundle_dir.resolve()
+        names = getattr(z, "namelist", None)
+        if callable(names):
+            for entry_name in names():
+                target = (bundle_root / entry_name).resolve()
+                if target != bundle_root and bundle_root not in target.parents:
+                    raise RuntimeError(f"Core archive entry escapes the bundle: {entry_name}")
         z.extractall(core_bundle_dir)
 
     # 8. Generate release-v2.json base metadata

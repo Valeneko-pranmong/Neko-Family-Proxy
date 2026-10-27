@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from neko_launcher.updater.state_machine import validate_transition
-from neko_launcher.updater.state_models import Cleanup, State
+from neko_launcher.updater.state_models import (
+    Cleanup,
+    State,
+    prune_unreferenced_evidence,
+)
 
 
 def execute_precommit_abort(current_state: State, error_code: str) -> State:
@@ -54,6 +58,7 @@ def execute_precommit_abort(current_state: State, error_code: str) -> State:
         last_error=error_code,
         evidence=current_state.evidence,
     )
+    next_state = prune_unreferenced_evidence(next_state)
 
     validate_transition(current_state, next_state)
     return next_state

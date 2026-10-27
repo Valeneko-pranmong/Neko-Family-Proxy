@@ -8,6 +8,17 @@ from pathlib import Path
 from typing import Any
 
 CORE_MANIFEST_FILENAME = "core-manifest.json"
+_HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def _sha256_file(path: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
 
 _REQUIRED_TOP_KEYS = {
     "rid",
@@ -162,16 +173,22 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
                     error=f"Unlisted file found on disk: {rel_name}",
                 )
 
-            data = file_path.read_bytes()
-            expected_size = files_map[rel_name]["size"]
-            if len(data) != expected_size:
+            try:
+                actual_size, sha = _sha256_file(file_path)
+            except OSError as err:
                 return CoreVerificationResult(
                     valid=False,
                     manifest_sha256=manifest_sha256,
-                    error=f"Size mismatch on {rel_name}: expected {expected_size}, got {len(data)}",
+                    error=f"Unreadable file {rel_name}: {err}",
+                )
+            expected_size = files_map[rel_name]["size"]
+            if actual_size != expected_size:
+                return CoreVerificationResult(
+                    valid=False,
+                    manifest_sha256=manifest_sha256,
+                    error=f"Size mismatch on {rel_name}: expected {expected_size}, got {actual_size}",
                 )
 
-            sha = hashlib.sha256(data).hexdigest()
             expected_sha = files_map[rel_name]["sha256"]
             if sha != expected_sha:
                 return CoreVerificationResult(
@@ -181,7 +198,7 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
                 )
 
             disk_files.add(rel_name)
-            actual_total_bytes += len(data)
+            actual_total_bytes += actual_size
 
     if disk_files != set(files_map.keys()):
         missing = set(files_map.keys()) - disk_files

@@ -1010,14 +1010,28 @@ class AppWindow:
                 self._record_support_event("FILE", "REPAIR_SUCCEEDED")
             if self._settings_window is not None and self._settings_window.winfo_exists():
                 try:
-                    self.root.after(0, self._settings_window.run_file_check)
+                    self._settings_window.run_file_check()
                 except Exception:
                     pass
+
+        def poll_completion(future: Future[Any]) -> None:
+            """Marshal repair completion onto the Tk thread without a worker callback."""
+            if not future.done():
+                try:
+                    if self.root.winfo_exists():
+                        self.root.after(100, lambda: poll_completion(future))
+                except Exception:
+                    pass
+                return
+            on_complete(future)
 
         executor = getattr(self, "_update_executor", getattr(self, "_executor", None))
         if executor is not None:
             fut = executor.submit(do_repair)
-            fut.add_done_callback(on_complete)
+            try:
+                self.root.after(100, lambda: poll_completion(fut))
+            except Exception:
+                pass
         else:
             try:
                 do_repair()
@@ -2503,9 +2517,12 @@ class AppWindow:
         work: Callable[[], Any],
         on_success: Callable[[Any], None] | None = None,
         on_failure: Callable[[Exception], None] | None = None,
+        *,
+        clear_messages: bool = True,
     ) -> None:
-        self._error.set("")
-        self._notice.set("")
+        if clear_messages:
+            self._error.set("")
+            self._notice.set("")
         self._pending.append((self._executor.submit(work), on_success, on_failure))
 
     def _drain_events(self) -> None:
@@ -2531,16 +2548,25 @@ class AppWindow:
                     on_failure(exc)
             else:
                 if on_success:
-                    on_success(result)
+                    try:
+                        on_success(result)
+                    except Exception as exc:
+                        self._record_exception_support(exc, "BACKGROUND_CALLBACK")
         self._pending = remaining
 
         for event in self._event_bus.drain():
-            if isinstance(event, StateChanged):
-                self._render_state(event.state)
-            elif isinstance(event, TelemetryUpdated):
-                self._render_telemetry(event.state)
-        if self.root.winfo_exists():
-            self.root.after(100, self._drain_events)
+            try:
+                if isinstance(event, StateChanged):
+                    self._render_state(event.state)
+                elif isinstance(event, TelemetryUpdated):
+                    self._render_telemetry(event.state)
+            except Exception as exc:
+                self._record_exception_support(exc, "EVENT_RENDER")
+        try:
+            if self.root.winfo_exists():
+                self.root.after(100, self._drain_events)
+        except Exception:
+            pass
 
     @staticmethod
     def _set_if_changed(variable: Any, value: Any) -> None:
@@ -2994,6 +3020,7 @@ class AppWindow:
             self._submit(
                 is_any_process_running,
                 self._on_game_detected,
+                clear_messages=False,
             )
 
         if self.root.winfo_exists():
@@ -3148,7 +3175,7 @@ class AppWindow:
 
     def _heartbeat(self) -> None:
         if self._controller.state.session_id:
-            self._submit(self._service.heartbeat)
+            self._submit(self._service.heartbeat, clear_messages=False)
         if self.root.winfo_exists():
             self.root.after(self._heartbeat_interval_ms(), self._heartbeat)
 

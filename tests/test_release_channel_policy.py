@@ -26,5 +26,6 @@ def test_staging_channel_detection_is_consistent_for_5_2_suffixes() -> None:
 
     assert expected_staging_channel("v5.2.0") == "preview"
     assert expected_staging_channel("v5.2.0-rc.1") == "preview"
+    assert expected_staging_channel("v5.2.2a") == "preview"
     assert expected_staging_channel("v5.1.6") == "stable"
     assert expected_staging_channel("v5.3.0") == "stable"

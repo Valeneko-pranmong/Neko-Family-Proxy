@@ -37,6 +37,11 @@ def make_core_fixture_with_array_manifest(tmp_path: Path) -> Path:
                 "size": len(b"dummy-content"),
                 "sha256": hashlib.sha256(b"dummy-content").hexdigest(),
             },
+            {
+                "path": "runtime-settings.nkps",
+                "size": len(b"protected-payload"),
+                "sha256": hashlib.sha256(b"protected-payload").hexdigest(),
+            },
         ],
     }
     (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -56,10 +61,11 @@ def make_core_fixture_with_object_manifest(tmp_path: Path) -> Path:
 
     manifest = {
         "source_commit": EXPECTED_COMMIT,
-        "file_count": 2,
+        "file_count": 3,
         "files": {
             "bin/v2ray-sn.exe": TEST_V2RAY_HASH,
             "dummy.dll": hashlib.sha256(b"dummy-content").hexdigest(),
+            "runtime-settings.nkps": hashlib.sha256(b"protected-payload").hexdigest(),
         },
     }
     (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -135,7 +141,7 @@ def test_object_manifest_file_count_mismatch_fails(tmp_path: Path) -> None:
     core = make_core_fixture_with_object_manifest(tmp_path)
     manifest_path = core / "core-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["file_count"] = 3
+    manifest["file_count"] = 4
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     proc = _run_verify(core)
     assert proc.returncode == 6, proc.stdout + proc.stderr

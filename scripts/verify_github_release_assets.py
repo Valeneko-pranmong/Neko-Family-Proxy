@@ -31,7 +31,7 @@ STABLE_RELEASE_EXPECTED_CHANNEL = "stable"
 STABLE_RELEASE_EXPECTED_MIN_SEQUENCE = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MIN = 1
 STABLE_RELEASE_EXPECTED_PROTOCOL_MAX = 1
-_PREVIEW_VERSION_PATTERN = re.compile(r"^v?5\.2\.\d+(?:[-+].*)?$")
+_PREVIEW_VERSION_PATTERN = re.compile(r"^v?5\.2\.\d+(?:a\d*)?(?:[-+].*)?$")
 
 
 def expected_release_channel(expected_tag: str) -> str:

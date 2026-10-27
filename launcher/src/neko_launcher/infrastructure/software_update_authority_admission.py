@@ -13,6 +13,9 @@ from neko_launcher.application.software_update_models import (
 )
 from neko_launcher.updater.ipc_channel import FramedIpcChannel
 
+ADMISSION_RESPONSE_TIMEOUT_SECONDS = 30.0
+ADMISSION_EXIT_TIMEOUT_SECONDS = 30.0
+
 VALID_ADMISSION_ERRORS = {
     "SIGNATURE_INVALID",
     "SCHEMA_INVALID",
@@ -102,7 +105,7 @@ class SoftwareUpdateAuthorityAdmissionService:
                 body={"envelope_b64": envelope_b64},
             )
 
-            resp = channel.receive_message(timeout_s=5.0)
+            resp = channel.receive_message(timeout_s=ADMISSION_RESPONSE_TIMEOUT_SECONDS)
             if resp.type != "AUTHORITY_ADMITTED":
                 return AuthorityAdmissionResult(
                     accepted=False,
@@ -202,7 +205,7 @@ class SoftwareUpdateAuthorityAdmissionService:
                 except Exception:
                     pass
 
-            exit_code = process.wait(timeout=5.0)
+            exit_code = process.wait(timeout=ADMISSION_EXIT_TIMEOUT_SECONDS)
             if exit_code != 0:
                 return AuthorityAdmissionResult(
                     accepted=False,

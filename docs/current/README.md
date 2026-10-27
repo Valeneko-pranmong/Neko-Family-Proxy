@@ -2,10 +2,10 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.2a ALPHA REV 4 BUILT AND UI-VERIFIED LOCALLY (NOT INSTALLED OR PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
+STATUS:                         5.2.2a ALPHA REV 6 HARDENED, INSTALL/UNINSTALL VERIFIED LOCALLY (NOT PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
 PRODUCT_BASELINE:               5.2.2a alpha (local test build); 5.2.1 (release target); 5.1.6 remains public stable
 SOURCE_5_2_2_PREP:              COMMITTED 81f8c8b + 72270c7; version bumped to 5.2.2a for the local alpha build
-ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 4 — preview-0021, sequence 21; installer 3787766e…; not installed or published
+ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 6 — preview-0023, sequence 23; installer 17458568…; not published
 CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
@@ -27,14 +27,14 @@ BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-26)
-TEST_SUITE:                     2,811 passed / 5 skipped / 7 deselected (launcher source, 2026-10-27)
+TEST_SUITE:                     2,817 passed / 5 skipped / 7 deselected (launcher source, 2026-10-27)
 RELEASE_RUNBOOK:                docs/current/5.2.0-release-runbook.md
 RELEASE_NOTES:                  docs/current/5.2.1-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
 ALPHA_BUILD_RECORD_5_2_2A:      docs/current/5.2.2a-alpha-build.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
-LAST_VERIFIED:                  2026-10-26 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-10-27 +07:00 (Asia/Bangkok)
 ```
 
 > **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the
@@ -118,7 +118,7 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
 - **v5.2.0 (unified-line release target, preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The new line uses Neko-NETWORK-ID and Neko Proxy API only; 5.1.6 remains on the legacy line and must be uninstalled before a clean 5.2.0 installation. See [5.2.0-release-notes.md](5.2.0-release-notes.md) and [5.2.0-release-runbook.md](5.2.0-release-runbook.md).
 - **v5.2.1 (preview/manual; built and installed, not published)**: login copy and Discord icon, login-endpoint pre-warm, fixed 500×640 window, one-frame Settings render, and an uninstall-time process guard. Envelope `preview-0016`, sequence 16, `minimum_supported_sequence = 16`. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
 - **v5.2.2 (source preparation)**: schema-2 support diagnostics with privacy-safe auth/restore timing, pinned-status centered login layout with a floating pending panel, and a startup splash that waits for session restore so auto-login does not flash the login screen. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
-- **v5.2.2a (local alpha build; not installed or published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0021` (sequence 21, `minimum_supported_sequence = 21`). Installer `3787766e…` (207,854,361 bytes, unsigned). The installer includes the netfilter2 elevated-command quoting fix; revision 3 lifts the login content block 24 px; revision 4 pre-lays out every Settings page so category switches render instantly. Sequences 17–20 were consumed by the b17 test build and revisions 1–3. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
+- **v5.2.2a (local alpha build; not published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0023` (sequence 23, `minimum_supported_sequence = 23`). Installer `17458568…` (201,007,176 bytes, unsigned); launcher `1837c270…` (21,629,808 bytes); updater `c3411b95…` (11,281,237 bytes). Revision 6 is the final rebuild of the code-review/hardening pass: update evidence pruning, streaming Core hashes, 900 s apply deadline, in-memory verified elevated driver script, scratch cleanup on uninstall, trimmed frozen builds, and UI robustness fixes. Sequences 17–22 were consumed by the b17 test build and revisions 1–5. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
 
 ---
 

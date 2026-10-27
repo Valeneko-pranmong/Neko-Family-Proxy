@@ -194,6 +194,37 @@ def test_activation_pass_commit(base_state):
     assert len(final_state.cleanup) == 2
 
 
+def test_activation_commit_prunes_unreferenced_evidence(base_state):
+    from neko_launcher.updater import activation
+
+    candidate_sha = base_state.transaction.candidate.binding.payload_sha256
+    old_sha = base_state.committed.binding.payload_sha256
+    stale_sha = "e" * 64
+    state = dataclasses.replace(
+        base_state,
+        evidence={
+            candidate_sha: "candidate-envelope",
+            old_sha: "old-envelope",
+            stale_sha: "superseded-envelope",
+        },
+    )
+    store = FakeSlotStore(state)
+
+    def passing_self_test(gen_dir: Path, **kwargs) -> SelfTestResult:
+        return SelfTestResult(passed=True)
+
+    result = activation.activate_verified_generation(
+        Path("/root"), store, self_test=passing_self_test
+    )
+
+    assert result.committed is True
+    final_state = store.writes[-1]
+    assert final_state.evidence == {
+        candidate_sha: "candidate-envelope",
+        old_sha: "old-envelope",
+    }
+
+
 def test_activation_fail_quiescing_write(base_state):
     from neko_launcher.updater import activation
     store = FakeSlotStore(base_state, reject_write_at_call=1)

@@ -304,13 +304,16 @@ function Remove-NekoCredentialTarget {
         return
     }
 
+    $cmdkey = Join-Path $env:SystemRoot 'System32\cmdkey.exe'
     foreach ($target in $targets) {
         if ($DryRun) {
             Write-Log "DRY-RUN would delete credential target: $target"
             continue
         }
         try {
-            $null = & $env:ComSpec /c ('cmdkey /delete:"{0}"' -f $target) 2>&1
+            # Pass the target as one argv element; never build a cmd.exe command
+            # from credential-store text.
+            $null = & $cmdkey "/delete:$target" 2>&1
             Write-Log "Requested credential target deletion: $target"
         }
         catch {

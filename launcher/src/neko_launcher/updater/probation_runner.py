@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import subprocess
-import time
 
 from neko_launcher.updater.core_manifest_verifier import verify_canonical_core_bundle
 
@@ -89,36 +89,37 @@ def run_probation_self_test(
             reason=f"Core preflight execution error: {err}",
         )
 
-    # Tkinter probe
+    # Probe the candidate launcher's own Tk runtime instead of bundling Tcl/Tk
+    # into this helper.
     if not skip_tk:
         try:
-            import tkinter as tk
-
-            root = tk.Tk()
-            root.withdraw()
-            callbacks_count = 0
-
-            def _cb() -> None:
-                nonlocal callbacks_count
-                callbacks_count += 1
-
-            root.after(5, _cb)
-            root.after(10, _cb)
-            root.update()
-            time.sleep(0.02)
-            root.update()
-            root.destroy()
-            if callbacks_count < 2:
-                return SelfTestResult(
-                    passed=False,
-                    error_code="SELFTEST_FAILED",
-                    reason=f"Tkinter event loop probe serviced only {callbacks_count} callbacks",
-                )
+            probe = subprocess.run(
+                [str(launcher_exe.resolve()), "--tk-self-test"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                if os.name == "nt"
+                else 0,
+            )
+        except subprocess.TimeoutExpired:
+            return SelfTestResult(
+                passed=False,
+                error_code="SELFTEST_FAILED",
+                reason="Launcher Tk self-test timed out",
+            )
         except Exception as err:
             return SelfTestResult(
                 passed=False,
                 error_code="SELFTEST_FAILED",
-                reason=f"Tkinter event loop probe error: {err}",
+                reason=f"Launcher Tk self-test error: {err}",
+            )
+        if probe.returncode != 0:
+            return SelfTestResult(
+                passed=False,
+                error_code="SELFTEST_FAILED",
+                reason=f"Launcher Tk self-test exited with code {probe.returncode}",
             )
 
     return SelfTestResult(passed=True)

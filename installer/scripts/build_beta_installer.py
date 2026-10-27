@@ -19,7 +19,7 @@ import glob
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
@@ -175,16 +175,48 @@ def build_candidate(args: argparse.Namespace) -> int:
         fail(f"source_commit mismatch: {manifest.get('source_commit')}")
     bad: list[str] = []
     files_obj = manifest["files"]
-    items = [(item["path"], item["sha256"]) for item in files_obj] if isinstance(files_obj, list) else files_obj.items()
-    for rel, want in items:
-        p = os.path.join(core_bundle, rel.replace("/", os.sep))
-        if not os.path.isfile(p):
-            bad.append(f"MISSING {rel}")
-        elif sha256_file(p) != want:
-            bad.append(f"HASH {rel}")
+    raw_items = (
+        [(item["path"], item["sha256"]) for item in files_obj]
+        if isinstance(files_obj, list)
+        else list(files_obj.items())
+    )
+    core_root = Path(core_bundle).resolve()
+    declared: set[str] = set()
+    for rel, want in raw_items:
+        rel_text = str(rel).replace("\\", "/")
+        rel_path = PurePosixPath(rel_text)
+        if (
+            not rel_text
+            or rel_path.is_absolute()
+            or not rel_path.parts
+            or any(part in ("", ".", "..") for part in rel_path.parts)
+        ):
+            fail(f"unsafe path in core manifest: {rel!r}")
+        key = rel_text.lower()
+        if key in declared:
+            fail(f"duplicate path in core manifest: {rel_text}")
+        declared.add(key)
+
+        p = core_root.joinpath(*rel_path.parts).resolve()
+        if core_root not in p.parents:
+            fail(f"path escapes CoreBundle: {rel_text}")
+        if not p.is_file():
+            bad.append(f"MISSING {rel_text}")
+        elif sha256_file(str(p)) != str(want).lower():
+            bad.append(f"HASH {rel_text}")
     if bad:
         fail(f"{len(bad)} core files bad; first: {bad[0]}")
-    print(f"GATE core-manifest=PASS ({len(manifest['files'])} files)")
+
+    actual: set[str] = set()
+    for root, _dirs, names in os.walk(core_root):
+        for name in names:
+            relative = Path(root, name).relative_to(core_root).as_posix().lower()
+            actual.add(relative)
+    allowed_undeclared = {"core-manifest.json", "canonical-core-manifest.json"}
+    extra = actual - declared - allowed_undeclared
+    if extra:
+        fail(f"undeclared files in CoreBundle: {sorted(extra)[:5]}")
+    print(f"GATE core-manifest=PASS ({len(declared)} files)")
 
     # ---- gate: trust profile & baseline envelope authority & staging --------
     if not os.path.isfile(args.trust_profile):
@@ -371,12 +403,15 @@ def build_candidate(args: argparse.Namespace) -> int:
         for f in fs
         if f.endswith(".nkps")
     ]
-    if nkps != os.path.join("CoreBundle", "runtime-settings.nkps") and not nkps:
-        fail("runtime-settings.nkps missing from payload")
+    expected_nkps = os.path.join("CoreBundle", "runtime-settings.nkps")
+    if nkps != [expected_nkps]:
+        fail(f"payload must contain exactly {expected_nkps}; found {nkps}")
     hits = []
     for root, _, files in os.walk(core_bundle):
         for name in files:
-            if name.lower().endswith((".json", ".txt", ".xml", ".ini", ".conf")):
+            if name.lower().endswith(
+                (".json", ".txt", ".xml", ".ini", ".conf", ".config", ".md", ".yml", ".yaml")
+            ):
                 p = os.path.join(root, name)
                 try:
                     text = open(p, encoding="utf-8", errors="ignore").read()
@@ -397,7 +432,8 @@ def build_candidate(args: argparse.Namespace) -> int:
             fail(f"missing helper script {s}")
     if not os.path.isfile(ISS_PATH):
         fail(f"missing {ISS_PATH}")
-    print("GATE installer-source=PASS")
+    driver_script_sha256 = sha256_file(os.path.join(scripts_dir, "ensure-netfilter2.ps1"))
+    print(f"GATE installer-source=PASS driver_script={driver_script_sha256}")
 
     # ---- gate 7: elevated driver registration pins --------------------------
     manifest_entries = {
@@ -444,6 +480,7 @@ def build_candidate(args: argparse.Namespace) -> int:
             f"/DExpectedCoreManifestSha256={core_manifest_sha256}",
             f"/DExpectedRedirectorSha256={redirector_sha256}",
             f"/DExpectedNfDriverSha256={nfdriver_sha256}",
+            f"/DExpectedDriverScriptSha256={driver_script_sha256}",
             "/Qp",
             ISS_PATH,
         ],
@@ -475,6 +512,7 @@ def build_candidate(args: argparse.Namespace) -> int:
             "redirector_sha256": redirector_sha256,
             "nfdriver_sha256": nfdriver_sha256,
         },
+        "driver_script_sha256": driver_script_sha256,
         "v2ray_sha256": APPROVED_V2RAY_SHA256,
         "dotnet_desktop_runtime": {
             "version": DOTNET_RUNTIME_VERSION_PIN,

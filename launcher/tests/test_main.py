@@ -167,6 +167,22 @@ def test_replace_executable_atomically_rolls_back_when_final_rename_fails(
     assert len(calls) == 3
 
 
+def test_main_tk_self_test_exits_before_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(sys, "argv", ["NekoLauncher.exe", "--tk-self-test"])
+    monkeypatch.setattr("neko_launcher.main._run_tk_self_test", lambda: calls.append("tk") or 0)
+    monkeypatch.setattr(
+        "neko_launcher.main.maybe_dispatch_updater_entry",
+        lambda args: calls.append("dispatch") or False,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    assert calls == ["tk"]
+
+
 def test_main_bootstrap_handoff_started_exits_before_building_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

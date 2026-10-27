@@ -14,6 +14,7 @@ from neko_launcher.updater.slot_selector import SelectionStatus, select_active_s
 from neko_launcher.updater.state_models import (
     Generation,
     State,
+    prune_unreferenced_evidence,
     serialize_state,
 )
 from neko_launcher.updater.win32_directory import get_directory_identity, open_directory_guarded
@@ -172,6 +173,7 @@ class RecoveryEngine:
                     last_error=state.last_error,
                     evidence=state.evidence,
                 )
+                next_state = prune_unreferenced_evidence(next_state)
                 active_slot = self._write_next_slot(next_state, active_slot)
                 mutations += 1
                 continue
@@ -214,6 +216,7 @@ class RecoveryEngine:
                     last_error="RECOVERY_ROLLBACK",
                     evidence=state.evidence,
                 )
+                rollback_state = prune_unreferenced_evidence(rollback_state)
                 active_slot = self._write_next_slot(rollback_state, active_slot)
                 mutations += 1
                 continue
@@ -240,6 +243,7 @@ class RecoveryEngine:
                     last_error=state.last_error,
                     evidence=state.evidence,
                 )
+                next_state = prune_unreferenced_evidence(next_state)
                 active_slot = self._write_next_slot(next_state, active_slot)
                 mutations += 1
                 continue

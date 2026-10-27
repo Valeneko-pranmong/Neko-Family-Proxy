@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.2.2a] - 2026-10-27
 
 ### Added
-- Local alpha build (revision 4) of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
+- Local alpha build (revision 6) of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
 - Release and installer tooling now accepts `5.x.ya` alpha versions while keeping 5.2.x on the preview channel.
 
 ### Changed
@@ -38,11 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Restored the login card's bottom border and clamped the pending-login panel inside the card so it cannot be clipped or cover the border.
+- Prevented stale update evidence from rejecting a third update; pruned evidence at begin/commit/abort/rollback and relaxed the authenticated-evidence subset check.
+- Streamed large Core hashing and extended updater IPC deadlines so a 1 GiB Core update no longer exhausts RAM or fails after 5 s.
+- Removed scratch/update directories and launcher backup files on uninstall; the installer now also rejects undeclared Core files and path-traversal entries.
+- Hardened the elevated netfilter2 helper to hash and execute the same in-memory script bytes from an admin-owned stage, and to read the manifest once.
+- Fixed worker-thread Tk access, event-pump shutdown, toast clearing by background polls, and tray Exit after a declined close.
 
 ### Build
 - Launcher and Updater built with Python 3.12.10 / Tk 8.6 / PyInstaller 6.21.0.
-- Signed envelope `preview-0021` (sequence 21, `minimum_supported_sequence = 21`, key `neko-update-prod-3`).
-- Installer `NekoFamilyProxy-Installer.exe` 207,854,361 bytes, SHA-256 `3787766e30f0f891886186be9fb8a390dd767fdeac893436a793fab0b68f312d`; unsigned and not published.
+- Signed envelope `preview-0023` (sequence 23, `minimum_supported_sequence = 23`, key `neko-update-prod-3`).
+- Installer `NekoFamilyProxy-Installer.exe` 201,007,176 bytes, SHA-256 `1745856872d7b194daea3fc0b902c30b89f820f06c81ee600bc7d22871de4e5b`; unsigned and not published.
+- Launcher `1837c270…` 21,629,808 bytes; Updater `c3411b95…` 11,281,237 bytes (Supabase/pydantic and Tcl/Tk removed from frozen builds).
 - Fixed the elevated netfilter2 command quoting that made the driver step fail with `FAIL: invalid pinned nfdriver.sha256`; the installer was rebuilt and the source line is covered by a regression test.
 
 ## [5.2.1] - 2026-10-26
