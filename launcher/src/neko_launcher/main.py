@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import ctypes
+import datetime
 import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+from neko_launcher import __version__
+from neko_launcher.application.diagnostics import safe_exception_fields
 from neko_launcher.bootstrap.app_factory import build_window
 from neko_launcher.bootstrap.baseline_enrollment import (
     enroll_baseline_from_signed_envelope,
@@ -170,26 +174,67 @@ def _maybe_sync_committed_generation(install_root: Path) -> None:
         pass
 
 
+def _run_tk_self_test() -> int:
+    """Verify this frozen launcher can create and service a Tk event loop."""
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        callbacks = 0
+
+        def _tick() -> None:
+            nonlocal callbacks
+            callbacks += 1
+
+        root.after(5, _tick)
+        root.after(10, _tick)
+        root.update()
+        time.sleep(0.02)
+        root.update()
+        root.destroy()
+        return 0 if callbacks >= 2 else 1
+    except Exception:
+        return 1
+
+
+_BOOT_PHASES: list[str] = []
+
+
+def _record_boot_phase(phase: str) -> None:
+    _BOOT_PHASES.append(phase[:64])
+    if len(_BOOT_PHASES) > 24:
+        del _BOOT_PHASES[:-24]
+
+
 def main() -> None:
+    _BOOT_PHASES.clear()
+    _record_boot_phase("main_entry")
+    if sys.argv[1:] == ["--tk-self-test"]:
+        sys.exit(_run_tk_self_test())
     if any(arg == "--enroll-baseline" or arg.startswith("--enroll-baseline") for arg in sys.argv[1:]):
         sys.exit(dispatch_baseline_enrollment(sys.argv))
 
     if maybe_dispatch_updater_entry(sys.argv):
         return
+    _record_boot_phase("updater_dispatch_checked")
 
     try:
         install_root = root_validator.get_expected_install_root()
         _maybe_sync_committed_generation(install_root)
     except Exception:
         pass
+    _record_boot_phase("install_root_resolved")
 
     mutex_handle = acquire_instance_mutex()
     if mutex_handle is None:
         show_already_running_message()
         return
+    _record_boot_phase("instance_mutex_acquired")
     exit_code = 0
     try:
         bootstrap_result = run_pending_update_bootstrap()
+        _record_boot_phase(f"pending_update_{bootstrap_result.name.lower()}")
         if bootstrap_result == PendingUpdateBootstrapResult.HANDOFF_STARTED:
             if sys.platform == "win32" and getattr(sys, "frozen", False):
                 relaunch_cmd = f'cmd.exe /c timeout /t 3 /nobreak >nul & start "" "{sys.executable}"'
@@ -199,10 +244,14 @@ def main() -> None:
                 except Exception:
                     pass
             return
-        build_window().root.mainloop()
+        _record_boot_phase("window_build")
+        window = build_window()
+        _record_boot_phase("window_built")
+        _record_boot_phase("mainloop_started")
+        window.root.mainloop()
     except Exception as exc:
         exit_code = 1
-        _report_startup_error(exc)
+        _report_startup_error(exc, phases=tuple(_BOOT_PHASES))
     finally:
         release_instance_mutex(mutex_handle)
         # Force terminate immediately after mainloop finishes to prevent
@@ -211,14 +260,29 @@ def main() -> None:
         os._exit(exit_code)
 
 
-def _report_startup_error(exc: Exception) -> None:
-    """Persist and display only allow-listed startup failure information."""
-    del exc
+def _report_startup_error(
+    exc: Exception,
+    *,
+    phases: tuple[str, ...] = (),
+) -> None:
+    """Persist only allow-listed startup context, never exception text."""
     log_dir = Path(os.getenv("LOCALAPPDATA", ".")) / "NEKO FAMILY"
     log_file = log_dir / "launcher-error.log"
+    timestamp_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    exception_fields = safe_exception_fields(exc)
+    lines = [
+        "StartupFailed",
+        f"TIMESTAMP_UTC={timestamp_utc}",
+        f"LAUNCHER_VERSION={__version__}",
+        f"EXCEPTION_CLASS={exception_fields.get('error_type', 'Exception')}",
+        f"WINERROR={exception_fields.get('winerror', 'none')}",
+        f"BOOT_PHASES={','.join(phases) if phases else 'unavailable'}",
+    ]
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file.write_text("StartupFailed\n", encoding="utf-8")
+        log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError:
         pass
     message = f"เปิด Neko Launcher ไม่สำเร็จ\n\nรายละเอียด: {log_file}"

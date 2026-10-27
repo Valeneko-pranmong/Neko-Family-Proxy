@@ -53,7 +53,16 @@ def test_tray_exit_is_marshaled_to_the_ui_thread() -> None:
 
     action_queue.put("close")
 
-    # Use a fake root that won't be checked since close returns early
     drain_tray_actions(action_queue, FakeTrayRoot(), lambda: close_calls.append(True))  # type: ignore[arg-type]
 
     assert close_calls == [True]
+
+
+def test_declined_tray_exit_rearms_action_polling() -> None:
+    action_queue: SimpleQueue[str] = SimpleQueue()
+    root = FakeTrayRoot()
+    action_queue.put("close")
+
+    drain_tray_actions(action_queue, root, lambda: None)  # type: ignore[arg-type]
+
+    assert len(root.scheduled) == 1

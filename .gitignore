@@ -204,3 +204,4 @@ cython_debug/
 # Local packaged-artifact smoke scratch evidence (screenshots, sandbox, logs)
 .hermes-smoke-shots/
 
+/.tmp.driveupload

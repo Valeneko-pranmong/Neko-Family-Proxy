@@ -111,6 +111,11 @@ class SettingsWindow(ctk.CTkToplevel):
         on_repair: Callable[[FileIntegrityReport], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        self.withdraw()
+        # We style the native title bar ourselves. CustomTkinter's Windows
+        # titlebar-color helper withdraws and re-maps the window, which shows
+        # a partial first paint (labels appearing progressively).
+        self._deactivate_windows_window_header_manipulation = True
         self._on_close_callback = on_close
         self._logo_path = logo_path
         self._icon_path = icon_path
@@ -206,13 +211,37 @@ class SettingsWindow(ctk.CTkToplevel):
         except Exception:
             pass
 
+        # Keep the first mapped frame fully transparent until every widget has
+        # been laid out and drawn once, then reveal the finished frame.
+        alpha_hidden = False
+        try:
+            self.attributes("-alpha", 0.0)
+            alpha_hidden = True
+        except Exception:
+            pass
+
         self._build_layout()
         self.bind("<Control-f>", self._focus_search)
+        self.update_idletasks()
+        self.update()
         style_native_title_bar(self, PALETTE)
         apply_rounded_window_shape(self, radius=20)
-        self.lift()
-        self.focus_force()
-        self.after(20, self._ensure_window_focus_and_lift)
+        self.deiconify()
+        self.update_idletasks()
+        if alpha_hidden:
+            self.update()
+            self.after(30, self._reveal_settings_window)
+        else:
+            self.update()
+            self._ensure_window_focus_and_lift()
+
+    def _reveal_settings_window(self) -> None:
+        try:
+            if self.winfo_exists():
+                self.attributes("-alpha", 1.0)
+        except (tk.TclError, RuntimeError):
+            pass
+        self._ensure_window_focus_and_lift()
 
     def _ensure_window_focus_and_lift(self) -> None:
         try:
@@ -365,6 +394,18 @@ class SettingsWindow(ctk.CTkToplevel):
         self._pages["pso2"] = self._create_pso2_page()
         self._create_tweaker_page(self._pages["pso2"])
         self._pages["about"] = self._create_about_page()
+        # Lay every page out once while the window is still hidden. Switching
+        # sections then only changes stacking order, so a page cannot appear
+        # collapsed or paint progressively on each click.
+        for page in self._pages.values():
+            page.configure(fg_color=PALETTE.card)
+            page.place(
+                in_=self._content_area,
+                x=0,
+                y=0,
+                relwidth=1.0,
+                relheight=1.0,
+            )
         self._focus_controls = tuple(
             control for control in (
                 self._search_entry, self._change_password_button,
@@ -392,9 +433,7 @@ class SettingsWindow(ctk.CTkToplevel):
                     text_color=PALETTE.text,
                     hover_color=PALETTE.surface_accent,
                 )
-        for page in self._pages.values():
-            page.pack_forget()
-        self._pages[key].pack(fill="both", expand=True)
+        self._pages[key].lift()
 
     def _filter_categories(self, *_args: Any) -> None:
         query = self._search_entry.get().strip().lower()

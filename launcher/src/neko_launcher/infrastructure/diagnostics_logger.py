@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import locale
 import os
+import platform
+import re
+import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -15,6 +19,9 @@ from neko_launcher.application.diagnostics import (
     safe_authorized_start_details,
     sanitize_diagnostic_text,
 )
+
+SUPPORT_LOG_SCHEMA = 2
+_SAFE_LOG_LABEL = re.compile(r"[^A-Za-z0-9_]+")
 
 
 class DevelopmentLogger:
@@ -114,11 +121,42 @@ class DevelopmentLogger:
         except OSError:
             return "UNAVAILABLE"
 
+    @staticmethod
+    def _safe_label(value: str, fallback: str) -> str:
+        cleaned = _SAFE_LOG_LABEL.sub("_", str(value)).strip("_")
+        return (cleaned or fallback)[:32].upper()
+
+    @classmethod
+    def _format_fields(cls, fields: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for raw_key, raw_value in fields.items():
+            key = _SAFE_LOG_LABEL.sub("_", str(raw_key)).strip("_")[:48]
+            if not key:
+                continue
+            value = getattr(raw_value, "value", raw_value)
+            if value is None:
+                text = "None"
+            elif isinstance(value, bool):
+                text = "True" if value else "False"
+            elif isinstance(value, (int, float)):
+                text = str(value)
+            elif isinstance(value, str):
+                text = (
+                    value.replace("\r", "\\r")
+                    .replace("\n", "\\n")
+                    .replace("\t", "\\t")[:300]
+                )
+            else:
+                text = f"<{type(value).__name__}>"
+            parts.append(f"{key}={text}")
+        return ", ".join(parts)
+
     def log_session_header(
         self,
         *,
         core_path: str = "",
         workspace_root: str = "",
+        install_root: str = "",
     ) -> None:
         if self._header_written:
             return
@@ -138,6 +176,40 @@ class DevelopmentLogger:
         if packaged:
             runtime_cat += " (PyInstaller frozen)"
 
+        local_now = datetime.datetime.now().astimezone()
+        utc_offset = local_now.strftime("%z") or "unknown"
+        if utc_offset != "unknown":
+            utc_offset = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
+        try:
+            locale_name = ".".join(
+                part for part in locale.getlocale() if part
+            ) or "unknown"
+        except Exception:
+            locale_name = "unknown"
+        try:
+            os_version = platform.platform()
+        except Exception:
+            os_version = "unknown"
+        try:
+            os_build = platform.version() or "unknown"
+        except Exception:
+            os_build = "unknown"
+        try:
+            architecture = platform.machine() or "unknown"
+        except Exception:
+            architecture = "unknown"
+        disk_anchor = (
+            Path(install_root)
+            if install_root
+            else Path(core_path).parent
+            if core_path
+            else self._log_dir
+        )
+        try:
+            disk_free_mb = shutil.disk_usage(disk_anchor).free // (1024 * 1024)
+        except OSError:
+            disk_free_mb = "UNAVAILABLE"
+
         core_exe = Path(core_path) if core_path else Path()
         core_dll = core_exe.with_name("NekoProxyCore.dll") if core_path else Path()
         timestamp_utc = datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -147,14 +219,26 @@ class DevelopmentLogger:
             "======================================================================",
             "NEKO FAMILY PROXY SUPPORT DIAGNOSTIC SESSION",
             "======================================================================",
+            f"SUPPORT_LOG_SCHEMA = {SUPPORT_LOG_SCHEMA}",
             f"SUPPORT_SESSION_ID = {self._session_id}",
             f"TIMESTAMP_UTC = {timestamp_utc}Z",
+            f"TIMESTAMP_LOCAL = {local_now.isoformat()}",
+            f"TIMEZONE = {local_now.tzname() or 'unknown'} ({utc_offset})",
             f"LAUNCHER_VERSION = {__version__}",
             f"DEBUG_VERBOSE = {'YES' if self._verbose else 'NO'}",
             f"PACKAGED_VS_SOURCE = {'PACKAGED' if packaged else 'SOURCE'}",
             f"PID = {os.getpid()}",
             f"ELEVATION_STATE = {'YES' if is_elevated else 'NO'}",
             f"PYTHON_PYINSTALLER_RUNTIME_CATEGORY = {runtime_cat}",
+            f"OS_VERSION = {os_version}",
+            f"OS_BUILD = {os_build}",
+            f"ARCHITECTURE = {architecture}",
+            f"CPU_COUNT = {os.cpu_count() or 0}",
+            f"LOCALE = {locale_name}",
+            f"LAUNCHER_EXE_PATH = {self._safe_path_display(sys.executable)}",
+            f"LOG_DIR = {self._safe_path_display(str(self._log_dir))}",
+            f"INSTALL_ROOT = {self._safe_path_display(install_root)}",
+            f"DISK_FREE_MB = {disk_free_mb}",
             f"CORE_EXE_SHA256 = {self._sha256_file(core_exe) if core_path else 'UNAVAILABLE'}",
             f"CORE_DLL_SHA256 = {self._sha256_file(core_dll) if core_path else 'UNAVAILABLE'}",
             f"CORE_PATH = {self._safe_path_display(core_path)}",
@@ -169,26 +253,43 @@ class DevelopmentLogger:
             self._attempt_id = attempt_id
             self._write_unlocked(f"=== BEGIN ATTEMPT {attempt_id} ===")
 
+    def record_event(self, category: str, event: str, **fields: Any) -> None:
+        msg = (
+            f"[{self._safe_label(category, 'APP')}] "
+            f"[{self._safe_label(event, 'EVENT')}]"
+        )
+        if fields:
+            msg += f" {self._format_fields(fields)}"
+        self._write(msg)
+
     def record_stage(self, stage: str, **kwargs: Any) -> None:
-        msg = f"[CORE] [{stage}]"
+        msg = f"[CORE] [{self._safe_label(stage, 'STAGE')}]"
         if stage == "AUTHORIZED_START_RESULT":
             kwargs = safe_authorized_start_details(kwargs)
         if kwargs:
-            details = ", ".join(f"{k}={v}" for k, v in kwargs.items())
-            msg += f" {details}"
+            msg += f" {self._format_fields(kwargs)}"
         self._write(msg)
 
     def record_process_event(self, event: str, **kwargs: Any) -> None:
-        msg = f"[PROCESS] [{event}]"
+        msg = f"[PROCESS] [{self._safe_label(event, 'EVENT')}]"
         if kwargs:
-            details = ", ".join(f"{k}={v}" for k, v in kwargs.items())
-            msg += f" {details}"
+            msg += f" {self._format_fields(kwargs)}"
         self._write(msg)
 
-    def record_exception(self, exc: Exception, stage: str) -> None:
+    def record_exception(
+        self,
+        exc: Exception,
+        stage: str,
+        *,
+        category: str = "CORE",
+    ) -> None:
         exc_type = type(exc).__name__
         sanitized_msg = sanitize_diagnostic_text(str(exc))
-        msg = f"[CORE] [{stage}] FAILED - {exc_type}: {sanitized_msg}"
+        msg = (
+            f"[{self._safe_label(category, 'CORE')}] "
+            f"[{self._safe_label(stage, 'STAGE')}] "
+            f"FAILED - {exc_type}: {sanitized_msg}"
+        )
         metadata = format_safe_diagnostic_metadata(exc)
         if metadata:
             msg += f" {metadata}"

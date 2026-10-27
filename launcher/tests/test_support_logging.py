@@ -75,6 +75,71 @@ def test_logger_writes_without_reopening_log_files(
         logger.close()
 
 
+def test_structured_events_include_category_event_timing_and_redaction(
+    tmp_path: Path,
+) -> None:
+    logger = DevelopmentLogger(tmp_path, verbose=False)
+
+    logger.record_event(
+        "AUTH",
+        "FLOW_PHASE",
+        phase="waiting_for_browser",
+        elapsed_ms=1250,
+        access_token="synthetic-access-token",
+        reason="customer\nretry",
+    )
+
+    text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "[AUTH] [FLOW_PHASE]" in text
+    assert "phase=waiting_for_browser" in text
+    assert "elapsed_ms=1250" in text
+    assert "synthetic-access-token" not in text
+    assert "access_token=<redacted>" in text
+    assert "customer\\nretry" in text
+
+
+def test_session_header_includes_machine_and_runtime_context(
+    tmp_path: Path,
+) -> None:
+    logger = DevelopmentLogger(tmp_path, verbose=False)
+    logger.log_session_header(
+        workspace_root=str(tmp_path),
+        install_root=str(tmp_path),
+    )
+
+    header = (tmp_path / "support.log").read_text(encoding="utf-8")
+    for marker in (
+        "SUPPORT_LOG_SCHEMA = 2",
+        "TIMESTAMP_LOCAL =",
+        "TIMEZONE =",
+        "OS_VERSION =",
+        "OS_BUILD =",
+        "ARCHITECTURE =",
+        "CPU_COUNT =",
+        "LOCALE =",
+        "LAUNCHER_EXE_PATH =",
+        "LOG_DIR =",
+        "INSTALL_ROOT =",
+        "DISK_FREE_MB =",
+    ):
+        assert marker in header
+
+
+def test_exception_events_can_use_a_non_core_support_category(
+    tmp_path: Path,
+) -> None:
+    logger = DevelopmentLogger(tmp_path, verbose=False)
+
+    logger.record_exception(
+        ValueError("safe failure"),
+        "BACKGROUND_TASK",
+        category="APP",
+    )
+
+    text = (tmp_path / "debug.log").read_text(encoding="utf-8")
+    assert "[APP] [BACKGROUND_TASK] FAILED - ValueError: safe failure" in text
+
+
 def test_application_factory_always_constructs_support_logger() -> None:
     source = Path(__file__).parents[1].joinpath(
         "src", "neko_launcher", "bootstrap", "app_factory.py"

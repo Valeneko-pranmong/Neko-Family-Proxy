@@ -19,6 +19,7 @@ from neko_launcher.application.errors import (
 from neko_launcher.application.services import LauncherService
 from neko_launcher.domain.models import (
     AuthenticatedUser,
+    AuthPhase,
     AuthStatus,
     CouponRedemption,
     Entitlement,
@@ -1083,3 +1084,24 @@ def test_reinstall_historical_installation_can_reclaim_and_supersedes_earlier_se
     assert "เซสชันนี้ถูกแทนที่ด้วยการเข้าสู่ระบบจากเครื่องอื่น" in (
         controller_b.state.last_error or ""
     )
+
+
+def test_session_claim_runs_while_the_entitlement_step_is_shown(
+    workflow: tuple[LauncherService, ApplicationController, FakeGateway],
+) -> None:
+    service, controller, gateway = workflow
+    gateway.has_access = True
+    phases_at_claim: list[object] = []
+    original_claim = gateway.claim_session
+
+    def spy(*args: object, **kwargs: object):
+        phases_at_claim.append(controller.state.auth_phase)
+        return original_claim(*args, **kwargs)
+
+    gateway.claim_session = spy
+
+    service.sign_in_with_web(FakeWebAuthenticator())
+
+    assert phases_at_claim == [AuthPhase.CHECKING_ENTITLEMENT]
+    assert controller.state.auth_status is AuthStatus.AUTHENTICATED
+    assert controller.state.auth_phase is AuthPhase.IDLE

@@ -56,13 +56,21 @@ def drain_tray_actions(
             
         if action == "close":
             on_close()
-            return
-            
+            try:
+                if not root.winfo_exists():
+                    return
+            except Exception:
+                return
+            continue
+
         if action == "restore" and root.winfo_exists():
             root.deiconify()
             root.attributes("-topmost", True)
             root.lift()
             root.after(100, lambda: root.attributes("-topmost", False))
-            
-    if root.winfo_exists():
-        root.after(100, lambda: drain_tray_actions(action_queue, root, on_close))
+
+    try:
+        if root.winfo_exists():
+            root.after(100, lambda: drain_tray_actions(action_queue, root, on_close))
+    except Exception:
+        pass

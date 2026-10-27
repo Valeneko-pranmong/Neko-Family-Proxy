@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import AppState, Entitlement
+from .models import AppState, AuthPhase, Entitlement
 from .telemetry import TelemetryState
 
 
@@ -18,6 +18,13 @@ class StateChanged(Event):
 @dataclass(frozen=True)
 class AuthStarted(Event):
     email: str
+
+
+@dataclass(frozen=True)
+class AuthProgress(Event):
+    """A sign-in attempt reached a new customer-visible step."""
+
+    phase: AuthPhase
 
 
 @dataclass(frozen=True)

@@ -1069,6 +1069,39 @@ def test_login_composition_allowed_when_release_is_current(tmp_path: Path) -> No
     assert result == "login_ok"
 
 
+def test_login_allowed_when_no_release_is_published(tmp_path: Path) -> None:
+    # A manual/preview build may have no eligible release in the feed yet.
+    # That is not an update requirement, so login must not be blocked.
+    gateway = TrackingGateway(resolved=None)
+    downloader = FakeAssetDownloader()
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.startup()
+    assert snap.state == UpdateLifecycleState.IDLE
+    assert snap.pending is None
+    assert snap.diagnostic_code is None
+    assert snap.disposition == StartupUpdateDisposition.CURRENT
+    assert coordinator.can_proceed_to_login() is True
+    assert coordinator.gate_login(lambda: "login_ok") == "login_ok"
+
+
+def test_login_allowed_when_check_fails_without_mandatory_update(tmp_path: Path) -> None:
+    # An untrusted/unavailable feed cannot prove a mandatory update is required.
+    # Keep the diagnostic visible, but do not lock the user out of login.
+    gateway = TrackingGateway(
+        error=CodedError("MANIFEST_UNAVAILABLE", "network is unreachable")
+    )
+    downloader = FakeAssetDownloader()
+    coordinator, _store, _ = _setup_coordinator(tmp_path, gateway, downloader)
+
+    snap = coordinator.startup()
+    assert snap.pending is None
+    assert snap.diagnostic_code == "MANIFEST_UNAVAILABLE"
+    assert snap.disposition is None
+    assert coordinator.can_proceed_to_login() is True
+    assert coordinator.gate_login(lambda: "login_ok") == "login_ok"
+
+
 def test_coordinator_startup_maps_updater_incompatible_to_reinstall_required(tmp_path: Path) -> None:
     gateway = TrackingGateway(error=CodedError("UPDATER_INCOMPATIBLE"))
     downloader = FakeAssetDownloader({})

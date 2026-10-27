@@ -74,7 +74,9 @@ def test_one_shot_none_result_normalizes_to_offline_without_exception_or_resched
     assert (window._server_avg_download, "—") in updated_values
     assert (window._server_avg_upload, "—") in updated_values
     assert (window._server_average_window, "เฉลี่ย 30 นาที") in updated_values
-    assert debug_events == [("PUBLIC_PROXY_STATUS_UNAVAILABLE", {"error": "no_result"})]
+    assert debug_events[0][0] == "PUBLIC_PROXY_STATUS_UNAVAILABLE"
+    assert debug_events[0][1]["error"] == "no_result"
+    assert isinstance(debug_events[0][1]["elapsed_ms"], int)
 
 
 def test_public_proxy_status_fetch_is_one_shot_without_30_second_reschedule() -> None:
@@ -175,14 +177,14 @@ def test_idle_server_status_uses_one_shot_online_result() -> None:
     window = object.__new__(AppWindow)
     window._public_server_host_status = "ONLINE"
 
-    assert window._get_server_status(AppState()) == ("ONLINE", "success")
+    assert window._get_server_status(AppState()) == ("ปกติ", "success")
 
 
 def test_idle_server_status_uses_one_shot_offline_result() -> None:
     window = object.__new__(AppWindow)
     window._public_server_host_status = "OFFLINE"
 
-    assert window._get_server_status(AppState()) == ("OFFLINE", "danger")
+    assert window._get_server_status(AppState()) == ("ขัดข้อง", "danger")
 
 
 def test_idle_server_status_normalizes_any_non_online_or_missing_signal_to_offline() -> None:
@@ -190,20 +192,20 @@ def test_idle_server_status_normalizes_any_non_online_or_missing_signal_to_offli
         window = object.__new__(AppWindow)
         window._public_server_host_status = state_val
 
-        assert window._get_server_status(AppState()) == ("OFFLINE", "danger")
+        assert window._get_server_status(AppState()) == ("ขัดข้อง", "danger")
 
 
 def test_idle_server_status_while_startup_fetch_is_pending() -> None:
     window = object.__new__(AppWindow)
     window._public_server_host_status = None
-    assert window._get_server_status(AppState()) == ("กำลังเช็ค", "warning")
+    assert window._get_server_status(AppState()) == ("กำลังตรวจสอบ", "warning")
 
 
 def test_startup_fetch_completes_asynchronously_and_resolves_pending_status() -> None:
     future: Future[Any] = Future()
     window, root, _executor = build_window(future)
     window._public_server_host_status = None
-    server_status_var = SimpleNamespace(value="กำลังเช็ค")
+    server_status_var = SimpleNamespace(value="กำลังตรวจสอบเซิร์ฟเวอร์")
     server_status_var.set = lambda val: setattr(server_status_var, "value", val)
     server_status_var.get = lambda: server_status_var.value
     window._server_status = server_status_var  # type: ignore[assignment]
@@ -216,7 +218,7 @@ def test_startup_fetch_completes_asynchronously_and_resolves_pending_status() ->
 
     # While pending, status should be CHECKING (None) and presentation untouched
     assert window._public_server_host_status is None
-    assert server_status_var.get() == "กำลังเช็ค"
+    assert server_status_var.get() == "กำลังตรวจสอบเซิร์ฟเวอร์"
     assert role_updates == []
 
     # Complete the SAME future asynchronously with ONLINE
@@ -248,7 +250,7 @@ def test_startup_fetch_completes_asynchronously_and_resolves_offline_presentatio
     future: Future[Any] = Future()
     window, root, _executor = build_window(future)
     window._public_server_host_status = None
-    server_status_var = SimpleNamespace(value="กำลังเช็ค")
+    server_status_var = SimpleNamespace(value="กำลังตรวจสอบเซิร์ฟเวอร์")
     server_status_var.set = lambda val: setattr(server_status_var, "value", val)
     server_status_var.get = lambda: server_status_var.value
     window._server_status = server_status_var  # type: ignore[assignment]
@@ -260,7 +262,7 @@ def test_startup_fetch_completes_asynchronously_and_resolves_offline_presentatio
     window._refresh_public_proxy_status()
 
     assert window._public_server_host_status is None
-    assert server_status_var.get() == "กำลังเช็ค"
+    assert server_status_var.get() == "กำลังตรวจสอบเซิร์ฟเวอร์"
     assert role_updates == []
 
     # Complete the SAME future asynchronously with OFFLINE
@@ -292,7 +294,7 @@ def test_startup_fetch_failure_resolves_offline_presentation() -> None:
     future: Future[Any] = Future()
     window, root, _executor = build_window(future)
     window._public_server_host_status = None
-    server_status_var = SimpleNamespace(value="กำลังเช็ค")
+    server_status_var = SimpleNamespace(value="กำลังตรวจสอบเซิร์ฟเวอร์")
     server_status_var.set = lambda val: setattr(server_status_var, "value", val)
     server_status_var.get = lambda: server_status_var.value
     window._server_status = server_status_var  # type: ignore[assignment]
@@ -304,7 +306,7 @@ def test_startup_fetch_failure_resolves_offline_presentation() -> None:
     window._refresh_public_proxy_status()
 
     assert window._public_server_host_status is None
-    assert server_status_var.get() == "กำลังเช็ค"
+    assert server_status_var.get() == "กำลังตรวจสอบเซิร์ฟเวอร์"
     assert role_updates == []
 
     # Complete the future with an exception
@@ -325,7 +327,7 @@ def test_startup_fetch_none_result_resolves_offline_presentation() -> None:
     future: Future[Any] = Future()
     window, root, _executor = build_window(future)
     window._public_server_host_status = None
-    server_status_var = SimpleNamespace(value="กำลังเช็ค")
+    server_status_var = SimpleNamespace(value="กำลังตรวจสอบเซิร์ฟเวอร์")
     server_status_var.set = lambda val: setattr(server_status_var, "value", val)
     server_status_var.get = lambda: server_status_var.value
     window._server_status = server_status_var  # type: ignore[assignment]
@@ -337,7 +339,7 @@ def test_startup_fetch_none_result_resolves_offline_presentation() -> None:
     window._refresh_public_proxy_status()
 
     assert window._public_server_host_status is None
-    assert server_status_var.get() == "กำลังเช็ค"
+    assert server_status_var.get() == "กำลังตรวจสอบเซิร์ฟเวอร์"
     assert role_updates == []
 
     # Complete the future with None
@@ -370,7 +372,7 @@ def test_core_running_and_lifecycle_states_not_overridden_by_public_status() -> 
 
     # When core is running without telemetry, it displays warning, not the idle one-shot status
     running = AppState(proxy_status=ProxyStatus.RUNNING, game_process_running=True)
-    assert window._get_server_status(running, None) == ("ข้อมูลสถานะไม่พร้อม", "warning")
+    assert window._get_server_status(running, None) == ("ตรวจสอบไม่ได้", "warning")
 
 
 
@@ -380,7 +382,7 @@ def test_never_completing_future_hits_ui_deadline_and_resolves_offline(monkeypat
     future: Future[Any] = Future()
     window, root, executor = build_window(future)
     window._public_server_host_status = None
-    server_status_var = SimpleNamespace(value="กำลังเช็ค")
+    server_status_var = SimpleNamespace(value="กำลังตรวจสอบเซิร์ฟเวอร์")
     server_status_var.set = lambda val: setattr(server_status_var, "value", val)
     server_status_var.get = lambda: server_status_var.value
     window._server_status = server_status_var  # type: ignore[assignment]
@@ -394,7 +396,7 @@ def test_never_completing_future_hits_ui_deadline_and_resolves_offline(monkeypat
     window._refresh_public_proxy_status()
 
     assert window._proxy_status_refresh_pending is True
-    assert server_status_var.get() == "กำลังเช็ค"
+    assert server_status_var.get() == "กำลังตรวจสอบเซิร์ฟเวอร์"
 
     callbacks = [callback for delay, callback in root.after_calls if delay == 100]
     root.after_calls.clear()

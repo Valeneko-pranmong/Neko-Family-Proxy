@@ -8,7 +8,11 @@ from neko_launcher.updater.precommit_abort import execute_precommit_abort
 from neko_launcher.updater.probation_runner import run_probation_self_test
 from neko_launcher.updater.slot_selector import SelectionStatus
 from neko_launcher.updater.state_machine import validate_transition
-from neko_launcher.updater.state_models import Cleanup, Generation
+from neko_launcher.updater.state_models import (
+    Cleanup,
+    Generation,
+    prune_unreferenced_evidence,
+)
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,7 @@ def activate_verified_generation(
             rollback=None,
             last_error=None
         )
+        state_c = prune_unreferenced_evidence(state_c)
         validate_transition(state_p, state_c)
     except Exception:  # noqa: BLE001
         return ActivationResult(False, None, 'STATE_CORRUPT')

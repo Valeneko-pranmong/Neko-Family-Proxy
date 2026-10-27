@@ -11,7 +11,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # The updater self-tests the candidate launcher's Tk runtime out-of-process;
+    # bundling a second Tcl/Tk copy here only adds ~8 MiB.
+    excludes=["tkinter", "_tkinter"],
     noarchive=False,
     optimize=0,
 )

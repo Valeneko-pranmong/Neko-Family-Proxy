@@ -71,7 +71,9 @@ class StageDraftReleaseError(Exception):
     """Raised when staging validation or execution fails."""
 
 
-_PREVIEW_ONLY_VERSION = re.compile(r"5\.2\.\d+(?:(?:a|b|rc)\d+|[-+].*)?$")
+_PREVIEW_ONLY_VERSION = re.compile(
+    r"5\.2\.\d+(?:(?:a|b|rc)\d*|[-+].*)?$"
+)
 
 
 def expected_staging_channel(tag: str) -> str:

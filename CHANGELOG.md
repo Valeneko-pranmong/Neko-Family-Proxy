@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added always-on structured support diagnostics with machine/runtime context, manual-login and restore timing, sanitized API error metadata, background exception traces, and proxy/game/telemetry/update lifecycle events.
 - Added the private `launcher_v2` schema foundation and next-line claim, heartbeat, release, permit, and rate-limit RPCs. These require a bridge-written `web_sessions` allowlist and an active identity link; the migrations are not applied to production.
 - Added a reference `supabase/functions/launcher_bridge` that validates the identity RS256/JWKS token, consumes JTI, creates a no-password next-line user, mints a Supabase session, and records the web-session allowlist. It is not deployed.
 - Added next-line schema selection: `NEKO_LAUNCHER_SCHEMA=launcher_v2` (default legacy `launcher`) for Launcher RPCs, and server-controlled `app_metadata.auth_line=next` selection in `issue_launch_permit`. Default behavior is unchanged.
@@ -15,11 +16,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added preview-channel release-list discovery and prerelease acceptance for `preview` trust profiles; stable 5.1.6 discovery remains on `/releases/latest`.
 - Added the signed `update-profile-preview-v1.json` (channel `preview`) and a reproducible profile-signing script; it authorizes only `neko-update-prod-2`.
 - Completed the local preview path: release-v2 manifests accept `channel=preview`; 5.2.x release/installer builds require a preview profile and preview manifest; the resolver, pending-update store, publisher, hosted verifier, and stable-rollout workflow enforce the same binding so preview and stable updates cannot cross-load or promote.
-- Re-versioned the 5.2 preview candidate as `5.2.0a1` for an alpha test. Alpha/PEP 440 versions are accepted by the release, publisher, verifier, and installer tooling while 5.2.x remains preview-only and blocked from stable publication. Scope and gates: `docs/current/5.2.0-alpha-test.md`.
+- Re-versioned the 5.2 preview candidate as `5.2.0a1` for an alpha test. Alpha/PEP 440 versions are accepted by the release, publisher, verifier, and installer tooling while 5.2.x remains preview-only and blocked from stable publication. That intermediate version was superseded by the `5.2.2a` local alpha; no tag or publication exists.
 
 ### Changed
-- 5.2.0 is now planned as a separate web-auth-only preview line. 5.1.6 remains the public stable line on the legacy password/recovery backend. 5.2.0 must not auto-update 5.1.6, must not be installed over or alongside it, and requires a full 5.1.6 uninstall first. 5.3.0 is the planned legacy cutover. See `docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`.
+- Startup keeps the update splash visible until session restore resolves (bounded by a force-close timeout) and now starts restore before building the window, so automatic sign-in no longer flashes the login screen first. Splash hold/close and startup restore time are recorded in the support log.
+- Kept the login status row pinned at the top, vertically centered the remaining login content, and made the pending-login panel float without moving the controls.
+- Settings now disables CustomTkinter's titlebar withdraw/re-map and reveals the first fully rendered frame in one paint.
+- 2026-10-26: Rotated the update trust anchors to release key `neko-update-prod-3` and profile authority `neko-update-profile-v520-2` because the prior private custody material was unavailable. Rebuilt the frozen Launcher/Updater, re-signed the preview and stable profiles and the `preview-0015` envelope, and built the unsigned 5.2.0 preview installer. Corrected the post-install Core verifier to accept the Core authority's path-to-SHA-256 manifest map, and made uninstall remove updater release slots, launcher logs, and the credential-vault target. Silent install, reinstall, uninstall, and 5.1.6 rollback pass; interactive Discord login/Core start remains pending.
+- 2026-10-25: **5.2.0 is designated the first usable release of the unified Proxy API line** (preview/manual channel, clean uninstall-first). `5.3.0` is not a release label. Release preparation is blocked on staging deployment/E2E, an approved `NEKO_PROXY_API_URL` origin, installer payload/prerequisites, signing, and the install matrix; see `docs/current/5.2.0-release-notes.md`, `docs/current/5.2.0-release-runbook.md`, and `docs/current/5.2.0-release-preparation-record.md`.
+- 5.2.0 was planned as a separate bridge/web-auth preview line. That plan is superseded by the unified Proxy API line: 5.1.6 remains public stable, 5.2.0 is preview/manual and clean uninstall-first, and `5.3.0` is not a release label.
 - Locked P0 decisions: isolated schema/RPC namespace in the existing Supabase project, dedicated preview channel, same AppId with a hard uninstall/process guard, clean-start uninstall, new-accounts-only 5.2.0, no legacy day/coupon transfer, Control Room admin-only web auth, gate-based sunset, and preview-only auto-updates. The shared-auth consumer audit is recorded; P0 is complete.
+
+## [5.2.2a] - 2026-10-27
+
+### Added
+- Local alpha build (revision 6) of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
+- Release and installer tooling now accepts `5.x.ya` alpha versions while keeping 5.2.x on the preview channel.
+
+### Changed
+- Lifted the login content block 24 px so the pending panel has room below the help text and the card does not look top-heavy.
+- Settings now pre-lays out every page at the full content-area size and switches sections by stacking, so pages appear fully rendered instead of collapsing/loading on each click.
+
+### Fixed
+- Restored the login card's bottom border and clamped the pending-login panel inside the card so it cannot be clipped or cover the border.
+- Prevented stale update evidence from rejecting a third update; pruned evidence at begin/commit/abort/rollback and relaxed the authenticated-evidence subset check.
+- Streamed large Core hashing and extended updater IPC deadlines so a 1 GiB Core update no longer exhausts RAM or fails after 5 s.
+- Removed scratch/update directories and launcher backup files on uninstall; the installer now also rejects undeclared Core files and path-traversal entries.
+- Hardened the elevated netfilter2 helper to hash and execute the same in-memory script bytes from an admin-owned stage, and to read the manifest once.
+- Fixed worker-thread Tk access, event-pump shutdown, toast clearing by background polls, and tray Exit after a declined close.
+
+### Build
+- Launcher and Updater built with Python 3.12.10 / Tk 8.6 / PyInstaller 6.21.0.
+- Signed envelope `preview-0023` (sequence 23, `minimum_supported_sequence = 23`, key `neko-update-prod-3`).
+- Installer `NekoFamilyProxy-Installer.exe` 201,007,176 bytes, SHA-256 `1745856872d7b194daea3fc0b902c30b89f820f06c81ee600bc7d22871de4e5b`; unsigned and not published.
+- Launcher `1837c270…` 21,629,808 bytes; Updater `c3411b95…` 11,281,237 bytes (Supabase/pydantic and Tcl/Tk removed from frozen builds).
+- Fixed the elevated netfilter2 command quoting that made the driver step fail with `FAIL: invalid pinned nfdriver.sha256`; the installer was rebuilt and the source line is covered by a regression test.
+
+## [5.2.1] - 2026-10-26
+
+### Added
+- Warm-up requests for the identity token, account preflight, and session-claim endpoints while the Discord browser step is in progress, reducing cold-start sign-in latency.
+- Regression coverage for the 5.2.1 -> 5.2.2 mandatory-update path and for active-game update deferral without stopping the proxy.
+
+### Changed
+- Login now reads "ล็อคอินด้วย Neko Family Network ID", shows the Discord icon, and links the support text to the Neko Family Discord.
+- The main window is fixed at 500x640; maximize and resize are disabled on every view.
+- The Settings window is rendered off-screen and shown only after layout completes, so all text appears in one frame.
+- The 5.2.1 release envelope uses `minimum_supported_sequence = 16`; later 5.2.x releases must use their own sequence so installed 5.2.1 clients are forced to update on the next launch.
+- Uninstall now refuses to run while `NekoLauncher`, `NekoProxyCore`, or `NekoUpdater` is running, matching the install-time process guard.
+
+### Upgrade
+- 5.2.1 keeps the 5.2.0 external Core bundle and trust profile. The installer still requires a clean uninstall of 5.2.0 before installation; in-place and side-by-side installation remain unsupported.
 
 ## [5.2.0] - 2026-10-24
 

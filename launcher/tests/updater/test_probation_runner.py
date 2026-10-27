@@ -39,6 +39,36 @@ def test_probation_fails_on_legacy_a43_core_without_preflight(tmp_path: Path) ->
     assert "exited with code 2" in (res.reason or "")
 
 
+def test_probation_probes_candidate_launcher_tk_out_of_process(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gen_dir = tmp_path / "g-tk"
+    gen_dir.mkdir()
+    launcher = gen_dir / "NekoLauncher.exe"
+    launcher.write_bytes(b"dummy launcher")
+    _create_test_bundle(gen_dir / "ProxyCore")
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (
+        json.dumps({"protocol_version": 1, "result": "PASS", "code": None}),
+        "",
+    )
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: mock_proc)
+    probed: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        probed.append(list(args))
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    res = run_probation_self_test(gen_dir)
+
+    assert res.passed
+    assert probed == [[str(launcher.resolve()), "--tk-self-test"]]
+
+
 def test_probation_passes_when_preflight_returns_pass(tmp_path: Path, monkeypatch) -> None:
     gen_dir = tmp_path / "g-002"
     gen_dir.mkdir()

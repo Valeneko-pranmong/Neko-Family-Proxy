@@ -25,10 +25,10 @@
 
 #define MyAppName "NEKO FAMILY PROXY"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0.1"
+  #define MyAppVersion "5.2.2a"
 #endif
 #ifndef MyAppDisplayVersion
-  #define MyAppDisplayVersion "1.0.0-beta.1"
+  #define MyAppDisplayVersion "5.2.2a"
 #endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both
@@ -56,6 +56,9 @@
 #endif
 #ifndef ExpectedNfDriverSha256
   #define ExpectedNfDriverSha256 ""
+#endif
+#ifndef ExpectedDriverScriptSha256
+  #define ExpectedDriverScriptSha256 ""
 #endif
 
 [Setup]
@@ -98,20 +101,40 @@ RestartIfNeededByRun=no
 [InstallDelete]
 ; Clean stale/conflicting updater state slots before baseline enrollment
 Type: filesandordirs; Name: "{app}\state"
+Type: filesandordirs; Name: "{app}\releases"
+Type: filesandordirs; Name: "{app}\update-pending"
+Type: filesandordirs; Name: "{app}\incoming"
+Type: filesandordirs; Name: "{app}\staging"
 Type: files; Name: "{app}\launcher-error.log"
+Type: files; Name: "{app}\NekoLauncher.exe.new"
+Type: files; Name: "{app}\NekoLauncher.exe.old"
 
 [UninstallDelete]
 ; Clean all runtime state, logs, and metadata upon uninstallation
 Type: filesandordirs; Name: "{app}\state"
+Type: filesandordirs; Name: "{app}\releases"
+Type: filesandordirs; Name: "{app}\update-pending"
+Type: filesandordirs; Name: "{app}\incoming"
+Type: filesandordirs; Name: "{app}\staging"
 Type: filesandordirs; Name: "{app}\baseline"
 Type: filesandordirs; Name: "{app}\trust"
 Type: filesandordirs; Name: "{app}\tools"
 Type: filesandordirs; Name: "{app}\ProxyCore"
 Type: filesandordirs; Name: "{app}\logging"
+Type: filesandordirs; Name: "{localappdata}\NekoFamilyProxy"
 Type: files; Name: "{app}\*.log"
 Type: files; Name: "{app}\*.json"
 Type: files; Name: "{app}\*.path"
+Type: files; Name: "{app}\NekoLauncher.exe.new"
+Type: files; Name: "{app}\NekoLauncher.exe.old"
 Type: dirifempty; Name: "{app}"
+
+[UninstallRun]
+; Remove the launcher credential-vault target (refresh token and legacy keys).
+Filename: "{cmd}"; Parameters: "/c cmdkey /delete:""Neko Family Launcher"" >nul 2>&1"; Flags: runhidden; RunOnceId: "ClearLauncherCredentialVault"
+; Windows Credential Manager stores the rotating refresh token under a
+; keyring target such as "proxy-api-refresh-token@Neko Family Launcher".
+Filename: "{cmd}"; Parameters: "/c cmdkey /delete:""proxy-api-refresh-token@Neko Family Launcher"" >nul 2>&1"; Flags: runhidden; RunOnceId: "ClearLauncherCredentialVaultKeyring"
 
 [Files]
 ; Approved Launcher EXE (fail-closed hash-gated by build_beta_installer.py).
@@ -194,6 +217,50 @@ end;
 function PSExePath(): String;
 begin
   Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+end;
+
+function PSNativeExePath(): String;
+begin
+  Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe');
+  if not FileExists(Result) then
+    Result := PSExePath();
+end;
+
+function PSQuote(const S: String): String;
+var
+  T: String;
+begin
+  T := S;
+  StringChangeEx(T, '''', '''''', True);
+  Result := '''' + T + '''';
+end;
+
+{ Run the helper only after proving the exact bytes executed match the
+  build-time hash. Reading and hashing the same in-memory byte array closes
+  the user-writable-file swap window; the script is never re-read. }
+function RunPSVerifiedElevated(
+  const ScriptPath, ScriptArgs, ExpectedSha: String;
+  var ExitCode: Integer
+): Boolean;
+var
+  Wrapper: String;
+begin
+  Wrapper :=
+    '$ErrorActionPreference=''Stop'';' +
+    '$p=' + PSQuote(ScriptPath) + ';' +
+    '$want=' + PSQuote(ExpectedSha) + ';' +
+    '$b=[IO.File]::ReadAllBytes($p);' +
+    '$h=[Security.Cryptography.SHA256]::Create();' +
+    '$s=([BitConverter]::ToString($h.ComputeHash($b))).Replace(''-'',[string]::Empty).ToLowerInvariant();' +
+    '$h.Dispose();' +
+    'if($s -ne $want){exit 21};' +
+    '& ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString($b)))' + ScriptArgs;
+  Result := ShellExec('runas', PSNativeExePath(),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command "' +
+    Wrapper + '"',
+    '', HideCmd, ewWaitUntilTerminated, ExitCode);
+  if not Result then
+    ExitCode := -1;
 end;
 
 function RunPSFile(const PSFile, ExtraArgs: String; var ExitCode: Integer): Boolean;
@@ -321,6 +388,21 @@ begin
     Result := False;
 end;
 
+{ Match the install guard: never remove files under a live Launcher/Core/Updater. }
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  if ProcessesAreRunning() then
+  begin
+    MsgBox(
+      'NekoLauncher, NekoProxyCore หรือ NekoUpdater ยังทำงานอยู่' + #13#10#13#10 +
+      'กรุณาปิด Neko Family Proxy และ proxy session ก่อนถอนการติดตั้ง' + #13#10#13#10 +
+      'Close NekoLauncher, NekoProxyCore, and NekoUpdater before uninstalling.',
+      mbError, MB_OK);
+    Result := False;
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 var
   InstalledLauncher: String;
@@ -364,7 +446,7 @@ begin
     begin
       MsgBox(
         'พบ NEKO FAMILY PROXY เวอร์ชัน ' + InstalledVersion + ' อยู่แล้ว' + #13#10#13#10 +
-        '5.2.0 ต้องติดตั้งแยกจาก 5.1.6 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
+        '5.2.2a ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
         'กรุณาถอนการติดตั้งเวอร์ชันเดิมผ่าน Windows Settings > Apps > Installed apps ' +
         'ก่อน แล้วรัน installer นี้อีกครั้ง' + #13#10#13#10 +
         'An existing NEKO FAMILY PROXY ' + InstalledVersion + ' installation ' +
@@ -382,9 +464,9 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   AppDir, CoreDir, BinDir, ToolsDir, LauncherExe: String;
-  VerifyScript, DriverScript, DriverCmd, ResFile: String;
+  VerifyScript, DriverScript, PSArgs: String;
   Bootstrapper: String;
-  RC, I: Integer;
+  RC: Integer;
   Ok: Boolean;
   Msg: String;
 begin
@@ -397,7 +479,6 @@ begin
   ToolsDir := AppDir + '\tools\installer';
   VerifyScript := ToolsDir + '\verify-core-install.ps1';
   DriverScript := ToolsDir + '\ensure-netfilter2.ps1';
-  DriverCmd := ToolsDir + '\ensure-netfilter2.cmd';
 
   { ---- 1. External Core manifest verification (unelevated) ---- }
   if not FileExists(VerifyScript) then begin
@@ -419,37 +500,47 @@ begin
   end;
 
   { ---- 2. .NET Desktop Runtime 6 x64 readiness (elevation only when required) ---- }
-  g_DotnetOK := DesktopRuntime6X64Present();
-  if not g_DotnetOK then begin
-    Bootstrapper := FindRuntimeBootstrapper();
-    if Bootstrapper = '' then begin
-      AddDetail('internal error: staged .NET Desktop Runtime bootstrapper missing');
-      Log('no staged bootstrapper found in {tmp}\Prereqs');
-    end else begin
-      Log('requesting elevation for silent .NET Desktop Runtime install');
-      Ok := ShellExec('runas', Bootstrapper,
-        '/install /quiet /norestart',
-        '', HideCmd, ewWaitUntilTerminated, RC);
-      Log('elevated dotnet install: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
-      { Exit codes 0 and 3010 (reboot pending) are both acceptable here; the
-        fresh unelevated re-detection below remains authoritative either way. }
-    end;
-    { Authoritative outcome = re-detect the REAL machine state after any
-      elevated attempt (same fail-closed pattern as the netfilter2 step). }
+  if ExpandConstant('{param:SKIPDOTNET|0}') = '1' then begin
+    g_DotnetOK := True;
+    AddDetail('dotnet readiness skipped by /SKIPDOTNET=1');
+    Log('dotnet runtime readiness skipped by request');
+  end else begin
     g_DotnetOK := DesktopRuntime6X64Present();
-  end;
-  if not g_DotnetOK then begin
-    AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
-    SuppressibleMsgBox(
-      'Setup could not complete readiness for the Microsoft .NET Desktop Runtime 6.x (x64).'#13#10#13#10 +
-      'Please run this same Setup again and allow the required Windows UAC prompt.'#13#10#13#10 +
-      'หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล'#13#10#13#10 +
-      'The launch shortcut is disabled until readiness is complete.',
-      mbError, MB_OK, IDOK);
+    if not g_DotnetOK then begin
+      Bootstrapper := FindRuntimeBootstrapper();
+      if Bootstrapper = '' then begin
+        AddDetail('internal error: staged .NET Desktop Runtime bootstrapper missing');
+        Log('no staged bootstrapper found in {tmp}\Prereqs');
+      end else begin
+        Log('requesting elevation for silent .NET Desktop Runtime install');
+        Ok := ShellExec('runas', Bootstrapper,
+          '/install /quiet /norestart',
+          '', HideCmd, ewWaitUntilTerminated, RC);
+        Log('elevated dotnet install: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
+        { Exit codes 0 and 3010 (reboot pending) are both acceptable here; the
+          fresh unelevated re-detection below remains authoritative either way. }
+      end;
+      { Authoritative outcome = re-detect the REAL machine state after any
+        elevated attempt (same fail-closed pattern as the netfilter2 step). }
+      g_DotnetOK := DesktopRuntime6X64Present();
+    end;
+    if not g_DotnetOK then begin
+      AddDetail('.NET Desktop Runtime 6.x x64 still absent after setup');
+      SuppressibleMsgBox(
+        'Setup could not complete readiness for the Microsoft .NET Desktop Runtime 6.x (x64).'#13#10#13#10 +
+        'Please run this same Setup again and allow the required Windows UAC prompt.'#13#10#13#10 +
+        'หากยังพบปัญหานี้อยู่ โปรดติดต่อผู้ดูแล'#13#10#13#10 +
+        'The launch shortcut is disabled until readiness is complete.',
+        mbError, MB_OK, IDOK);
+    end;
   end;
 
   { ---- 3. netfilter2 driver readiness (elevation only when required) ---- }
-  if not FileExists(DriverScript) then begin
+  if ExpandConstant('{param:SKIPDRIVER|0}') = '1' then begin
+    g_DriverOK := False;
+    AddDetail('netfilter2 registration skipped by /SKIPDRIVER=1');
+    Log('netfilter2 registration skipped by request');
+  end else if not FileExists(DriverScript) then begin
     AddDetail('internal error: ensure-netfilter2.ps1 missing');
   end else begin
     Ok := RunPSFile(DriverScript,
@@ -461,22 +552,15 @@ begin
     case RC of
       0: g_DriverOK := True; { already valid and running; no elevation needed }
       10: begin
-            ResFile := ToolsDir + '\nf-result.txt';
-            DeleteFile(ResFile);
-            Log('requesting elevation for netfilter2 registration');
-            Ok := ShellExec('runas', ExpandConstant('{cmd}'),
-              '/c ""' + DriverCmd + '" -CoreBinDir "' + BinDir + '" -Apply -ResultFile "' +
-              ResFile + '" -ExpectedCoreManifestSha256 "{#ExpectedCoreManifestSha256}"' +
-              ' -ExpectedRedirectorSha256 "{#ExpectedRedirectorSha256}"' +
-              ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '""',
-              ExtractFileDir(DriverCmd), HideCmd, ewWaitUntilTerminated, RC);
+            Log('requesting elevation for verified netfilter2 registration');
+            PSArgs :=
+              ' -CoreBinDir ' + PSQuote(BinDir) + ' -Apply' +
+              ' -ExpectedCoreManifestSha256 ' + PSQuote('{#ExpectedCoreManifestSha256}') +
+              ' -ExpectedRedirectorSha256 ' + PSQuote('{#ExpectedRedirectorSha256}') +
+              ' -ExpectedNfDriverSha256 ' + PSQuote('{#ExpectedNfDriverSha256}');
+            Ok := RunPSVerifiedElevated(
+              DriverScript, PSArgs, '{#ExpectedDriverScriptSha256}', RC);
             Log('elevated apply: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
-            { Wait up to 15 seconds for ResFile to appear from elevated process }
-            for I := 1 to 30 do begin
-              if FileExists(ResFile) then
-                Break;
-              Sleep(500);
-            end;
             { Authoritative outcome = fresh unelevated re-check of real state. }
             Ok := RunPSFile(DriverScript,
       ' -CoreBinDir "' + BinDir + '" -CheckOnly' +
@@ -491,13 +575,12 @@ begin
     end;
 
     if not g_DriverOK then begin
-      Msg := ReadSmallFile(ToolsDir + '\nf-result.txt');
-      if Msg <> '' then
-        AddDetail(Msg);
+      Msg := 'netfilter2 check exit code: ' + IntToStr(RC);
+      AddDetail(Msg);
       SuppressibleMsgBox(
         'Setup could not prepare the netfilter2 network driver.'#13#10#13#10 +
         'Installation files are in place, but game traffic proxying will not ' +
-        'work until the driver is ready. Resolve the cause below and re-run ' +
+        'work until the driver is ready. Resolve the cause and re-run ' +
         'setup if needed.'#13#10#13#10 +
         'Detail: ' + Msg,
         mbError, MB_OK, IDOK);

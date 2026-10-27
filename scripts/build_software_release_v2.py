@@ -44,7 +44,9 @@ EXPECTED_ASSETS = [
 ]
 
 _KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-_PREVIEW_VERSION_PATTERN = re.compile(r"^v?5\.2\.\d+(?:(?:a|b|rc)\d+|[-+].*)?$")
+_PREVIEW_VERSION_PATTERN = re.compile(
+    r"^v?5\.2\.\d+(?:(?:a|b|rc)\d*|[-+].*)?$"
+)
 
 
 def expected_release_channel(release_version: str) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
@@ -11,12 +11,21 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from neko_launcher.application.diagnostics import (
+    SupportEventSink,
+    safe_exception_fields,
+)
 from neko_launcher.application.errors import LauncherServiceError
+from neko_launcher.domain.models import AuthPhase
+from neko_launcher.infrastructure.auth.proxy_api_gateway import (
+    PROXY_CLAIM_PATH,
+    PROXY_ME_PATH,
+)
 
 DEFAULT_IDENTITY_BASE_URL = "https://neko-network-id.vercel.app"
 AUTHORIZE_PATH = "/launcher/authorize"
@@ -30,6 +39,10 @@ HTTP_TIMEOUT_SECONDS = 10.0
 MAX_RESPONSE_BYTES = 65_536
 MAX_OPAQUE_CODE_CHARS = 4096
 MAX_TOKEN_CHARS = 16_384
+PREWARM_TIMEOUT_SECONDS = 3.0
+PREWARM_MAX_RESPONSE_BYTES = 4096
+
+T = TypeVar("T")
 
 
 class WebAuthError(LauncherServiceError):
@@ -60,6 +73,15 @@ class BridgeSession:
     refresh_token: str
     expires_in: int
     token_type: str = "Bearer"
+
+
+@dataclass(frozen=True)
+class IdentityTokenSet:
+    access_token: str = field(repr=False)
+    refresh_token: str = field(repr=False)
+    expires_in: int
+    token_type: str = "Bearer"
+    scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,7 +124,7 @@ class UrllibJsonTransport:
         parsed = urlparse(url)
         if parsed.scheme != "https" or not parsed.hostname:
             raise WebAuthError(
-                "ระบบล็อกอินต้องใช้การเชื่อมต่อที่ปลอดภัย",
+                "การเข้าสู่ระบบต้องใช้การเชื่อมต่อที่ปลอดภัย",
                 code="insecure_endpoint",
             )
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode(
@@ -135,14 +157,14 @@ class UrllibJsonTransport:
             raw = error.read(self._max_response_bytes + 1)
         except (URLError, TimeoutError, OSError) as error:
             raise WebAuthError(
-                "เชื่อมต่อระบบล็อกอินไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต",
+                "เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่",
                 code="network_error",
                 retryable=True,
             ) from error
 
         if len(raw) > self._max_response_bytes:
             raise WebAuthError(
-                "คำตอบจากระบบล็อกอินมีขนาดใหญ่เกินไป",
+                "ระบบตอบกลับไม่สมบูรณ์ กรุณาลองใหม่",
                 code="response_too_large",
             )
         document: dict[str, Any] | None = None
@@ -164,7 +186,7 @@ class UrllibJsonTransport:
 def generate_pkce() -> PkceChallenge:
     verifier = secrets.token_urlsafe(64)
     if not 43 <= len(verifier) <= 128:
-        raise WebAuthError("สร้าง PKCE verifier ไม่สำเร็จ", code="pkce_error")
+        raise WebAuthError("เตรียมการเข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่", code="pkce_error")
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     state = secrets.token_urlsafe(32)
@@ -200,10 +222,101 @@ def _normalized_https_base(value: str) -> str:
         or parsed.fragment
     ):
         raise WebAuthError(
-            "ที่อยู่ระบบล็อกอินไม่ถูกต้อง",
+            "ระบบตั้งค่าการเข้าสู่ระบบไม่ถูกต้อง กรุณาติดต่อผู้ดูแล",
             code="identity_endpoint_invalid",
         )
     return value.rstrip("/")
+
+
+def _prewarm_targets(
+    identity_base_url: str,
+    proxy_api_base_url: str,
+) -> list[tuple[str, str, bytes | None]]:
+    try:
+        identity_base = _normalized_https_base(identity_base_url)
+    except WebAuthError:
+        return []
+    targets: list[tuple[str, str, bytes | None]] = [
+        (f"{identity_base}{TOKEN_PATH}", "POST", b"{}"),
+    ]
+    if proxy_api_base_url:
+        parsed = urlparse(proxy_api_base_url)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname
+            and parsed.path in ("", "/")
+            and not parsed.query
+            and not parsed.fragment
+            and parsed.username is None
+            and parsed.password is None
+        ):
+            proxy_base = proxy_api_base_url.rstrip("/")
+            targets.append((f"{proxy_base}{PROXY_ME_PATH}", "GET", None))
+            targets.append((f"{proxy_base}{PROXY_CLAIM_PATH}", "POST", b"{}"))
+    return targets
+
+
+def _send_prewarm_request(
+    url: str,
+    method: str,
+    body: bytes | None,
+    opener: Any,
+    timeout: float,
+) -> None:
+    headers = {
+        "Accept": "application/json",
+        "Cache-Control": "no-store",
+        "User-Agent": "NekoLauncherWarmup/1",
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = Request(url, data=body, headers=headers, method=method)
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            response.read(PREWARM_MAX_RESPONSE_BYTES)
+    except Exception:
+        pass
+
+
+def prewarm_login_stack(
+    identity_base_url: str,
+    proxy_api_base_url: str = "",
+    *,
+    opener: Any = None,
+    timeout: float = PREWARM_TIMEOUT_SECONDS,
+) -> threading.Thread | None:
+    """Wake the auth endpoints while the browser/Discord step is in progress."""
+    targets = _prewarm_targets(identity_base_url, proxy_api_base_url)
+    if not targets:
+        return None
+
+    def run() -> None:
+        workers = [
+            threading.Thread(
+                target=_send_prewarm_request,
+                args=(
+                    url,
+                    method,
+                    body,
+                    opener if opener is not None else build_opener(),
+                    timeout,
+                ),
+                daemon=True,
+            )
+            for url, method, body in targets
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout + 1.0)
+
+    thread = threading.Thread(
+        target=run,
+        name="neko-auth-prewarm",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 class _LoopbackHTTPServer(ThreadingHTTPServer):
@@ -260,7 +373,7 @@ class LoopbackCallbackServer:
             self._server = _LoopbackHTTPServer((self._host, self._requested_port), Handler)
         except OSError as error:
             raise WebAuthError(
-                "พอร์ตสำหรับรับผลการเข้าสู่ระบบไม่ว่าง กรุณาปิดโปรแกรมอื่นแล้วลองใหม่",
+                "มีโปรแกรมอื่นใช้งานช่องรับผลการเข้าสู่ระบบอยู่ กรุณาปิดโปรแกรมดังกล่าวแล้วลองใหม่",
                 code="loopback_port_unavailable",
                 retryable=True,
             ) from error
@@ -296,7 +409,7 @@ class LoopbackCallbackServer:
             result = self._result
         if result is None:
             raise WebAuthError(
-                "ไม่ได้รับผลการเข้าสู่ระบบที่ถูกต้อง",
+                "ไม่ได้รับการยืนยันจากเบราว์เซอร์ กรุณาลองใหม่",
                 code="callback_missing",
             )
         return result
@@ -413,6 +526,7 @@ class WebAuthClient:
         http_timeout: float = HTTP_TIMEOUT_SECONDS,
         transport: JsonTransport | None = None,
         browser_opener: Callable[[str], bool] | None = None,
+        event_sink: SupportEventSink | None = None,
     ) -> None:
         self._identity_base_url = _normalized_https_base(identity_base_url)
         self._bridge_exchange_url = bridge_exchange_url.strip()
@@ -425,7 +539,7 @@ class WebAuthClient:
                 or bridge.fragment
             ):
                 raise WebAuthError(
-                    "ที่อยู่ระบบเชื่อมบัญชีไม่ถูกต้อง",
+                    "ระบบตั้งค่าการเชื่อมบัญชีไม่ถูกต้อง กรุณาติดต่อผู้ดูแล",
                     code="bridge_endpoint_invalid",
                 )
         self._loopback_port = loopback_port
@@ -433,24 +547,97 @@ class WebAuthClient:
         self._http_timeout = http_timeout
         self._transport = transport or UrllibJsonTransport()
         self._browser_opener = browser_opener or webbrowser.open
+        self._event_sink = event_sink
         self._active = threading.Lock()
         self._cancelled = threading.Event()
         self._server: LoopbackCallbackServer | None = None
+        self._teardown: threading.Thread | None = None
+        self._observer_lock = threading.Lock()
+        self._progress_observer: Callable[[AuthPhase], None] | None = None
+        self._flow_started_at: float | None = None
+        self._flow_phase_started_at: float | None = None
+
+    def _support_event(self, event: str, **fields: Any) -> None:
+        sink = self._event_sink
+        if sink is None:
+            return
+        try:
+            sink.record_event("AUTH", event, **fields)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _elapsed_ms(started_at: float | None) -> int | None:
+        if started_at is None:
+            return None
+        return max(0, int((time.monotonic() - started_at) * 1000))
+
+    def attach_progress_observer(
+        self,
+        observer: Callable[[AuthPhase], None] | None,
+    ) -> None:
+        """Register a listener for customer-visible sign-in steps (worker thread)."""
+        with self._observer_lock:
+            self._progress_observer = observer
+
+    def _emit_progress(self, phase: AuthPhase) -> None:
+        now = time.monotonic()
+        phase_elapsed = self._elapsed_ms(self._flow_phase_started_at)
+        self._flow_phase_started_at = now
+        self._support_event(
+            "FLOW_PHASE",
+            phase=phase.value,
+            elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            phase_elapsed_ms=phase_elapsed,
+        )
+        with self._observer_lock:
+            observer = self._progress_observer
+        if observer is None:
+            return
+        try:
+            observer(phase)
+        except Exception:
+            pass
 
     def authenticate(self) -> BridgeSession:
+        if not self._bridge_exchange_url:
+            raise WebAuthError(
+                "ยังไม่ได้เปิดให้เข้าสู่ระบบด้วย Discord กรุณาติดต่อผู้ดูแล",
+                code="bridge_not_configured",
+            )
+        return self._authenticate_flow(
+            require_refresh=False,
+            finalize=lambda tokens: self._exchange_bridge(tokens.access_token),
+        )
+
+    def authenticate_identity(self) -> IdentityTokenSet:
+        """Return identity tokens without the legacy bridge/session exchange."""
+        return self._authenticate_flow(
+            require_refresh=True,
+            finalize=lambda tokens: tokens,
+        )
+
+    def _authenticate_flow(
+        self,
+        *,
+        require_refresh: bool,
+        finalize: Callable[[IdentityTokenSet], T],
+    ) -> T:
         if not self._active.acquire(blocking=False):
             raise WebAuthError(
-                "กำลังเข้าสู่ระบบผ่านเว็บอยู่ กรุณารอสักครู่",
+                "กำลังเข้าสู่ระบบอยู่ กรุณารอสักครู่",
                 code="already_in_progress",
             )
         server: LoopbackCallbackServer | None = None
         try:
             self._cancelled.clear()
-            if not self._bridge_exchange_url:
-                raise WebAuthError(
-                    "ยังไม่ได้ตั้งค่าบริการเชื่อมบัญชี Discord",
-                    code="bridge_not_configured",
-                )
+            self._flow_started_at = time.monotonic()
+            self._flow_phase_started_at = None
+            self._support_event(
+                "FLOW_STARTED",
+                mode="identity" if require_refresh else "bridge",
+            )
+            self._await_previous_teardown()
             pkce = generate_pkce()
             server = LoopbackCallbackServer(
                 expected_state=pkce.state,
@@ -458,11 +645,18 @@ class WebAuthClient:
             )
             self._server = server
             server.start()
+            self._support_event(
+                "LOOPBACK_READY",
+                port=server.port,
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
+            redirect_uri = server.redirect_uri
             authorize_url = build_authorize_url(
                 self._identity_base_url,
-                server.redirect_uri,
+                redirect_uri,
                 pkce,
             )
+            self._emit_progress(AuthPhase.OPENING_BROWSER)
             try:
                 opened = self._browser_opener(authorize_url)
             except (OSError, RuntimeError) as error:
@@ -477,31 +671,100 @@ class WebAuthClient:
                     code="browser_open_failed",
                     retryable=True,
                 )
+            self._support_event(
+                "BROWSER_OPENED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
 
+            self._emit_progress(AuthPhase.WAITING_FOR_BROWSER)
             callback = server.wait(self._callback_timeout)
+            self._support_event(
+                "CALLBACK_RECEIVED",
+                code_present=bool(callback.code),
+                error_present=callback.error is not None,
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
             if self._cancelled.is_set():
                 raise WebAuthError("ยกเลิกการเข้าสู่ระบบแล้ว", code="cancelled")
             if callback.error is not None:
                 raise self._callback_error(callback.error)
             if not callback.code:
                 raise WebAuthError(
-                    "ไม่ได้รับรหัสยืนยันการเข้าสู่ระบบ",
+                    "ไม่ได้รับการยืนยันจากเบราว์เซอร์ กรุณาลองใหม่",
                     code="callback_missing",
                 )
 
-            identity_token = self._exchange_identity_code(
+            self._release_loopback_async(server)
+            server = None
+            self._emit_progress(AuthPhase.CONNECTING)
+            self._support_event(
+                "TOKEN_EXCHANGE_STARTED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
+            tokens = self._exchange_identity_code_tokens(
                 callback.code,
                 pkce.verifier,
-                server.redirect_uri,
+                redirect_uri,
+                require_refresh=require_refresh,
+            )
+            self._support_event(
+                "TOKEN_EXCHANGE_SUCCEEDED",
+                expires_in=tokens.expires_in,
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
             )
             if self._cancelled.is_set():
                 raise WebAuthError("ยกเลิกการเข้าสู่ระบบแล้ว", code="cancelled")
-            return self._exchange_bridge(identity_token)
+            result = finalize(tokens)
+            self._support_event(
+                "FLOW_SUCCEEDED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+            )
+            return result
+        except WebAuthError as error:
+            self._support_event(
+                "FLOW_FAILED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+                **safe_exception_fields(error),
+            )
+            raise
+        except Exception as error:
+            self._support_event(
+                "FLOW_FAILED",
+                elapsed_ms=self._elapsed_ms(self._flow_started_at),
+                **safe_exception_fields(error),
+            )
+            raise
         finally:
             self._server = None
             if server is not None:
                 server.close()
+            self._flow_started_at = None
+            self._flow_phase_started_at = None
             self._active.release()
+
+    def _await_previous_teardown(self) -> None:
+        """The loopback port is exclusive, so never start over a live teardown."""
+        teardown = self._teardown
+        if teardown is not None:
+            if teardown.is_alive():
+                teardown.join(timeout=1.0)
+            self._teardown = None
+
+    def _release_loopback_async(self, server: LoopbackCallbackServer) -> None:
+        """Shut the callback listener down off the critical path.
+
+        The authorisation code is already captured, so waiting for the browser's
+        connection to drain here is what kept the login screen frozen after the
+        browser reported success.
+        """
+        self._server = None
+        teardown = threading.Thread(
+            target=server.close,
+            name="neko-web-auth-teardown",
+            daemon=True,
+        )
+        self._teardown = teardown
+        teardown.start()
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -509,12 +772,14 @@ class WebAuthClient:
         if server is not None:
             server.cancel()
 
-    def _exchange_identity_code(
+    def _exchange_identity_code_tokens(
         self,
         code: str,
         code_verifier: str,
         redirect_uri: str,
-    ) -> str:
+        *,
+        require_refresh: bool,
+    ) -> IdentityTokenSet:
         response = self._transport.post_json(
             f"{self._identity_base_url}{TOKEN_PATH}",
             {
@@ -533,7 +798,7 @@ class WebAuthClient:
         token_type = document.get("token_type")
         if not isinstance(token_type, str) or token_type.lower() != "bearer":
             raise WebAuthError(
-                "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
+                "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่",
                 code="invalid_token_response",
             )
         access_token = document.get("access_token")
@@ -543,9 +808,22 @@ class WebAuthClient:
             or len(access_token) > MAX_TOKEN_CHARS
         ):
             raise WebAuthError(
-                "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
+                "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่",
                 code="invalid_token_response",
             )
+        refresh_token = document.get("refresh_token")
+        if require_refresh:
+            if (
+                not isinstance(refresh_token, str)
+                or not refresh_token
+                or len(refresh_token) > MAX_TOKEN_CHARS
+            ):
+                raise WebAuthError(
+                    "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่",
+                    code="invalid_token_response",
+                )
+        else:
+            refresh_token = ""
         expires_in = document.get("expires_in")
         if (
             type(expires_in) is not int
@@ -553,10 +831,22 @@ class WebAuthClient:
             or expires_in > 3600
         ):
             raise WebAuthError(
-                "คำตอบจากระบบล็อกอินไม่ถูกต้อง",
+                "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่",
                 code="invalid_token_response",
             )
-        return access_token
+        scope = document.get("scope", "")
+        if not isinstance(scope, str) or len(scope) > 512:
+            raise WebAuthError(
+                "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่",
+                code="invalid_token_response",
+            )
+        return IdentityTokenSet(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+            token_type="Bearer",
+            scope=scope,
+        )
 
     def _exchange_bridge(self, identity_token: str) -> BridgeSession:
         response = self._transport.post_json(
@@ -571,7 +861,7 @@ class WebAuthClient:
         token_type = document.get("token_type")
         if not isinstance(token_type, str) or token_type.lower() != "bearer":
             raise WebAuthError(
-                "คำตอบจากระบบเชื่อมบัญชีไม่ถูกต้อง",
+                "เชื่อมบัญชีไม่สำเร็จ กรุณาลองใหม่",
                 code="invalid_bridge_response",
             )
         access_token = document.get("access_token")
@@ -585,13 +875,13 @@ class WebAuthClient:
             or len(refresh_token) > MAX_TOKEN_CHARS
         ):
             raise WebAuthError(
-                "คำตอบจากระบบเชื่อมบัญชีไม่ถูกต้อง",
+                "เชื่อมบัญชีไม่สำเร็จ กรุณาลองใหม่",
                 code="invalid_bridge_response",
             )
         expires_in = document.get("expires_in", 0)
         if type(expires_in) is not int or expires_in < 0:
             raise WebAuthError(
-                "คำตอบจากระบบเชื่อมบัญชีไม่ถูกต้อง",
+                "เชื่อมบัญชีไม่สำเร็จ กรุณาลองใหม่",
                 code="invalid_bridge_response",
             )
         return BridgeSession(
@@ -610,7 +900,7 @@ class WebAuthClient:
             )
         if error == "server_error":
             return WebAuthError(
-                "ระบบล็อกอินขัดข้อง กรุณาลองใหม่",
+                "ระบบขัดข้องชั่วคราว กรุณาลองใหม่",
                 code="server_error",
                 retryable=True,
             )
@@ -631,12 +921,12 @@ class WebAuthClient:
             )
         if response.status == 400:
             return WebAuthError(
-                "คำขอเข้าสู่ระบบไม่ถูกต้อง",
+                "เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
                 code="invalid_request",
             )
         if response.status == 401:
             return WebAuthError(
-                "ไคลเอนต์ไม่ได้รับอนุญาตให้เข้าสู่ระบบ",
+                "โปรแกรมนี้ไม่ได้รับอนุญาตให้เข้าสู่ระบบ กรุณาติดต่อผู้ดูแล",
                 code="invalid_client",
             )
         if response.status == 429:
@@ -647,7 +937,7 @@ class WebAuthClient:
             )
         if response.status >= 500:
             return WebAuthError(
-                "ระบบล็อกอินขัดข้อง กรุณาลองใหม่",
+                "ระบบขัดข้องชั่วคราว กรุณาลองใหม่",
                 code="server_error",
                 retryable=True,
             )
@@ -663,12 +953,12 @@ class WebAuthClient:
         error = document.get("error")
         if response.status == 401:
             return WebAuthError(
-                "ข้อมูลล็อกอินไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่",
+                "ข้อมูลเข้าสู่ระบบไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่",
                 code="invalid_token",
             )
         if response.status == 409 and error == "token_replayed":
             return WebAuthError(
-                "ข้อมูลล็อกอินถูกใช้แล้ว กรุณาเข้าสู่ระบบใหม่",
+                "ข้อมูลเข้าสู่ระบบถูกใช้แล้ว กรุณาเข้าสู่ระบบใหม่",
                 code="token_replayed",
             )
         if response.status == 409 and error == "identity_not_linked":

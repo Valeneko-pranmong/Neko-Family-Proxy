@@ -4,6 +4,8 @@ from neko_launcher.application.authorized_core import (
     PermitDiagnosticCode,
 )
 from neko_launcher.application.diagnostics import (
+    format_safe_diagnostic_metadata,
+    safe_exception_fields,
     sanitize_diagnostic_text,
     CoreDiagnosticsRecorder,
     NoopDiagnosticsSink,
@@ -45,6 +47,44 @@ def test_sanitize_diagnostic_text():
     text = "access_token=123"
     sanitized = sanitize_diagnostic_text(text)
     assert sanitize_diagnostic_text(sanitized) == sanitized
+
+
+class SafeAuthError(RuntimeError):
+    code = "invalid_grant"
+    status = 400
+    request_id = "0123456789abcdef0123456789abcdef"
+    retryable = True
+
+
+class UnsafeAuthError(RuntimeError):
+    code = "RAW_TOKEN_SENTINEL"
+    status = "RAW_STATUS_SENTINEL"
+    request_id = "short"
+    retryable = "yes"
+
+
+def test_safe_exception_fields_allowlist_known_transport_metadata():
+    fields = safe_exception_fields(SafeAuthError("safe failure"))
+
+    assert fields == {
+        "error_type": "SafeAuthError",
+        "error_code": "invalid_grant",
+        "http_status": 400,
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "retryable": True,
+    }
+    metadata = format_safe_diagnostic_metadata(SafeAuthError("safe failure"))
+    assert "error_code=invalid_grant" in metadata
+    assert "http_status=400" in metadata
+    assert "request_id=0123456789abcdef0123456789abcdef" in metadata
+    assert "retryable=True" in metadata
+
+
+def test_safe_exception_fields_drop_untrusted_values():
+    fields = safe_exception_fields(UnsafeAuthError("safe failure"))
+
+    assert fields == {"error_type": "UnsafeAuthError"}
+    assert "RAW_" not in repr(fields)
 
 
 def test_core_diagnostics_recorder_state():

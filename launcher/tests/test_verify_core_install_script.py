@@ -37,7 +37,36 @@ def make_core_fixture_with_array_manifest(tmp_path: Path) -> Path:
                 "size": len(b"dummy-content"),
                 "sha256": hashlib.sha256(b"dummy-content").hexdigest(),
             },
+            {
+                "path": "runtime-settings.nkps",
+                "size": len(b"protected-payload"),
+                "sha256": hashlib.sha256(b"protected-payload").hexdigest(),
+            },
         ],
+    }
+    (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return core
+
+
+def make_core_fixture_with_object_manifest(tmp_path: Path) -> Path:
+    core = tmp_path / "ProxyCore"
+    core.mkdir(parents=True, exist_ok=True)
+    bin_dir = core / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    v2ray_bytes = TEST_V2RAY_BYTES
+    (bin_dir / "v2ray-sn.exe").write_bytes(v2ray_bytes)
+    (core / "dummy.dll").write_bytes(b"dummy-content")
+    (core / "runtime-settings.nkps").write_bytes(b"protected-payload")
+
+    manifest = {
+        "source_commit": EXPECTED_COMMIT,
+        "file_count": 3,
+        "files": {
+            "bin/v2ray-sn.exe": TEST_V2RAY_HASH,
+            "dummy.dll": hashlib.sha256(b"dummy-content").hexdigest(),
+            "runtime-settings.nkps": hashlib.sha256(b"protected-payload").hexdigest(),
+        },
     }
     (core / "core-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return core
@@ -83,6 +112,40 @@ def test_real_array_manifest_verifies_successfully(tmp_path: Path) -> None:
     proc = _run_verify(core)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "PASS: core manifest verified" in proc.stdout
+
+
+def test_real_object_manifest_verifies_successfully(tmp_path: Path) -> None:
+    core = make_core_fixture_with_object_manifest(tmp_path)
+    proc = _run_verify(core)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PASS: core manifest verified" in proc.stdout
+
+
+def test_object_manifest_missing_file_fails(tmp_path: Path) -> None:
+    core = make_core_fixture_with_object_manifest(tmp_path)
+    (core / "dummy.dll").unlink()
+    proc = _run_verify(core)
+    assert proc.returncode == 6, proc.stdout + proc.stderr
+    assert "MISSING dummy.dll" in proc.stdout
+
+
+def test_object_manifest_wrong_hash_fails(tmp_path: Path) -> None:
+    core = make_core_fixture_with_object_manifest(tmp_path)
+    (core / "dummy.dll").write_bytes(b"tampered-content")
+    proc = _run_verify(core)
+    assert proc.returncode == 6, proc.stdout + proc.stderr
+    assert "HASH dummy.dll" in proc.stdout
+
+
+def test_object_manifest_file_count_mismatch_fails(tmp_path: Path) -> None:
+    core = make_core_fixture_with_object_manifest(tmp_path)
+    manifest_path = core / "core-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["file_count"] = 4
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    proc = _run_verify(core)
+    assert proc.returncode == 6, proc.stdout + proc.stderr
+    assert "file_count mismatch" in proc.stdout.lower()
 
 
 def test_missing_file_fails(tmp_path: Path) -> None:
@@ -168,7 +231,7 @@ def test_unsafe_path_absolute_fails(tmp_path: Path) -> None:
     assert "unsafe" in proc.stdout.lower() or "escape" in proc.stdout.lower()
 
 
-def test_malformed_non_array_files_object_fails(tmp_path: Path) -> None:
+def test_object_manifest_invalid_hash_fails(tmp_path: Path) -> None:
     core = make_core_fixture_with_array_manifest(tmp_path)
     manifest_path = core / "core-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -176,7 +239,7 @@ def test_malformed_non_array_files_object_fails(tmp_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     proc = _run_verify(core)
     assert proc.returncode == 6, proc.stdout + proc.stderr
-    assert "non-empty array" in proc.stdout.lower()
+    assert "invalid sha256" in proc.stdout.lower()
 
 
 def test_malformed_non_array_files_string_fails(tmp_path: Path) -> None:

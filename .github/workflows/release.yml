@@ -248,7 +248,7 @@ jobs:
           if ($release.target_commitish.ToLowerInvariant() -ne $env:EXPECTED_TARGET.ToLowerInvariant()) { throw "Release target mismatch." }
 
           $normalizedTag = $env:RELEASE_TAG.TrimStart('v')
-          if ($normalizedTag -match '^5\.2\.\d+((a|b|rc)\d+)?([-+].*)?$') {
+          if ($normalizedTag -match '^5\.2\.\d+(?:(?:a|b|rc)\d*|[-+].*)?$') {
             throw "5.2.x is preview-only and cannot be promoted to stable."
           }
 

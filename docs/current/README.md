@@ -1,42 +1,89 @@
-# NEKO FAMILY PROXY — Current Component Status & 5.2.0a1 Alpha Line
+# NEKO FAMILY PROXY — Current Component Status & 5.2.0 Release Line
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         PREPARING 5.2.0a1 ALPHA TEST (not publishable)
-PRODUCT_BASELINE:               5.2.0a1 (alpha test); 5.1.6 remains public stable
-CURRENT_RELEASE_TAG:            v5.2.0a1 (alpha candidate; not yet published)
+STATUS:                         5.2.2a ALPHA REV 6 HARDENED, INSTALL/UNINSTALL VERIFIED LOCALLY (NOT PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
+PRODUCT_BASELINE:               5.2.2a alpha (local test build); 5.2.1 (release target); 5.1.6 remains public stable
+SOURCE_5_2_2_PREP:              COMMITTED 81f8c8b + 72270c7; version bumped to 5.2.2a for the local alpha build
+ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 6 — preview-0023, sequence 23; installer 17458568…; not published
+CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
-INSTALLER_CANDIDATE:            SUPERSEDED (pre-web-auth build; rebuild required)
-ACTIVE_DEV_BRANCH:              main
+INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
+ACTIVE_DEV_BRANCH:              feat/proxy-api-launcher-clean-v2
+RELEASE_CHANNEL:                PREVIEW/MANUAL (owner decision 2026-10-25)
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
-UPDATE_TRUST_ANCHOR:            neko-update-prod-2 / neko-update-profile-v520-1
-RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0a1 ALPHA NEW-ACCOUNT WEB-AUTH PREVIEW; CLEAN START; NO SIDE-BY-SIDE
-UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0a1; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
-WEB_AUTH_LAUNCHER:              IMPLEMENTED; FROZEN BUILD WEB-ONLY; P1/P3/P4 E2E PENDING
-NEXT_CUTOVER:                   v5.3.0 (gate-based legacy shutdown; last active term or approved cutoff)
-SEPARATION_PLAN:                docs/superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md
-ALPHA_TEST:                     docs/current/5.2.0-alpha-test.md
-STAGING_RUNBOOK:                docs/current/launcher-bridge-staging-runbook.md
-CUTOVER_RUNBOOK:                docs/current/5.3.0-cutover-runbook.md
-STATUS_AUDIT:                   docs/current/p0-p5-status-audit.md
-AUTH_FLOW:                      PASS (Fail-closed Lite auth + single-session arbitration)
-PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision)
-SESSION_GUARD_INVARIANT:        PASS (Zero forced game/proxy termination on update)
-NEXT_LAUNCH_APPLY:              PASS (Offline verified bootstrap before window creation)
-BOOTSTRAP_AUTHORITY:            PASS (Bounded v5.1.0 signed archive override; historical bootstrap)
-LAUNCHER_TITLE_BINDING:         PASS (Bound to canonical neko_launcher.__version__)
-INSTALLER_CORE_AUTHORITY:       PASS (Dynamic build authority propagation via ISCC)
-REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-24)
-TEST_SUITE:                     2,631 passed / 4 skipped (launcher, 2026-10-25); 74 passed / 1 environment-limited (root)
-LAST_VERIFIED:                  2026-10-25 +07:00 (Asia/Bangkok)
+UPDATE_TRUST_ANCHOR:            neko-update-prod-3 / neko-update-profile-v520-2
+RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0 UNIFIED PREVIEW; CLEAN UNINSTALL-FIRST; NO SIDE-BY-SIDE
+UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
+WEB_AUTH_LAUNCHER:              FROZEN RELEASE CONFIGURATION BUILT; INTERACTIVE DISCORD LOGIN/CORE START PENDING
+PROXY_API_DEPLOYMENT:           STAGING LIVE (https://neko-control-room-staging.vercel.app); /public/status 200, /v1/me 401
+STAGING_E2E:                    NOT PASSED (01c/02d/03c gates open)
+AUTH_FLOW:                      PASS (fail-closed identity refresh + single-session arbitration in source)
+PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision in source)
+SESSION_GUARD_INVARIANT:        PASS (no forced game/proxy termination on update)
+NEXT_LAUNCH_APPLY:              PASS (offline verified bootstrap before window creation)
+BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; historical bootstrap)
+LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
+INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
+REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-26)
+TEST_SUITE:                     2,817 passed / 5 skipped / 7 deselected (launcher source, 2026-10-27)
+RELEASE_RUNBOOK:                docs/current/5.2.0-release-runbook.md
+RELEASE_NOTES:                  docs/current/5.2.1-release-notes.md
+PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
+PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
+ALPHA_BUILD_RECORD_5_2_2A:      docs/current/5.2.2a-alpha-build.md
+LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
+LAST_VERIFIED:                  2026-10-27 +07:00 (Asia/Bangkok)
 ```
 
-> **Current-state rule:** `main` is preparing the `5.2.0a1` alpha test of the 5.2.0 web-auth separation line. `v5.1.6` remains the last published stable and must stay usable on its legacy password/recovery backend throughout 5.2.0 development. `5.2.0a1` is a new-accounts-only manual alpha using an isolated schema in the same Supabase project, a dedicated preview channel, and a clean-start install: there is no legacy day/coupon transfer, 5.1.6 remains usable until its existing term expires or an approved cutoff, it must not be published as the latest stable, must not auto-update 5.1.6, and must not be installed over or alongside 5.1.6. The installer guard and preview-channel binding are implemented in source; the rebuilt installer/install matrix, bridge deployment, real preview publication, auto-apply, and E2E are still pending. The 5.1.2 architecture described below remains the foundation of the deferred update lifecycle; it has been shipped and extended through 5.1.3–5.1.6. This document describes repository state, not a hosted-backend deployment audit.
+> **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the
+> 5.2.0 line. Core, the external Core bundle, the preview trust profile, the
+> staging origins, and the Proxy API contract are unchanged. The envelope is
+> `preview-0016` (sequence 16, `minimum_supported_sequence = 16`), signed by
+> `neko-update-prod-3`. Later 5.2.x releases must set
+> `minimum_supported_sequence` to their own sequence so 5.2.1 installations are
+> forced to update on the next Launcher start; the running game/proxy session is
+> never force-closed. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
 >
-> **Development plan:** [5.2.0 web-auth separation and 5.3.0 cutover](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).
+> **2026-10-26 5.2.2 source preparation:** the release branch now contains
+> structured support diagnostics, a centered login layout with a pinned top
+> status row and a non-shifting pending panel, one-frame Settings rendering, and
+> a startup splash that waits for session restore. The last change removes the
+> 2–4 second login-screen flash that made users think their session had been
+> lost. These are source-only commits `81f8c8b` and `72270c7`; the installed
+> 5.2.1 artifacts do not include them, and no 5.2.2 build, tag, or publication
+> exists. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
+
+> **2026-10-25 unified-platform overlay:** the first usable release of the
+> unified line is **5.2.0** on the preview/manual channel. The new line uses
+> Neko-NETWORK-ID access/refresh tokens and Neko Proxy API only. P1 slices 1–2
+> (source/dev `NEKO_PROXY_API_URL`) implement the account-status preflight,
+> refresh-token storage, claim/heartbeat/release, and the permit + Runtime
+> Config v1 Core path without a bridge or Supabase session. See
+> [5.2.0-release-notes.md](5.2.0-release-notes.md),
+> [5.2.0-release-runbook.md](5.2.0-release-runbook.md), and
+> [proxy-api-launcher-contract.md](proxy-api-launcher-contract.md). The
+> bridge/session-minting and web-session allowlist parts of the older plan are
+> superseded for the new line; `5.1.6` remains unchanged.
 >
-> **Alpha test:** [5.2.0a1 alpha test](5.2.0-alpha-test.md).
+> **Current-state rule:** `feat/proxy-api-launcher-clean-v2` is the release
+> preparation branch. `v5.1.6` remains the last published stable and must stay
+> usable on its legacy password/recovery backend throughout 5.2.0 development.
+> 5.2.0 is a preview/manual release with a clean uninstall-first install: there
+> is no legacy day/coupon transfer, 5.1.6 remains usable until its existing
+> term expires or an approved cutoff, 5.2.0 must not be published as the latest
+> stable, must not auto-update 5.1.6, and must not be installed over or
+> alongside 5.1.6. The installer guard is implemented in source (same AppId,
+> running-process and installed-version checks); the rebuilt installer/install
+> matrix, frozen release configuration, staging deployment, and E2E are still
+> pending. The 5.1.2 architecture described below remains the foundation of the
+> deferred update lifecycle; it has been shipped and extended through
+> 5.1.3–5.1.6. This document describes repository state, not a hosted-backend
+> deployment audit.
+>
+> **Release-label rule:** `5.3.0` is not a release label. The 5.3.0 documents
+> are retained as historical/legacy-retirement material only.
 
 ---
 
@@ -63,12 +110,15 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
   - Disabled once a newer accepted machine release existed on GitHub.
 - The bootstrap path is retained for traceability; it is not the release path for the current line.
 
-### 1.3 Release Line 5.1.3–5.2.0
+### 1.3 Release Line 5.1.3–5.2.2 (source)
 - **v5.1.3**: installed-file integrity check and repair in Settings; update-notification and Settings-focus refinements; clean uninstall/state cleanup; machine credential provisioned during baseline enrollment.
 - **v5.1.4**: 64-bit WOW64 redirection guard in the elevated driver installer and non-BOM ASCII installer logging.
 - **v5.1.5**: native `ensure-netfilter2.cmd` Sysnative dispatcher and Inno Setup result-file polling guard.
 - **v5.1.6**: startup update-check splash before the main window; in-app update progress dialog; windowless updater helper; committed-generation self-sync; Settings version check; baseline enrollment from a working-directory install root.
-- **v5.2.0 (planned preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The line is being converted to web-auth-only with a separate installer/backend; 5.1.6 remains on the legacy line and must be uninstalled before a 5.2.0 installation. See the separation plan.
+- **v5.2.0 (unified-line release target, preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The new line uses Neko-NETWORK-ID and Neko Proxy API only; 5.1.6 remains on the legacy line and must be uninstalled before a clean 5.2.0 installation. See [5.2.0-release-notes.md](5.2.0-release-notes.md) and [5.2.0-release-runbook.md](5.2.0-release-runbook.md).
+- **v5.2.1 (preview/manual; built and installed, not published)**: login copy and Discord icon, login-endpoint pre-warm, fixed 500×640 window, one-frame Settings render, and an uninstall-time process guard. Envelope `preview-0016`, sequence 16, `minimum_supported_sequence = 16`. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
+- **v5.2.2 (source preparation)**: schema-2 support diagnostics with privacy-safe auth/restore timing, pinned-status centered login layout with a floating pending panel, and a startup splash that waits for session restore so auto-login does not flash the login screen. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
+- **v5.2.2a (local alpha build; not published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0023` (sequence 23, `minimum_supported_sequence = 23`). Installer `17458568…` (201,007,176 bytes, unsigned); launcher `1837c270…` (21,629,808 bytes); updater `c3411b95…` (11,281,237 bytes). Revision 6 is the final rebuild of the code-review/hardening pass: update evidence pruning, streaming Core hashes, 900 s apply deadline, in-memory verified elevated driver script, scratch cleanup on uninstall, trimmed frozen builds, and UI robustness fixes. Sequences 17–22 were consumed by the b17 test build and revisions 1–5. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
 
 ---
 
@@ -106,7 +156,7 @@ The released line preserves all fundamental security and product invariants:
 - **External Core Topology**: NekoProxyCore remains external under `%LOCALAPPDATA%\NEKO FAMILY\ProxyCore\NekoProxyCore.exe`.
 - **Game Invariant**: Launcher close, update staging, and update deferral never kill `pso2.exe`.
 - **Single-Instance Mutex**: `Local\NekoFamilyProxyLauncher` remains the cross-process single-instance boundary; no competing locks added.
-- **Credential Isolation**: Client contains only publishable credentials (Supabase URL / anon key); no service keys or private signing keys.
+- **Credential Isolation**: 5.1.6 contains only publishable Supabase credentials (URL / anon key); the 5.2.0 new line contains no Supabase URL, key, session, or proxy database credential. Neither line contains service keys or private signing keys.
 - **Canonical Version Display**: Launcher window title bar is bound directly to `neko_launcher.__version__` (`NEKO FAMILY PROXY v<version>`).
 - **Installer Core Authority**: Post-install verification parameters match build-approved authority dynamically.
 
@@ -114,8 +164,8 @@ The released line preserves all fundamental security and product invariants:
 
 ## 4. Verification Evidence Summary
 
-- **Launcher suite**: 2,607 passed, 4 skipped, 7 deselected on 2026-10-25. This includes the new `launcher_v2` auth-foundation, claim/permit, bridge-support, staging-runbook, installer-separation, next-line schema-selection, web-only/frozen-build, preview-channel, and feed-isolation tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
-- **Repository safety**: PASS on 2026-10-24 (`scripts/check_repository_safety.py`).
+- **Launcher suite**: 2,809 passed, 5 skipped, 7 deselected on 2026-10-26 (source). This includes the `launcher_v2` auth-foundation, claim/permit, bridge-support, staging-runbook, installer-separation, next-line schema-selection, web-only/frozen-build, preview-channel, and feed-isolation tests, plus the 5.2.2 support-diagnostics and startup splash/session-restore tests; the PowerShell-dependent test remains environment-skipped when `pwsh` is unavailable.
+- **Repository safety**: PASS on 2026-10-26 (`scripts/check_repository_safety.py`).
 - **Ruff and CI**: `ruff check src tests` PASS; CI enforces the same gate in `.github/workflows/ci.yml`.
 - **Git diff**: `git diff --check` PASSED with clean formatting and no whitespace defects.
 - **Edge permit service**: 31 Node tests PASS, including rate-limit 429 and fail-closed 503 paths.

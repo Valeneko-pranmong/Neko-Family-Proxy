@@ -7,6 +7,13 @@ production enablement is authorized by this document.
 
 **Owner:** Neko Family Proxy maintainers
 
+> **Superseded for the new line (2026-10-25):** the bridge/session-minting and
+> launcher web-session allowlist portions of this plan are replaced by the
+> identity access/refresh token + Neko Proxy API design in
+> [docs/current/5.3.0-proxy-api-launcher.md](../../current/5.3.0-proxy-api-launcher.md).
+> `5.1.6` remains unchanged; the remainder of this document is historical
+> context for the 5.2.0 line.
+
 **Supersedes:** the in-place 5.1.6 -> 5.2.0 upgrade policy in the 5.2.0 release
 notes and manual-upgrade guide.
 
@@ -407,13 +414,12 @@ publisher and hosted verifier require preview manifests to be prereleases, and
 guards cover 5.2.x suffixes. Full Launcher suite: 2,629 passed / 4 skipped.
 Actual preview publication, 5.2.0 auto-apply, and feed-level E2E remain open.
 
-**P4 alpha slice status (2026-10-25):** the 5.2 preview candidate is
-re-versioned `5.2.0a1` for an alpha test. The version regexes in the release,
-publisher, verifier, workflow, and installer toolchain accept PEP 440 alpha
-suffixes while keeping the 5.2 line preview-only. Alpha scope, evidence, exit
-criteria, and rollback are recorded in `docs/current/5.2.0-alpha-test.md`.
-No tag/publication exists; staging E2E and staged installer payloads remain
-blocked (ISCC itself is available).
+**P4 alpha slice status (2026-10-27):** the intermediate `5.2.0a1`
+re-version was superseded by the `5.2.2a` local alpha build (revision 6). The
+release, publisher, verifier, workflow, and installer toolchain accept
+alpha/PEP 440 suffixes while keeping the 5.2 line preview-only. Evidence:
+`docs/current/5.2.2a-alpha-build.md`. No tag or publication exists; staging E2E
+and staged installer payloads remain blocked (ISCC itself is available).
 
 ### P5 — 5.3.0 Cutover
 

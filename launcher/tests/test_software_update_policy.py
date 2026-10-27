@@ -871,6 +871,38 @@ def test_newer_same_major_is_mandatory_even_if_manifest_flag_false() -> None:
     assert result is StartupUpdateDisposition.MANDATORY_UPDATE
 
 
+def test_5_2_1_to_5_2_2_is_mandatory_on_next_startup() -> None:
+    result = classify_startup_release(
+        local=local_release_identity(version="5.2.1", sequence=16),
+        remote=bound_release(
+            version="5.2.2",
+            sequence=17,
+            mandatory=False,
+            minimum_supported_sequence=17,
+        ),
+    )
+    assert result is StartupUpdateDisposition.MANDATORY_UPDATE
+
+
+def test_5_2_2_minimum_sequence_forces_mandatory_even_without_flag() -> None:
+    local = local_release_identity(
+        version="5.2.1",
+        sequence=16,
+        release_id="preview-0016",
+    )
+    remote = release_for(
+        bind(17, release_id="preview-0017"),
+        mandatory=False,
+        minimum_supported_sequence=17,
+        launcher_version="5.2.2",
+    )
+
+    result = evaluate_release(local, remote, UpdateInvocationReason.STARTUP)
+
+    assert result.state is UpdateState.MANDATORY
+    assert result.mandatory is True
+
+
 def test_next_major_requires_reinstall() -> None:
     result = classify_startup_release(
         local=local_release_identity(version="5.1.3", sequence=9),

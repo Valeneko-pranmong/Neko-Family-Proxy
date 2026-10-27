@@ -1,6 +1,13 @@
 # Launcher Web Auth — Implementation Status
 
-**Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging. A reference proxy bridge is implemented in `supabase/functions/launcher_bridge/` (identity JWT/JWKS validation, JTI replay, identity link, session mint, web-session allowlist) but is not deployed; identity→proxy mapping and E2E are not complete. **Policy decision (2026-10-25):** 5.2.0 is a new-accounts-only web-auth line using an isolated schema in the same Supabase project; 5.1.6 remains on legacy password/recovery until the 5.3.0 cutover; there is no day/coupon transfer. See the separation plan.
+**Status:** Launcher-side loopback/PKCE/token/bridge adapter implemented on 2026-10-25. Gated off by default. Identity endpoints are live on staging. A reference proxy bridge is implemented in `supabase/functions/launcher_bridge/` (identity JWT/JWKS validation, JTI replay, identity link, session mint, web-session allowlist) but is not deployed; identity→proxy mapping and E2E are not complete. **Policy decision (2026-10-25):** this bridge/session-minting document is legacy/5.1.6-only. The 5.2.0 unified line uses Neko-NETWORK-ID and Neko Proxy API without a bridge or Supabase session; 5.1.6 remains on legacy password/recovery until a future, separately approved legacy-retirement gate. There is no day/coupon transfer. See [5.2.0-release-notes.md](5.2.0-release-notes.md).
+
+> **New-line supersession (2026-10-25):** this bridge/session-minting
+> implementation is legacy/5.1.6-only. The unified 5.2.0 line uses identity
+> access/refresh tokens and Neko Proxy API only; see
+> [5.3.0-proxy-api-launcher.md](5.3.0-proxy-api-launcher.md) (design reference;
+> release label superseded), [5.2.0-release-notes.md](5.2.0-release-notes.md),
+> and [proxy-api-launcher-contract.md](proxy-api-launcher-contract.md).
 
 ## Live identity contract
 
@@ -72,5 +79,5 @@ The Launcher maps `401 invalid_token`, `409 token_replayed`, `409 identity_not_l
 - 5.1.6 remains the public stable line with password/recovery on the legacy backend; do not force it to 5.2.0.
 - 5.2.0 is a new-accounts-only preview line using an isolated schema in the same Supabase project. It is web-auth-only at release, must not retain password/recovery fallback, must not be installed over or alongside 5.1.6, and must not become the latest stable update for 5.1.6.
 - 5.2.0 uses a dedicated preview channel and a clean local start; legacy 5.1.6 users stay on their existing term and receive no day/coupon transfer.
-- 5.3.0 is the cutover release after the bridge, mapping, link/claim, Control Room admin web auth, and E2E are complete; legacy shutdown is gate-based and waits for the last active term or an explicit cutoff.
+- Legacy retirement is a future, separately approved gate after the unified line, Control Room admin web auth, and E2E are complete. `5.3.0` is not a release label; legacy shutdown waits for the last active term or an explicit cutoff.
 - No release/tag/publish is authorized by this document. The authoritative development sequence is [`../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md`](../superpowers/plans/2026-10-25-web-auth-separation-and-5-3-0-cutover.md).

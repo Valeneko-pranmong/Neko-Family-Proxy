@@ -1121,6 +1121,37 @@ def test_valid_later_update_accepts_previous_and_exact_referenced_evidence(
         env.close()
 
 
+def test_authenticated_superseded_evidence_does_not_block_build(
+    tmp_path: Path,
+) -> None:
+    from neko_launcher.updater.generation_builder import build_generation
+
+    env = Env(tmp_path)
+    try:
+        extra_payload, extra_envelope = env.sign(
+            3,
+            env.new_launcher_sha,
+            len(env.new_launcher),
+            env.core_zip_sha,
+            env.core_zip.stat().st_size,
+            env.new_core_sha,
+        )
+        extra_sha = hashlib.sha256(extra_payload).hexdigest()
+        env.state = replace(
+            env.state,
+            evidence={
+                **env.state.evidence,
+                extra_sha: base64.b64encode(extra_envelope).decode("ascii"),
+            },
+        )
+
+        result = build_generation(env.root, env.state, env.keys)
+
+        assert result.generation == env.candidate
+    finally:
+        env.close()
+
+
 def test_valid_rollback_preserved_highwater_is_accepted(tmp_path: Path) -> None:
     from neko_launcher.updater.generation_builder import build_generation
 

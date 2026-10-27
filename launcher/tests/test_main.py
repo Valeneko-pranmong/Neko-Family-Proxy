@@ -75,13 +75,18 @@ def test_startup_error_report_does_not_persist_or_display_exception_detail(
     try:
         raise RuntimeError(sentinel)
     except RuntimeError as exc:
-        _report_startup_error(exc)
+        _report_startup_error(
+            exc,
+            phases=("main_entry", "window_build"),
+        )
 
     log_text = (tmp_path / "NEKO FAMILY" / "launcher-error.log").read_text(
         encoding="utf-8"
     )
     assert sentinel not in log_text
     assert "Traceback" not in log_text
+    assert "EXCEPTION_CLASS=RuntimeError" in log_text
+    assert "BOOT_PHASES=main_entry,window_build" in log_text
     assert messages and sentinel not in messages[0]
 
 
@@ -160,6 +165,22 @@ def test_replace_executable_atomically_rolls_back_when_final_rename_fails(
     assert not backup.exists()
     assert not (tmp_path / "NekoLauncher.exe.new").exists()
     assert len(calls) == 3
+
+
+def test_main_tk_self_test_exits_before_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(sys, "argv", ["NekoLauncher.exe", "--tk-self-test"])
+    monkeypatch.setattr("neko_launcher.main._run_tk_self_test", lambda: calls.append("tk") or 0)
+    monkeypatch.setattr(
+        "neko_launcher.main.maybe_dispatch_updater_entry",
+        lambda args: calls.append("dispatch") or False,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    assert calls == ["tk"]
 
 
 def test_main_bootstrap_handoff_started_exits_before_building_window(

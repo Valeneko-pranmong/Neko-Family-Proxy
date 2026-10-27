@@ -4,7 +4,11 @@ from __future__ import annotations
 import secrets
 
 from neko_launcher.updater.state_machine import validate_transition
-from neko_launcher.updater.state_models import Rollback, State
+from neko_launcher.updater.state_models import (
+    Rollback,
+    State,
+    prune_unreferenced_evidence,
+)
 
 
 def initiate_postcommit_rollback(current_state: State, error_code: str) -> State:
@@ -43,6 +47,7 @@ def initiate_postcommit_rollback(current_state: State, error_code: str) -> State
         last_error=error_code,
         evidence=current_state.evidence,
     )
+    next_state = prune_unreferenced_evidence(next_state)
 
     validate_transition(current_state, next_state)
     return next_state
@@ -78,6 +83,7 @@ def complete_postcommit_rollback_selection(current_state: State) -> State:
         last_error=current_state.last_error,
         evidence=current_state.evidence,
     )
+    next_state = prune_unreferenced_evidence(next_state)
 
     validate_transition(current_state, next_state)
     return next_state

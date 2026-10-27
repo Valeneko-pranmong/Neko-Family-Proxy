@@ -186,7 +186,7 @@ def test_rollout_blocks_preview_only_5_2_from_stable() -> None:
 
     guard = "$normalizedTag = $env:RELEASE_TAG.TrimStart('v')"
     assert guard in rollout
-    assert r"^5\.2\.\d+((a|b|rc)\d+)?([-+].*)?$" in rollout
+    assert r"^5\.2\.\d+(?:(?:a|b|rc)\d*|[-+].*)?$" in rollout
     assert "preview-only and cannot be promoted to stable" in rollout
     assert rollout.index(guard) < rollout.index("--method PATCH")
 

@@ -967,15 +967,18 @@ def test_verify_assets_accepts_5_2_preview_prerelease(tmp_path: Path) -> None:
     )
 
 
-def test_verify_assets_accepts_5_2_alpha_prerelease(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["5.2.0a1", "5.2.2a"])
+def test_verify_assets_accepts_5_2_alpha_prerelease(
+    tmp_path: Path, version: str
+) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(
         tmp_path,
-        tag_name="v5.2.0a1",
+        tag_name=f"v{version}",
         release_id="preview-0008",
-        launcher_version="5.2.0a1",
-        updater_version="5.2.0a1",
-        core_version="5.2.0a1",
+        launcher_version=version,
+        updater_version=version,
+        core_version=version,
         channel="preview",
         prerelease=True,
         draft=False,

@@ -6,6 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .defaults import (
     ACCOUNT_RECOVERY_API_URL,
@@ -15,6 +16,7 @@ from .defaults import (
     SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_URL,
 )
+from .release_config import RELEASE_IDENTITY_BASE_URL, RELEASE_PROXY_API_URL
 
 
 class ProgramPreferences:
@@ -85,6 +87,8 @@ class LauncherConfig:
     proxy_status_api_url: str
     identity_base_url: str
     web_auth_bridge_url: str
+    proxy_api_url: str
+    proxy_api_enabled: bool
     web_auth_enabled: bool
     web_auth_only: bool
     launcher_schema: str
@@ -112,18 +116,53 @@ class LauncherConfig:
             except OSError:
                 stored_game_exe = ""
         proxy_path = local_app_data / "NEKO FAMILY" / "ProxyCore" / "NekoProxyCore.exe"
-        identity_base_url = (
-            os.getenv("NEKO_IDENTITY_BASE_URL", "").strip() or IDENTITY_BASE_URL
-        )
+        frozen_build = bool(getattr(sys, "frozen", False))
+        env_identity_base_url = os.getenv("NEKO_IDENTITY_BASE_URL", "").strip()
+        if frozen_build:
+            if env_identity_base_url:
+                raise ValueError(
+                    "NEKO_IDENTITY_BASE_URL is disabled in frozen builds"
+                )
+            if not RELEASE_IDENTITY_BASE_URL:
+                raise ValueError(
+                    "frozen 5.2.2a builds require a release identity base URL"
+                )
+            identity_base_url = _require_https_origin(
+                RELEASE_IDENTITY_BASE_URL, "RELEASE_IDENTITY_BASE_URL"
+            )
+        else:
+            identity_base_url = env_identity_base_url or IDENTITY_BASE_URL
         web_auth_bridge_url = os.getenv("NEKO_AUTH_BRIDGE_URL", "").strip()
-        # The web path stays hidden until the proxy bridge exists and the owner
-        # explicitly enables it; password login remains the fallback.
-        web_auth_enabled = (
+        env_proxy_api_url = os.getenv("NEKO_PROXY_API_URL", "").strip()
+        if env_proxy_api_url and frozen_build:
+            raise ValueError("NEKO_PROXY_API_URL is disabled in frozen builds")
+        if frozen_build:
+            if not RELEASE_PROXY_API_URL:
+                raise ValueError(
+                    "frozen 5.2.2a builds require a release proxy API URL"
+                )
+            proxy_api_url = _require_https_origin(
+                RELEASE_PROXY_API_URL, "RELEASE_PROXY_API_URL"
+            )
+        elif env_proxy_api_url:
+            proxy_api_url = _require_https_origin(
+                env_proxy_api_url, "NEKO_PROXY_API_URL"
+            )
+        else:
+            proxy_api_url = ""
+        if proxy_api_url and web_auth_bridge_url:
+            raise ValueError(
+                "NEKO_PROXY_API_URL and NEKO_AUTH_BRIDGE_URL are mutually exclusive"
+            )
+        proxy_api_enabled = bool(proxy_api_url)
+        legacy_web_auth_enabled = (
             os.getenv("NEKO_WEB_AUTH_ENABLED") == "1"
             and bool(web_auth_bridge_url)
         )
+        # The new line uses NEKO_PROXY_API_URL in source/dev and the frozen
+        # release origin from release_config in packaged preview builds.
+        web_auth_enabled = proxy_api_enabled or legacy_web_auth_enabled
         web_auth_only_override = os.getenv("NEKO_WEB_AUTH_ONLY", "").strip()
-        frozen_build = bool(getattr(sys, "frozen", False))
         if web_auth_only_override == "1":
             if not web_auth_enabled:
                 raise ValueError(
@@ -135,11 +174,15 @@ class LauncherConfig:
                 raise ValueError(
                     "password authentication is disabled in frozen builds"
                 )
+            if proxy_api_enabled:
+                raise ValueError(
+                    "NEKO_PROXY_API_URL requires web-only authentication"
+                )
             web_auth_only = False
         elif frozen_build:
             if not web_auth_enabled:
                 raise ValueError(
-                    "frozen 5.2.0 builds require the web auth bridge"
+                    "frozen 5.2.2a builds require web authentication"
                 )
             web_auth_only = True
         else:
@@ -164,9 +207,26 @@ class LauncherConfig:
             proxy_status_api_url=PROXY_STATUS_API_URL,
             identity_base_url=identity_base_url,
             web_auth_bridge_url=web_auth_bridge_url,
+            proxy_api_url=proxy_api_url,
+            proxy_api_enabled=proxy_api_enabled,
             web_auth_enabled=web_auth_enabled,
             web_auth_only=web_auth_only,
             launcher_schema=launcher_schema,
             debug_mode=debug_mode,
             debug_log_dir=debug_log_dir,
         )
+
+
+def _require_https_origin(value: str, name: str) -> str:
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(f"{name} must be an HTTPS origin")
+    return value.rstrip("/")

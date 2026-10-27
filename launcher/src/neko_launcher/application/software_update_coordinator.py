@@ -340,6 +340,12 @@ class SoftwareUpdateCoordinator:
             disposition = StartupUpdateDisposition.MANDATORY_UPDATE
         elif self._startup_disposition is not None:
             disposition = self._startup_disposition
+        elif (
+            check_result.diagnostic_code is None
+            and check_result.state
+            in (UpdateState.UNAVAILABLE, UpdateState.LATEST)
+        ):
+            disposition = StartupUpdateDisposition.CURRENT
 
         if disposition is StartupUpdateDisposition.REINSTALL_REQUIRED:
             diag_code = (
@@ -492,11 +498,12 @@ class SoftwareUpdateCoordinator:
             snap = self._current_snapshot or self._startup_snapshot
             if snap.pending is not None:
                 return False
-            if snap.disposition != StartupUpdateDisposition.CURRENT:
+            if snap.disposition in (
+                StartupUpdateDisposition.REINSTALL_REQUIRED,
+                StartupUpdateDisposition.MANDATORY_UPDATE,
+            ):
                 return False
-            if snap.diagnostic_code is not None:
-                return False
-            return snap.state == UpdateLifecycleState.IDLE
+            return True
 
     def is_login_permitted(self) -> bool:
         return self.can_proceed_to_login()

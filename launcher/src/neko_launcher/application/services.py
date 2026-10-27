@@ -5,6 +5,7 @@ from threading import Event, RLock, Thread
 
 from neko_launcher.domain.events import (
     AuthFailed,
+    AuthProgress,
     AuthStarted,
     AuthSucceeded,
     EntitlementLoaded,
@@ -15,6 +16,7 @@ from neko_launcher.domain.events import (
 )
 from neko_launcher.domain.models import (
     AuthenticatedUser,
+    AuthPhase,
     AuthStatus,
     CouponRedemption,
     Entitlement,
@@ -35,6 +37,7 @@ from .ports import (
     AccountRecoveryGateway,
     AuthGateway,
     EntitlementGateway,
+    IdentityWebAuthenticator,
     InstallationIdentity,
     WebAuthAuthenticator,
 )
@@ -121,7 +124,10 @@ class LauncherService:
         with self._session_lock:
             self._sign_in_locked(username, password)
 
-    def sign_in_with_web(self, authenticator: WebAuthAuthenticator) -> None:
+    def sign_in_with_web(
+        self,
+        authenticator: WebAuthAuthenticator | IdentityWebAuthenticator,
+    ) -> None:
         with self._session_lock:
             self._clear_recovery_session()
             self._controller.dispatch(AuthStarted("discord"))
@@ -154,6 +160,7 @@ class LauncherService:
         self._complete_sign_in(user)
 
     def _complete_sign_in(self, user: AuthenticatedUser) -> None:
+        self._controller.dispatch(AuthProgress(AuthPhase.CHECKING_ENTITLEMENT))
         try:
             claimed = self._claim_session(allow_missing=True)
         except LauncherServiceError:
@@ -184,6 +191,16 @@ class LauncherService:
     @property
     def has_recovery_session(self) -> bool:
         return self._recovery_session is not None
+
+    @property
+    def heartbeat_interval_seconds(self) -> int:
+        """Return the server-provided heartbeat interval, clamped to 10-60 s."""
+        try:
+            raw = getattr(self._entitlement_gateway, "heartbeat_interval_seconds", 30)
+            seconds = int(raw)
+        except (TypeError, ValueError):
+            seconds = 30
+        return min(60, max(10, seconds))
 
     def begin_account_recovery(self) -> None:
         self._require_password_auth()
@@ -572,7 +589,7 @@ class LauncherService:
     def _require_password_auth(self) -> None:
         if self._web_auth_only:
             raise LauncherServiceError(
-                "5.2.0 ใช้การเข้าสู่ระบบผ่าน Discord เท่านั้น"
+                "โปรแกรมนี้อนุญาตให้เข้าสู่ระบบด้วยบัญชี Discord เท่านั้น"
             )
 
     def _clear_recovery_session(self) -> None:
