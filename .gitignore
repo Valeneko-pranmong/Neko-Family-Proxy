@@ -204,4 +204,7 @@ cython_debug/
 # Local packaged-artifact smoke scratch evidence (screenshots, sandbox, logs)
 .hermes-smoke-shots/
 
+# Production sequence authority ledger lives on the custody host; keep it out of the repo
+/authority/
+
 /.tmp.driveupload
