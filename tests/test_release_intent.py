@@ -1,6 +1,7 @@
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -183,6 +184,15 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
             setup_out = candidate_dir / "out"
             setup_out.mkdir(parents=True, exist_ok=True)
             (setup_out / "NekoFamilyProxy-Installer.exe").write_text("fake_setup")
+            payload_dir = candidate_dir / "payload"
+            baseline_dir = payload_dir / "baseline"
+            baseline_dir.mkdir(parents=True, exist_ok=True)
+            env_in = Path(args[0][args[0].index("--baseline-envelope") + 1])
+            (baseline_dir / "release-v2.json").write_bytes(env_in.read_bytes())
+            trust_dir = payload_dir / "trust"
+            trust_dir.mkdir(parents=True, exist_ok=True)
+            trust_in = Path(args[0][args[0].index("--trust-profile") + 1])
+            (trust_dir / "update-profile-v1.json").write_bytes(trust_in.read_bytes())
         return subprocess.CompletedProcess(args[0], 0, stdout=b"", stderr=b"")
     monkeypatch.setattr("subprocess.run", mock_run)
     monkeypatch.setattr("subprocess.check_output", lambda *a, **k: b"file.txt\n" if "git" in a[0] else b'{"assets":[{"name":"release-v2.json","url":"http"}]}')
@@ -252,6 +262,10 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     (dist_dir / "NekoLauncher.exe").write_text("l")
     (dist_dir / "NekoUpdater.exe").write_text("u")
 
+    trust_dir = source_dir / "trust"
+    trust_dir.mkdir(parents=True, exist_ok=True)
+    (trust_dir / "update-profile-v1.json").write_bytes(b"{}\n")
+
     # Fake shutil copy so the publish dir has the exe
     def fake_copy(src, dst):
         Path(dst).parent.mkdir(parents=True, exist_ok=True)
@@ -265,6 +279,29 @@ def test_e_build_record_provenance(monkeypatch, tmp_path):
     def fake_sha256(path):
         return "0d20debb26fc8b2bc84f25fbd9d4596a6364af8517ebf012e8b871127b798941"
     monkeypatch.setattr(release_controller, "_get_sha256", fake_sha256)
+
+    monkeypatch.setattr(
+        release_controller,
+        "require_sequence_allocation",
+        lambda target: (8, "stable-0008"),
+    )
+    monkeypatch.setattr(
+        release_controller,
+        "load_verified_trust_profile",
+        lambda path: (
+            {
+                "profile_id": "production",
+                "channel": "stable",
+                "owner": "Valeneko-pranmong",
+                "repository": "Neko-Family-Proxy",
+                "profile_authority_key_id": "neko-update-profile-v520-2",
+                "profile_authority_public_key_sha256": "a" * 64,
+                "profile_envelope_sha256": "b" * 64,
+                "keyset_sha256": "c" * 64,
+            },
+            SimpleNamespace(),
+        ),
+    )
 
     release_controller.process_accepted_commits("sha1", 1, installer_repo="Valeneko-pranmong/Neko-Family-Proxy-Installer")
 

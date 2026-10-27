@@ -20,7 +20,12 @@
 
 .PARAMETER Force
     Skip the typed confirmation. Also allows removing a version other than
-    5.2.0 and running from an elevated shell.
+    5.2.x. This does not permit running from an elevated shell.
+
+.PARAMETER UninstallerSha256
+    Optional pinned SHA-256 of the Inno Setup uninstaller. When supplied, the
+    uninstaller is executed only if its bytes match; otherwise it is skipped
+    and only known leftovers are removed.
 
 .PARAMETER KeepLogs
     Copy launcher/support logs to a backup folder before uninstalling.
@@ -49,7 +54,8 @@ param(
     [switch]$Force,
     [switch]$KeepLogs,
     [string]$LogBackupPath,
-    [int]$TimeoutSeconds = 180
+    [int]$TimeoutSeconds = 180,
+    [string]$UninstallerSha256 = ''
 )
 
 Set-StrictMode -Version Latest
@@ -63,6 +69,7 @@ $script:LogRoot = Join-Path $env:LOCALAPPDATA 'NekoFamilyProxy'
 $script:KnownUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{D4A7C182-6B3E-4F19-9C05-2E8AF7B31D64}_is1'
 $script:AppDisplayName = 'NEKO FAMILY PROXY'
 $script:CredentialTarget = 'Neko Family Launcher'
+$script:UninstallerHash = ''
 
 function Write-Log {
     param(
@@ -107,6 +114,40 @@ function Test-UnderDirectory {
     }
     catch {
         return $false
+    }
+}
+
+function Assert-UninstallerTrusted {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$ExpectedSha256
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Uninstaller is a reparse point.'
+    }
+    if ($item.Name -notmatch '^unins\d{3}\.exe$') {
+        throw "Unexpected uninstaller filename: $($item.Name)"
+    }
+    if (-not (Test-SamePath -Left $item.DirectoryName -Right $script:AppRoot)) {
+        throw 'Uninstaller is not a direct child of the app root.'
+    }
+
+    $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $script:UninstallerHash = $hash
+    if ($ExpectedSha256) {
+        $expected = $ExpectedSha256.Trim().ToLowerInvariant()
+        if ($expected -notmatch '^[0-9a-f]{64}$') {
+            throw 'UninstallerSha256 must be exactly 64 hexadecimal characters.'
+        }
+        if ($hash -ne $expected) {
+            throw "Uninstaller SHA-256 mismatch: got $hash"
+        }
+        Write-Log "Uninstaller SHA-256 matches the pin: $hash"
+    }
+    else {
+        Write-Log "Uninstaller SHA-256 is not pinned: $hash" 'WARN'
     }
 }
 
@@ -353,6 +394,7 @@ function Show-UninstallSummary {
     Write-Log "Installed version : $(if ($Version) { $Version } else { 'unknown' })"
     Write-Log "App root          : $($script:AppRoot)"
     Write-Log "Uninstaller       : $(if ($Uninstaller) { $Uninstaller } else { 'not found' })"
+    Write-Log "Uninstaller SHA-256: $(if ($script:UninstallerHash) { $script:UninstallerHash } else { 'not computed' })"
     Write-Log "Log backup        : $(if ($LogBackup) { $LogBackup } else { 'not requested' })"
     Write-Log "netfilter2        : $(Get-Netfilter2Status) (preserved by design)"
     Write-Log "Script log        : $($script:LogFile)"
@@ -366,11 +408,9 @@ try {
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     $isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($isElevated) {
-        Write-Log 'Running elevated. This is a per-user install; run as the installing user, not as Administrator.' 'WARN'
-        if (-not $Force) {
-            Write-Log 'Aborting. Re-run without elevation, or pass -Force if this is intentional.' 'ERROR'
-            exit 2
-        }
+        Write-Log 'Running elevated. This is a per-user install; run as the installing user, not as Administrator.' 'ERROR'
+        Write-Log 'Aborting. Elevation is not permitted for this script.' 'ERROR'
+        exit 2
     }
 
     $entries = @(Get-NekoUninstallEntries)
@@ -393,8 +433,8 @@ try {
     }
 
     $version = if ($null -ne $entry) { [string]$entry.DisplayVersion } else { '' }
-    if ($version -and -not $Force -and $version -ne '5.2.0' -and -not $DryRun) {
-        Write-Log "Installed version is '$version', not 5.2.0. Pass -Force to remove this version." 'WARN'
+    if ($version -and -not $Force -and $version -notmatch '^5\.2\.\d+(?:[a-z]\d*)?$' -and -not $DryRun) {
+        Write-Log "Installed version is '$version', not a 5.2.x version. Pass -Force to remove this version." 'WARN'
         exit 2
     }
 
@@ -408,13 +448,15 @@ try {
         if ($null -ne $candidate) { $uninstaller = $candidate.FullName }
     }
 
-    if ($uninstaller -and -not (Test-Path -LiteralPath $uninstaller)) {
-        Write-Log "Registered uninstaller does not exist: $uninstaller" 'WARN'
-        $uninstaller = $null
-    }
-    if ($uninstaller -and -not (Test-UnderDirectory -Path $uninstaller -Directory $script:AppRoot)) {
-        Write-Log "Refusing uninstaller outside the app root: $uninstaller" 'ERROR'
-        $uninstaller = $null
+    if ($uninstaller) {
+        try {
+            Assert-UninstallerTrusted -Path $uninstaller -ExpectedSha256 $UninstallerSha256
+        }
+        catch {
+            Write-Log "Refusing to run uninstaller: $($_.Exception.Message)" 'ERROR'
+            $script:Problems.Add('Official uninstaller was not trusted; execution skipped.') | Out-Null
+            $uninstaller = $null
+        }
     }
 
     if ($null -eq $entry -and -not (Test-Path -LiteralPath $script:AppRoot) -and -not (Test-Path -LiteralPath $script:LogRoot)) {

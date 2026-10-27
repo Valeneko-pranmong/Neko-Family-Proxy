@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 import pytest
 
 from scripts.publish_atomic_release import (
@@ -17,10 +18,40 @@ from scripts.release_controller import (
     InstallerPublishError,
     REQUIRED_INSTALLER_ASSET,
     StagedInstallerDraftEvidence,
+    load_verified_trust_profile,
     process_accepted_commits,
     publish_split_release,
+    require_sequence_allocation,
     validate_installer_repo_configuration,
 )
+
+
+def test_require_sequence_allocation_refuses_missing_defaults():
+    with pytest.raises(RuntimeError, match="refusing to default"):
+        require_sequence_allocation(
+            SimpleNamespace(source_base="v5.1.6", target="v5.2.0")
+        )
+    with pytest.raises(RuntimeError, match="refusing to default"):
+        require_sequence_allocation(("v5.1.6", "v5.2.0"))
+    with pytest.raises(RuntimeError, match="must be positive"):
+        require_sequence_allocation(("v5.1.6", "v5.2.0", 0, "stable-0000"))
+
+    assert require_sequence_allocation(
+        ("v5.1.6", "v5.2.0", 23, "preview-0023")
+    ) == (23, "preview-0023")
+    assert require_sequence_allocation(
+        SimpleNamespace(sequence=23, release_id="preview-0023")
+    ) == (23, "preview-0023")
+
+
+def test_load_verified_trust_profile_fails_closed(tmp_path):
+    with pytest.raises(RuntimeError, match="not found"):
+        load_verified_trust_profile(tmp_path / "missing.json")
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_bytes(b"{}")
+    with pytest.raises(RuntimeError, match="verification failed"):
+        load_verified_trust_profile(invalid)
 
 
 def _make_clean_git_executor(tag: str, sha: str, *, custom_handler=None):
@@ -440,6 +471,10 @@ def test_process_accepted_commits_unified_build_and_provenance(monkeypatch, tmp_
             if "--baseline-envelope" in args:
                 env_in = Path(args[args.index("--baseline-envelope") + 1])
                 (baseline_dir / "release-v2.json").write_bytes(env_in.read_bytes())
+            trust_dir = staging_base / "5.1.2" / "payload" / "trust"
+            trust_dir.mkdir(parents=True, exist_ok=True)
+            trust_in = Path(args[args.index("--trust-profile") + 1])
+            (trust_dir / "update-profile-v1.json").write_bytes(trust_in.read_bytes())
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         if "build_software_release_v2.py" in str(args[1]):
             import base64
@@ -490,6 +525,23 @@ def test_process_accepted_commits_unified_build_and_provenance(monkeypatch, tmp_
     monkeypatch.setattr(
         "scripts.publish_atomic_release.publish_unified_release",
         lambda **kwargs: unified_publish_calls.append(kwargs),
+    )
+
+    monkeypatch.setattr(
+        "scripts.release_controller.load_verified_trust_profile",
+        lambda path: (
+            {
+                "profile_id": "production",
+                "channel": "stable",
+                "owner": "Valeneko-pranmong",
+                "repository": "Neko-Family-Proxy",
+                "profile_authority_key_id": "neko-update-profile-v520-2",
+                "profile_authority_public_key_sha256": "a" * 64,
+                "profile_envelope_sha256": "b" * 64,
+                "keyset_sha256": "c" * 64,
+            },
+            SimpleNamespace(),
+        ),
     )
 
     process_accepted_commits(sha, run_id, installer_repo=installer_repo)

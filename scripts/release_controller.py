@@ -116,6 +116,65 @@ def trust_profile_path() -> Path:
     configured = os.environ.get("NEKO_UPDATE_TRUST_PROFILE", "").strip()
     return Path(configured) if configured else Path()
 
+
+def load_verified_trust_profile(
+    canonical_trust_profile: Path,
+) -> tuple[dict[str, Any], Any]:
+    """Load and verify the release trust profile, refusing any fallback."""
+    from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
+    from neko_launcher.updater.trust_profile import verify_update_trust_profile
+
+    if not canonical_trust_profile.is_file():
+        raise RuntimeError(
+            "Canonical update trust profile not found; refusing to publish"
+        )
+    raw_trust_profile = canonical_trust_profile.read_bytes()
+    try:
+        verified_profile = verify_update_trust_profile(
+            raw_trust_profile,
+            profile_authority_public_keys=PROFILE_AUTHORITY_PUBLIC_KEYS,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Update trust profile verification failed: {exc}"
+        ) from exc
+    trust_prof_dict = {
+        "profile_id": verified_profile.profile_id,
+        "channel": verified_profile.channel,
+        "owner": verified_profile.owner,
+        "repository": verified_profile.repository,
+        "profile_authority_key_id": verified_profile.profile_authority_key_id,
+        "profile_authority_public_key_sha256": verified_profile.profile_authority_public_key_sha256,
+        "profile_envelope_sha256": verified_profile.profile_envelope_sha256,
+        "keyset_sha256": verified_profile.keyset_sha256,
+    }
+    return trust_prof_dict, verified_profile
+
+
+def require_sequence_allocation(target_res: Any) -> tuple[int, str]:
+    """Return the explicit ledger allocation; never invent a default sequence."""
+    if isinstance(target_res, tuple):
+        if len(target_res) < 4:
+            raise RuntimeError(
+                "Release target did not provide a complete sequence allocation; "
+                "refusing to default"
+            )
+        raw_sequence, raw_release_id = target_res[2], target_res[3]
+    else:
+        raw_sequence = getattr(target_res, "sequence", None)
+        raw_release_id = getattr(target_res, "release_id", None)
+    if raw_sequence is None or not raw_release_id:
+        raise RuntimeError(
+            "Release target is missing a sequence allocation; refusing to default"
+        )
+    try:
+        sequence = int(raw_sequence)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Release target sequence allocation is not an integer") from exc
+    if sequence <= 0:
+        raise RuntimeError("Release target sequence allocation must be positive")
+    return sequence, str(raw_release_id)
+
 _SEMVER_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 _SEMVER_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 _PYPROJECT_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -1507,17 +1566,7 @@ def process_accepted_commits(
         stable = resolution.source_base_tag
         stable_version = resolution.source_base_version
         version_source = resolution.version_source
-        if isinstance(target_res, tuple):
-            _, _, *allocation = target_res
-            sequence = int(allocation[0]) if allocation else 8
-            release_id = (
-                str(allocation[1])
-                if len(allocation) > 1
-                else f"stable-{sequence:04d}"
-            )
-        else:
-            sequence = getattr(target_res, "sequence", None) or 8
-            release_id = getattr(target_res, "release_id", None) or f"stable-{sequence:04d}"
+        sequence, release_id = require_sequence_allocation(target_res)
         print(
             f"Resolved version: {version_tag} ({version}) from {version_source}, "
             f"base/stable: {stable_version}, sequence: {sequence}, "
@@ -1735,42 +1784,15 @@ def process_accepted_commits(
     payload_sha = hashlib.sha256(payload_bytes).hexdigest()
 
     # Locate canonical production update-profile-v1.json
-    from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS
-    from neko_launcher.updater.trust_profile import verify_update_trust_profile
-
     canonical_trust_profile = trust_profile_path()
     if not canonical_trust_profile.is_file():
         canonical_trust_profile = staging_base / "update-profile-v1.json"
         if not canonical_trust_profile.is_file():
             canonical_trust_profile = source_dir / "trust" / "update-profile-v1.json"
 
-    raw_trust_profile = canonical_trust_profile.read_bytes() if canonical_trust_profile.is_file() else b"{}"
-    try:
-        verified_profile = verify_update_trust_profile(
-            raw_trust_profile,
-            profile_authority_public_keys=PROFILE_AUTHORITY_PUBLIC_KEYS,
-        )
-        trust_prof_dict = {
-            "profile_id": verified_profile.profile_id,
-            "channel": verified_profile.channel,
-            "owner": verified_profile.owner,
-            "repository": verified_profile.repository,
-            "profile_authority_key_id": verified_profile.profile_authority_key_id,
-            "profile_authority_public_key_sha256": verified_profile.profile_authority_public_key_sha256,
-            "profile_envelope_sha256": verified_profile.profile_envelope_sha256,
-            "keyset_sha256": verified_profile.keyset_sha256,
-        }
-    except Exception:
-        trust_prof_dict = {
-            "profile_id": "production",
-            "channel": "stable",
-            "owner": "Valeneko-pranmong",
-            "repository": "Neko-Family-Proxy",
-            "profile_authority_key_id": "neko-update-profile-v520-2",
-            "profile_authority_public_key_sha256": "41a4c0c7d5023fbbe50d16c9fb6d9d0fd22948393bd45150e79ec5d4728c123a",
-            "profile_envelope_sha256": "380e7df676d14fb16c773e124bdfda68ff83cac8ef7f846eb7ff51d55dd15a1c",
-            "keyset_sha256": "b80183016a2ffb2dca40d1a9f461762be4a933996b3e6ad5b54da1733800ff43",
-        }
+    trust_prof_dict, _verified_profile = load_verified_trust_profile(
+        canonical_trust_profile
+    )
 
     # Format frozen CoreAuthorityBinding dict
     if isinstance(core_provenance, dict):
@@ -1843,11 +1865,21 @@ def process_accepted_commits(
 
     embedded_envelope_file = payload_dir / "baseline" / "release-v2.json"
     embedded_profile_file = payload_dir / "trust" / "update-profile-v1.json"
-    embedded_envelope_sha256 = _get_sha256(embedded_envelope_file) if embedded_envelope_file.is_file() else manifest_hash
-    embedded_profile_sha256 = _get_sha256(embedded_profile_file) if embedded_profile_file.is_file() else _get_sha256(canonical_trust_profile)
+    if not embedded_envelope_file.is_file():
+        raise RuntimeError("Embedded release envelope is missing from installer payload")
+    if not embedded_profile_file.is_file():
+        raise RuntimeError("Embedded trust profile is missing from installer payload")
+
+    embedded_envelope_sha256 = _get_sha256(embedded_envelope_file)
+    embedded_profile_sha256 = _get_sha256(embedded_profile_file)
+    canonical_profile_sha256 = _get_sha256(canonical_trust_profile)
 
     if embedded_envelope_sha256 != manifest_hash:
         raise RuntimeError(f"Embedded envelope hash {embedded_envelope_sha256} does not match signed envelope {manifest_hash}")
+    if embedded_profile_sha256 != canonical_profile_sha256:
+        raise RuntimeError(
+            "Embedded trust profile does not match the verified canonical profile"
+        )
 
     # 10. Split publish
     build_record = {

@@ -41,6 +41,19 @@ def test_installer_blocks_a_different_installed_version() -> None:
     assert "Result := False;" in source
 
 
+def test_clean_uninstall_refuses_elevation_and_untrusted_uninstallers() -> None:
+    source = (REPO_ROOT / "installer" / "scripts" / "clean-uninstall.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Assert-UninstallerTrusted" in source
+    assert "Uninstaller is not a direct child of the app root." in source
+    assert "UninstallerSha256 must be exactly 64 hexadecimal characters." in source
+    assert "Elevation is not permitted for this script." in source
+    assert "Start-Process -FilePath $uninstaller" in source
+    assert "$version -notmatch '^5\\.2\\.\\d+(?:[a-z]\\d*)?$'" in source
+
+
 def test_elevated_driver_command_verifies_script_bytes_before_execution() -> None:
     source = installer_source()
 
