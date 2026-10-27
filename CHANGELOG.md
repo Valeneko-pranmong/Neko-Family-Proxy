@@ -29,13 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.2.2a] - 2026-10-27
 
 ### Added
-- Local alpha build of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
+- Local alpha build (revision 2) of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
 - Release and installer tooling now accepts `5.x.ya` alpha versions while keeping 5.2.x on the preview channel.
+
+### Fixed
+- Restored the login card's bottom border and clamped the pending-login panel inside the card so it cannot be clipped or cover the border.
 
 ### Build
 - Launcher and Updater built with Python 3.12.10 / Tk 8.6 / PyInstaller 6.21.0.
-- Signed envelope `preview-0018` (sequence 18, `minimum_supported_sequence = 18`, key `neko-update-prod-3`).
-- Installer `NekoFamilyProxy-Installer.exe` 207,850,752 bytes, SHA-256 `24b51ae40cf8bb18a87aa3e9bf3df12a93a26be726e68c6ea903f2929749d742`; unsigned and not published.
+- Signed envelope `preview-0019` (sequence 19, `minimum_supported_sequence = 19`, key `neko-update-prod-3`).
+- Installer `NekoFamilyProxy-Installer.exe` 207,847,764 bytes, SHA-256 `0a432155b4b475548cf546b86afdadd8027c85592759862769e3b1fc7061212d`; unsigned and not published.
 
 ## [5.2.1] - 2026-10-26
 

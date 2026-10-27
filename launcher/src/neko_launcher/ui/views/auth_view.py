@@ -87,7 +87,7 @@ class AuthView:
             # The full-height layout also gives the floating progress panel
             # room below the content without reflowing the login controls.
             layout = ctk.CTkFrame(intro, fg_color="transparent")
-            layout.pack(fill="both", expand=True, padx=18)
+            layout.pack(fill="both", expand=True, padx=18, pady=(0, 8))
             content = ctk.CTkFrame(layout, fg_color="transparent")
             content.pack(fill="x", expand=True)
 
@@ -415,6 +415,12 @@ class AuthView:
                     + 10
                     - host.winfo_rooty()
                 )
+                bottom_margin = 8
+                max_top = max(
+                    bottom_margin,
+                    host.winfo_height() - panel.winfo_reqheight() - bottom_margin,
+                )
+                top = max(bottom_margin, min(top, max_top))
                 panel.place(
                     in_=host,
                     x=0,

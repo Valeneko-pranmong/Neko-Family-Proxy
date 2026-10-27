@@ -210,6 +210,17 @@ def test_web_only_progress_panel_does_not_move_login_controls() -> None:
         root.update()
         assert view._web_login_button.winfo_rooty() == before
 
+        panel = view._progress_panel
+        host = view._progress_host
+        assert panel is not None and host is not None
+        assert panel.winfo_y() >= 8
+        assert panel.winfo_y() + panel.winfo_height() <= host.winfo_height() - 8
+        card = view.frame.winfo_children()[0]
+        assert (
+            host.winfo_rooty() + host.winfo_height()
+            <= card.winfo_rooty() + card.winfo_height() - 8
+        )
+
         view.set_auth_progress("ยืนยันแล้ว กำลังเชื่อมต่อบัญชี")
         root.update()
         assert view._web_login_button.winfo_rooty() == before

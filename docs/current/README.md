@@ -2,10 +2,10 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.2a ALPHA BUILT LOCALLY (NOT INSTALLED OR PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
+STATUS:                         5.2.2a ALPHA REV 2 BUILT AND UI-VERIFIED LOCALLY (NOT INSTALLED OR PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
 PRODUCT_BASELINE:               5.2.2a alpha (local test build); 5.2.1 (release target); 5.1.6 remains public stable
 SOURCE_5_2_2_PREP:              COMMITTED 81f8c8b + 72270c7; version bumped to 5.2.2a for the local alpha build
-ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 — preview-0018, sequence 18; installer 24b51ae4…; not installed or published
+ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 2 — preview-0019, sequence 19; installer 0a432155…; not installed or published
 CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
@@ -118,7 +118,7 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
 - **v5.2.0 (unified-line release target, preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The new line uses Neko-NETWORK-ID and Neko Proxy API only; 5.1.6 remains on the legacy line and must be uninstalled before a clean 5.2.0 installation. See [5.2.0-release-notes.md](5.2.0-release-notes.md) and [5.2.0-release-runbook.md](5.2.0-release-runbook.md).
 - **v5.2.1 (preview/manual; built and installed, not published)**: login copy and Discord icon, login-endpoint pre-warm, fixed 500×640 window, one-frame Settings render, and an uninstall-time process guard. Envelope `preview-0016`, sequence 16, `minimum_supported_sequence = 16`. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
 - **v5.2.2 (source preparation)**: schema-2 support diagnostics with privacy-safe auth/restore timing, pinned-status centered login layout with a floating pending panel, and a startup splash that waits for session restore so auto-login does not flash the login screen. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
-- **v5.2.2a (local alpha build; not installed or published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0018` (sequence 18, `minimum_supported_sequence = 18`). Installer `24b51ae4…` (207,850,752 bytes, unsigned). Sequence 17 was already consumed by the b17 test build. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
+- **v5.2.2a (local alpha build; not installed or published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0019` (sequence 19, `minimum_supported_sequence = 19`). Installer `0a432155…` (207,847,764 bytes, unsigned). Revision 2 fixes the login card's missing bottom border and keeps the pending panel inside the card. Sequences 17 and 18 were already consumed by the b17 test build and revision 1. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
 
 ---
 
