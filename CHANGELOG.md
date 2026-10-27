@@ -29,16 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.2.2a] - 2026-10-27
 
 ### Added
-- Local alpha build (revision 2) of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
+- Local alpha build (revision 3) of the 5.2.2 source-preparation changes: schema-2 support diagnostics, pinned-status login layout, one-frame Settings rendering, and a startup splash that waits for session restore.
 - Release and installer tooling now accepts `5.x.ya` alpha versions while keeping 5.2.x on the preview channel.
+
+### Changed
+- Lifted the login content block 24 px so the pending panel has room below the help text and the card does not look top-heavy.
 
 ### Fixed
 - Restored the login card's bottom border and clamped the pending-login panel inside the card so it cannot be clipped or cover the border.
 
 ### Build
 - Launcher and Updater built with Python 3.12.10 / Tk 8.6 / PyInstaller 6.21.0.
-- Signed envelope `preview-0019` (sequence 19, `minimum_supported_sequence = 19`, key `neko-update-prod-3`).
-- Installer `NekoFamilyProxy-Installer.exe` 207,847,760 bytes, SHA-256 `f20cfe57495b7556c520a2183c596104513638de4b8f1a5ed69254e2e78e6c8a`; unsigned and not published.
+- Signed envelope `preview-0020` (sequence 20, `minimum_supported_sequence = 20`, key `neko-update-prod-3`).
+- Installer `NekoFamilyProxy-Installer.exe` 207,845,387 bytes, SHA-256 `2421f890aa9a51aea85ead6446fe52943c702ced22277feb5eead35debeff771`; unsigned and not published.
 - Fixed the elevated netfilter2 command quoting that made the driver step fail with `FAIL: invalid pinned nfdriver.sha256`; the installer was rebuilt and the source line is covered by a regression test.
 
 ## [5.2.1] - 2026-10-26

@@ -89,7 +89,7 @@ class AuthView:
             layout = ctk.CTkFrame(intro, fg_color="transparent")
             layout.pack(fill="both", expand=True, padx=18, pady=(0, 8))
             content = ctk.CTkFrame(layout, fg_color="transparent")
-            content.pack(fill="x", expand=True)
+            content.pack(fill="x", expand=True, pady=(0, 48))
 
         self._auth_hint = ctk.CTkLabel(
             top_row,
