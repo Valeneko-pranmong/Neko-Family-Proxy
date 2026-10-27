@@ -18,7 +18,10 @@ _launcher_tests_dir = str(Path(__file__).resolve().parent)
 if hasattr(_root_tests, "__path__") and _launcher_tests_dir not in _root_tests.__path__:
     _root_tests.__path__.append(_launcher_tests_dir)
 
-from neko_launcher.updater.canonical_json import canonical_json_dumps  # noqa: E402
+from neko_launcher.updater.canonical_json import (  # noqa: E402
+    canonical_json_dumps,
+    canonical_json_loads,
+)
 from tests.software_update_helpers import signed_envelope, valid_v2_release_document  # noqa: E402
 
 
@@ -145,7 +148,7 @@ def _stage(tmp_path: Path) -> Path:
         core_size=1024,
     )
     env_dict = signed_envelope(doc, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
-    (stage / "baseline_envelope.json").write_bytes(canonical_json_dumps(env_dict) + b"\n")
+    (stage / "baseline_envelope.json").write_bytes(canonical_json_dumps(env_dict))
 
     return stage
 
@@ -308,7 +311,7 @@ def test_core_manifest_list_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         core_size=1024,
     )
     env_dict = signed_envelope(doc, key_id=TEST_REL_KEY_ID, private_key=TEST_REL_PRIV)
-    (stage / "baseline_envelope.json").write_bytes(canonical_json_dumps(env_dict) + b"\n")
+    (stage / "baseline_envelope.json").write_bytes(canonical_json_dumps(env_dict))
 
     monkeypatch.setattr(module.subprocess, "run", lambda *_a, **_k: type("R", (), {"returncode": 0})())
 
@@ -924,7 +927,7 @@ def _make_keys_and_files(tmp_path: Path, channel: str = "stable") -> tuple[Path,
         core_size=1024,
     )
     env_dict = signed_envelope(doc, key_id=rel_key_id, private_key=rel_priv)
-    envelope_bytes = canonical_json_dumps(env_dict) + b"\n"
+    envelope_bytes = canonical_json_dumps(env_dict)
     envelope_path = tmp_path / "release-v2.json"
     envelope_path.write_bytes(envelope_bytes)
 
@@ -1007,6 +1010,73 @@ def test_builder_stages_envelope_and_profile_byte_identical_and_records_hashes(
     assert record["profile_id"] == "proof-v512"
     assert "keyset_sha256" in record
     assert len(record["keyset_sha256"]) == 64
+
+
+def test_builder_rejects_envelope_framing_clients_will_not_accept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", lambda: "mock_iscc.exe")
+
+    def _mock_run(stage: Path):
+        def run(args, **_kwargs) -> Any:
+            if args and args[0] == "mock_iscc.exe":
+                out_dir = stage / "out"
+                out_dir.mkdir(exist_ok=True)
+                (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        return run
+
+    canonical = b""
+    for index, variant in enumerate((b"\n", b" \n", b"\r\n", b"  ")):
+        stage = _stage(tmp_path / f"case-{index}")
+        profile_path, envelope_path, auth_keys = _make_keys_and_files(stage, channel="preview")
+        if not canonical:
+            canonical = envelope_path.read_bytes()
+        envelope_path.write_bytes(canonical + variant)
+
+        monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+        monkeypatch.setattr(module.subprocess, "run", _mock_run(stage))
+        argv = _argv(
+            stage,
+            _digest(b"launcher"),
+            _digest(b"updater"),
+            baseline_envelope=envelope_path,
+            trust_profile=profile_path,
+            release_version="5.2.2a",
+        )
+        with pytest.raises(module.PrebuildGateError, match="not exactly canonical"):
+            build_candidate(parse_args(argv))
+
+    # The canonical form itself reaches the later gates instead of being rejected here.
+    stage = _stage(tmp_path / "case-canonical")
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(stage, channel="preview")
+    monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+    monkeypatch.setattr(module.subprocess, "run", _mock_run(stage))
+    assert envelope_path.read_bytes() == canonical
+    assert canonical_json_dumps(canonical_json_loads(canonical)) == canonical
+    assert (
+        build_candidate(
+            parse_args(
+                _argv(
+                    stage,
+                    _digest(b"launcher"),
+                    _digest(b"updater"),
+                    baseline_envelope=envelope_path,
+                    trust_profile=profile_path,
+                    release_version="5.2.2a",
+                )
+            )
+        )
+        == 0
+    )
+    staged = stage / "payload" / "baseline" / "release-v2.json"
+    assert staged.read_bytes() == canonical, "staged envelope must stay exactly canonical"
 
 
 def test_validate_installer_channel_requires_preview_for_5_2() -> None:

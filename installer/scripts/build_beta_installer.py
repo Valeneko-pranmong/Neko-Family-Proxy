@@ -29,7 +29,10 @@ LAUNCHER_SRC = os.path.join(REPO, "launcher", "src")
 if LAUNCHER_SRC not in sys.path:
     sys.path.insert(0, LAUNCHER_SRC)
 
-from neko_launcher.updater.canonical_json import canonical_json_loads  # noqa: E402
+from neko_launcher.updater.canonical_json import (  # noqa: E402
+    canonical_json_dumps,
+    canonical_json_loads,
+)
 from neko_launcher.updater.manifest_v2 import verify_release_envelope_v2  # noqa: E402
 from neko_launcher.updater.trust import PROFILE_AUTHORITY_PUBLIC_KEYS  # noqa: E402
 from neko_launcher.updater.trust_profile import verify_update_trust_profile  # noqa: E402
@@ -241,6 +244,14 @@ def build_candidate(args: argparse.Namespace) -> int:
         envelope_doc = canonical_json_loads(raw_baseline_envelope.strip())
     except Exception as exc:
         fail(f"baseline envelope JSON parsing failed: {exc}")
+
+    # The embedded copy must be byte-identical to the published release-v2.json asset,
+    # which clients reject unless it is exactly canonical (no trailing newline).
+    if canonical_json_dumps(envelope_doc) != raw_baseline_envelope:
+        fail(
+            "baseline envelope is not exactly canonical JSON; "
+            "re-emit it with scripts/build_software_release_v2.py"
+        )
 
     try:
         release_set, payload_sha256 = verify_release_envelope_v2(
