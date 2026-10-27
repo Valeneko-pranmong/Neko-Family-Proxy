@@ -41,6 +41,19 @@ def test_installer_blocks_a_different_installed_version() -> None:
     assert "Result := False;" in source
 
 
+def test_elevated_driver_command_preserves_the_last_pinned_hash() -> None:
+    source = installer_source()
+
+    assert (
+        """' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '"',"""
+        in source
+    )
+    assert (
+        """' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '""',"""
+        not in source
+    )
+
+
 def test_installer_blocks_running_launcher_core_and_updater() -> None:
     source = installer_source()
 

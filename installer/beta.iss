@@ -503,7 +503,7 @@ begin
               '/c ""' + DriverCmd + '" -CoreBinDir "' + BinDir + '" -Apply -ResultFile "' +
               ResFile + '" -ExpectedCoreManifestSha256 "{#ExpectedCoreManifestSha256}"' +
               ' -ExpectedRedirectorSha256 "{#ExpectedRedirectorSha256}"' +
-              ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '""',
+              ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"' + '"',
               ExtractFileDir(DriverCmd), HideCmd, ewWaitUntilTerminated, RC);
             Log('elevated apply: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
             { Wait up to 15 seconds for ResFile to appear from elevated process }

@@ -38,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Build
 - Launcher and Updater built with Python 3.12.10 / Tk 8.6 / PyInstaller 6.21.0.
 - Signed envelope `preview-0019` (sequence 19, `minimum_supported_sequence = 19`, key `neko-update-prod-3`).
-- Installer `NekoFamilyProxy-Installer.exe` 207,847,764 bytes, SHA-256 `0a432155b4b475548cf546b86afdadd8027c85592759862769e3b1fc7061212d`; unsigned and not published.
+- Installer `NekoFamilyProxy-Installer.exe` 207,847,760 bytes, SHA-256 `f20cfe57495b7556c520a2183c596104513638de4b8f1a5ed69254e2e78e6c8a`; unsigned and not published.
+- Fixed the elevated netfilter2 command quoting that made the driver step fail with `FAIL: invalid pinned nfdriver.sha256`; the installer was rebuilt and the source line is covered by a regression test.
 
 ## [5.2.1] - 2026-10-26
 
