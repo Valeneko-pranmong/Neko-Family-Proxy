@@ -70,6 +70,21 @@ $script:KnownUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uni
 $script:AppDisplayName = 'NEKO FAMILY PROXY'
 $script:CredentialTarget = 'Neko Family Launcher'
 $script:UninstallerHash = ''
+# cmdkey cannot delete targets whose name contains a space or '@' (it answers
+# "The command line parameters are incorrect"), so removal goes through the
+# Credential Manager API and is confirmed by re-listing.
+$script:CredentialApiSource = @'
+using System;
+using System.Runtime.InteropServices;
+public static class NekoCredentialStore {
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredDeleteW(string target, int type, int reserved);
+    public static int Delete(string target) {
+        if (CredDeleteW(target, 1, 0)) { return 0; }
+        return Marshal.GetLastWin32Error();
+    }
+}
+'@
 
 function Write-Log {
     param(
@@ -338,6 +353,28 @@ function Get-NekoCredentialTargets {
     return @($targets | Sort-Object -Unique)
 }
 
+function Remove-NekoCredentialViaApi {
+    param([Parameter(Mandatory = $true)][string]$Target)
+
+    if (-not ('NekoCredentialStore' -as [type])) {
+        try {
+            Add-Type -TypeDefinition $script:CredentialApiSource
+        }
+        catch {
+            Write-Log "Could not load the credential deletion API: $($_.Exception.Message)" 'WARN'
+            return -1
+        }
+    }
+
+    try {
+        return [NekoCredentialStore]::Delete($Target)
+    }
+    catch {
+        Write-Log "Credential deletion threw for '$Target': $($_.Exception.Message)" 'WARN'
+        return -1
+    }
+}
+
 function Remove-NekoCredentialTarget {
     $targets = @(Get-NekoCredentialTargets)
     if ($targets.Count -eq 0) {
@@ -345,30 +382,34 @@ function Remove-NekoCredentialTarget {
         return
     }
 
-    $cmdkey = Join-Path $env:SystemRoot 'System32\cmdkey.exe'
     foreach ($target in $targets) {
         if ($DryRun) {
             Write-Log "DRY-RUN would delete credential target: $target"
             continue
         }
-        try {
-            # Pass the target as one argv element; never build a cmd.exe command
-            # from credential-store text.
-            $null = & $cmdkey "/delete:$target" 2>&1
-            Write-Log "Requested credential target deletion: $target"
+        # The target name is passed straight to the API as a single value; it is
+        # never interpolated into a shell command.
+        $win32 = Remove-NekoCredentialViaApi -Target $target
+        if ($win32 -eq 0) {
+            Write-Log "Credential target deleted: $target"
         }
-        catch {
-            Write-Log "Could not delete credential target '$target': $($_.Exception.Message)" 'WARN'
-            $script:Problems.Add("Credential target could not be deleted: $target") | Out-Null
+        else {
+            Write-Log "Could not delete credential target '$target' (Win32 error $win32)" 'WARN'
+            $script:Problems.Add("Credential target could not be deleted: $target (Win32 error $win32)") | Out-Null
         }
     }
 
-    if (-not $DryRun) {
+    if ($DryRun) { return }
+
+    $remaining = @()
+    foreach ($attempt in 1..5) {
         $remaining = @(Get-NekoCredentialTargets)
-        if ($remaining.Count -gt 0) {
-            Write-Log "Credential target still present: $($remaining -join ', ')" 'ERROR'
-            $script:Problems.Add("Credential target remains: $($remaining -join ', ')") | Out-Null
-        }
+        if ($remaining.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if ($remaining.Count -gt 0) {
+        Write-Log "Credential target still present: $($remaining -join ', ')" 'ERROR'
+        $script:Problems.Add("Credential target remains: $($remaining -join ', ')") | Out-Null
     }
 }
 

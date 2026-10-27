@@ -54,6 +54,18 @@ def test_clean_uninstall_refuses_elevation_and_untrusted_uninstallers() -> None:
     assert "$version -notmatch '^5\\.2\\.\\d+(?:[a-z]\\d*)?$'" in source
 
 
+def test_clean_uninstall_removes_credentials_through_the_api() -> None:
+    source = (REPO_ROOT / "installer" / "scripts" / "clean-uninstall.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CredDeleteW" in source
+    assert "NekoCredentialStore" in source
+    assert "Credential target deleted" in source
+    assert "Win32 error" in source
+    assert 'cmdkey "/delete:' not in source
+
+
 def test_elevated_driver_command_verifies_script_bytes_before_execution() -> None:
     source = installer_source()
 
