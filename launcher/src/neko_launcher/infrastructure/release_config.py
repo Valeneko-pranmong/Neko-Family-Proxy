@@ -1,4 +1,4 @@
-"""Build-time release configuration for the frozen 5.2.2a preview build.
+"""Build-time release configuration for the frozen 5.2.2 preview build.
 
 The owner approved the public staging Proxy API origin for the preview/manual
 release. Source/dev builds use ``NEKO_PROXY_API_URL`` instead; frozen builds

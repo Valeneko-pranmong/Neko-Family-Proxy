@@ -25,8 +25,8 @@ def test_installer_keeps_single_app_id_and_clean_start_policy() -> None:
 def test_installer_default_version_is_the_release_version() -> None:
     source = installer_source()
 
-    assert '#define MyAppVersion "5.2.2a"' in source
-    assert '#define MyAppDisplayVersion "5.2.2a"' in source
+    assert '#define MyAppVersion "5.2.2"' in source
+    assert '#define MyAppDisplayVersion "5.2.2"' in source
 
 
 def test_installer_blocks_a_different_installed_version() -> None:
@@ -36,7 +36,7 @@ def test_installer_blocks_a_different_installed_version() -> None:
     assert "function ExistingInstallVersion(): String;" in source
     assert "RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion'" in source
     assert "InstalledVersion <> '{#MyAppVersion}'" in source
-    assert "5.2.2a ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0" in source
+    assert "5.2.2 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0" in source
     assert "An existing NEKO FAMILY PROXY ' + InstalledVersion" in source
     assert "Result := False;" in source
 
