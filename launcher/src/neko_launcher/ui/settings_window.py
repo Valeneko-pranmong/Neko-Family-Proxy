@@ -1009,6 +1009,28 @@ class SettingsWindow(ctk.CTkToplevel):
     def _invoke_file_check(self) -> None:
         self.run_file_check()
 
+    def set_file_check_busy(self, busy: bool) -> None:
+        """Show that hashing runs off the Tk thread; the host delivers the report."""
+        button = getattr(self, "_file_check_button", None)
+        if button is not None:
+            button.configure(
+                state="disabled" if busy else "normal",
+                text="กำลังตรวจสอบ..." if busy else "ตรวจสอบไฟล์",
+            )
+        if busy:
+            self._file_check_notice_var.set(
+                "กำลังตรวจสอบไฟล์ติดตั้ง… ใช้เวลาสองสามวินาที"
+            )
+
+    def finish_file_check(self, report: FileIntegrityReport | None) -> None:
+        self.set_file_check_busy(False)
+        if report is None:
+            self._file_check_notice_var.set(
+                "ตรวจสอบไฟล์ไม่ได้ในตอนนี้ กรุณาลองใหม่อีกครั้ง"
+            )
+            return
+        self._handle_file_check_report(report)
+
     def _handle_file_check_report(self, report: FileIntegrityReport) -> None:
         self._last_integrity_report = report
         item_map = {item.component: item for item in report.items}

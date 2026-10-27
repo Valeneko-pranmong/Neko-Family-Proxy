@@ -731,13 +731,38 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
     window._submitted_work = []
     window._submitted_callbacks = []
 
-    def submit(work: Any, on_success: Any = None, on_failure: Any = None) -> None:
+    def submit(
+        work: Any,
+        on_success: Any = None,
+        on_failure: Any = None,
+        *,
+        clear_messages: bool = True,
+    ) -> None:
         window._submitted_work.append(work)  # type: ignore[attr-defined]
         window._submitted_callbacks.append(  # type: ignore[attr-defined]
             (on_success, on_failure)
         )
 
     window._submit = submit  # type: ignore[method-assign]
+
+    settled_cursor = [0]
+
+    def settle_game_observation() -> None:
+        """Deliver queued game-presence probes, as the Tk-thread poll would."""
+        while settled_cursor[0] < len(window._submitted_work):  # type: ignore[arg-type]
+            index = settled_cursor[0]
+            settled_cursor[0] += 1
+            work = window._submitted_work[index]  # type: ignore[attr-defined]
+            on_success, _on_failure = window._submitted_callbacks[index]  # type: ignore[attr-defined]
+            if (
+                getattr(work, "__name__", "")
+                in ("_observe_game_process", "_revalidate_bound_game")
+                and getattr(work, "__self__", None) is window
+                and on_success is not None
+            ):
+                on_success(work())
+
+    window.settle_game_observation = settle_game_observation  # type: ignore[method-assign]
     return window
 
 
@@ -1376,14 +1401,17 @@ def test_running_proxy_transport_disconnect_with_pso2_queues_reconnect(
         replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
     )
 
-    assert len(window._submitted_work) == submitted_before  # type: ignore[attr-defined]
+    # The disconnect queues only the off-thread game-presence probe.
+    assert len(window._submitted_work) == submitted_before + 1  # type: ignore[attr-defined]
+    window.settle_game_observation()
+
     assert len(window._scheduled_reconnects) == 1  # type: ignore[attr-defined]
     delay, callback = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
     assert delay == 1.0
 
     callback()
 
-    assert len(window._submitted_work) == submitted_before + 1  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == submitted_before + 2  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
@@ -1424,10 +1452,15 @@ def test_each_runtime_health_failure_queues_only_one_reconnect(
         snapshot=snapshot,
     )
     window._render_telemetry(healthy)
+    probes = len(window._submitted_work)  # type: ignore[attr-defined]
     unhealthy = replace(healthy, snapshot=replace(snapshot, **changes))
 
     window._render_telemetry(unhealthy)
     window._render_telemetry(unhealthy)
+
+    # One in-flight game-presence probe covers repeated unhealthy renders.
+    assert len(window._submitted_work) == probes + 1  # type: ignore[attr-defined]
+    window.settle_game_observation()
 
     assert window._controller.state.proxy_status is ProxyStatus.RECONNECTING
     assert len(window._scheduled_reconnects) == 1  # type: ignore[attr-defined]
@@ -1462,6 +1495,7 @@ def test_successful_reconnect_returns_running_and_resets_retry_budget(
     window._render_telemetry(
         replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
     )
+    window.settle_game_observation()
     _, scheduled = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
     scheduled()
 
@@ -1473,8 +1507,8 @@ def test_successful_reconnect_returns_running_and_resets_retry_budget(
         )
 
     window._service.start_proxy = succeed  # type: ignore[method-assign]
-    result = window._submitted_work[0]()  # type: ignore[attr-defined]
-    on_success, _ = window._submitted_callbacks[0]  # type: ignore[attr-defined]
+    result = window._submitted_work[-1]()  # type: ignore[attr-defined]
+    on_success, _ = window._submitted_callbacks[-1]  # type: ignore[attr-defined]
     on_success(result)
     window._render_telemetry(healthy)
 
@@ -1517,6 +1551,7 @@ def test_retry_budget_exhaustion_stays_failed_without_rescheduling(
         healthy, connection_state=TelemetryConnectionState.DISCONNECTED
     )
     window._render_telemetry(unhealthy)
+    window.settle_game_observation()
 
     def fail_retry_safe(**_kwargs: Any) -> None:
         window._controller.state = replace(  # type: ignore[assignment]
@@ -1529,11 +1564,13 @@ def test_retry_budget_exhaustion_stays_failed_without_rescheduling(
     for index in range(2):
         _, scheduled = window._scheduled_reconnects[index]  # type: ignore[attr-defined]
         scheduled()
-        result = window._submitted_work[index]()  # type: ignore[attr-defined]
-        on_success, _ = window._submitted_callbacks[index]  # type: ignore[attr-defined]
+        result = window._submitted_work[-1]()  # type: ignore[attr-defined]
+        on_success, _ = window._submitted_callbacks[-1]  # type: ignore[attr-defined]
         on_success(result)
+        window.settle_game_observation()
 
     window._render_telemetry(unhealthy)
+    window.settle_game_observation()
 
     assert len(window._scheduled_reconnects) == 2  # type: ignore[attr-defined]
     assert window._controller.state.proxy_status is ProxyStatus.FAILED
@@ -1571,6 +1608,7 @@ def test_runtime_reconnect_retry_cannot_race_legacy_game_detection_retry(
     window._render_telemetry(
         replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
     )
+    window.settle_game_observation()
     _, scheduled = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
     scheduled()
 
@@ -1582,14 +1620,14 @@ def test_runtime_reconnect_retry_cannot_race_legacy_game_detection_retry(
         )
 
     window._service.start_proxy = fail_retry_safe  # type: ignore[method-assign]
-    result = window._submitted_work[0]()  # type: ignore[attr-defined]
+    result = window._submitted_work[-1]()  # type: ignore[attr-defined]
 
     # Reproduce the UI ordering window before the worker completion callback
     # has scheduled bounded reconnect attempt 2.
     window._on_game_detected(True)
 
     assert result is ReconnectCompletion.RETRY
-    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == 2  # type: ignore[attr-defined]
 
 
 def test_confirmed_logout_cancels_scheduled_reconnect_before_background_work(
@@ -1622,12 +1660,52 @@ def test_confirmed_logout_cancels_scheduled_reconnect_before_background_work(
     window._render_telemetry(
         replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
     )
+    window.settle_game_observation()
+    submitted_before_logout = len(window._submitted_work)  # type: ignore[attr-defined]
     _, reconnect_callback = window._scheduled_reconnects[0]  # type: ignore[attr-defined]
 
     window._sign_out()
     reconnect_callback()
 
-    assert len(window._submitted_work) == 1  # type: ignore[attr-defined]
+    assert len(window._submitted_work) == submitted_before_logout + 1  # type: ignore[attr-defined]
+
+
+def test_close_withdraws_before_waiting_on_child_processes() -> None:
+    """Teardown blocks on process.wait and the updater handoff, so the window
+    must leave the screen first instead of hanging there as a dead frame."""
+    order: list[str] = []
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._controller = type("Controller", (), {"state": AppState()})()  # type: ignore[assignment]
+    window._service = type(  # type: ignore[assignment]
+        "Service", (), {"shutdown": lambda self: order.append("shutdown")}
+    )()
+    window._executor = FakeExecutor()  # type: ignore[assignment]
+    window._tray_manager = None
+    window._telemetry_client = None
+    window._settings_window = None
+    window._startup_splash = None
+    window._web_auth_client = None
+    window._reconnect_controller = None
+    window._update_apply_service = None
+    window._started_at_monotonic = time.monotonic()
+    window._record_support_event = lambda *a, **k: None  # type: ignore[method-assign]
+    window._clear_recovery_sensitive_fields = lambda: None  # type: ignore[method-assign]
+    window.root = type(  # type: ignore[assignment]
+        "Root",
+        (),
+        {
+            "withdraw": lambda self: order.append("withdraw"),
+            "update_idletasks": lambda self: None,
+            "quit": lambda self: order.append("quit"),
+            "destroy": lambda self: order.append("destroy"),
+        },
+    )()
+
+    window.close()
+
+    assert order == ["withdraw", "shutdown", "quit", "destroy"]
 
 
 def test_close_stops_telemetry_client(tmp_path: Path) -> None:
@@ -1805,6 +1883,42 @@ def test_positive_poll_requires_unconditional_exact_revalidation(
     assert len(window._submitted_work) == 0
 
 
+def test_game_poll_observes_off_the_tk_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each tasklist snapshot costs ~350 ms; the poll must not run one inline."""
+    tweaker = tmp_path / "Tweaker.exe"
+    tweaker.touch()
+    window = build_tweaker_window(tweaker)
+    window._process_detection_pending = False
+    window.root = type(  # type: ignore[assignment]
+        "FakeRoot", (), {"winfo_exists": lambda self: True, "after": lambda *a: None}
+    )()
+    observed: list[str] = []
+    target = TargetProcess(7, "pso2.exe", 700)
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.is_any_process_running",
+        lambda *a: observed.append("coarse") or True,
+    )
+    monkeypatch.setattr(
+        "neko_launcher.ui.app_window.observe_exact_pso2",
+        lambda: observed.append("exact") or target,
+    )
+
+    window._poll_game_process()
+
+    assert observed == []
+    assert window._process_detection_pending is True
+    assert window._controller.state.game_process_running is False
+
+    window.settle_game_observation()
+
+    assert observed == ["coarse", "exact"]
+    assert window._bound_target == target
+    assert window._controller.state.game_process_running is True
+    assert window._process_detection_pending is False
+
+
 def test_confirmed_absence_clears_state_cancels_and_stops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1835,6 +1949,7 @@ def test_delayed_reconnect_is_inert_after_confirmed_disappearance(
     )
     window._reconnect_controller.observe_running()
     window._observe_runtime_health(SimpleNamespace(is_healthy=False))
+    window.settle_game_observation()
     _, delayed_reconnect = window._scheduled_reconnects[0]
     monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", lambda: None)
     monkeypatch.setattr(
@@ -1846,7 +1961,7 @@ def test_delayed_reconnect_is_inert_after_confirmed_disappearance(
     delayed_reconnect()
 
     assert window._controller.state.game_process_running is False
-    assert len(window._submitted_work) == 0
+    assert len(window._submitted_work) == 1
     assert window._service.proxy_started == 0
 
 
@@ -1877,11 +1992,10 @@ def test_unhealthy_telemetry_with_stale_game_does_not_reconnect(monkeypatch, tmp
 
     unhealthy = replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
     window._render_telemetry(unhealthy)
-
-
+    window.settle_game_observation()
 
     assert window._controller.state.game_process_running is False
-    assert len(window._submitted_work) == 0
+    assert len(window._submitted_work) == 1
     assert window._service.proxy_stopped == 0
     assert len(window._scheduled_reconnects) == 0
 
@@ -2036,6 +2150,7 @@ def test_bound_pso2_session_liveness_ignores_transient_window_loss(
 
     # 3. Telemetry unhealthy path regression
     window._observe_runtime_health(SimpleNamespace(is_healthy=False))
+    window.settle_game_observation()
     assert window._controller.state.game_process_running is True
     assert getattr(window, "_bound_target", None) == target1
     assert window._service.proxy_stopped == 0
@@ -2057,8 +2172,8 @@ def test_bound_pso2_session_liveness_ignores_transient_window_loss(
 
     assert window._controller.state.game_process_running is True
     assert getattr(window, "_bound_target", None) == target2
-    assert len(window._submitted_work) == 2
-    window._submitted_work[1]()
+    assert len(window._submitted_work) == 3
+    window._submitted_work[2]()
     assert window._service.proxy_started == 2
 
 
@@ -2112,6 +2227,7 @@ def test_unhealthy_telemetry_with_bound_target_ignores_window_loss(
     window_visible = False
     unhealthy = replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
     window._render_telemetry(unhealthy)
+    window.settle_game_observation()
 
     assert window._controller.state.game_process_running is True
     assert getattr(window, "_bound_target", None) == target

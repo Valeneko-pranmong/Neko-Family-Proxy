@@ -728,6 +728,93 @@ def test_app_window_handle_file_check_delegates_to_check_installed_files(
     assert called["release"] is dummy_rel
 
 
+def test_file_check_hashes_off_the_tk_thread() -> None:
+    """A click must not hash ~190 MB of artifacts inside the Tk mainloop."""
+    from concurrent.futures import Future
+    import threading
+
+    report = _make_dummy_report()
+    hashed_on: list[str] = []
+
+    class FakeSettings:
+        def __init__(self) -> None:
+            self.busy_calls: list[bool] = []
+            self.delivered: list[Any] = []
+
+        def winfo_exists(self) -> bool:
+            return True
+
+        def set_file_check_busy(self, busy: bool) -> None:
+            self.busy_calls.append(busy)
+
+        def finish_file_check(self, delivered: Any) -> None:
+            self.busy_calls.append(False)
+            self.delivered.append(delivered)
+
+    class FakeRoot:
+        def __init__(self) -> None:
+            self.callbacks: list[Any] = []
+
+        def winfo_exists(self) -> bool:
+            return True
+
+        def after(self, _delay: int, callback: Any = None) -> None:
+            if callback is not None:
+                self.callbacks.append(callback)
+
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._file_check_future = None
+    window._settings_window = FakeSettings()
+    window.root = FakeRoot()  # type: ignore[assignment]
+    future: Future[Any] = Future()
+    window._update_executor = type(  # type: ignore[assignment]
+        "FakeExecutor", (), {"submit": lambda self, work: future}
+    )()
+
+    def collect() -> Any:
+        hashed_on.append(threading.current_thread().name)
+        return report
+
+    window._handle_file_check = collect  # type: ignore[method-assign]
+    window._start_file_check()
+
+    assert hashed_on == []
+    assert window._settings_window.busy_calls == [True]  # type: ignore[attr-defined]
+    assert window._file_check_future is future
+
+    worker = threading.Thread(target=lambda: future.set_result(collect()))
+    worker.start()
+    worker.join()
+    assert hashed_on and hashed_on[0] != threading.main_thread().name
+
+    # The report is marshalled back by the Tk-thread poll, not by the worker.
+    assert window._settings_window.delivered == []  # type: ignore[attr-defined]
+    window.root.callbacks[0]()
+
+    assert window._settings_window.delivered == [report]  # type: ignore[attr-defined]
+    assert window._file_check_future is None
+
+
+def test_file_check_ignores_a_second_click_while_hashing() -> None:
+    window = object.__new__(AppWindow)
+    window._closing = False
+    window._file_check_future = "already running"  # type: ignore[assignment]
+    window._settings_window = type(
+        "FakeSettings",
+        (),
+        {"winfo_exists": lambda self: True, "set_file_check_busy": lambda self, b: None},
+    )()
+    submitted: list[Any] = []
+    window._update_executor = type(  # type: ignore[assignment]
+        "FakeExecutor", (), {"submit": lambda self, work: submitted.append(work)}
+    )()
+
+    window._start_file_check()
+
+    assert submitted == []
+
+
 def test_app_window_handle_file_repair_invokes_repair_workflow(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1402,6 +1489,35 @@ def test_file_check_button_starts_diagnostics_on_explicit_click() -> None:
 
         window._file_check_button.invoke()
         assert calls["check"] == 1
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
+def test_file_check_busy_state_clears_only_when_the_host_delivers() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(root, on_file_check=lambda: None)
+
+        window.set_file_check_busy(True)
+        assert str(window._file_check_button.cget("state")) == "disabled"
+        assert "กำลังตรวจสอบ" in window._file_check_notice_var.get()
+
+        window.finish_file_check(_make_dummy_report())
+        assert str(window._file_check_button.cget("state")) != "disabled"
+        assert "OK" in window._file_check_launcher_var.get()
+
+        window.set_file_check_busy(True)
+        window.finish_file_check(None)
+        assert "ไม่ได้" in window._file_check_notice_var.get()
+        assert str(window._file_check_button.cget("state")) != "disabled"
     finally:
         try:
             root.destroy()

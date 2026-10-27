@@ -220,7 +220,9 @@ class AppWindow:
         self._last_update_check_started_at: float | None = None
         self._last_update_check_source: str | None = None
         self._debug_retry_pending = False
+        self._file_check_future: Future[FileIntegrityReport | None] | None = None
         self._bound_target: TargetProcess | None = None
+        self._runtime_health_probe_pending = False
         self._proxy_start_attempted_for_detected_game = False
         self._proxy_retry_suppression_logged = False
         self._startup_recovery_in_progress = False
@@ -868,7 +870,7 @@ class AppWindow:
             on_launch_game=self._launch_game,
             on_open_logs=self._open_debug_logs,
             on_show_advanced_diagnostics=self._show_debug_dialog,
-            on_file_check=self._handle_file_check,
+            on_file_check=self._start_file_check,
             on_repair=self._handle_file_repair,
         )
         self._apply_always_on_top()
@@ -877,6 +879,76 @@ class AppWindow:
         if hasattr(self._settings_window, "focus_force"):
             self._settings_window.focus_force()
         self._record_support_event("APP", "SETTINGS_OPENED")
+
+    def _start_file_check(self) -> None:
+        """Hash the installed artifacts off the Tk thread and deliver the report.
+
+        Returns immediately: a full check reads Launcher, Updater and Core bytes,
+        which would stall the Tk mainloop for seconds if it ran on click.
+        """
+        settings_window = self._settings_window
+        if settings_window is None or getattr(self, "_closing", False):
+            return
+        try:
+            if not settings_window.winfo_exists():
+                return
+        except Exception:
+            return
+        if getattr(self, "_file_check_future", None) is not None:
+            return
+
+        def deliver(report: FileIntegrityReport | None) -> None:
+            if self._settings_window is not settings_window:
+                return
+            try:
+                if settings_window.winfo_exists():
+                    settings_window.finish_file_check(report)
+            except Exception:
+                pass
+
+        settings_window.set_file_check_busy(True)
+
+        def finish(future: Future[FileIntegrityReport | None]) -> None:
+            self._file_check_future = None
+            try:
+                deliver(future.result())
+            except Exception as exc:
+                self._record_exception_support(exc, "FILE_CHECK")
+                self._record_support_event(
+                    "FILE", "CHECK_FAILED", error_type=type(exc).__name__
+                )
+                deliver(None)
+
+        def poll_completion(future: Future[FileIntegrityReport | None]) -> None:
+            if not future.done():
+                try:
+                    if self.root.winfo_exists():
+                        self.root.after(100, lambda: poll_completion(future))
+                except Exception:
+                    pass
+                return
+            finish(future)
+
+        executor = getattr(self, "_update_executor", None)
+        if executor is None:
+            try:
+                deliver(self._handle_file_check())
+            except Exception:
+                deliver(None)
+            return
+        try:
+            future: Future[FileIntegrityReport | None] = executor.submit(
+                self._handle_file_check
+            )
+        except Exception:
+            deliver(None)
+            return
+        self._file_check_future = future
+        try:
+            self.root.after(100, lambda: poll_completion(future))
+        except Exception:
+            self._file_check_future = None
+            deliver(None)
 
     def _handle_file_check(self) -> FileIntegrityReport | None:
         """User-invoked diagnostic file check against the installed bound release."""
@@ -1010,7 +1082,7 @@ class AppWindow:
                 self._record_support_event("FILE", "REPAIR_SUCCEEDED")
             if self._settings_window is not None and self._settings_window.winfo_exists():
                 try:
-                    self._settings_window.run_file_check()
+                    self._start_file_check()
                 except Exception:
                     pass
 
@@ -1049,7 +1121,7 @@ class AppWindow:
             finally:
                 if self._settings_window is not None and self._settings_window.winfo_exists():
                     try:
-                        self._settings_window.run_file_check()
+                        self._start_file_check()
                     except Exception:
                         pass
 
@@ -3018,15 +3090,61 @@ class AppWindow:
         if not self._process_detection_pending:
             self._process_detection_pending = True
             self._submit(
-                is_any_process_running,
-                self._on_game_detected,
+                self._observe_game_process,
+                self._on_game_observed,
                 clear_messages=False,
             )
 
         if self.root.winfo_exists():
             self.root.after(3_000, self._poll_game_process)
 
-    def _on_game_detected(self, detected: bool | None) -> None:
+    def _revalidate_bound_game(self) -> tuple[bool | None, TargetProcess | None]:
+        """Revalidate the exact pso2.exe identity off the Tk thread.
+
+        A ``tasklist`` snapshot costs ~350 ms here, so no caller may run it
+        inside the mainloop. None means the process table could not be observed,
+        which is not evidence that the game exited.
+        """
+        target = getattr(self, "_bound_target", None)
+        if target is not None:
+            try:
+                still_running = is_same_target_still_running(target)
+            except ProcessObservationUnavailable:
+                return None, target
+            return (True, target) if still_running else (False, None)
+        try:
+            exact = observe_exact_pso2()
+        except ProcessObservationUnavailable:
+            return None, None
+        if exact is None:
+            return False, None
+        return True, exact
+
+    def _observe_game_process(self) -> tuple[bool | None, TargetProcess | None]:
+        """Resolve the poll and the exact-target revalidation off the Tk thread.
+
+        A positive poll is always revalidated against the exact pso2.exe
+        identity, exactly as it was on the Tk thread before.
+        """
+        detected = is_any_process_running()
+        if detected is not True:
+            return detected, None
+        return self._revalidate_bound_game()
+
+    def _on_game_observed(
+        self,
+        observed: tuple[bool | None, TargetProcess | None],
+    ) -> None:
+        detected, target = observed
+        self._bound_target = target
+        self._on_game_detected(detected, revalidated=True)
+
+    def _on_game_detected(
+        self,
+        detected: bool | None,
+        *,
+        revalidated: bool = False,
+    ) -> None:
         """Callback when process detection finishes."""
         self._process_detection_pending = False
         if self._startup_route_pending:
@@ -3041,7 +3159,7 @@ class AppWindow:
                 reason="preserving last known process state",
             )
             return
-        if detected:
+        if detected and not revalidated:
             if getattr(self, "_bound_target", None) is not None:
                 try:
                     still_running = is_same_target_still_running(self._bound_target)
@@ -3070,7 +3188,7 @@ class AppWindow:
                 else:
                     self._bound_target = target
                     detected = True
-        else:
+        elif not detected:
             self._bound_target = None
         state = self._controller.state
         detection_changed = state.game_process_running is not detected
@@ -3321,37 +3439,41 @@ class AppWindow:
             if state.proxy_status is ProxyStatus.RUNNING:
                 reconnect_controller.observe_running()
             return
+        if getattr(self, "_runtime_health_probe_pending", False):
+            return
+        self._runtime_health_probe_pending = True
+        self._submit(
+            self._revalidate_bound_game,
+            self._runtime_health_revalidated,
+            lambda _error: self._runtime_health_probe_settled(),
+            clear_messages=False,
+        )
 
-        if getattr(self, "_bound_target", None) is not None:
-            try:
-                still_running = is_same_target_still_running(self._bound_target)
-            except ProcessObservationUnavailable:
-                self._record_debug_status(
-                    "GAME_PROCESS_OBSERVATION_FAILED",
-                    reason="preserving last known process state",
-                )
-                return
-            if not still_running:
-                self._bound_target = None
-                self._on_game_detected(False)
-                return
-        else:
-            try:
-                target = observe_exact_pso2()
-            except ProcessObservationUnavailable:
-                self._record_debug_status(
-                    "GAME_PROCESS_OBSERVATION_FAILED",
-                    reason="preserving last known process state",
-                )
-                return
-            if target is not None:
-                self._bound_target = target
-            else:
-                self._on_game_detected(False)
-                return
+    def _runtime_health_probe_settled(self) -> None:
+        self._runtime_health_probe_pending = False
+
+    def _runtime_health_revalidated(
+        self,
+        observed: tuple[bool | None, TargetProcess | None],
+    ) -> None:
+        self._runtime_health_probe_settled()
+        reconnect_controller = getattr(self, "_reconnect_controller", None)
+        if reconnect_controller is None:
+            return
+        detected, target = observed
+        self._bound_target = target
+        if detected is None:
+            self._record_debug_status(
+                "GAME_PROCESS_OBSERVATION_FAILED",
+                reason="preserving last known process state",
+            )
+            return
+        if not detected:
+            self._on_game_detected(False, revalidated=True)
+            return
 
         attempt = reconnect_controller.request(
-            state,
+            self._controller.state,
             shutting_down=getattr(self, "_closing", False),
         )
         if attempt is None:
@@ -3473,6 +3595,16 @@ class AppWindow:
             != GameStatus.STOPPED.value
         )
         self._closing = True
+        # Teardown below waits on child processes and flushes the support log on
+        # this thread, so take the window off screen first. Leaving a mapped
+        # window behind reads as a crashed application.
+        withdraw = getattr(self.root, "withdraw", None)
+        if callable(withdraw):
+            try:
+                withdraw()
+                self.root.update_idletasks()
+            except Exception:
+                pass
         update_apply_pending = getattr(self, "_update_apply_pending", False)
         update_apply_future = getattr(self, "_update_apply_future", None)
         if update_apply_future is not None:
