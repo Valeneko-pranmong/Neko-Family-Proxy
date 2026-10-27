@@ -2,10 +2,10 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.2a ALPHA REV 3 BUILT AND UI-VERIFIED LOCALLY (NOT INSTALLED OR PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
+STATUS:                         5.2.2a ALPHA REV 4 BUILT AND UI-VERIFIED LOCALLY (NOT INSTALLED OR PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
 PRODUCT_BASELINE:               5.2.2a alpha (local test build); 5.2.1 (release target); 5.1.6 remains public stable
 SOURCE_5_2_2_PREP:              COMMITTED 81f8c8b + 72270c7; version bumped to 5.2.2a for the local alpha build
-ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 3 — preview-0020, sequence 20; installer 2421f890…; not installed or published
+ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 4 — preview-0021, sequence 21; installer 3787766e…; not installed or published
 CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
 LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
@@ -27,7 +27,7 @@ BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-26)
-TEST_SUITE:                     2,809 passed / 5 skipped / 7 deselected (launcher source, 2026-10-26)
+TEST_SUITE:                     2,811 passed / 5 skipped / 7 deselected (launcher source, 2026-10-27)
 RELEASE_RUNBOOK:                docs/current/5.2.0-release-runbook.md
 RELEASE_NOTES:                  docs/current/5.2.1-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
@@ -118,7 +118,7 @@ The 5.1.2 architecture introduced the **Deferred Update Lifecycle** and the **Pr
 - **v5.2.0 (unified-line release target, preview)**: refreshed launcher/auth/dashboard/Settings presentation; atomic self-sync and buffered logging; installer driver-path pinning; permit-issuance rate limiting; CI action pinning; release/profile authority rotation. The new line uses Neko-NETWORK-ID and Neko Proxy API only; 5.1.6 remains on the legacy line and must be uninstalled before a clean 5.2.0 installation. See [5.2.0-release-notes.md](5.2.0-release-notes.md) and [5.2.0-release-runbook.md](5.2.0-release-runbook.md).
 - **v5.2.1 (preview/manual; built and installed, not published)**: login copy and Discord icon, login-endpoint pre-warm, fixed 500×640 window, one-frame Settings render, and an uninstall-time process guard. Envelope `preview-0016`, sequence 16, `minimum_supported_sequence = 16`. See [5.2.1-release-notes.md](5.2.1-release-notes.md).
 - **v5.2.2 (source preparation)**: schema-2 support diagnostics with privacy-safe auth/restore timing, pinned-status centered login layout with a floating pending panel, and a startup splash that waits for session restore so auto-login does not flash the login screen. See [5.2.2-preparation-record.md](5.2.2-preparation-record.md).
-- **v5.2.2a (local alpha build; not installed or published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0020` (sequence 20, `minimum_supported_sequence = 20`). Installer `2421f890…` (207,845,387 bytes, unsigned). The installer includes the netfilter2 elevated-command quoting fix; revision 3 lifts the login content block 24 px. Sequences 17–19 were consumed by the b17 test build and revisions 1–2. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
+- **v5.2.2a (local alpha build; not installed or published)**: the 5.2.2 preparation changes re-versioned to `5.2.2a`, built with Python 3.12/Tk 8.6, and signed into `preview-0021` (sequence 21, `minimum_supported_sequence = 21`). Installer `3787766e…` (207,854,361 bytes, unsigned). The installer includes the netfilter2 elevated-command quoting fix; revision 3 lifts the login content block 24 px; revision 4 pre-lays out every Settings page so category switches render instantly. Sequences 17–20 were consumed by the b17 test build and revisions 1–3. See [5.2.2a-alpha-build.md](5.2.2a-alpha-build.md).
 
 ---
 

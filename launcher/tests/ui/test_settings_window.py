@@ -77,6 +77,40 @@ def test_settings_window_structure_and_categories() -> None:
             pass
 
 
+def test_category_pages_are_prelaid_out_to_the_full_content_area() -> None:
+    try:
+        root = ctk.CTk()
+        root.withdraw()
+    except Exception:
+        pytest.skip("Tkinter display not available")
+
+    try:
+        window = SettingsWindow(root)
+        window.update_idletasks()
+        window.update()
+
+        content_width = window._content_area.winfo_width()
+        content_height = window._content_area.winfo_height()
+        assert content_width > 100 and content_height > 100
+        for page in window._pages.values():
+            assert page.winfo_manager() == "place"
+            assert page.winfo_width() == content_width
+            assert page.winfo_height() == content_height
+
+        for key, _ in SettingsWindow.CATEGORIES:
+            window.select_category(key)
+            window.update()
+            page = window._pages[key]
+            assert page.winfo_manager() == "place"
+            assert page.winfo_width() == content_width
+            assert page.winfo_height() == content_height
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
 def test_account_page_binds_shared_username_and_existing_actions_once() -> None:
     try:
         root = ctk.CTk()

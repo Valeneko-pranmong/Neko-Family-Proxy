@@ -394,6 +394,18 @@ class SettingsWindow(ctk.CTkToplevel):
         self._pages["pso2"] = self._create_pso2_page()
         self._create_tweaker_page(self._pages["pso2"])
         self._pages["about"] = self._create_about_page()
+        # Lay every page out once while the window is still hidden. Switching
+        # sections then only changes stacking order, so a page cannot appear
+        # collapsed or paint progressively on each click.
+        for page in self._pages.values():
+            page.configure(fg_color=PALETTE.card)
+            page.place(
+                in_=self._content_area,
+                x=0,
+                y=0,
+                relwidth=1.0,
+                relheight=1.0,
+            )
         self._focus_controls = tuple(
             control for control in (
                 self._search_entry, self._change_password_button,
@@ -421,9 +433,7 @@ class SettingsWindow(ctk.CTkToplevel):
                     text_color=PALETTE.text,
                     hover_color=PALETTE.surface_accent,
                 )
-        for page in self._pages.values():
-            page.pack_forget()
-        self._pages[key].pack(fill="both", expand=True)
+        self._pages[key].lift()
 
     def _filter_categories(self, *_args: Any) -> None:
         query = self._search_entry.get().strip().lower()
