@@ -328,6 +328,19 @@ def test_public_staging_path_has_no_repository_authority_parameter() -> None:
     assert "repo" not in inspect.signature(module.stage_draft_release).parameters
 
 
+def test_subprocess_executor_decodes_utf8_output_regardless_of_locale() -> None:
+    module = load_module()
+    result = module._SubprocessExecutor().run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write('ไทย'.encode('utf-8'))",
+        ]
+    )
+    assert result.returncode == 0
+    assert result.stdout == "ไทย"
+
+
 def test_main_marshals_cli_arguments_into_the_draft_stager(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

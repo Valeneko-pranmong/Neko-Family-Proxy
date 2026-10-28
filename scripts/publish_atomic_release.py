@@ -127,7 +127,12 @@ class _SubprocessExecutor:
                 args, stdout=stdout, capture_output=False, check=False
             )
         return subprocess.run(
-            args, capture_output=capture_output, text=True, check=False
+            args,
+            capture_output=capture_output,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
 
 
