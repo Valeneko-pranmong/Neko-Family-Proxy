@@ -29,6 +29,7 @@ INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via IS
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-28)
 TEST_SUITE:                     2,851 passed / 5 skipped / 7 deselected (launcher, 2026-10-28)
 RELEASE_RUNBOOK:                docs/current/5.2.2-build-runbook.md
+PATCH_RUNBOOK:                  docs/current/5.2.x-patch-runbook.md
 RELEASE_NOTES:                  docs/current/5.2.4-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
