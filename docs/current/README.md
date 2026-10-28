@@ -2,17 +2,17 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.3 WITHDRAWN (PRERELEASE); 5.2.4 MANUAL MIGRATION BUILD READY 2026-10-28
-PRODUCT_BASELINE:               5.2.2 remains public stable; 5.2.4 is the manual migration target; 5.1.6 remains the legacy line
+STATUS:                         5.2.3 FIXED MANUAL NON-LATEST (RE-RELEASE); 5.2.4 CANCELED
+PRODUCT_BASELINE:               5.2.2 remains public stable; 5.2.3 fixed is the manual migration target; 5.1.6 remains the legacy line
 SOURCE_5_2_2_PREP:              historical; 5.2.2 stable was published on 2026-10-28
 ALPHA_BUILD_5_2_2A:             historical; superseded by the published 5.2.2 stable
-CURRENT_RELEASE_TAG:            v5.2.4 (release id 426730922, non-latest manual, stable-0028 seq 28); v5.2.3 withdrawn to prerelease
-LAST_PUBLIC_STABLE:             v5.2.2 (releases/latest); v5.2.4 manual non-latest until migration completes
-INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.4, unsigned (SHA-256 39038c0c7dcf4bc8813cd7ad831ffe6e6b71363710bce5942c1a7ddea35256c6)
+CURRENT_RELEASE_TAG:            v5.2.3 (fixed re-release, non-latest manual, stable-0028 seq 28); v5.2.4 canceled
+LAST_PUBLIC_STABLE:             v5.2.2 (releases/latest); v5.2.3 fixed manual non-latest until migration completes
+INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.3, unsigned (SHA-256 7a2683ced330bc0e73e72a1611aef44e2c710ca32b05f037e4fe50a584bc3d2b)
 ACTIVE_DEV_BRANCH:              main
 RELEASE_CHANNEL:                STABLE (5.2.2 and later may publish stable)
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
-UPDATE_LIFECYCLE:               5.2.2 UPDATER CANNOT VERIFY FROZEN CORE (CORE_INVENTORY_INVALID); 5.2.4 FIXES IT AND PINS UPDATER d7d59cf4…; MANUAL CLEAN INSTALL REQUIRED
+UPDATE_LIFECYCLE:               5.2.2 UPDATER CANNOT VERIFY FROZEN CORE (CORE_INVENTORY_INVALID); 5.2.3 RE-RELEASE FIXES IT AND PINS UPDATER d7d59cf4…; MANUAL CLEAN INSTALL REQUIRED
 UPDATE_TRUST_ANCHOR:            neko-update-prod-3 / neko-update-profile-v520-2
 RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.x UNIFIED; CLEAN UNINSTALL-FIRST; NO SIDE-BY-SIDE
 UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.x; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
@@ -27,15 +27,15 @@ BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; hi
 LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
 REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-28)
-TEST_SUITE:                     2,851 passed / 5 skipped / 7 deselected (launcher, 2026-10-28)
+TEST_SUITE:                     2,852 passed / 6 skipped / 7 deselected (launcher, 2026-10-28)
 RELEASE_RUNBOOK:                docs/current/5.2.2-build-runbook.md
 PATCH_RUNBOOK:                  docs/current/5.2.x-patch-runbook.md
-RELEASE_NOTES:                  docs/current/5.2.4-release-notes.md
+RELEASE_NOTES:                  docs/current/5.2.3-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
 ALPHA_BUILD_RECORD_5_2_2A:      docs/current/5.2.2a-alpha-build.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
-LAST_VERIFIED:                  2026-10-28 20:49 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-10-28 21:06 +07:00 (Asia/Bangkok)
 ```
 
 > **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the

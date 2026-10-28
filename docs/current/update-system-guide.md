@@ -1,8 +1,8 @@
-# คู่มือระบบอัปเดต — สถานะจริงหลัง 5.2.3 (อัปเดต 2026-10-28)
+# คู่มือระบบอัปเดต — สถานะจริงหลัง 5.2.3 re-release (2026-10-28)
 
 > **คนที่ทำแพทต่อ:** ใช้ [5.2.x-patch-runbook.md](5.2.x-patch-runbook.md) เป็น checklist/คำสั่งจริง
 
-เอกสารนี้อธิบายว่าทำไม 5.2.2 อัปเดตอัตโนมัติไป 5.2.3 ไม่ได้, 5.2.4 แก้อะไร, และการออก release ถัดไปต้องทำอย่างไรให้ไม่พังซ้ำ
+เอกสารนี้อธิบายว่าทำไม 5.2.2 อัปเดตอัตโนมัติไป 5.2.3 ไม่ได้, 5.2.3 ที่ re-release แก้อะไร, และการออกรุ่นถัดไปต้องทำอย่างไรให้ไม่พังซ้ำ
 
 ---
 
@@ -12,10 +12,10 @@
 |---|---|---|
 | 5.1.6 | legacy stable | ไม่ได้ (คนละ trust key) — ติดตั้งใหม่ |
 | 5.2.2 | stable ที่ยังเป็น `releases/latest` | ไม่ได้ — updater ตรวจ Core ไม่ผ่าน |
-| 5.2.3 | **prerelease/manual (ถอนจาก stable)** | ไม่ได้ — apply ล้มเหลว `CORE_INVENTORY_INVALID` |
-| 5.2.4 | **manual clean install** (non-latest จนกว่าจะย้ายผู้ใช้เสร็จ) | ใช้ได้หลังติดตั้ง 5.2.4 ครั้งเดียว |
+| 5.2.3 | **fixed re-release, manual non-latest** (`stable-0028`, seq 28) | ใช้ได้หลังติดตั้ง 5.2.3 ครั้งเดียว |
+| 5.2.4 | **ยกเลิก** (ถูกลบ release/tag) | — |
 
-ตัวเลขล่าสุด: 5.2.4 envelope `stable-0028` seq 28 min 28, updater hash `d7d59cf4…`
+ตัวเลขล่าสุด: 5.2.3 fixed envelope `stable-0028` seq 28 min 28, updater `d7d59cf4…`, launcher `70e7b571…`, installer `7a2683ce…`
 
 ---
 
@@ -34,11 +34,11 @@
 
 ---
 
-## 3. ทำไม 5.2.2 → 5.2.3 ถึงล้มเหลว (สองชั้น)
+## 3. ทำไม 5.2.2 → 5.2.3 (ครั้งแรก) ถึงล้มเหลว
 
 ### ชั้นที่ 1 — updater hash
 
-`verify_installed_updater` เอา hash/size ของ `NekoUpdater.exe` ที่ติดตั้ง (5.2.2 = `35f4532c…`, 11,281,597 B) ไปเทียบกับ updater ใน manifest 5.2.3 (`bb2cee9d…`, 11,280,446 B) → `UPDATER_SIZE_MISMATCH` → `UPDATER_INCOMPATIBLE`
+`verify_installed_updater` เอา hash/size ของ `NekoUpdater.exe` ที่ติดตั้ง (5.2.2 = `35f4532c…`, 11,281,597 B) ไปเทียบกับ updater ใน manifest (`bb2cee9d…`, 11,280,446 B) → `UPDATER_SIZE_MISMATCH` → `UPDATER_INCOMPATIBLE`
 
 การ pin manifest ให้ใช้ updater 5.2.2 แก้ชั้นนี้ได้ (resolver ผ่าน) แต่ไม่พอ
 
@@ -52,7 +52,7 @@
 
 ---
 
-## 4. 5.2.4 แก้อะไร
+## 4. 5.2.3 re-release แก้อะไร
 
 `verify_canonical_core_bundle` รองรับทั้งสอง schema:
 
@@ -65,34 +65,35 @@
 
 - **updater bytes ถูก pin ที่ `d7d59cf4…` (11,281,988 B)** — ห้าม rebuild เปลี่ยน hash จนกว่าจะมีกลไก self-replace ที่ปลอดภัย
 - manifest ของ release ถัดไปต้องระบุ updater hash นี้ และ installer ต้อง stage ไฟล์เดียวกัน
-- publisher บังคับ `updater.version == tag`; จึงใช้ version label ตาม tag ได้ แต่ **ไบต์ต้องเป็น d7d59cf4… เสมอ** (บันทึกไว้ใน release notes ทุกครั้ง)
+- publisher บังคับ `updater.version == tag`; จึงใช้ version label ตาม tag ได้ แต่ **ไบต์ต้องเป็น d7d59cf4… เสมอ**
 - launcher version = tag; core คง 5.2.0 (`c262432c…`)
-- ห้ามใช้ sequence ซ้ำ: เครื่องที่เคย apply 5.2.3 ล้มเหลวจะบันทึก seq 27 เป็น failed; release ถัดไปต้องเป็น seq 28 ขึ้นไป
+- sequence 28 ถูกใช้โดย 5.2.3 re-release แล้ว; รุ่นถัดไปต้องเป็น **seq 29**
+- tag `v5.2.3` ถูก force-move ไปยัง commit ของ re-release (tag เดิมชี้ `da61a82`); อย่าทำซ้ำถ้าไม่จำเป็น — ครั้งต่อไปให้ bump version ใหม่แทน
 
 ---
 
-## 5. การย้ายผู้ใช้ไป 5.2.4 (manual)
+## 5. การย้ายผู้ใช้ไป 5.2.3 (manual)
 
 1. ปิด launcher/proxy/เกม
 2. ถอนเวอร์ชันเดิมผ่าน Windows Settings > Apps
-3. ติดตั้ง `NekoFamilyProxy-Installer.exe` 5.2.4
+3. ติดตั้ง `NekoFamilyProxy-Installer.exe` 5.2.3 (re-release)
 4. ล็อกอิน Discord ใหม่ (credential ในเครื่องถูกลบตอนถอน; วัน/สิทธิ์อยู่ฝั่ง server)
 5. ตรวจ baseline เป็น `stable-0028`
 
-**ห้ามประกาศ 5.2.4 เป็น stable จนกว่าผู้ใช้ 5.2.2 จะย้ายเสร็จ** — ถ้า feed stable ชี้ updater `d7d59cf4…` เครื่อง 5.2.2 ที่ยังใช้ `35f4532c…` จะขึ้น `REINSTALL_REQUIRED` และถูกล็อกไม่ให้ login
+**ห้ามประกาศ 5.2.3 เป็น latest จนกว่าผู้ใช้ 5.2.2 จะย้ายเสร็จ** — ถ้า feed stable ชี้ updater `d7d59cf4…` เครื่อง 5.2.2 ที่ยังใช้ `35f4532c…` จะขึ้น `REINSTALL_REQUIRED` และถูกล็อกไม่ให้ login
 
 ---
 
-## 6. การออก release ถัดไป (5.2.5)
+## 6. การออก release ถัดไป (5.2.4)
 
-1. bump launcher เป็น 5.2.5 แล้ว rebuild `NekoLauncher.exe` (updater **ไม่ต้อง rebuild**; ใช้ `d7d59cf4…`)
-2. สร้าง envelope: stable, `stable-0029`, seq 29, min 29, launcher 5.2.5, updater version 5.2.5 + hash `d7d59cf4…`, core 5.2.0
+1. bump launcher เป็น 5.2.4 แล้ว rebuild `NekoLauncher.exe` (updater **ไม่ต้อง rebuild**; ใช้ `d7d59cf4…`)
+2. สร้าง envelope: stable, `stable-0029`, seq 29, min 29, launcher 5.2.4, updater version 5.2.4 + hash `d7d59cf4…`, core 5.2.0
 3. เซ็นด้วย `neko-update-prod-3`
 4. rebuild installer ด้วย pinned updater + baseline ใหม่; ต้องได้ 11/11 gates
-5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.4** (stage → apply → baseline เปลี่ยนเป็น 0029 → self-tests) ก่อนเผยแพร่
+5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.3 fixed** (stage → apply → baseline เปลี่ยนเป็น 0029 → self-tests) ก่อนเผยแพร่
 6. เผยแพร่เป็น **non-latest manual ก่อน** (`make_latest=false`); จะ mark latest ก็ต่อเมื่อไม่มีเครื่อง 5.2.2 เหลือในระบบ
 
-คำสั่ง build/publish โดยละเอียดดู `docs/current/5.2.2-build-runbook.md` (โครงเดิม) และใช้ค่า version/sequence ด้านบน
+คำสั่ง build/publish โดยละเอียดดู `docs/current/5.2.x-patch-runbook.md`
 
 ---
 
@@ -105,9 +106,10 @@
 - [ ] installer 11/11 gates + baseline envelope ใหม่
 - [ ] staging มี 5 asset พอดี; ชื่อไฟล์ตรง
 - [ ] suite เขียว, ruff, repository safety
-- [ ] live update test จาก 5.2.4 สำเร็จจริง (ไม่ใช่แค่ resolver ผ่าน)
+- [ ] live update test จาก 5.2.3 fixed สำเร็จจริง (ไม่ใช่แค่ resolver ผ่าน)
 - [ ] notes/hash/docs ตรงกับ asset จริง
 - [ ] ถ้าเพิ่งมีเครื่อง apply ล้มเหลว: ใช้ sequence ถัดไป ไม่ reuse
+- [ ] ก่อน publish: `releases/latest` ยังเป็น v5.2.2 และ plan non-latest/latest ชัดเจน
 
 ---
 
@@ -117,3 +119,4 @@
 - การ freeze Core ที่ schema ต่างจาก verifier ทำให้ update engine ใช้ไม่ได้ทั้ง line แม้ resolver จะผ่าน
 - ต้องทดสอบ **apply จริง** ไม่ใช่แค่ `verify_installed_updater`/resolver ก่อน publish
 - feed หนึ่งตัวรับ updater hash ได้ค่าเดียว จึงต้องวางแผนช่วงเปลี่ยนผ่าน population เสมอ
+- การ rebrand/rewrite tag ควรเป็นทางเลือกสุดท้าย; ปกติให้ bump version ใหม่แทน
