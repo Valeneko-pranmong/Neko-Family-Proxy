@@ -706,6 +706,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--installer-repo", default=DEFAULT_INSTALLER_REPO)
     parser.add_argument("--as-prerelease", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--expected-sequence", type=int)
+    parser.add_argument("--expected-minimum-sequence", type=int)
     return parser.parse_args(argv)
 
 

@@ -349,12 +349,18 @@ def test_main_marshals_cli_arguments_into_the_draft_stager(
         "0" * 40,
         "--as-prerelease",
         "--dry-run",
+        "--expected-sequence",
+        "25",
+        "--expected-minimum-sequence",
+        "25",
     ]
 
     assert module.main(argv) == 0
     assert captured["tag"] == "v5.2.2"
     assert captured["as_prerelease"] is True
     assert captured["dry_run"] is True
+    assert captured["expected_sequence"] == 25
+    assert captured["expected_minimum_sequence"] == 25
     assert "installer_repo" not in captured
 
 
