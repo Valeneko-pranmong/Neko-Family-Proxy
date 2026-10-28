@@ -1,4 +1,9 @@
-"""Canonical Core manifest and on-disk bundle verifier."""
+"""Core manifest and on-disk bundle verifier.
+
+Supports both the canonical schema (``rid``/``executable``/``files`` array) and
+the frozen Core authority schema used by the 5.2.x line (``file_count`` plus a
+``files`` path-to-SHA-256 map).
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -41,6 +46,15 @@ _FORBIDDEN_LEAF_NAMES = {
     "settings.json",
 }
 
+_FROZEN_AUTHORITY_HASH_FIELDS = {
+    "neko_proxy_core_exe_hash": "NekoProxyCore.exe",
+    "neko_proxy_core_dll_hash": "NekoProxyCore.dll",
+    "protected_settings_payload_hash": "runtime-settings.nkps",
+    "redirector_bin_hash": "bin/Redirector.bin",
+    "nfapi_dll_hash": "bin/nfapi.dll",
+    "v2ray_sn_exe_hash": "bin/v2ray-sn.exe",
+}
+
 
 class CoreVerificationError(ValueError):
     """Raised when a Core bundle does not match its canonical manifest."""
@@ -74,6 +88,9 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
 
     if not isinstance(manifest, dict):
         return CoreVerificationResult(valid=False, manifest_sha256=manifest_sha256, error="Manifest must be a JSON object")
+
+    if "rid" not in manifest and isinstance(manifest.get("files"), dict):
+        return _verify_frozen_authority_manifest(bundle_dir, manifest, manifest_sha256)
 
     if not _REQUIRED_TOP_KEYS.issubset(manifest.keys()):
         missing_keys = sorted(_REQUIRED_TOP_KEYS - set(manifest.keys()))
@@ -207,6 +224,112 @@ def verify_canonical_core_bundle(bundle_dir: Path) -> CoreVerificationResult:
             manifest_sha256=manifest_sha256,
             error=f"Missing files from disk: {next(iter(missing))}",
         )
+
+    return CoreVerificationResult(
+        valid=True,
+        file_count=len(files_map),
+        total_bytes=actual_total_bytes,
+        manifest_sha256=manifest_sha256,
+        error=None,
+    )
+
+
+def _invalid(manifest_sha256: str, message: str) -> CoreVerificationResult:
+    return CoreVerificationResult(
+        valid=False,
+        manifest_sha256=manifest_sha256,
+        error=message,
+    )
+
+
+def _verify_frozen_authority_manifest(
+    bundle_dir: Path,
+    manifest: dict[str, Any],
+    manifest_sha256: str,
+) -> CoreVerificationResult:
+    source_commit = manifest.get("source_commit")
+    if not isinstance(source_commit, str) or not source_commit.strip():
+        return _invalid(manifest_sha256, "Invalid manifest source_commit")
+
+    files_obj = manifest.get("files")
+    if not isinstance(files_obj, dict) or not files_obj:
+        return _invalid(manifest_sha256, "Manifest files field must be a non-empty object")
+
+    declared_count = manifest.get("file_count")
+    if type(declared_count) is not int or declared_count != len(files_obj):
+        return _invalid(
+            manifest_sha256,
+            f"Manifest file_count {declared_count!r} does not match {len(files_obj)} entries",
+        )
+
+    files_map: dict[str, str] = {}
+    for rel_path, sha_val in files_obj.items():
+        if not isinstance(rel_path, str) or not rel_path.strip():
+            return _invalid(manifest_sha256, "Invalid file path in manifest")
+        norm_path = rel_path.replace("\\", "/")
+        if norm_path.startswith("/") or ".." in norm_path.split("/"):
+            return _invalid(
+                manifest_sha256,
+                f"Path traversal or absolute path in manifest: {rel_path}",
+            )
+        if norm_path in files_map:
+            return _invalid(manifest_sha256, f"Duplicate file path in manifest: {rel_path}")
+        if Path(norm_path).name.lower() in _FORBIDDEN_LEAF_NAMES:
+            return _invalid(manifest_sha256, f"Forbidden file in manifest: {rel_path}")
+        if (
+            not isinstance(sha_val, str)
+            or len(sha_val) != 64
+            or not all(c in "0123456789abcdefABCDEF" for c in sha_val)
+        ):
+            return _invalid(
+                manifest_sha256,
+                f"Invalid SHA256 in manifest for {rel_path}: {sha_val}",
+            )
+        files_map[norm_path] = sha_val.lower()
+
+    for mandatory_file in _MANDATORY_CORE_FILES:
+        if mandatory_file not in files_map:
+            return _invalid(
+                manifest_sha256,
+                f"Missing mandatory Core file in manifest: {mandatory_file}",
+            )
+
+    for field_name, rel_path in _FROZEN_AUTHORITY_HASH_FIELDS.items():
+        if field_name not in manifest:
+            continue
+        declared = manifest[field_name]
+        if not isinstance(declared, str) or declared.lower() != files_map[rel_path]:
+            return _invalid(
+                manifest_sha256,
+                f"Manifest {field_name} does not match files entry {rel_path}",
+            )
+
+    disk_files: set[str] = set()
+    actual_total_bytes = 0
+    for file_path in bundle_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel_name = file_path.relative_to(bundle_dir).as_posix()
+        if rel_name in (CORE_MANIFEST_FILENAME, "canonical-core-manifest.json"):
+            continue
+        if rel_name not in files_map:
+            return _invalid(manifest_sha256, f"Unlisted file found on disk: {rel_name}")
+        try:
+            actual_size, sha = _sha256_file(file_path)
+        except OSError as err:
+            return _invalid(manifest_sha256, f"Unreadable file {rel_name}: {err}")
+        expected_sha = files_map[rel_name]
+        if sha != expected_sha:
+            return _invalid(
+                manifest_sha256,
+                f"Hash mismatch on {rel_name}: expected {expected_sha}, got {sha}",
+            )
+        disk_files.add(rel_name)
+        actual_total_bytes += actual_size
+
+    if disk_files != set(files_map):
+        missing = set(files_map) - disk_files
+        return _invalid(manifest_sha256, f"Missing files from disk: {next(iter(missing))}")
 
     return CoreVerificationResult(
         valid=True,

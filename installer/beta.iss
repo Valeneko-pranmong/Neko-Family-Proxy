@@ -25,10 +25,10 @@
 
 #define MyAppName "NEKO FAMILY PROXY"
 #ifndef MyAppVersion
-  #define MyAppVersion "5.2.3"
+  #define MyAppVersion "5.2.4"
 #endif
 #ifndef MyAppDisplayVersion
-  #define MyAppDisplayVersion "5.2.3"
+  #define MyAppDisplayVersion "5.2.4"
 #endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both
@@ -446,7 +446,7 @@ begin
     begin
       MsgBox(
         'พบ NEKO FAMILY PROXY เวอร์ชัน ' + InstalledVersion + ' อยู่แล้ว' + #13#10#13#10 +
-        '5.2.3 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
+        '5.2.4 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
         'กรุณาถอนการติดตั้งเวอร์ชันเดิมผ่าน Windows Settings > Apps > Installed apps ' +
         'ก่อน แล้วรัน installer นี้อีกครั้ง' + #13#10#13#10 +
         'An existing NEKO FAMILY PROXY ' + InstalledVersion + ' installation ' +

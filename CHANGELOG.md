@@ -5,7 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.4] - 2026-10-28
+
+### Fixed
+- Updater Core verification now accepts the frozen 5.2.0 Core authority manifest schema (`source_commit`, `file_count`, path-to-SHA-256 map) as well as the canonical `rid`/`executable`/`files[]` schema. The 5.2.2 updater rejected the frozen Core with `CORE_INVENTORY_INVALID`, so no in-app update could be applied.
+- The updater artifact is pinned for the 5.2.x line so 5.2.4 installations can resolve and apply later releases.
+
+### Changed
+- 5.2.4 is a manual clean-install migration: 5.2.2/5.2.3 cannot auto-update to it because the old updater is rejected before the fix can run. Future 5.2.x updates work after the one-time install.
+- Withdrew the 5.2.3 stable publication to prerelease/manual after the live update test failed with `CORE_INVENTORY_INVALID`.
+
 ## [5.2.3] - 2026-10-28
+
+> **WITHDRAWN:** this release cannot be applied by the 5.2.2 updater. Use the manual 5.2.4 installer instead. 5.2.3 remains available only for reference/clean install.
 
 ### Added
 - Proxy self-service sign-in: the launcher accepts a `pending` proxy account and shows zero days instead of failing when the Discord identity has no pre-linked account.
