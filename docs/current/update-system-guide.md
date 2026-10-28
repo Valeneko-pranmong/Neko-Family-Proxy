@@ -96,7 +96,7 @@ updater จึงต้องข้าม preflight สำหรับ Core sche
 2. สร้าง envelope: stable, `stable-0029`, seq 29, min 29, launcher 5.2.4, updater version 5.2.4 + hash `b0b991f5…`, core 5.2.0
 3. เซ็นด้วย `neko-update-prod-3`
 4. rebuild installer ด้วย pinned updater + baseline ใหม่; ต้องได้ 11/11 gates
-5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.3 fixed** (stage → apply → committed 29 → self-tests) ก่อนเผยแพร่ — รอบนี้ผ่านแล้วด้วย launcher `3e060ae8…` / envelope `17b61458…`; ถ้า rebuild ให้ใช้ seq 30
+5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.3 fixed** (stage → apply → state committed 29 → restart → self-tests) ก่อนเผยแพร่ — รอบนี้ผ่านแล้วด้วย launcher `3e060ae8…` / envelope `17b61458…`; ถ้า rebuild ให้ใช้ seq 30
 6. เผยแพร่เป็น **non-latest manual ก่อน** (`make_latest=false`); จะ mark latest ก็ต่อเมื่อไม่มีเครื่อง 5.2.2 เหลือในระบบ
 
 คำสั่ง build/publish โดยละเอียดดู `docs/current/5.2.x-patch-runbook.md`
