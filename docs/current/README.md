@@ -6,8 +6,8 @@ STATUS:                         5.2.3 WITHDRAWN (PRERELEASE); 5.2.4 MANUAL MIGRA
 PRODUCT_BASELINE:               5.2.2 remains public stable; 5.2.4 is the manual migration target; 5.1.6 remains the legacy line
 SOURCE_5_2_2_PREP:              historical; 5.2.2 stable was published on 2026-10-28
 ALPHA_BUILD_5_2_2A:             historical; superseded by the published 5.2.2 stable
-CURRENT_RELEASE_TAG:            v5.2.4 (manual/prerelease, stable-0028 seq 28); v5.2.3 withdrawn to prerelease
-LAST_PUBLIC_STABLE:             v5.2.2 (releases/latest); v5.2.4 prerelease until migration completes
+CURRENT_RELEASE_TAG:            v5.2.4 (release id 426730922, non-latest manual, stable-0028 seq 28); v5.2.3 withdrawn to prerelease
+LAST_PUBLIC_STABLE:             v5.2.2 (releases/latest); v5.2.4 manual non-latest until migration completes
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.4, unsigned (SHA-256 39038c0c7dcf4bc8813cd7ad831ffe6e6b71363710bce5942c1a7ddea35256c6)
 ACTIVE_DEV_BRANCH:              main
 RELEASE_CHANNEL:                STABLE (5.2.2 and later may publish stable)

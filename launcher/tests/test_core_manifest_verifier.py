@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 
 from neko_launcher.updater.core_manifest_verifier import verify_canonical_core_bundle
+from neko_launcher.updater.generation_builder import (
+    GenerationBuildError,
+    _verify_core,
+)
 
 _MANDATORY = (
     "NekoProxyCore.exe",
@@ -150,3 +154,29 @@ def test_canonical_manifest_still_valid(tmp_path: Path) -> None:
     assert result.valid is True
     assert result.file_count == len(files)
     assert result.manifest_sha256 == _sha(raw)
+
+
+def test_generation_builder_accepts_frozen_authority_core(tmp_path: Path) -> None:
+    bundle = tmp_path / "core"
+    bundle.mkdir()
+    files = _valid_files()
+    _write_files(bundle, files)
+    manifest_sha = _write_frozen_manifest(bundle, files)
+
+    _verify_core(bundle, manifest_sha)
+
+
+def test_generation_builder_rejects_tampered_frozen_authority_core(tmp_path: Path) -> None:
+    bundle = tmp_path / "core"
+    bundle.mkdir()
+    files = _valid_files()
+    _write_files(bundle, files)
+    manifest_sha = _write_frozen_manifest(bundle, files)
+    (bundle / "NekoProxyCore.exe").write_bytes(b"tampered")
+
+    try:
+        _verify_core(bundle, manifest_sha)
+    except GenerationBuildError as error:
+        assert error.code == "CORE_INVENTORY_INVALID"
+    else:
+        raise AssertionError("tampered frozen Core must be rejected")

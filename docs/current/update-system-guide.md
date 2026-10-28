@@ -11,7 +11,7 @@
 | 5.1.6 | legacy stable | ไม่ได้ (คนละ trust key) — ติดตั้งใหม่ |
 | 5.2.2 | stable ที่ยังเป็น `releases/latest` | ไม่ได้ — updater ตรวจ Core ไม่ผ่าน |
 | 5.2.3 | **prerelease/manual (ถอนจาก stable)** | ไม่ได้ — apply ล้มเหลว `CORE_INVENTORY_INVALID` |
-| 5.2.4 | **manual clean install** (prerelease จนกว่าจะย้ายผู้ใช้เสร็จ) | ใช้ได้หลังติดตั้ง 5.2.4 ครั้งเดียว |
+| 5.2.4 | **manual clean install** (non-latest จนกว่าจะย้ายผู้ใช้เสร็จ) | ใช้ได้หลังติดตั้ง 5.2.4 ครั้งเดียว |
 
 ตัวเลขล่าสุด: 5.2.4 envelope `stable-0028` seq 28 min 28, updater hash `d7d59cf4…`
 
@@ -88,7 +88,7 @@
 3. เซ็นด้วย `neko-update-prod-3`
 4. rebuild installer ด้วย pinned updater + baseline ใหม่; ต้องได้ 11/11 gates
 5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.4** (stage → apply → baseline เปลี่ยนเป็น 0029 → self-tests) ก่อนเผยแพร่
-6. เผยแพร่เป็น **prerelease/manual ก่อน**; จะ promote เป็น stable ก็ต่อเมื่อไม่มีเครื่อง 5.2.2 เหลือในระบบ
+6. เผยแพร่เป็น **non-latest manual ก่อน** (`make_latest=false`); จะ mark latest ก็ต่อเมื่อไม่มีเครื่อง 5.2.2 เหลือในระบบ
 
 คำสั่ง build/publish โดยละเอียดดู `docs/current/5.2.2-build-runbook.md` (โครงเดิม) และใช้ค่า version/sequence ด้านบน
 
