@@ -53,11 +53,12 @@
 
 ## 2. สถานะของแต่ละรุ่น (ณ 2026-10-28)
 
-| รุ่น | Profile (ติดตั้ง) | คีย์ที่ไว้ใจ | Baseline | เห็น 5.2.2 stable? |
+| รุ่น | Profile (ติดตั้ง) | คีย์ที่ไว้ใจ | Baseline | เห็น stable ล่าสุด? |
 |---|---|---|---|---|
 | 5.1.6 | `neko-update-profile-v512-1` (stable) | prod-1 เท่านั้น | `stable-0013` seq 13 min 9 | ❌ ตรวจลายเซ็นไม่ผ่าน (คนละคีย์) → ต้องติดตั้งใหม่ manual |
 | 5.2.1 | preview | prod-3 | `preview-0016` seq 16 min 16 | ❌ ช่อง preview มองไม่เห็น stable → ขึ้น "ล่าสุด" |
-| 5.2.2 | `trust/update-profile-v1.json` (stable, sha `380e7df6…`) | prod-3 | `stable-0026` seq 26 min 26 | — (คือรุ่นปัจจุบัน) |
+| 5.2.2 | `trust/update-profile-v1.json` (stable, sha `380e7df6…`) | prod-3 | `stable-0026` seq 26 min 26 | ✅ เห็น 5.2.3 stable (seq 27) |
+| 5.2.3 | `trust/update-profile-v1.json` (stable, sha `380e7df6…`) | prod-3 | `stable-0027` seq 27 min 27 | — (คือรุ่นปัจจุบัน) |
 
 หมายเหตุ: 5.2.1 (และ 5.2.2a preview builds) ไม่เคยถูก publish เป็น GitHub release; มีเฉพาะเครื่องทดสอบ
 

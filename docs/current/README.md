@@ -2,23 +2,23 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.2a ALPHA REV 6 HARDENED, INSTALL/UNINSTALL VERIFIED LOCALLY (NOT PUBLISHED); 5.2.1 INSTALL MATRIX AND OWNER SIGN-OFF STILL OPEN
-PRODUCT_BASELINE:               5.2.2a alpha (local test build); 5.2.1 (release target); 5.1.6 remains public stable
-SOURCE_5_2_2_PREP:              COMMITTED 81f8c8b + 72270c7; version bumped to 5.2.2a for the local alpha build
-ALPHA_BUILD_5_2_2A:             BUILT 2026-10-27 rev 6 — preview-0023, sequence 23; installer 17458568…; not published
-CURRENT_RELEASE_TAG:            none; 5.2.1 is not tagged or published
-LAST_PUBLIC_STABLE:             v5.1.6 (01d5331, released 2026-09-21)
-INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.1 preview, unsigned (SHA-256 a4381f80fe734b9a4207dec0f86fcbe1f9be1aee303248935feeee4d6d5da628)
-ACTIVE_DEV_BRANCH:              feat/proxy-api-launcher-clean-v2
-RELEASE_CHANNEL:                PREVIEW/MANUAL (owner decision 2026-10-25)
+STATUS:                         5.2.3 STABLE PUBLISHED 2026-10-28 (SELF-SERVICE PENDING LOGIN + COUPON ACTIVATION); LIVE DISCORD LOGIN E2E PENDING OWNER
+PRODUCT_BASELINE:               5.2.3 stable (published); 5.2.2 previous stable; 5.1.6 remains the legacy line
+SOURCE_5_2_2_PREP:              historical; 5.2.2 stable was published on 2026-10-28
+ALPHA_BUILD_5_2_2A:             historical; superseded by the published 5.2.2 stable
+CURRENT_RELEASE_TAG:            v5.2.3 (release id 426685853, target da61a82)
+LAST_PUBLIC_STABLE:             v5.2.3 (da61a82, released 2026-10-28)
+INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.3, unsigned (SHA-256 c194364e5af3f2fcb8c93950a701b8289f101ca0294e4d550f60b6c550facaf5)
+ACTIVE_DEV_BRANCH:              main
+RELEASE_CHANNEL:                STABLE (5.2.2 and later may publish stable)
 DISTRIBUTION_ARCHITECTURE:      CANONICAL MAIN REPOSITORY (historical updates repo superseded)
 UPDATE_LIFECYCLE:               BACKGROUND STAGE -> DURABLE PENDING -> DEFERRED OFFLINE APPLY
 UPDATE_TRUST_ANCHOR:            neko-update-prod-3 / neko-update-profile-v520-2
-RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.0 UNIFIED PREVIEW; CLEAN UNINSTALL-FIRST; NO SIDE-BY-SIDE
-UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.0; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
-WEB_AUTH_LAUNCHER:              FROZEN RELEASE CONFIGURATION BUILT; INTERACTIVE DISCORD LOGIN/CORE START PENDING
-PROXY_API_DEPLOYMENT:           STAGING LIVE (https://neko-control-room-staging.vercel.app); /public/status 200, /v1/me 401
-STAGING_E2E:                    NOT PASSED (01c/02d/03c gates open)
+RELEASE_SEPARATION:             5.1.6 LEGACY / 5.2.x UNIFIED; CLEAN UNINSTALL-FIRST; NO SIDE-BY-SIDE
+UPGRADE_PATH_5_1_6:             NO IN-PLACE UPGRADE; UNINSTALL 5.1.6 BEFORE 5.2.x; NO LEGACY ACCOUNT/DAY/COUPON TRANSFER
+WEB_AUTH_LAUNCHER:              5.2.3 SIGNS IN PENDING ACCOUNTS AND REDEEMS COUPONS THROUGH THE PROXY API; LIVE DISCORD LOGIN VERIFICATION PENDING
+PROXY_API_DEPLOYMENT:           PRODUCTION + STAGING LIVE (neko-control-room deployed 5084eaa; self-service migration applied by owner)
+STAGING_E2E:                    pending owner live login/coupon check
 AUTH_FLOW:                      PASS (fail-closed identity refresh + single-session arbitration in source)
 PROXY_FLOW:                     PASS (Runtime Config v1 + Core pipe supervision in source)
 SESSION_GUARD_INVARIANT:        PASS (no forced game/proxy termination on update)
@@ -26,15 +26,15 @@ NEXT_LAUNCH_APPLY:              PASS (offline verified bootstrap before window c
 BOOTSTRAP_AUTHORITY:            PASS (bounded v5.1.0 signed archive override; historical bootstrap)
 LAUNCHER_TITLE_BINDING:         PASS (bound to canonical neko_launcher.__version__)
 INSTALLER_CORE_AUTHORITY:       PASS (dynamic build authority propagation via ISCC)
-REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-26)
-TEST_SUITE:                     2,817 passed / 5 skipped / 7 deselected (launcher source, 2026-10-27)
-RELEASE_RUNBOOK:                docs/current/5.2.0-release-runbook.md
-RELEASE_NOTES:                  docs/current/5.2.1-release-notes.md
+REPOSITORY_SAFETY:              PASS (scripts/check_repository_safety.py, 2026-10-28)
+TEST_SUITE:                     2,845 passed / 5 skipped / 7 deselected (launcher, 2026-10-28)
+RELEASE_RUNBOOK:                docs/current/5.2.2-build-runbook.md
+RELEASE_NOTES:                  docs/current/5.2.3-release-notes.md
 PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
 ALPHA_BUILD_RECORD_5_2_2A:      docs/current/5.2.2a-alpha-build.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
-LAST_VERIFIED:                  2026-10-27 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-10-28 +07:00 (Asia/Bangkok)
 ```
 
 > **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the
