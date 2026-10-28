@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - 5.2.3 is a manual clean-install migration: 5.2.2 cannot auto-update because the old updater is rejected before the fix can run. Future 5.2.x updates work after the one-time install.
+- 5.2.3 is published as `releases/latest`, so remaining 5.2.2 installations are gated with `REINSTALL_REQUIRED` and must install the 5.2.3 installer manually.
 - This re-release uses sequence 28 (`stable-0028`). The first 5.2.3 publication was withdrawn after the live update test failed with `CORE_INVENTORY_INVALID`.
 
 ## [Unreleased]

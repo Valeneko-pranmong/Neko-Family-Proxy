@@ -2,12 +2,12 @@
 
 ```text
 DOCUMENT:                       docs/current/README.md
-STATUS:                         5.2.3 FIXED MANUAL NON-LATEST (RE-RELEASE); 5.2.4 CANCELED
-PRODUCT_BASELINE:               5.2.2 remains public stable; 5.2.3 fixed is the manual migration target; 5.1.6 remains the legacy line
+STATUS:                         5.2.3 FIXED RE-RELEASE IS PUBLIC STABLE (releases/latest); 5.2.4 CANCELED
+PRODUCT_BASELINE:               5.2.3 fixed is the public stable baseline; remaining 5.2.2 clients are login-gated (REINSTALL_REQUIRED) and must install the 5.2.3 installer manually; 5.1.6 remains the legacy line
 SOURCE_5_2_2_PREP:              historical; 5.2.2 stable was published on 2026-10-28
 ALPHA_BUILD_5_2_2A:             historical; superseded by the published 5.2.2 stable
-CURRENT_RELEASE_TAG:            v5.2.3 (fixed re-release, release id 426773973, non-latest manual, stable-0028 seq 28, target 71dbc55); v5.2.4 canceled
-LAST_PUBLIC_STABLE:             v5.2.2 (releases/latest); v5.2.3 fixed manual non-latest until migration completes
+CURRENT_RELEASE_TAG:            v5.2.3 (fixed re-release, release id 426773973, releases/latest since 2026-10-28, stable-0028 seq 28, target 71dbc55); v5.2.4 canceled
+LAST_PUBLIC_STABLE:             v5.2.3 (releases/latest); v5.2.2 is superseded and cannot auto-update to it
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.3, unsigned (SHA-256 674a968d5ee2774fc4d89c917628364b3a2d09fce7ea7cdecac620f536232666)
 ACTIVE_DEV_BRANCH:              main
 RELEASE_CHANNEL:                STABLE (5.2.2 and later may publish stable)
@@ -35,7 +35,7 @@ PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
 ALPHA_BUILD_RECORD_5_2_2A:      docs/current/5.2.2a-alpha-build.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
-LAST_VERIFIED:                  2026-10-28 21:28 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-10-28 21:37 +07:00 (Asia/Bangkok)
 ```
 
 > **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the

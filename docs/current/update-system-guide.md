@@ -11,11 +11,13 @@
 | รุ่น | สถานะ | อัปเดตในแอปได้? |
 |---|---|---|
 | 5.1.6 | legacy stable | ไม่ได้ (คนละ trust key) — ติดตั้งใหม่ |
-| 5.2.2 | stable ที่ยังเป็น `releases/latest` | ไม่ได้ — updater ตรวจ Core ไม่ผ่าน |
-| 5.2.3 | **fixed re-release, manual non-latest** (`stable-0028`, seq 28) | ใช้ได้หลังติดตั้ง 5.2.3 ครั้งเดียว |
+| 5.2.2 | **superseded** (ถูกแทนที่เป็น latest แล้ว) | ไม่ได้ — ขึ้น `REINSTALL_REQUIRED` และถูกล็อก login |
+| 5.2.3 | **public stable = `releases/latest`** (`stable-0028`, seq 28) | ใช้ได้หลังติดตั้ง 5.2.3 ครั้งเดียว |
 | 5.2.4 | **ยกเลิก** (ถูกลบ release/tag) | — |
 
 ตัวเลขล่าสุด: 5.2.3 fixed envelope `stable-0028` seq 28 min 28, updater `b0b991f5…`, launcher `70e7b571…`, installer `674a968d…`
+
+`releases/latest` ถูก mark เป็น `v5.2.3` (release id `426773973`) เมื่อ 2026-10-28 — เครื่อง 5.2.2 ที่เหลือจึงต้องติดตั้ง installer 5.2.3 เองทั้งหมด (ดู §5)
 
 ---
 
@@ -86,7 +88,7 @@ updater จึงต้องข้าม preflight สำหรับ Core sche
 4. ล็อกอิน Discord ใหม่ (credential ในเครื่องถูกลบตอนถอน; วัน/สิทธิ์อยู่ฝั่ง server)
 5. ตรวจ baseline เป็น `stable-0028`
 
-**ห้ามประกาศ 5.2.3 เป็น latest จนกว่าผู้ใช้ 5.2.2 จะย้ายเสร็จ** — ถ้า feed stable ชี้ updater `b0b991f5…` เครื่อง 5.2.2 ที่ยังใช้ `35f4532c…` จะขึ้น `REINSTALL_REQUIRED` และถูกล็อกไม่ให้ login
+**สถานะปัจจุบัน: 5.2.3 เป็น `releases/latest` แล้ว (2026-10-28)** — เครื่อง 5.2.2 ที่ยังใช้ updater `35f4532c…` จะเทียบกับ `b0b991f5…` ไม่ผ่าน (`verify_installed_updater`) → policy คืน `REINSTALL_REQUIRED` → login gate ปิดด้วยข้อความ "จำเป็นต้องติดตั้งโปรแกรมใหม่ กรุณาติดต่อผู้ดูแล" (`software_update_policy.py:84`, `app_window.py:1491`) ค่า `mandatory: false` ใน envelope ไม่ช่วย ดังนั้นทุกเครื่อง 5.2.2 ต้องทำขั้นตอน 1-5 ด้วยมือ
 
 ---
 
@@ -97,7 +99,7 @@ updater จึงต้องข้าม preflight สำหรับ Core sche
 3. เซ็นด้วย `neko-update-prod-3`
 4. rebuild installer ด้วย pinned updater + baseline ใหม่; ต้องได้ 11/11 gates
 5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.3 fixed** (stage → apply → state committed 29 → restart → self-tests) ก่อนเผยแพร่ — รอบนี้ผ่านแล้วด้วย launcher `3e060ae8…` / envelope `17b61458…`; ถ้า rebuild ให้ใช้ seq 30
-6. เผยแพร่เป็น **non-latest manual ก่อน** (`make_latest=false`); จะ mark latest ก็ต่อเมื่อไม่มีเครื่อง 5.2.2 เหลือในระบบ
+6. เผยแพร่ได้เป็น **latest ตรง ๆ** (`make_latest=true`) เพราะ 5.2.3 ซึ่งเป็น latest ปัจจุบันอัปเดตในแอปได้แล้วและ updater hash ไม่เปลี่ยน; ใช้ non-latest เฉพาะเมื่อ updater bytes เปลี่ยนอีกครั้ง (ดู §4 เรื่อง pin `b0b991f5…`)
 
 คำสั่ง build/publish โดยละเอียดดู `docs/current/5.2.x-patch-runbook.md`
 
@@ -115,7 +117,7 @@ updater จึงต้องข้าม preflight สำหรับ Core sche
 - [ ] live update test จาก 5.2.3 fixed สำเร็จจริง (ไม่ใช่แค่ resolver ผ่าน)
 - [ ] notes/hash/docs ตรงกับ asset จริง
 - [ ] ถ้าเพิ่งมีเครื่อง apply ล้มเหลว: ใช้ sequence ถัดไป ไม่ reuse
-- [ ] ก่อน publish: `releases/latest` ยังเป็น v5.2.2 และ plan non-latest/latest ชัดเจน
+- [ ] ก่อน publish: บันทึกค่า `releases/latest` ปัจจุบัน (ตอนนี้ v5.2.3) และระบุ plan latest/non-latest ให้ชัดเจน
 
 ---
 
