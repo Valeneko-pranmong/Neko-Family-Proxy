@@ -1,5 +1,5 @@
 {
-  "source_base": "v5.1.6",
-  "target": "v5.2.1",
+  "source_base": "v5.2.2",
+  "target": "v5.2.3",
   "intent": "user_bug"
 }
