@@ -22,7 +22,7 @@ PROXY_RELEASE_PATH = "/v1/session/release"
 PROXY_PERMIT_PATH = "/v1/launch-permit"
 PROXY_COUPON_REDEEM_PATH = "/v1/coupons/redeem"
 IDENTITY_TOKEN_PATH = "/api/launcher/token"
-CLIENT_ID = "neko-launcher"
+PROXY_LAUNCHER_CLIENT_ID = "neko-launcher-v2"
 HTTP_TIMEOUT_SECONDS = 10.0
 MAX_RESPONSE_BYTES = 65_536
 MAX_TOKEN_CHARS = 16_384
@@ -330,7 +330,7 @@ class ProxyApiGateway:
             headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
             payload={
                 "grant_type": "refresh_token",
-                "client_id": CLIENT_ID,
+                "client_id": PROXY_LAUNCHER_CLIENT_ID,
                 "refresh_token": token,
             },
         )

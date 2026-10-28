@@ -30,6 +30,21 @@ def test_proxy_api_url_is_disabled_by_default(tmp_path: Path) -> None:
     assert config.web_auth_only is False
 
 
+def test_frozen_build_pairs_production_proxy_and_identity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    config = LauncherConfig.from_environment(tmp_path)
+
+    assert config.proxy_api_url == "https://neko-control-room.vercel.app"
+    assert config.identity_base_url == "https://neko-network-id.vercel.app"
+    assert config.web_auth_bridge_url == ""
+    assert config.proxy_api_enabled is True
+    assert config.web_auth_only is True
+
+
 def test_proxy_api_url_alone_enables_web_only(
     monkeypatch,
     tmp_path: Path,

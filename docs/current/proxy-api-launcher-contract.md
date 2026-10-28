@@ -60,7 +60,7 @@ User-Agent: NekoLauncher/<version>
 
 {
   "grant_type": "refresh_token",
-  "client_id": "neko-launcher",
+  "client_id": "neko-launcher-v2",
   "refresh_token": "<current refresh token>"
 }
 ```
@@ -79,6 +79,9 @@ the earlier “old token / not deployed” blocker is closed.
 GET  {identity}/launcher/authorize   PKCE S256, exact redirect
 POST {identity}/api/launcher/token   grant_type=authorization_code
 ```
+
+Authorize, code exchange, and refresh all use `client_id=neko-launcher-v2`.
+The legacy bridge retains `neko-launcher`; its token profile is not interchangeable.
 
 `WebAuthClient.authenticate_identity()` requires the identity response to
 contain a refresh token. It does not call `launcher_bridge` and does not create

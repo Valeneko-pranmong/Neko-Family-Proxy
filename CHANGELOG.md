@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.4] - 2026-10-28
+
+### Fixed
+- Discord sign-in now uses the `neko-launcher-v2` OAuth client for authorize, code exchange, and refresh, matching the identity service's Proxy API profile. The previous build sent the legacy `neko-launcher` client, which is reserved for the 5.1.6 bridge profile.
+- Frozen 5.2.x builds now pin the production Proxy API and identity origins instead of staging, so first-time sign-in provisions the pending proxy account on the live service and coupon activation works without a manual link.
+
+### Changed
+- 5.2.3 installations auto-update to 5.2.4 through the pinned updater (`b0b991f5…`); no reinstall is required.
+- Release sequence 30 (`stable-0030`), `minimum_supported_sequence = 30`.
+- Existing 5.2.3 refresh tokens are bound to the legacy client id and are cleared on the first 5.2.4 launch, so users sign in with Discord once more.
+
 ## [5.2.3] - 2026-10-28 (re-released with the updater fix)
 
 ### Fixed

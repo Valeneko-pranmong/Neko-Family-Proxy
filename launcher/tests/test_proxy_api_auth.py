@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from http.client import HTTPConnection
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
@@ -13,13 +18,17 @@ import neko_launcher.bootstrap.app_factory as app_factory
 from neko_launcher.application.controller import ApplicationController
 from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.application.services import LauncherService
+from neko_launcher.domain.events import GameProcessStateChanged
 from neko_launcher.domain.models import (
     AuthenticatedUser,
+    AuthStatus,
     CouponRedemption,
     Entitlement,
     EntitlementStatus,
+    ProxyStatus,
     SessionClaim,
     SessionTerminationReason,
+    entitlement_is_active,
 )
 from neko_launcher.infrastructure.auth.proxy_api_auth import (
     REFRESH_TOKEN_STORE_KEY,
@@ -35,7 +44,11 @@ from neko_launcher.infrastructure.auth.proxy_api_gateway import (
     ProxyApiHttpResponse,
     ProxyApiTransportError,
 )
-from neko_launcher.infrastructure.auth.web_auth import IdentityTokenSet
+from neko_launcher.infrastructure.auth.web_auth import (
+    IdentityTokenSet,
+    JsonResponse,
+    WebAuthClient,
+)
 from neko_launcher.infrastructure.config import LauncherConfig
 from neko_launcher.infrastructure.event_bus import EventBus
 
@@ -213,7 +226,7 @@ def test_sign_in_refreshes_once_on_auth_error(code: str) -> None:
     refresh_call = transport.calls[1]
     assert refresh_call["payload"] == {
         "grant_type": "refresh_token",
-        "client_id": "neko-launcher",
+        "client_id": "neko-launcher-v2",
         "refresh_token": "identity-refresh-fixture",
     }
     assert transport.calls[2]["headers"]["Authorization"] == (
@@ -571,6 +584,158 @@ def test_service_claims_on_restore_with_injected_gateway() -> None:
     assert service.restore_session() is True
     assert entitlement.claim_calls == 1
     assert service._controller.state.auth_status.value == "authenticated"
+
+
+def test_v2_web_login_pending_account_redeems_coupon_without_another_login() -> None:
+    class LoginTransport(FakeTransport):
+        def post_json(self, url, payload, headers, timeout) -> JsonResponse:
+            response = self.request(
+                "POST", url, headers=headers, payload=payload, timeout=timeout
+            )
+            return JsonResponse(
+                status=response.status,
+                headers=response.headers,
+                body=response.body,
+                document=response.document,
+            )
+
+    valid_until = datetime.now(timezone.utc) + timedelta(days=30)
+    transport = LoginTransport(
+        [
+            _response(200, FIXTURE["identity_tokens"]),
+            _response(200, FIXTURE["me_pending"]),
+            _error_response("account_pending"),
+            _response(200, {**FIXTURE["coupon_success"], "valid_until": valid_until.isoformat()}),
+            _response(
+                200,
+                {**FIXTURE["claim_success"], "license_valid_until": valid_until.isoformat()},
+            ),
+        ]
+    )
+    store = _store()
+    auth = _auth(transport, store)
+    entitlement = ProxyApiEntitlementGateway(auth._client, auth)
+    proxy_starts: list[bool] = []
+    controller = ApplicationController(
+        EventBus(), proxy_gateway=SimpleNamespace(start=lambda: proxy_starts.append(True))
+    )
+    service = LauncherService(
+        controller,
+        auth,
+        entitlement,
+        SimpleNamespace(key_hash="a" * 64, display_name="Test PC"),
+        "neko-family-proxy",
+        web_auth_only=True,
+    )
+    authorize_urls: list[str] = []
+
+    def browser_opener(url: str) -> bool:
+        authorize_urls.append(url)
+        query = parse_qs(urlparse(url).query)
+        redirect = urlparse(query["redirect_uri"][0])
+        assert redirect.scheme == "http"
+        assert redirect.hostname == "127.0.0.1"
+        assert redirect.port is not None and redirect.port > 0
+        assert redirect.path == "/auth/callback"
+        assert query["state"][0]
+        connection = HTTPConnection("127.0.0.1", redirect.port, timeout=2)
+        try:
+            # Exercise the real state check before delivering the valid callback.
+            for state, code, status in (
+                ("wrong-state", "rejected-code", 400),
+                (query["state"][0], "authorization-code-fixture", 200),
+            ):
+                params = urlencode({"state": state, "code": code})
+                connection.request("GET", f"{redirect.path}?{params}")
+                response = connection.getresponse()
+                response.read()
+                assert response.status == status
+        finally:
+            connection.close()
+        return True
+
+    web_auth = WebAuthClient(
+        identity_base_url="https://identity.test",
+        bridge_exchange_url="",
+        loopback_port=0,
+        callback_timeout=2,
+        transport=transport,
+        browser_opener=browser_opener,
+    )
+    try:
+        service.sign_in_with_web(web_auth)
+    finally:
+        web_auth._await_previous_teardown()
+
+    assert len(authorize_urls) == 1
+    authorize = urlparse(authorize_urls[0])
+    assert (authorize.scheme, authorize.netloc, authorize.path) == (
+        "https", "identity.test", "/launcher/authorize"
+    )
+    query = parse_qs(authorize.query)
+    assert query["response_type"] == ["code"]
+    assert query["client_id"] == ["neko-launcher-v2"]
+    assert query["code_challenge_method"] == ["S256"]
+    exchange = transport.calls[0]["payload"]
+    verifier = exchange["code_verifier"]
+    assert 43 <= len(verifier) <= 128
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+    assert query["code_challenge"] == [challenge.rstrip(b"=").decode("ascii")]
+    assert exchange == {
+        "grant_type": "authorization_code",
+        "client_id": "neko-launcher-v2",
+        "code": "authorization-code-fixture",
+        "code_verifier": verifier,
+        "redirect_uri": query["redirect_uri"][0],
+    }
+    pending = controller.state
+    assert pending.auth_status is AuthStatus.AUTHENTICATED
+    assert pending.user_id == FIXTURE["me_pending"]["identity_user_id"]
+    assert pending.user_email == "Neko Tester"
+    assert pending.session_id is None
+    assert pending.entitlement is None
+    assert auth.account_status is not None and auth.account_status.status == "pending"
+    assert store.values == {REFRESH_TOKEN_STORE_KEY: "identity-refresh-fixture"}
+    assert len(transport.calls) == 3
+
+    controller.dispatch(GameProcessStateChanged(True))
+    service.start_proxy()
+    assert controller.state.proxy_status is ProxyStatus.FAILED
+    assert controller.state.last_error == "บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน"
+    assert proxy_starts == []
+    assert len(transport.calls) == 3
+
+    redemption = service.redeem_coupon("VALID-COUPON-FIXTURE")
+
+    assert redemption == CouponRedemption("neko-family-proxy", 30, valid_until)
+    active = controller.state
+    assert active.auth_status is AuthStatus.AUTHENTICATED
+    assert active.user_id == pending.user_id
+    assert active.session_id == FIXTURE["claim_success"]["session_id"]
+    assert active.entitlement == Entitlement(
+        "neko-family-proxy", EntitlementStatus.ACTIVE, valid_until
+    )
+    assert entitlement_is_active(active.entitlement)
+    assert active.last_error is None
+    assert store.values == {REFRESH_TOKEN_STORE_KEY: "identity-refresh-fixture"}
+    assert len(authorize_urls) == 1
+    assert [(call["method"], call["url"]) for call in transport.calls] == [
+        ("POST", "https://identity.test/api/launcher/token"),
+        ("GET", "https://proxy.test/v1/me"),
+        ("POST", "https://proxy.test/v1/session/claim"),
+        ("POST", "https://proxy.test/v1/coupons/redeem"),
+        ("POST", "https://proxy.test/v1/session/claim"),
+    ]
+    assert transport.calls[3]["payload"] == {"code": "VALID-COUPON-FIXTURE"}
+    assert transport.calls[2]["payload"] == transport.calls[4]["payload"] == {
+        "installation_key_hash": "a" * 64,
+        "display_name": "Test PC",
+    }
+    assert all(
+        call["headers"]["Authorization"] == "Bearer identity-access-fixture"
+        for call in transport.calls[1:]
+    )
+    assert transport.responses == []
 
 
 def test_compose_auth_dependencies_proxy_mode_does_not_build_supabase(

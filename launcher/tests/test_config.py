@@ -124,7 +124,7 @@ def test_frozen_build_uses_release_proxy_api_url(
     )
     config = LauncherConfig.from_environment(tmp_path)
     assert config.proxy_api_url == "https://proxy.example"
-    assert config.identity_base_url == "https://neko-network-id-staging.vercel.app"
+    assert config.identity_base_url == "https://neko-network-id.vercel.app"
     assert config.proxy_api_enabled is True
     assert config.web_auth_enabled is True
     assert config.web_auth_only is True

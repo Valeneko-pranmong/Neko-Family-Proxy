@@ -122,7 +122,7 @@ def test_refresh_exchange_uses_identity_endpoint_and_returns_rotated_tokens() ->
     assert call["url"] == "https://identity.test/api/launcher/token"
     assert call["payload"] == {
         "grant_type": "refresh_token",
-        "client_id": "neko-launcher",
+        "client_id": "neko-launcher-v2",
         "refresh_token": "refresh-fixture",
     }
     headers = call["headers"]

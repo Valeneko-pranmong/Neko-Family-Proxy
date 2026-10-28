@@ -24,13 +24,14 @@ from neko_launcher.application.errors import LauncherServiceError
 from neko_launcher.domain.models import AuthPhase
 from neko_launcher.infrastructure.auth.proxy_api_gateway import (
     PROXY_CLAIM_PATH,
+    PROXY_LAUNCHER_CLIENT_ID,
     PROXY_ME_PATH,
 )
 
 DEFAULT_IDENTITY_BASE_URL = "https://neko-network-id.vercel.app"
 AUTHORIZE_PATH = "/launcher/authorize"
 TOKEN_PATH = "/api/launcher/token"
-CLIENT_ID = "neko-launcher"
+LEGACY_LAUNCHER_CLIENT_ID = "neko-launcher"
 LOOPBACK_HOST = "127.0.0.1"
 LOOPBACK_PORT = 53682
 LOOPBACK_PATH = "/auth/callback"
@@ -197,12 +198,14 @@ def build_authorize_url(
     identity_base_url: str,
     redirect_uri: str,
     pkce: PkceChallenge,
+    *,
+    client_id: str,
 ) -> str:
     base = _normalized_https_base(identity_base_url)
     query = urlencode(
         {
             "response_type": "code",
-            "client_id": CLIENT_ID,
+            "client_id": client_id,
             "redirect_uri": redirect_uri,
             "state": pkce.state,
             "code_challenge": pkce.challenge,
@@ -606,6 +609,7 @@ class WebAuthClient:
                 code="bridge_not_configured",
             )
         return self._authenticate_flow(
+            client_id=LEGACY_LAUNCHER_CLIENT_ID,
             require_refresh=False,
             finalize=lambda tokens: self._exchange_bridge(tokens.access_token),
         )
@@ -613,6 +617,7 @@ class WebAuthClient:
     def authenticate_identity(self) -> IdentityTokenSet:
         """Return identity tokens without the legacy bridge/session exchange."""
         return self._authenticate_flow(
+            client_id=PROXY_LAUNCHER_CLIENT_ID,
             require_refresh=True,
             finalize=lambda tokens: tokens,
         )
@@ -620,6 +625,7 @@ class WebAuthClient:
     def _authenticate_flow(
         self,
         *,
+        client_id: str,
         require_refresh: bool,
         finalize: Callable[[IdentityTokenSet], T],
     ) -> T:
@@ -655,6 +661,7 @@ class WebAuthClient:
                 self._identity_base_url,
                 redirect_uri,
                 pkce,
+                client_id=client_id,
             )
             self._emit_progress(AuthPhase.OPENING_BROWSER)
             try:
@@ -705,6 +712,7 @@ class WebAuthClient:
                 callback.code,
                 pkce.verifier,
                 redirect_uri,
+                client_id=client_id,
                 require_refresh=require_refresh,
             )
             self._support_event(
@@ -778,13 +786,14 @@ class WebAuthClient:
         code_verifier: str,
         redirect_uri: str,
         *,
+        client_id: str,
         require_refresh: bool,
     ) -> IdentityTokenSet:
         response = self._transport.post_json(
             f"{self._identity_base_url}{TOKEN_PATH}",
             {
                 "grant_type": "authorization_code",
-                "client_id": CLIENT_ID,
+                "client_id": client_id,
                 "code": code,
                 "code_verifier": code_verifier,
                 "redirect_uri": redirect_uri,

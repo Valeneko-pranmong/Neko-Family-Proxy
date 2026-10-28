@@ -70,11 +70,14 @@ def _browser_sends_callback(
     code: str | None = "code-123",
     error: str | None = None,
     wrong_state: bool = False,
+    expected_client_id: str | None = None,
 ) -> tuple[object, threading.Event]:
     opened = threading.Event()
 
     def opener(url: str) -> bool:
         query = parse_qs(urlparse(url).query)
+        if expected_client_id is not None:
+            assert query["client_id"] == [expected_client_id]
         redirect_uri = query["redirect_uri"][0]
         state = "wrong-state" if wrong_state else query["state"][0]
         params: dict[str, str] = {"state": state}
@@ -172,12 +175,14 @@ def test_pkce_uses_s256_and_bounded_random_values() -> None:
     assert first.challenge != first.verifier
 
 
-def test_authorize_url_uses_exact_loopback_contract() -> None:
+@pytest.mark.parametrize("client_id", ["neko-launcher", "neko-launcher-v2"])
+def test_authorize_url_uses_exact_loopback_contract(client_id: str) -> None:
     pkce = generate_pkce()
     url = build_authorize_url(
         "https://identity.test",
         "http://127.0.0.1:53682/auth/callback",
         pkce,
+        client_id=client_id,
     )
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
@@ -186,7 +191,7 @@ def test_authorize_url_uses_exact_loopback_contract() -> None:
     assert parsed.netloc == "identity.test"
     assert parsed.path == "/launcher/authorize"
     assert query["response_type"] == ["code"]
-    assert query["client_id"] == ["neko-launcher"]
+    assert query["client_id"] == [client_id]
     assert query["redirect_uri"] == ["http://127.0.0.1:53682/auth/callback"]
     assert query["state"] == [pkce.state]
     assert query["code_challenge"] == [pkce.challenge]
@@ -197,7 +202,12 @@ def test_authorize_url_rejects_non_https_or_path_base() -> None:
     pkce = generate_pkce()
     for base in ("http://identity.test", "https://identity.test/extra"):
         with pytest.raises(WebAuthError, match="ระบบตั้งค่าการเข้าสู่ระบบไม่ถูกต้อง"):
-            build_authorize_url(base, "http://127.0.0.1:53682/auth/callback", pkce)
+            build_authorize_url(
+                base,
+                "http://127.0.0.1:53682/auth/callback",
+                pkce,
+                client_id="neko-launcher-v2",
+            )
 
 
 def test_loopback_accepts_one_matching_callback() -> None:
@@ -317,7 +327,7 @@ def test_loopback_times_out_and_can_be_cancelled() -> None:
 
 def test_client_exchanges_code_and_bridge_session() -> None:
     transport = FakeTransport([_token_response(), _bridge_response()])
-    opener, opened = _browser_sends_callback()
+    opener, opened = _browser_sends_callback(expected_client_id="neko-launcher")
     client = _client(transport, browser_opener=opener)
 
     session = client.authenticate()
@@ -405,7 +415,7 @@ def test_failed_flow_emits_error_category_without_token_material() -> None:
 
 def test_client_identity_exchange_requires_no_bridge() -> None:
     transport = FakeTransport([_identity_token_response()])
-    opener, opened = _browser_sends_callback()
+    opener, opened = _browser_sends_callback(expected_client_id="neko-launcher-v2")
     client = _client(transport, bridge_exchange_url="", browser_opener=opener)
 
     tokens = client.authenticate_identity()
@@ -420,6 +430,7 @@ def test_client_identity_exchange_requires_no_bridge() -> None:
     assert len(transport.calls) == 1
     assert transport.calls[0]["url"] == "https://identity.test/api/launcher/token"
     assert transport.calls[0]["payload"]["grant_type"] == "authorization_code"
+    assert transport.calls[0]["payload"]["client_id"] == "neko-launcher-v2"
 
 
 def test_identity_exchange_requires_refresh_token() -> None:
