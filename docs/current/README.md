@@ -6,7 +6,7 @@ STATUS:                         5.2.3 FIXED MANUAL NON-LATEST (RE-RELEASE); 5.2.
 PRODUCT_BASELINE:               5.2.2 remains public stable; 5.2.3 fixed is the manual migration target; 5.1.6 remains the legacy line
 SOURCE_5_2_2_PREP:              historical; 5.2.2 stable was published on 2026-10-28
 ALPHA_BUILD_5_2_2A:             historical; superseded by the published 5.2.2 stable
-CURRENT_RELEASE_TAG:            v5.2.3 (fixed re-release, non-latest manual, stable-0028 seq 28); v5.2.4 canceled
+CURRENT_RELEASE_TAG:            v5.2.3 (fixed re-release, release id 426750987, non-latest manual, stable-0028 seq 28, target 00f8d89); v5.2.4 canceled
 LAST_PUBLIC_STABLE:             v5.2.2 (releases/latest); v5.2.3 fixed manual non-latest until migration completes
 INSTALLER_CANDIDATE:            NekoFamilyProxy-Installer.exe 5.2.3, unsigned (SHA-256 7a2683ced330bc0e73e72a1611aef44e2c710ca32b05f037e4fe50a584bc3d2b)
 ACTIVE_DEV_BRANCH:              main
@@ -35,7 +35,7 @@ PREPARATION_RECORD:             docs/current/5.2.0-release-preparation-record.md
 PREPARATION_RECORD_5_2_2:       docs/current/5.2.2-preparation-record.md
 ALPHA_BUILD_RECORD_5_2_2A:      docs/current/5.2.2a-alpha-build.md
 LEGACY_RETIREMENT:              future; 5.3.0 is not a release label (see 5.3.0-cutover-runbook.md)
-LAST_VERIFIED:                  2026-10-28 21:06 +07:00 (Asia/Bangkok)
+LAST_VERIFIED:                  2026-10-28 21:10 +07:00 (Asia/Bangkok)
 ```
 
 > **2026-10-26 5.2.1 patch overlay:** 5.2.1 is a launcher/UI patch on the
