@@ -362,6 +362,35 @@ def test_main_marshals_cli_arguments_into_the_draft_stager(
     assert "installer_repo" not in captured
 
 
+def test_main_reads_notes_file_content_into_the_stager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load_module()
+    captured: dict[str, Any] = {}
+
+    def fake_stage(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(module, "stage_draft_release", fake_stage)
+    notes = tmp_path / "notes.md"
+    notes.write_text("# notes", encoding="utf-8")
+    argv = [
+        "--staging-dir",
+        "stage",
+        "--tag",
+        "v5.2.2",
+        "--target-commit",
+        "0" * 40,
+        "--notes-file",
+        str(notes),
+        "--dry-run",
+    ]
+
+    assert module.main(argv) == 0
+    assert captured["notes"] == "# notes"
+    assert "notes_file" not in captured
+
+
 def test_expected_staging_channel_binds_5_2_to_preview() -> None:
     module = load_module()
     assert module.expected_staging_channel("v5.2.0") == "preview"

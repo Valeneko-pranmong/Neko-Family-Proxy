@@ -775,7 +775,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--target-commit", required=True)
     parser.add_argument("--title")
-    parser.add_argument("--notes")
+    notes_group = parser.add_mutually_exclusive_group()
+    notes_group.add_argument("--notes")
+    notes_group.add_argument("--notes-file", type=Path)
     parser.add_argument("--installer-repo", default=DEFAULT_INSTALLER_REPO)
     parser.add_argument("--as-prerelease", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -791,6 +793,8 @@ _STAGE_DRAFT_PARAMETERS = frozenset(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.notes_file is not None:
+        args.notes = args.notes_file.read_text(encoding="utf-8")
     # --installer-repo belongs to the unified publisher, not the draft stager.
     kwargs = {
         key: value
