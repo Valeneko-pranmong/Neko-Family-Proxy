@@ -6,7 +6,7 @@ import hashlib
 import inspect
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
@@ -319,6 +319,83 @@ def _verify_manifest_signature(document: dict[str, Any]) -> Any:
         raise StageDraftReleaseError("Manifest signature verification failed") from error
 
 
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_core_bundle(bundle_dir: Path, *, expected_identity: str) -> None:
+    manifest_path = bundle_dir / "core-manifest.json"
+    if not manifest_path.is_file():
+        raise StageDraftReleaseError("Core manifest missing from bundle")
+    manifest_bytes = manifest_path.read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != expected_identity.lower():
+        raise StageDraftReleaseError("Core installed identity mismatch")
+    try:
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except Exception as error:
+        raise StageDraftReleaseError("Core manifest is invalid JSON") from error
+    if not isinstance(manifest, dict):
+        raise StageDraftReleaseError("Core manifest must be a JSON object")
+    source_commit = manifest.get("source_commit")
+    if not isinstance(source_commit, str) or not source_commit.strip():
+        raise StageDraftReleaseError("Core manifest is missing source_commit")
+    if manifest.get("rid", "win-x64") != "win-x64" or manifest.get(
+        "executable", "NekoProxyCore.exe"
+    ) != "NekoProxyCore.exe":
+        raise StageDraftReleaseError("Unsupported core manifest rid or executable")
+    files_obj = manifest.get("files")
+    if isinstance(files_obj, list):
+        entries = [
+            (item.get("path"), item.get("sha256"))
+            for item in files_obj
+            if isinstance(item, dict)
+        ]
+        if len(entries) != len(files_obj):
+            raise StageDraftReleaseError("Core manifest files entry is malformed")
+    elif isinstance(files_obj, dict):
+        entries = list(files_obj.items())
+    else:
+        raise StageDraftReleaseError("Core manifest files entry is malformed")
+    if not entries:
+        raise StageDraftReleaseError("Core manifest declares zero files")
+    if "file_count" in manifest and manifest["file_count"] != len(entries):
+        raise StageDraftReleaseError("Core manifest file_count mismatch")
+    root = bundle_dir.resolve()
+    declared: set[str] = set()
+    for raw_path, raw_digest in entries:
+        rel_text = str(raw_path).replace("\\", "/")
+        rel = PurePosixPath(rel_text)
+        if (
+            not rel_text
+            or rel.is_absolute()
+            or any(part in {"", ".", ".."} for part in rel.parts)
+            or not isinstance(raw_digest, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", raw_digest) is None
+        ):
+            raise StageDraftReleaseError(f"Unsafe core manifest entry: {rel_text!r}")
+        key = rel_text.lower()
+        if key in declared:
+            raise StageDraftReleaseError(f"Duplicate core manifest path: {rel_text}")
+        declared.add(key)
+        target = root.joinpath(*rel.parts).resolve()
+        if root not in target.parents:
+            raise StageDraftReleaseError(f"Core manifest path escapes bundle: {rel_text}")
+        if not target.is_file() or _sha256_path(target) != raw_digest.lower():
+            raise StageDraftReleaseError(f"Core file does not match manifest: {rel_text}")
+    actual = {
+        path.relative_to(root).as_posix().lower()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    extra = actual - declared - {"core-manifest.json", "canonical-core-manifest.json"}
+    if extra:
+        raise StageDraftReleaseError(f"Undeclared files in Core bundle: {sorted(extra)[:5]}")
+
+
 def _validate_manifest(
     manifest_path: Path,
     assets: dict[str, Path],
@@ -423,24 +500,19 @@ def _validate_manifest(
 
     _ensure_launcher_import_path()
     try:
-        from neko_launcher.updater.core_manifest_verifier import (
-            verify_canonical_core_bundle,
-        )
         from neko_launcher.updater.zip_extractor import extract_core_bundle
 
         with tempfile.TemporaryDirectory(prefix="neko-core-proof-") as extraction_dir:
             extracted = Path(extraction_dir)
             extract_core_bundle(assets["NekoProxyCore.zip"], extracted)
-            verification = verify_canonical_core_bundle(extracted)
+            _verify_core_bundle(
+                extracted,
+                expected_identity=release_set.components["core"].installed_identity_sha256,
+            )
+    except StageDraftReleaseError:
+        raise
     except Exception as error:
         raise StageDraftReleaseError("Core bundle extraction or verification failed") from error
-    if not verification.valid:
-        raise StageDraftReleaseError("Core bundle verification failed")
-    if (
-        verification.manifest_sha256
-        != release_set.components["core"].installed_identity_sha256
-    ):
-        raise StageDraftReleaseError("Core installed identity mismatch")
 
 
 def validate_staging_preconditions(

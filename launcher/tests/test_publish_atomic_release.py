@@ -169,19 +169,12 @@ def _make_core_zip(path: Path) -> tuple[bytes, str]:
         "bin/nfapi.dll": b"dummy",
         "bin/v2ray-sn.exe": b"dummy",
     }
-    files_array = [
-        {
-            "path": k,
-            "size": len(v),
-            "sha256": hashlib.sha256(v).hexdigest(),
-        }
-        for k, v in sorted(files.items())
-    ]
     manifest = {
-        "rid": "win-x64",
-        "executable": "NekoProxyCore.exe",
         "source_commit": TARGET,
-        "files": files_array,
+        "file_count": len(files),
+        "files": {
+            k: hashlib.sha256(v).hexdigest() for k, v in sorted(files.items())
+        },
     }
     manifest_bytes = canonical(manifest)
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -426,6 +419,62 @@ def test_validation_accepts_frozen_core_version_below_release_tag(tmp_path: Path
     )
 
     assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)
+
+
+@pytest.mark.parametrize("schema", ["custody", "canonical"])
+def test_core_bundle_verification_accepts_declared_files(
+    tmp_path: Path, schema: str
+) -> None:
+    module = load_module()
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    payloads = {"NekoProxyCore.exe": b"core", "bin/Redirector.bin": b"redirector"}
+    for name, data in payloads.items():
+        target = bundle / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    if schema == "custody":
+        files_field: Any = {
+            name: hashlib.sha256(data).hexdigest()
+            for name, data in sorted(payloads.items())
+        }
+    else:
+        files_field = [
+            {
+                "path": name,
+                "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+            for name, data in sorted(payloads.items())
+        ]
+    manifest = {
+        "source_commit": TARGET,
+        "file_count": len(payloads),
+        "files": files_field,
+    }
+    (bundle / "core-manifest.json").write_bytes(canonical(manifest))
+    identity = hashlib.sha256((bundle / "core-manifest.json").read_bytes()).hexdigest()
+
+    module._verify_core_bundle(bundle, expected_identity=identity)
+
+
+def test_core_bundle_verification_rejects_file_hash_mismatch(tmp_path: Path) -> None:
+    module = load_module()
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "NekoProxyCore.exe").write_bytes(b"core")
+    manifest = {
+        "source_commit": TARGET,
+        "file_count": 1,
+        "files": {"NekoProxyCore.exe": "0" * 64},
+    }
+    (bundle / "core-manifest.json").write_bytes(canonical(manifest))
+    identity = hashlib.sha256((bundle / "core-manifest.json").read_bytes()).hexdigest()
+
+    with pytest.raises(
+        module.StageDraftReleaseError, match="Core file does not match manifest"
+    ):
+        module._verify_core_bundle(bundle, expected_identity=identity)
 
 
 def test_validation_rejects_stable_manifest_for_5_2(tmp_path: Path) -> None:
