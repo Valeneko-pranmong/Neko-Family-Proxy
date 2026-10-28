@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import uuid4
 
-from neko_launcher.application.errors import HeartbeatAuthInvalid, LauncherServiceError
+from neko_launcher.application.errors import (
+    EntitlementUnavailable,
+    HeartbeatAuthInvalid,
+)
 from neko_launcher.domain.models import (
     CouponRedemption,
     Entitlement,
@@ -15,10 +18,18 @@ from neko_launcher.domain.models import (
 from .proxy_api_gateway import ProxyApiError, ProxyApiGateway
 from .proxy_api_session import ProxyApiAccessTokenProvider, call_with_access_token
 
-PENDING_COUPON_MESSAGE = "การเติมคูปองผ่าน Proxy API จะเปิดใช้งานในขั้นถัดไป"
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
+NO_ENTITLEMENT_MESSAGE = "บัญชีนี้ยังไม่มีวันใช้งาน กรุณาเติมคูปองก่อน"
 
 _AUTH_INVALID_CODES = frozenset({"invalid_token", "token_expired", "invalid_grant"})
+_NO_ENTITLEMENT_CODES = frozenset(
+    {
+        "identity_not_linked",
+        "account_pending",
+        "license_inactive",
+        "license_expired",
+    }
+)
 
 
 class ProxyApiEntitlementGateway:
@@ -50,15 +61,20 @@ class ProxyApiEntitlementGateway:
         display_name: str,
     ) -> SessionClaim:
         idempotency_key = self._idempotency_key_factory()
-        response = call_with_access_token(
-            self._tokens,
-            lambda token: self._client.claim_session(
-                token,
-                installation_key_hash=installation_key_hash,
-                display_name=display_name,
-                idempotency_key=idempotency_key,
-            ),
-        )
+        try:
+            response = call_with_access_token(
+                self._tokens,
+                lambda token: self._client.claim_session(
+                    token,
+                    installation_key_hash=installation_key_hash,
+                    display_name=display_name,
+                    idempotency_key=idempotency_key,
+                ),
+            )
+        except ProxyApiError as error:
+            if error.code in _NO_ENTITLEMENT_CODES:
+                raise EntitlementUnavailable(NO_ENTITLEMENT_MESSAGE) from error
+            raise
         self._heartbeat_interval_seconds = response.heartbeat_interval_seconds
         self._termination_reason = SessionTerminationReason.REVOKED
         return SessionClaim(
@@ -127,4 +143,17 @@ class ProxyApiEntitlementGateway:
         return response.released
 
     def redeem_coupon(self, code: str) -> CouponRedemption:
-        raise LauncherServiceError(PENDING_COUPON_MESSAGE)
+        idempotency_key = self._idempotency_key_factory()
+        result = call_with_access_token(
+            self._tokens,
+            lambda token: self._client.redeem_coupon(
+                token,
+                code=code,
+                idempotency_key=idempotency_key,
+            ),
+        )
+        return CouponRedemption(
+            product_code=result.product_code,
+            days_added=result.days_added,
+            valid_until=result.valid_until,
+        )

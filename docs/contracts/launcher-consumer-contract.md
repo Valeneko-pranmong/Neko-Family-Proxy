@@ -72,7 +72,7 @@ issued permit.
 | Proxy API | `POST /v1/session/heartbeat` | Bearer access token | v0; request schema **PENDING** |
 | Proxy API | `POST /v1/session/release` | Bearer access token | v0; request schema **PENDING** |
 | Proxy API | `POST /v1/launch-permit` | Bearer access token | v0; request/response schema **PENDING**, Core shape frozen |
-| Proxy API | `POST /v1/coupons/redeem` | Bearer access token | v0; request/response schema **PENDING** |
+| Proxy API | `POST /v1/coupons/redeem` | Bearer access token | v0; implemented |
 | Proxy API | `GET /public/status` | None | v0; response schema **PENDING** |
 | Proxy API | `/v1/admin/*` | Service JWT only | **Forbidden to the Launcher** |
 
@@ -83,7 +83,7 @@ Scope matrix from v0:
 | `/v1/me` | `proxy:read` |
 | `/v1/session/claim`, `/v1/session/heartbeat`, `/v1/session/release` | `proxy:launch` (assumed; confirm) |
 | `/v1/launch-permit` | `proxy:launch` |
-| `/v1/coupons/redeem` | **PENDING** — not covered explicitly by `proxy:launch proxy:read` |
+| `/v1/coupons/redeem` | `proxy:launch` |
 | `/public/status` | None |
 | `/v1/admin/*` | `proxy:admin` (Launcher never uses it) |
 
@@ -592,10 +592,11 @@ must not translate, repair, infer, or fabricate missing fields.
 
 Endpoint: `POST /v1/coupons/redeem`, `Idempotency-Key` required.
 
-v0 defines only the path and idempotency. The current Launcher's RPC contract
-returns `product_code`, `days_added`, and `valid_until`, and uses
-`invalid_coupon`, `already_redeemed`, `rate_limited`, and `account_restricted`.
-The new request/response and stable error mapping are **PENDING** (G11/D11).
+Request: `{ "code": "<entered coupon code>" }`. Success returns `product_code`,
+`days_added` (1–3650), `valid_until`, and `server_time`. The server provisions a
+missing proxy account, accepts a pending account, and activates it with the
+license in one transaction. Coupon plaintext is hashed server-side and never
+stored.
 
 Client behavior:
 
@@ -603,8 +604,8 @@ Client behavior:
 - Reuse the same key when the user retries the same code after an ambiguous
   outcome. Generate a new key for a different code.
 - On success, update the displayed entitlement from the response and re-run
-  `/v1/me` and claim; do not add days locally.
-- On `already_redeemed`, do not retry with a new key.
+  claim; do not add days locally.
+- On `coupon_already_redeemed`, do not retry with a new key.
 - On 429, honor `Retry-After`; the current behavior is 10 minutes.
 - Never log the coupon code.
 
@@ -646,8 +647,8 @@ claim, permit, or Core.
 | `invalid_token` | Refresh once. If it persists, clear local session and require login. |
 | `token_expired` | Refresh once, then retry the original call once. If it persists, sign out. |
 | `insufficient_scope` | Do not retry. Sign out and show "update required" / permission error. |
-| `identity_not_linked` | Do not retry. Show the agreed link/support flow (product decision pending). |
-| `account_pending` | Do not launch. Show pending-account message. |
+| `identity_not_linked` | Treat as no entitlement (zero days) on claim; first login provisions the account, so this is no longer a normal path. |
+| `account_pending` | Sign in with zero days; do not launch; offer coupon entry. |
 | `account_suspended` | Sign out local authorization; show restricted-account message. |
 | `license_expired` | Clear entitlement; offer coupon/support path; do not launch. |
 | `session_conflict` | Re-read `/v1/me`; follow the agreed conflict policy; do not steal blindly. |

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -175,24 +176,59 @@ def _error_from_code(code: str) -> ProxyApiError:
     return captured.value
 
 
-@pytest.mark.parametrize(
-    ("fixture_name", "expected_code"),
-    [
-        ("me_pending", "account_pending"),
-        ("me_suspended", "account_suspended"),
-    ],
-)
-def test_non_active_account_status_maps_to_shared_code(
-    fixture_name: str,
-    expected_code: str,
-) -> None:
+def test_pending_account_status_is_allowed_to_sign_in() -> None:
+    transport = FakeTransport([_response(200, FIXTURE["me_pending"])])
+
+    account = _gateway(transport).get_me("access-fixture")
+
+    assert account.status == "pending"
+    account.require_sign_in_allowed()
+
+
+@pytest.mark.parametrize("fixture_name", ["me_suspended"])
+def test_blocked_account_status_maps_to_shared_code(fixture_name: str) -> None:
     transport = FakeTransport([_response(200, FIXTURE[fixture_name])])
 
     account = _gateway(transport).get_me("access-fixture")
 
     with pytest.raises(ProxyApiError) as captured:
-        account.require_active()
-    assert captured.value.code == expected_code
+        account.require_sign_in_allowed()
+    assert captured.value.code == "account_suspended"
+
+
+def test_redeem_coupon_uses_idempotency_and_parses_days() -> None:
+    transport = FakeTransport([_response(200, FIXTURE["coupon_success"])])
+
+    result = _gateway(transport).redeem_coupon(
+        "access-fixture",
+        code="NEKO-ABC-123",
+        idempotency_key="coupon-idempotency-key-1",
+    )
+
+    assert result.product_code == "neko-family-proxy"
+    assert result.days_added == 30
+    assert result.valid_until == datetime(2026, 11, 24, 12, tzinfo=UTC)
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"] == "https://proxy.test/v1/coupons/redeem"
+    assert call["headers"]["Authorization"] == "Bearer access-fixture"
+    assert call["headers"]["Idempotency-Key"] == "coupon-idempotency-key-1"
+    assert call["payload"] == {"code": "NEKO-ABC-123"}
+
+
+def test_redeem_coupon_maps_coupon_errors() -> None:
+    transport = FakeTransport([_error_response("coupon_invalid")])
+
+    with pytest.raises(ProxyApiError) as captured:
+        _gateway(transport).redeem_coupon(
+            "access-fixture",
+            code="NEKO-ABC-123",
+            idempotency_key="coupon-idempotency-key-1",
+        )
+
+    assert captured.value.code == "coupon_invalid"
+    assert "คูปอง" in str(captured.value)
 
 
 def test_timeout_is_mapped_to_retryable_proxy_error() -> None:

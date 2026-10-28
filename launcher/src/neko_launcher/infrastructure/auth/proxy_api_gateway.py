@@ -20,6 +20,7 @@ PROXY_CLAIM_PATH = "/v1/session/claim"
 PROXY_HEARTBEAT_PATH = "/v1/session/heartbeat"
 PROXY_RELEASE_PATH = "/v1/session/release"
 PROXY_PERMIT_PATH = "/v1/launch-permit"
+PROXY_COUPON_REDEEM_PATH = "/v1/coupons/redeem"
 IDENTITY_TOKEN_PATH = "/api/launcher/token"
 CLIENT_ID = "neko-launcher"
 HTTP_TIMEOUT_SECONDS = 10.0
@@ -155,12 +156,17 @@ class ProxyAccountStatus:
     status: str
     display_name: str | None
 
-    def require_active(self) -> None:
-        if self.status == "active":
+    def require_sign_in_allowed(self) -> None:
+        if self.status in {"active", "pending"}:
             return
-        if self.status == "pending":
-            raise ProxyApiError("account_pending")
         raise ProxyApiError("account_suspended")
+
+
+@dataclass(frozen=True)
+class ProxyCouponRedemption:
+    product_code: str
+    days_added: int
+    valid_until: datetime
 
 
 @dataclass(frozen=True)
@@ -426,6 +432,29 @@ class ProxyApiGateway:
             raise _error_from_response(response)
         return _parse_launch_permit(response, correlation)
 
+    def redeem_coupon(
+        self,
+        access_token: str,
+        *,
+        code: str,
+        idempotency_key: str,
+    ) -> ProxyCouponRedemption:
+        token = _require_bearer_value(access_token, "invalid_token")
+        coupon_code = _require_coupon_code(code)
+        key = _require_idempotency_key(idempotency_key)
+        response = self._request(
+            "POST",
+            f"{self._proxy_api_base_url}{PROXY_COUPON_REDEEM_PATH}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": key,
+            },
+            payload={"code": coupon_code},
+        )
+        if response.status != 200:
+            raise _error_from_response(response)
+        return _parse_coupon_redemption(response)
+
     def _request(
         self,
         method: str,
@@ -626,6 +655,26 @@ def _parse_token_set(response: ProxyApiHttpResponse) -> ProxyApiTokenSet:
     )
 
 
+def _parse_coupon_redemption(
+    response: ProxyApiHttpResponse,
+) -> ProxyCouponRedemption:
+    document = response.document
+    if not isinstance(document, dict):
+        raise ProxyApiError("invalid_response")
+    product_code = _required_text(document.get("product_code"), 64)
+    days_added = document.get("days_added")
+    if type(days_added) is not int or not 1 <= days_added <= 3_650:
+        raise ProxyApiError("invalid_response")
+    valid_until = _optional_datetime(document.get("valid_until"))
+    if valid_until is None:
+        raise ProxyApiError("invalid_response")
+    return ProxyCouponRedemption(
+        product_code=product_code,
+        days_added=days_added,
+        valid_until=valid_until,
+    )
+
+
 def _required_token(value: object) -> str:
     if (
         not isinstance(value, str)
@@ -725,6 +774,16 @@ def _require_idempotency_key(value: object) -> str:
         not isinstance(value, str)
         or not 16 <= len(value) <= 128
         or any(ord(character) < 33 or ord(character) > 126 for character in value)
+    ):
+        raise ProxyApiError("invalid_request")
+    return value
+
+
+def _require_coupon_code(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 256
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise ProxyApiError("invalid_request")
     return value

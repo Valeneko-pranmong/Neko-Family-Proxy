@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Proxy self-service sign-in: the launcher accepts a `pending` proxy account and shows zero days instead of failing when the Discord identity has no pre-linked account.
+- Coupon redemption through `POST /v1/coupons/redeem` with an idempotency key; a successful redemption updates the displayed expiry and claims a session.
 - Added always-on structured support diagnostics with machine/runtime context, manual-login and restore timing, sanitized API error metadata, background exception traces, and proxy/game/telemetry/update lifecycle events.
 - Added the private `launcher_v2` schema foundation and next-line claim, heartbeat, release, permit, and rate-limit RPCs. These require a bridge-written `web_sessions` allowlist and an active identity link; the migrations are not applied to production.
 - Added a reference `supabase/functions/launcher_bridge` that validates the identity RS256/JWKS token, consumes JTI, creates a no-password next-line user, mints a Supabase session, and records the web-session allowlist. It is not deployed.
@@ -17,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the signed `update-profile-preview-v1.json` (channel `preview`) and a reproducible profile-signing script; it authorizes only `neko-update-prod-2`.
 - Completed the local preview path: release-v2 manifests accept `channel=preview`; 5.2.x release/installer builds require a preview profile and preview manifest; the resolver, pending-update store, publisher, hosted verifier, and stable-rollout workflow enforce the same binding so preview and stable updates cannot cross-load or promote.
 - Re-versioned the 5.2 preview candidate as `5.2.0a1` for an alpha test. Alpha/PEP 440 versions are accepted by the release, publisher, verifier, and installer tooling while 5.2.x remains preview-only and blocked from stable publication. That intermediate version was superseded by the `5.2.2a` local alpha; no tag or publication exists.
+
+### Fixed
+- Discord sign-in no longer fails with "บัญชี Discord นี้ยังไม่ได้เชื่อมกับบัญชี Neko Family" when the identity has no proxy account; the first login provisions a pending account and the launcher displays zero days until a coupon is activated.
+- Claim responses without an entitlement (`account_pending`, `license_inactive`, `license_expired`, `identity_not_linked`) are mapped to an empty entitlement instead of a failed sign-in.
 
 ### Changed
 - Startup keeps the update splash visible until session restore resolves (bounded by a force-close timeout) and now starts restore before building the window, so automatic sign-in no longer flashes the login screen first. Splash hold/close and startup restore time are recorded in the support log.

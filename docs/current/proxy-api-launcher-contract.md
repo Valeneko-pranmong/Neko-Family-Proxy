@@ -40,11 +40,13 @@ GET {NEKO_PROXY_API_URL}/v1/me
 ```
 
 Success requires `identity_user_id`, `proxy_account_id`, `status`, and
-`display_name` (nullable). `status` is one of `pending`, `active`, `suspended`,
-`closed`. Called after login and on restore, before claim.
-`pending` maps to `account_pending`; `suspended`/`closed` map to
-`account_suspended`. The license summary and identity-access fields are not
-consumed yet.
+`display_name` (nullable); `license` may be `null`. `status` is one of `pending`,
+`active`, `suspended`, `closed`. Called after login and on restore, before claim.
+When the identity has no proxy account yet, the API provisions a `pending`
+account and returns `200`; the launcher signs in and shows zero days. `pending`
+is accepted for sign-in; `suspended`/`closed` map to `account_suspended`. The
+license summary and identity-access fields are not consumed yet; entitlement
+days come from claim or coupon redemption.
 
 ### 1.2 Identity refresh
 
@@ -191,6 +193,22 @@ The permit JWT claims remain the frozen Core contract (`RS256`,
 `aud=neko-proxy-core`, `challenge`, `runtime_config_version`,
 `runtime_config_sha256`). Core verifies them; the launcher does not.
 
+### 1.8 Coupon redemption
+
+```http
+POST {NEKO_PROXY_API_URL}/v1/coupons/redeem
+Idempotency-Key: <16-128 printable ASCII characters>
+Content-Type: application/json
+
+{ "code": "<coupon code, trimmed>" }
+```
+
+Success returns `product_code`, `days_added` (1–3650), `valid_until`, and
+`server_time`. The launcher displays the new expiry immediately, then claims a
+session. A pending account is activated by the redemption; a missing account is
+provisioned and activated in the same transaction. Coupon codes are never
+logged or persisted locally.
+
 ## 2. Retry, timeout, and idempotency rules
 
 | Condition | Behavior |
@@ -256,8 +274,8 @@ message for the code and keeps `request_id` for support.
 | `invalid_token` | เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่ | Refresh once; then clear/sign out on failure. |
 | `token_expired` | เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่ | Refresh once; then clear/sign out on failure. |
 | `insufficient_scope` | โปรแกรมนี้ไม่มีสิทธิ์เชื่อมต่อระบบ กรุณาอัปเดตโปรแกรม | No retry; sign out / update. |
-| `identity_not_linked` | บัญชี Discord นี้ยังไม่ได้เชื่อมกับบัญชี Neko Family กรุณาติดต่อฝ่ายบริการ | No retry; linking/support instruction. |
-| `account_pending` | บัญชีนี้อยู่ระหว่างการตรวจสอบ กรุณารอหรือติดต่อฝ่ายบริการ | No launch; show pending state. |
+| `identity_not_linked` | บัญชี Discord นี้ยังไม่ได้เชื่อมกับบัญชี Neko Family กรุณาติดต่อฝ่ายบริการ | No retry; the launcher treats it as "no entitlement" (zero days) on claim. First login provisions the account, so this is no longer a normal path. |
+| `account_pending` | บัญชีนี้อยู่ระหว่างการตรวจสอบ กรุณารอหรือติดต่อฝ่ายบริการ | No launch; the launcher signs in with zero days and offers coupon entry. |
 | `account_suspended` | บัญชีนี้ไม่สามารถใช้งานได้ กรุณาติดต่อฝ่ายบริการ | No launch; clear local authorization. |
 | `account_closed` | บัญชีนี้ถูกปิดการใช้งาน กรุณาติดต่อฝ่ายบริการ | No launch; clear local authorization. |
 | `license_expired` | สิทธิ์ใช้งานหมดอายุ กรุณาเติมวันหรือติดต่อฝ่ายบริการ | Show expired; no launch. |
@@ -384,7 +402,9 @@ release gates allow it.
   no Supabase construction; no Supabase import.
 - `test_proxy_api_entitlement.py`: claim mapping, idempotency-key stability
   across token refresh, heartbeat interval, session conflict, account/license
-  denials, release, coupon deferral.
+  denials, release, coupon redemption.
+- `test_proxy_api_gateway.py`: `/v1/me` pending/blocked statuses, coupon request
+  and response contract, and coupon error mapping.
 - `test_proxy_api_permit.py`: permit success, runtime-config v1 mapping, one
   refresh retry, invalid runtime config, diagnostic mapping, secret redaction.
 - `test_proxy_api_config.py`: flag off/on, HTTPS origin, frozen rejection,

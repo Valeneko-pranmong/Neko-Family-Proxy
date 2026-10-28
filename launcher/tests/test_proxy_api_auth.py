@@ -244,25 +244,28 @@ def test_failed_preflight_clears_refresh_token(code: str) -> None:
     assert auth.account_status is None
 
 
-@pytest.mark.parametrize(
-    ("fixture_name", "expected_code"),
-    [
-        ("me_pending", "account_pending"),
-        ("me_suspended", "account_suspended"),
-    ],
-)
-def test_account_status_from_success_response_is_enforced(
-    fixture_name: str,
-    expected_code: str,
-) -> None:
+def test_sign_in_accepts_a_pending_account_and_keeps_the_refresh_token() -> None:
     store = _store()
-    transport = FakeTransport([_response(200, FIXTURE[fixture_name])])
+    transport = FakeTransport([_response(200, FIXTURE["me_pending"])])
+    auth = _auth(transport, store)
+
+    user = auth.sign_in_with_web(FakeIdentityAuthenticator(_identity_tokens()))
+
+    assert user.user_id == "11111111-1111-4111-8111-111111111111"
+    assert store.values == {REFRESH_TOKEN_STORE_KEY: "identity-refresh-fixture"}
+    assert auth.account_status is not None
+    assert auth.account_status.status == "pending"
+
+
+def test_suspended_account_status_from_success_response_is_enforced() -> None:
+    store = _store()
+    transport = FakeTransport([_response(200, FIXTURE["me_suspended"])])
     auth = _auth(transport, store)
 
     with pytest.raises(ProxyApiError) as captured:
         auth.sign_in_with_web(FakeIdentityAuthenticator(_identity_tokens()))
 
-    assert captured.value.code == expected_code
+    assert captured.value.code == "account_suspended"
     assert store.values == {}
 
 

@@ -133,7 +133,7 @@ class ProxyApiAuthGateway:
                 self._token_store.save(tokens.refresh_token)
                 self._access_token = tokens.access_token
                 status = self._preflight_locked(tokens.access_token)
-                status.require_active()
+                status.require_sign_in_allowed()
             except Exception:
                 self._clear_all_locked()
                 raise
@@ -162,7 +162,7 @@ class ProxyApiAuthGateway:
             try:
                 tokens = self._exchange_refresh_locked(refresh_token)
                 status = self._client.get_me(tokens.access_token)
-                status.require_active()
+                status.require_sign_in_allowed()
             except ProxyApiError as error:
                 self._support_event(
                     "RESTORE_FAILED",

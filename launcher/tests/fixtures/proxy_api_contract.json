@@ -41,6 +41,12 @@
     "session_id": "77777777-7777-4777-8777-777777777777",
     "released": true
   },
+  "coupon_success": {
+    "product_code": "neko-family-proxy",
+    "days_added": 30,
+    "valid_until": "2026-11-24T12:00:00.000Z",
+    "server_time": "2026-10-25T12:00:00.000Z"
+  },
   "permit_success": {
     "permit": "header-fixture.payload-fixture.signature-fixture",
     "token_type": "neko-launch+jwt",
@@ -235,6 +241,17 @@
           "code": "invalid_request",
           "message": "invalid request",
           "request_id": "req-fixture-invalid-request",
+          "retryable": false
+        }
+      }
+    },
+    "coupon_invalid": {
+      "status": 400,
+      "body": {
+        "error": {
+          "code": "coupon_invalid",
+          "message": "coupon invalid",
+          "request_id": "req-fixture-coupon-invalid",
           "retryable": false
         }
       }

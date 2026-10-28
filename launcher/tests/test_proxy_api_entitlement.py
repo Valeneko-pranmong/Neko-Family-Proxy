@@ -4,13 +4,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from neko_launcher.application.errors import HeartbeatAuthInvalid, LauncherServiceError
+from neko_launcher.application.errors import (
+    EntitlementUnavailable,
+    HeartbeatAuthInvalid,
+)
 from neko_launcher.domain.models import EntitlementStatus, SessionTerminationReason
 from neko_launcher.infrastructure.auth.proxy_api_entitlement import (
     ProxyApiEntitlementGateway,
 )
 from neko_launcher.infrastructure.auth.proxy_api_gateway import (
     ProxyApiError,
+    ProxyCouponRedemption,
     ProxyHeartbeat,
     ProxyRelease,
     ProxySessionClaim,
@@ -44,10 +48,28 @@ class FakeClient:
         self.heartbeat_error: Exception | None = None
         self.heartbeat_errors: list[Exception] = []
         self.release_error: Exception | None = None
+        self.coupon_error: Exception | None = None
         self.claim_calls: list[dict[str, object]] = []
         self.heartbeat_calls: list[dict[str, object]] = []
         self.release_calls: list[dict[str, object]] = []
+        self.coupon_calls: list[dict[str, object]] = []
         self.heartbeat_interval = 30
+
+    def redeem_coupon(self, access_token: str, *, code: str, idempotency_key: str):
+        self.coupon_calls.append(
+            {
+                "token": access_token,
+                "code": code,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        if self.coupon_error is not None:
+            raise self.coupon_error
+        return ProxyCouponRedemption(
+            product_code="neko-family-proxy",
+            days_added=30,
+            valid_until=LICENSE_UNTIL,
+        )
 
     def claim_session(self, access_token: str, **kwargs):
         self.claim_calls.append({"token": access_token, **kwargs})
@@ -244,8 +266,47 @@ def test_release_is_best_effort() -> None:
     assert gateway.release_session(SESSION_ID) is False
 
 
-def test_coupon_remains_a_later_slice() -> None:
-    gateway, _, _ = _gateway()
+def test_redeem_coupon_maps_the_server_result() -> None:
+    gateway, client, _ = _gateway()
 
-    with pytest.raises(LauncherServiceError, match="ขั้นถัดไป"):
+    result = gateway.redeem_coupon("NEKO-fixture")
+
+    assert result.product_code == "neko-family-proxy"
+    assert result.days_added == 30
+    assert result.valid_until == LICENSE_UNTIL
+    assert client.coupon_calls == [
+        {
+            "token": "access-fixture",
+            "code": "NEKO-fixture",
+            "idempotency_key": "idem-claim-fixture",
+        }
+    ]
+
+
+def test_redeem_coupon_propagates_coupon_errors() -> None:
+    client = FakeClient()
+    client.coupon_error = ProxyApiError("coupon_invalid")
+    gateway, _, _ = _gateway(client)
+
+    with pytest.raises(ProxyApiError) as captured:
         gateway.redeem_coupon("NEKO-fixture")
+
+    assert captured.value.code == "coupon_invalid"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "identity_not_linked",
+        "account_pending",
+        "license_inactive",
+        "license_expired",
+    ],
+)
+def test_claim_without_entitlement_is_not_a_login_failure(code: str) -> None:
+    client = FakeClient()
+    client.claim_error = ProxyApiError(code)
+    gateway, _, _ = _gateway(client)
+
+    with pytest.raises(EntitlementUnavailable):
+        gateway.claim_session("neko-family-proxy", "a" * 64, "Office PC")
