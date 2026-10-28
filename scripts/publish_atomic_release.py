@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -708,10 +709,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_STAGE_DRAFT_PARAMETERS = frozenset(
+    inspect.signature(stage_draft_release).parameters
+)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    # --installer-repo belongs to the unified publisher, not the draft stager.
+    kwargs = {
+        key: value
+        for key, value in vars(args).items()
+        if key in _STAGE_DRAFT_PARAMETERS
+    }
     try:
-        stage_draft_release(**vars(args))
+        stage_draft_release(**kwargs)
     except StageDraftReleaseError as error:
         message = re.sub(r"https?://\S+", "<sanitized-url>", str(error))
         print(f"draft staging failed: {message}", file=sys.stderr)

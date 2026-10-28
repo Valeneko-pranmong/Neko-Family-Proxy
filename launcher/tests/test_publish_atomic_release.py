@@ -330,6 +330,34 @@ def test_public_staging_path_has_no_repository_authority_parameter() -> None:
     assert "repo" not in inspect.signature(module.stage_draft_release).parameters
 
 
+def test_main_marshals_cli_arguments_into_the_draft_stager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_module()
+    captured: dict[str, Any] = {}
+
+    def fake_stage(**kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(module, "stage_draft_release", fake_stage)
+    argv = [
+        "--staging-dir",
+        "stage",
+        "--tag",
+        "v5.2.2",
+        "--target-commit",
+        "0" * 40,
+        "--as-prerelease",
+        "--dry-run",
+    ]
+
+    assert module.main(argv) == 0
+    assert captured["tag"] == "v5.2.2"
+    assert captured["as_prerelease"] is True
+    assert captured["dry_run"] is True
+    assert "installer_repo" not in captured
+
+
 def test_expected_staging_channel_binds_5_2_to_preview() -> None:
     module = load_module()
     assert module.expected_staging_channel("v5.2.0") == "preview"
