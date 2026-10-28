@@ -199,6 +199,7 @@ def make_stage(
     minimum_supported_sequence: int = 1,
     release_id: str = "stable-0008",
     version: str = "5.1.4",
+    core_version: str | None = None,
     mandatory: bool = False,
     channel: str = "stable",
 ) -> Path:
@@ -219,7 +220,11 @@ def make_stage(
     ):
         data = payloads[name]
         components[component] = {
-            "version": version,
+            "version": (
+                core_version
+                if component == "core" and core_version is not None
+                else version
+            ),
             "artifact_id": name,
             "artifact_sha256": hashlib.sha256(data).hexdigest(),
             "artifact_size": len(data),
@@ -392,6 +397,32 @@ def test_validation_accepts_preview_manifest_for_5_2(tmp_path: Path) -> None:
         repo_root=SCRIPT.parents[1],
         executor=FakeExecutor(),
         expected_channel="preview",
+    )
+
+    assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)
+
+
+def test_validation_accepts_frozen_core_version_below_release_tag(tmp_path: Path) -> None:
+    module = load_module()
+    stage = make_stage(
+        tmp_path,
+        sequence=25,
+        minimum_supported_sequence=25,
+        release_id="preview-0025",
+        version="5.2.2",
+        core_version="5.2.0",
+        channel="preview",
+    )
+
+    assets = module.validate_staging_preconditions(
+        staging_dir=stage,
+        tag="v5.2.2",
+        target_commit=TARGET,
+        repo_root=SCRIPT.parents[1],
+        executor=FakeExecutor(),
+        expected_channel="preview",
+        expected_sequence=25,
+        expected_minimum_sequence=25,
     )
 
     assert set(assets) == set(module.REQUIRED_STAGE_ASSETS)

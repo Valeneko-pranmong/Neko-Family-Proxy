@@ -407,8 +407,9 @@ def _validate_manifest(
         descriptor = release_set.components[component_name]
         file_data = assets[file_name].read_bytes()
         digest = hashlib.sha256(file_data).hexdigest()
+        # Core is frozen across 5.2.x; its identity is bound by installed_identity_sha256 below.
         if (
-            descriptor.version != tag.lstrip("v")
+            (component_name != "core" and descriptor.version != tag.lstrip("v"))
             or descriptor.artifact_id != file_name
             or descriptor.artifact_sha256 != digest
             or descriptor.artifact_size != len(file_data)
