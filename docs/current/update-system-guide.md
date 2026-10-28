@@ -15,7 +15,7 @@
 | 5.2.3 | **fixed re-release, manual non-latest** (`stable-0028`, seq 28) | ใช้ได้หลังติดตั้ง 5.2.3 ครั้งเดียว |
 | 5.2.4 | **ยกเลิก** (ถูกลบ release/tag) | — |
 
-ตัวเลขล่าสุด: 5.2.3 fixed envelope `stable-0028` seq 28 min 28, updater `d7d59cf4…`, launcher `70e7b571…`, installer `7a2683ce…`
+ตัวเลขล่าสุด: 5.2.3 fixed envelope `stable-0028` seq 28 min 28, updater `b0b991f5…`, launcher `70e7b571…`, installer `674a968d…`
 
 ---
 
@@ -50,6 +50,12 @@
 
 เพราะการตรวจอยู่ใน `NekoUpdater.exe` ตัวที่ติดตั้งอยู่ จึงแก้จาก server ไม่ได้ ต้องเปลี่ยน updater binary ซึ่ง client เก่าโหลดเองไม่ได้ → ทางออกเดียวคือ **ติดตั้งใหม่หนึ่งครั้ง**
 
+### ชั้นที่ 3 — Core preflight (เจอตอนทดสอบ apply จริง)
+
+หลังแก้ inventory แล้ว probation ยังเรียก `NekoProxyCore.exe --update-preflight` แต่ Core freeze 5.2.0 ไม่มี flag นี้ (exit 2, ไม่มี output) → `SELFTEST_FAILED`
+
+updater จึงต้องข้าม preflight สำหรับ Core schema เดิม โดยยังตรวจ inventory ครบ 1,023 ไฟล์
+
 ---
 
 ## 4. 5.2.3 re-release แก้อะไร
@@ -63,9 +69,9 @@
 
 ### สัญญาของ line 5.2.x หลังจากนี้
 
-- **updater bytes ถูก pin ที่ `d7d59cf4…` (11,281,988 B)** — ห้าม rebuild เปลี่ยน hash จนกว่าจะมีกลไก self-replace ที่ปลอดภัย
+- **updater bytes ถูก pin ที่ `b0b991f5…` (11,281,601 B)** — ห้าม rebuild เปลี่ยน hash จนกว่าจะมีกลไก self-replace ที่ปลอดภัย
 - manifest ของ release ถัดไปต้องระบุ updater hash นี้ และ installer ต้อง stage ไฟล์เดียวกัน
-- publisher บังคับ `updater.version == tag`; จึงใช้ version label ตาม tag ได้ แต่ **ไบต์ต้องเป็น d7d59cf4… เสมอ**
+- publisher บังคับ `updater.version == tag`; จึงใช้ version label ตาม tag ได้ แต่ **ไบต์ต้องเป็น b0b991f5… เสมอ**
 - launcher version = tag; core คง 5.2.0 (`c262432c…`)
 - sequence 28 ถูกใช้โดย 5.2.3 re-release แล้ว; รุ่นถัดไปต้องเป็น **seq 29**
 - tag `v5.2.3` ถูก force-move ไปยัง commit ของ re-release (tag เดิมชี้ `da61a82`); อย่าทำซ้ำถ้าไม่จำเป็น — ครั้งต่อไปให้ bump version ใหม่แทน
@@ -80,14 +86,14 @@
 4. ล็อกอิน Discord ใหม่ (credential ในเครื่องถูกลบตอนถอน; วัน/สิทธิ์อยู่ฝั่ง server)
 5. ตรวจ baseline เป็น `stable-0028`
 
-**ห้ามประกาศ 5.2.3 เป็น latest จนกว่าผู้ใช้ 5.2.2 จะย้ายเสร็จ** — ถ้า feed stable ชี้ updater `d7d59cf4…` เครื่อง 5.2.2 ที่ยังใช้ `35f4532c…` จะขึ้น `REINSTALL_REQUIRED` และถูกล็อกไม่ให้ login
+**ห้ามประกาศ 5.2.3 เป็น latest จนกว่าผู้ใช้ 5.2.2 จะย้ายเสร็จ** — ถ้า feed stable ชี้ updater `b0b991f5…` เครื่อง 5.2.2 ที่ยังใช้ `35f4532c…` จะขึ้น `REINSTALL_REQUIRED` และถูกล็อกไม่ให้ login
 
 ---
 
 ## 6. การออก release ถัดไป (5.2.4)
 
-1. bump launcher เป็น 5.2.4 แล้ว rebuild `NekoLauncher.exe` (updater **ไม่ต้อง rebuild**; ใช้ `d7d59cf4…`)
-2. สร้าง envelope: stable, `stable-0029`, seq 29, min 29, launcher 5.2.4, updater version 5.2.4 + hash `d7d59cf4…`, core 5.2.0
+1. bump launcher เป็น 5.2.4 แล้ว rebuild `NekoLauncher.exe` (updater **ไม่ต้อง rebuild**; ใช้ `b0b991f5…`)
+2. สร้าง envelope: stable, `stable-0029`, seq 29, min 29, launcher 5.2.4, updater version 5.2.4 + hash `b0b991f5…`, core 5.2.0
 3. เซ็นด้วย `neko-update-prod-3`
 4. rebuild installer ด้วย pinned updater + baseline ใหม่; ต้องได้ 11/11 gates
 5. **ทดสอบอัปเดตจริงจากเครื่อง 5.2.3 fixed** (stage → apply → baseline เปลี่ยนเป็น 0029 → self-tests) ก่อนเผยแพร่
@@ -101,7 +107,7 @@
 
 - [ ] worktree clean; tag ชี้ commit ที่ build และ push แล้ว
 - [ ] envelope: channel stable, seq ใหม่, min = seq, key prod-3
-- [ ] updater hash = `d7d59cf4…` (ห้ามเปลี่ยน)
+- [ ] updater hash = `b0b991f5…` (ห้ามเปลี่ยน)
 - [ ] core คง 5.2.0 + identity `c262432c…`
 - [ ] installer 11/11 gates + baseline envelope ใหม่
 - [ ] staging มี 5 asset พอดี; ชื่อไฟล์ตรง

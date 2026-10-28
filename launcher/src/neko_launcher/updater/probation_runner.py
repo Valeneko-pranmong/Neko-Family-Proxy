@@ -17,6 +17,20 @@ class SelfTestResult:
     reason: str | None = None
 
 
+def _is_frozen_authority_core(core_dir: Path) -> bool:
+    try:
+        manifest = json.loads(
+            (Path(core_dir) / "core-manifest.json").read_text(encoding="utf-8")
+        )
+    except Exception:
+        return False
+    return (
+        isinstance(manifest, dict)
+        and "rid" not in manifest
+        and isinstance(manifest.get("files"), dict)
+    )
+
+
 def run_probation_self_test(
     generation_dir: Path,
     skip_tk: bool = False,
@@ -40,54 +54,57 @@ def run_probation_self_test(
             reason=f"Core verification failed: {core_res.error}",
         )
 
-    # Core preflight execution
-    core_exe = core_dir / "NekoProxyCore.exe"
-    if not core_exe.is_file():
-        return SelfTestResult(
-            passed=False,
-            error_code="ARTIFACT_MISSING",
-            reason="Core executable 'NekoProxyCore.exe' missing",
-        )
+    # The frozen 5.2.0 Core predates the --update-preflight contract; its
+    # full inventory verification above is the compatibility check.
+    if not _is_frozen_authority_core(core_dir):
+        # Core preflight execution
+        core_exe = core_dir / "NekoProxyCore.exe"
+        if not core_exe.is_file():
+            return SelfTestResult(
+                passed=False,
+                error_code="ARTIFACT_MISSING",
+                reason="Core executable 'NekoProxyCore.exe' missing",
+            )
 
-    try:
-        proc = subprocess.Popen(
-            [str(core_exe.resolve()), "--update-preflight"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        req = json.dumps({"protocol_version": 1, "generation_id": generation_dir.name}) + "\n"
         try:
-            stdout, _ = proc.communicate(input=req, timeout=core_preflight_timeout_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            return SelfTestResult(
-                passed=False,
-                error_code="SELFTEST_FAILED",
-                reason="Core preflight execution timed out",
+            proc = subprocess.Popen(
+                [str(core_exe.resolve()), "--update-preflight"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
-        if proc.returncode != 0:
-            return SelfTestResult(
-                passed=False,
-                error_code="SELFTEST_FAILED",
-                reason=f"Core preflight exited with code {proc.returncode}",
-            )
+            req = json.dumps({"protocol_version": 1, "generation_id": generation_dir.name}) + "\n"
+            try:
+                stdout, _ = proc.communicate(input=req, timeout=core_preflight_timeout_s)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return SelfTestResult(
+                    passed=False,
+                    error_code="SELFTEST_FAILED",
+                    reason="Core preflight execution timed out",
+                )
+            if proc.returncode != 0:
+                return SelfTestResult(
+                    passed=False,
+                    error_code="SELFTEST_FAILED",
+                    reason=f"Core preflight exited with code {proc.returncode}",
+                )
 
-        resp = json.loads(stdout.strip())
-        if resp.get("result") != "PASS":
+            resp = json.loads(stdout.strip())
+            if resp.get("result") != "PASS":
+                return SelfTestResult(
+                    passed=False,
+                    error_code="SELFTEST_FAILED",
+                    reason=f"Core preflight returned: {resp.get('code')}",
+                )
+        except Exception as err:
             return SelfTestResult(
                 passed=False,
                 error_code="SELFTEST_FAILED",
-                reason=f"Core preflight returned: {resp.get('code')}",
+                reason=f"Core preflight execution error: {err}",
             )
-    except Exception as err:
-        return SelfTestResult(
-            passed=False,
-            error_code="SELFTEST_FAILED",
-            reason=f"Core preflight execution error: {err}",
-        )
 
     # Probe the candidate launcher's own Tk runtime instead of bundling Tcl/Tk
     # into this helper.
