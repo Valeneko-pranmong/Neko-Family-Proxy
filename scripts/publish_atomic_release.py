@@ -75,11 +75,22 @@ class StageDraftReleaseError(Exception):
 _PREVIEW_ONLY_VERSION = re.compile(
     r"5\.2\.\d+(?:(?:a|b|rc)\d*|[-+].*)?$"
 )
+_STABLE_5_2_VERSION = re.compile(r"5\.2\.(\d+)")
+_STABLE_5_2_FLOOR = 2
 
 
-def expected_staging_channel(tag: str) -> str:
+def _stable_5_2_capable(version: str) -> bool:
+    match = _STABLE_5_2_VERSION.fullmatch(version)
+    return match is not None and int(match.group(1)) >= _STABLE_5_2_FLOOR
+
+
+def expected_staging_channel(tag: str, *, as_prerelease: bool = False) -> str:
     normalized = str(tag).strip().lstrip("v")
-    return "preview" if _PREVIEW_ONLY_VERSION.fullmatch(normalized) else "stable"
+    if not _PREVIEW_ONLY_VERSION.fullmatch(normalized):
+        return "stable"
+    if _stable_5_2_capable(normalized) and not as_prerelease:
+        return "stable"
+    return "preview"
 
 
 def validate_stable_release_channel(
@@ -88,10 +99,14 @@ def validate_stable_release_channel(
     as_prerelease: bool,
 ) -> None:
     normalized = str(version).strip().lstrip("v")
-    if _PREVIEW_ONLY_VERSION.fullmatch(normalized) and not as_prerelease:
+    if (
+        _PREVIEW_ONLY_VERSION.fullmatch(normalized)
+        and not _stable_5_2_capable(normalized)
+        and not as_prerelease
+    ):
         raise StageDraftReleaseError(
-            "5.2.x is preview-only; stable publication is blocked until the "
-            "preview channel and P4 gates are complete"
+            "5.2.0, 5.2.1 and 5.2.x preview builds are preview-only; stable "
+            "publication is blocked"
         )
 
 
@@ -528,6 +543,7 @@ def validate_staging_preconditions(
     repo_root: Path,
     executor: CommandExecutor,
     expected_channel: str | None = None,
+    as_prerelease: bool = False,
     expected_sequence: int | None = None,
     expected_release_id: str | None = None,
     expected_allocation: Any | None = None,
@@ -568,7 +584,8 @@ def validate_staging_preconditions(
         assets["release-v2.json"],
         assets,
         tag,
-        expected_channel=expected_channel or expected_staging_channel(tag),
+        expected_channel=expected_channel
+        or expected_staging_channel(tag, as_prerelease=as_prerelease),
         expected_sequence=expected_sequence,
         expected_release_id=expected_release_id,
         expected_allocation=expected_allocation,
@@ -649,6 +666,7 @@ def stage_draft_release(
         target_commit=target_commit,
         repo_root=repo_root,
         executor=runner,
+        as_prerelease=as_prerelease,
         expected_sequence=expected_sequence,
         expected_release_id=expected_release_id,
         expected_allocation=expected_allocation,

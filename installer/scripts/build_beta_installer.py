@@ -77,10 +77,12 @@ def fail(message: str) -> "None":
 def validate_installer_channel(release_version: str, channel: str) -> None:
     normalized = str(release_version).strip().lstrip("v")
     is_5_2 = re.fullmatch(r"5\.2\.\d+(?:(?:a|b|rc)\d*)?", normalized) is not None
-    if is_5_2 and channel != "preview":
+    stable_match = re.fullmatch(r"5\.2\.(\d+)", normalized)
+    stable_capable = stable_match is not None and int(stable_match.group(1)) >= 2
+    if is_5_2 and not stable_capable and channel != "preview":
         fail(
-            "5.2.x is preview-only; installer trust profile channel must be "
-            f"'preview', got {channel!r}"
+            "5.2.0, 5.2.1 and 5.2.x preview builds are preview-only; installer "
+            f"trust profile channel must be 'preview', got {channel!r}"
         )
     if channel == "preview" and not is_5_2:
         fail(

@@ -996,6 +996,63 @@ def test_verify_assets_accepts_5_2_alpha_prerelease(
     )
 
 
+def test_verify_assets_accepts_5_2_2_stable_release(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.2.2",
+        sequence=26,
+        minimum_supported_sequence=26,
+        release_id="stable-0026",
+        launcher_version="5.2.2",
+        updater_version="5.2.2",
+        core_version="5.2.2",
+        channel="stable",
+        prerelease=False,
+        draft=False,
+    )
+
+    verifier.verify_github_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        public_key_file=bundle["public_key_file"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        expected_minimum_sequence=26,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+
+def test_verify_assets_accepts_5_2_2_preview_prerelease(tmp_path: Path) -> None:
+    verifier = load_verifier_module()
+    bundle = create_test_release_bundle(
+        tmp_path,
+        tag_name="v5.2.2",
+        sequence=26,
+        minimum_supported_sequence=26,
+        release_id="preview-0026",
+        launcher_version="5.2.2",
+        updater_version="5.2.2",
+        core_version="5.2.2",
+        channel="preview",
+        prerelease=True,
+        draft=False,
+    )
+
+    verifier.verify_github_release_assets(
+        release_json_path=bundle["release_json_file"],
+        download_dir=bundle["download_dir"],
+        public_key_file=bundle["public_key_file"],
+        expected_tag=bundle["expected_tag"],
+        expected_target=bundle["expected_target"],
+        require_prerelease=True,
+        expected_minimum_sequence=26,
+        expected_key_id=TEST_KEY_ID,
+        trusted_public_keys=get_test_key_registry(),
+    )
+
+
 def test_verify_assets_rejects_5_2_preview_without_require_prerelease(tmp_path: Path) -> None:
     verifier = load_verifier_module()
     bundle = create_test_release_bundle(

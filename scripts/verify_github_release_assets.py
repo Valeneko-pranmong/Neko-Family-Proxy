@@ -34,10 +34,24 @@ STABLE_RELEASE_EXPECTED_PROTOCOL_MAX = 1
 _PREVIEW_VERSION_PATTERN = re.compile(
     r"^v?5\.2\.\d+(?:(?:a|b|rc)\d*|[-+].*)?$"
 )
+_STABLE_5_2_VERSION = re.compile(r"5\.2\.(\d+)")
+_STABLE_5_2_FLOOR = 2
 
 
-def expected_release_channel(expected_tag: str) -> str:
-    return "preview" if _PREVIEW_VERSION_PATTERN.fullmatch(expected_tag.strip()) else "stable"
+def _stable_5_2_capable(expected_tag: str) -> bool:
+    match = _STABLE_5_2_VERSION.fullmatch(str(expected_tag).strip().lstrip("v"))
+    return match is not None and int(match.group(1)) >= _STABLE_5_2_FLOOR
+
+
+def expected_release_channel(
+    expected_tag: str, *, require_prerelease: bool = False
+) -> str:
+    normalized = str(expected_tag).strip()
+    if not _PREVIEW_VERSION_PATTERN.fullmatch(normalized):
+        return "stable"
+    if _stable_5_2_capable(normalized):
+        return "preview" if require_prerelease else "stable"
+    return "preview"
 
 REQUIRED_UNIFIED_ASSETS: tuple[str, ...] = (
     "NekoFamilyProxy-Installer.exe",
@@ -153,7 +167,9 @@ def verify_unified_release_assets(
             f"Release repository cannot be the retired/superseded repository ({expected_repo})"
         )
 
-    expected_channel = expected_release_channel(expected_tag)
+    expected_channel = expected_release_channel(
+        expected_tag, require_prerelease=require_prerelease
+    )
 
     release_path = Path(release_json_path)
     if not release_path.is_file():

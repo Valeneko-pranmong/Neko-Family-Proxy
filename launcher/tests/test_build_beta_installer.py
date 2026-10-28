@@ -1093,6 +1093,8 @@ def test_validate_installer_channel_requires_preview_for_5_2() -> None:
     module.validate_installer_channel("v5.2.1", "preview")
     module.validate_installer_channel("5.2.0a1", "preview")
     module.validate_installer_channel("v5.2.2a", "preview")
+    module.validate_installer_channel("5.2.2", "stable")
+    module.validate_installer_channel("v5.2.2", "preview")
 
 
 def test_validate_installer_channel_limits_preview_to_5_2() -> None:
@@ -1167,6 +1169,42 @@ def test_builder_accepts_5_2_installer_with_preview_profile(
     assert staged_profile.read_bytes() == profile_path.read_bytes()
     record = json.loads((stage / "out" / "build-record.json").read_text(encoding="utf-8"))
     assert record["embedded_trust_profile_sha256"] == _digest(profile_path.read_bytes())
+
+
+def test_builder_accepts_5_2_2_installer_with_stable_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_builder()
+    parse_args, build_candidate = _candidate_api(module)
+    stage = _stage(tmp_path)
+    profile_path, envelope_path, auth_keys = _make_keys_and_files(tmp_path, channel="stable")
+
+    monkeypatch.setattr(module, "PROFILE_AUTHORITY_PUBLIC_KEYS", auth_keys)
+    monkeypatch.setattr(module, "APPROVED_V2RAY_SHA256", _digest(b"v2ray"))
+    monkeypatch.setattr(module, "DOTNET_RUNTIME_SHA256_PIN", _digest(b"dotnet"))
+    monkeypatch.setattr(module, "find_iscc", lambda: "mock_iscc.exe")
+
+    def mock_subprocess_run(args, **kwargs) -> Any:
+        if args and args[0] == "mock_iscc.exe":
+            out_dir = stage / "out"
+            out_dir.mkdir(exist_ok=True)
+            (out_dir / "NekoFamilyProxy-Installer.exe").write_bytes(b"mock_installer")
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(module.subprocess, "run", mock_subprocess_run)
+
+    argv = _argv(
+        stage,
+        _digest(b"launcher"),
+        _digest(b"updater"),
+        baseline_envelope=envelope_path,
+        trust_profile=profile_path,
+        release_version="5.2.2",
+    )
+    assert build_candidate(parse_args(argv)) == 0
+
+    staged_profile = stage / "payload" / "trust" / "update-profile-v1.json"
+    assert staged_profile.read_bytes() == profile_path.read_bytes()
 
 
 def test_builder_rejects_untrusted_profile_authority_signature(

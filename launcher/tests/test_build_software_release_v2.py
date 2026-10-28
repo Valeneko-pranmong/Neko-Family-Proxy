@@ -513,13 +513,18 @@ def test_expected_release_channel_binds_5_2_to_preview() -> None:
     assert expected_release_channel("v5.2.1") == "preview"
     assert expected_release_channel("5.2.0a1") == "preview"
     assert expected_release_channel("5.2.2a") == "preview"
+    assert expected_release_channel("5.2.2") == "stable"
     assert expected_release_channel("5.1.6") == "stable"
     assert expected_release_channel("5.3.0") == "stable"
 
     validate_release_channel("5.2.0", "preview")
     validate_release_channel("5.2.0a1", "preview")
     validate_release_channel("5.2.2a", "preview")
+    validate_release_channel("5.2.2", "preview")
+    validate_release_channel("5.2.2", "stable")
     validate_release_channel("5.3.0", "stable")
+    with pytest.raises(ValueError, match="must be 'preview' or 'stable'"):
+        validate_release_channel("5.2.2", "beta")
     with pytest.raises(ValueError, match="must be 'preview'"):
         validate_release_channel("5.2.0", "stable")
     with pytest.raises(ValueError, match="must be 'stable'"):

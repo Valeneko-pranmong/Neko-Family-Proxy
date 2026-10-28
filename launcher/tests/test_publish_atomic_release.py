@@ -411,8 +411,20 @@ def test_expected_staging_channel_binds_5_2_to_preview() -> None:
     assert module.expected_staging_channel("v5.2.0a1") == "preview"
     assert module.expected_staging_channel("v5.2.2a") == "preview"
     assert module.expected_staging_channel("5.2.2a0") == "preview"
+    assert module.expected_staging_channel("v5.2.2") == "stable"
+    assert module.expected_staging_channel("5.2.2", as_prerelease=True) == "preview"
     assert module.expected_staging_channel("v5.1.6") == "stable"
     assert module.expected_staging_channel("v5.3.0") == "stable"
+
+
+def test_stable_channel_policy_allows_5_2_2_only() -> None:
+    module = load_module()
+
+    module.validate_stable_release_channel("5.2.2", as_prerelease=False)
+    module.validate_stable_release_channel("v5.2.1", as_prerelease=True)
+    for version in ("5.2.0", "v5.2.1", "v5.2.2a"):
+        with pytest.raises(module.StageDraftReleaseError, match="preview-only"):
+            module.validate_stable_release_channel(version, as_prerelease=False)
 
 
 def test_validation_accepts_preview_manifest_for_5_2(tmp_path: Path) -> None:

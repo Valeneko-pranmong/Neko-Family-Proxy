@@ -49,11 +49,30 @@ _PREVIEW_VERSION_PATTERN = re.compile(
 )
 
 
+_STABLE_5_2_VERSION = re.compile(r"5\.2\.(\d+)")
+_STABLE_5_2_FLOOR = 2
+
+
+def _stable_5_2_capable(release_version: str) -> bool:
+    match = _STABLE_5_2_VERSION.fullmatch(str(release_version).strip().lstrip("v"))
+    return match is not None and int(match.group(1)) >= _STABLE_5_2_FLOOR
+
+
 def expected_release_channel(release_version: str) -> str:
-    return "preview" if _PREVIEW_VERSION_PATTERN.fullmatch(release_version.strip()) else "stable"
+    normalized = str(release_version).strip()
+    if not _PREVIEW_VERSION_PATTERN.fullmatch(normalized):
+        return "stable"
+    return "stable" if _stable_5_2_capable(normalized) else "preview"
 
 
 def validate_release_channel(release_version: str, channel: str) -> None:
+    if _stable_5_2_capable(release_version):
+        if channel not in {"preview", "stable"}:
+            raise ValueError(
+                "Trust profile channel must be 'preview' or 'stable' for "
+                f"release {release_version}, got {channel!r}"
+            )
+        return
     expected = expected_release_channel(release_version)
     if channel != expected:
         raise ValueError(
