@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.2.5] - Unreleased
 
 ### Fixed
+- Frozen Launcher restarts use a fresh PyInstaller runtime rather than sharing Tcl/Tk files with an exiting process. Nested launches from older clients detach before starting the UI; managed IPC workers retain their existing channel.
 - Same-version Setup archives the known V2Ray runtime log outside the verified Core tree before completing manifest verification. The log is preserved byte-for-byte; unexpected binaries, settings, keys, and other undeclared files still fail closed.
 - Automatic reconnect rechecks the latest telemetry after an asynchronous game-presence probe, so an outdated unhealthy observation cannot restart a recovered Core. Confirmed game exit and genuine runtime failures still follow the existing recovery policy.
 - Driver preparation uses Inno's native `Exec` to start a 64-bit PowerShell bridge, which requests UAC for the hash-verified helper through an encoded command. `ShellExec` does not honor Inno's redirection setting and launched 32-bit PowerShell in the first 5.2.5 candidate.

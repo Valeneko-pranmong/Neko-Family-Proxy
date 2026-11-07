@@ -168,7 +168,9 @@ def _maybe_sync_committed_generation(install_root: Path) -> None:
             if cur_manifest is None or sha256_file(cur_manifest) != committed.core_identity_sha256:
                 shutil.copytree(committed_core, root_core, dirs_exist_ok=True)
 
-        subprocess.Popen([str(current_exe)] + sys.argv[1:])
+        restart_env = os.environ.copy()
+        restart_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        subprocess.Popen([str(current_exe)] + sys.argv[1:], env=restart_env)
         sys.exit(0)
     except Exception:
         pass
@@ -240,7 +242,9 @@ def main() -> None:
                 relaunch_cmd = f'cmd.exe /c timeout /t 3 /nobreak >nul & start "" "{sys.executable}"'
                 cflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
                 try:
-                    subprocess.Popen(relaunch_cmd, shell=False, creationflags=cflags)
+                    restart_env = os.environ.copy()
+                    restart_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                    subprocess.Popen(relaunch_cmd, shell=False, creationflags=cflags, env=restart_env)
                 except Exception:
                     pass
             return

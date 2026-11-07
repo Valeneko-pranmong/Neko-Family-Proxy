@@ -2394,7 +2394,9 @@ class AppWindow:
                         relaunch_cmd = f'cmd.exe /c timeout /t 2 /nobreak >nul & start "" "{launcher_exe}"'
                         cflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
                         try:
-                            subprocess.Popen(relaunch_cmd, shell=False, creationflags=cflags)
+                            restart_env = os.environ.copy()
+                            restart_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                            subprocess.Popen(relaunch_cmd, shell=False, creationflags=cflags, env=restart_env)
                         except Exception:
                             pass
 

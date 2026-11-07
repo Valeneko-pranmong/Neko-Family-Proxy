@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import runpy
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -165,6 +166,154 @@ def test_replace_executable_atomically_rolls_back_when_final_rename_fails(
     assert not backup.exists()
     assert not (tmp_path / "NekoLauncher.exe.new").exists()
     assert len(calls) == 3
+
+
+def test_committed_generation_relaunch_gets_a_fresh_frozen_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from neko_launcher.main import _maybe_sync_committed_generation
+    from neko_launcher.updater.slot_selector import SelectionStatus
+
+    root = tmp_path / "app"
+    root.mkdir()
+    executable = root / "NekoLauncher.exe"
+    executable.write_bytes(b"old launcher")
+    payload_sha = "a" * 64
+    generation = root / "releases" / f"g-{35:020d}-{payload_sha}"
+    generation.mkdir(parents=True)
+    (generation / "NekoLauncher.exe").write_bytes(b"new launcher")
+    state_dir = root / "state"
+    state_dir.mkdir()
+    (state_dir / "slot-a.bin").touch()
+    (state_dir / "slot-b.bin").touch()
+    committed = SimpleNamespace(
+        binding=SimpleNamespace(release_sequence=35, payload_sha256=payload_sha),
+        launcher_identity_sha256=_sha256(b"new launcher"),
+    )
+    slot_store = MagicMock()
+    slot_store.load.return_value = SimpleNamespace(
+        status=SelectionStatus.SELECTED, state=SimpleNamespace(committed=committed)
+    )
+    monkeypatch.setattr(
+        "neko_launcher.updater.slot_store.SlotStore", lambda *args: slot_store
+    )
+    monkeypatch.setattr(
+        "neko_launcher.main.load_installed_update_trust_profile",
+        lambda path: SimpleNamespace(release_public_keys={}),
+    )
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "argv", [str(executable)])
+    monkeypatch.delenv("PYINSTALLER_RESET_ENVIRONMENT", raising=False)
+    spawned: list[tuple[list[str], dict[str, str]]] = []
+    monkeypatch.setattr(
+        "neko_launcher.main.subprocess.Popen",
+        lambda args, **kwargs: spawned.append((args, kwargs["env"])),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        _maybe_sync_committed_generation(root)
+
+    assert exc_info.value.code == 0
+    assert executable.read_bytes() == b"new launcher"
+    assert spawned[0][0] == [str(executable)]
+    assert spawned[0][1]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in os.environ
+    slot_store.close.assert_called_once()
+
+
+@pytest.mark.parametrize("arguments", [[], ["--tk-self-test"]])
+def test_legacy_frozen_runtime_detaches_before_tk_or_bootstrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arguments: list[str],
+) -> None:
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    restarted = MagicMock()
+    restarted.wait.return_value = 11
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "argv", ["NekoLauncher.exe", *arguments])
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.delenv("PYINSTALLER_RESET_ENVIRONMENT", raising=False)
+
+    def spawn(args, **kwargs):
+        calls.append((args, kwargs["env"]))
+        return restarted
+
+    monkeypatch.setattr("neko_launcher.main.subprocess.Popen", spawn)
+    monkeypatch.setattr(
+        "neko_launcher.main._run_tk_self_test",
+        lambda: pytest.fail("Inherited runtime must restart before creating Tk"),
+    )
+    monkeypatch.setattr(
+        "neko_launcher.main.acquire_instance_mutex",
+        lambda: pytest.fail("Inherited runtime must restart before acquiring the mutex"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "pyi_restart_environment.py"))
+    assert exc_info.value.code == (11 if arguments else 0)
+    if arguments:
+        restarted.wait.assert_called_once()
+    else:
+        restarted.wait.assert_not_called()
+
+    assert len(calls) == 1
+    assert calls[0][0] == [sys.executable, *arguments]
+    assert calls[0][1]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in os.environ
+
+
+@pytest.mark.parametrize("mode", ["--update-managed", "--update-probation"])
+def test_managed_frozen_workers_keep_their_inherited_ipc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.setattr(sys, "argv", ["NekoLauncher.exe", mode])
+    monkeypatch.setattr(
+        "neko_launcher.main.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("Managed workers must not replace their IPC process"),
+    )
+    monkeypatch.setattr(
+        "neko_launcher.main.maybe_dispatch_updater_entry",
+        lambda args: calls.append(args) or True,
+    )
+
+    runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "pyi_restart_environment.py"))
+    main()
+
+    assert calls == [["NekoLauncher.exe", mode]]
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_current_runtime_does_not_restart_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frozen: bool
+) -> None:
+    runtime_hook = Path(__file__).parents[1] / "scripts" / "pyi_restart_environment.py"
+    (tmp_path / runtime_hook.name).write_bytes(runtime_hook.read_bytes())
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    monkeypatch.setattr(sys, "argv", ["NekoLauncher.exe", "--tk-self-test"])
+    monkeypatch.setattr("neko_launcher.main._run_tk_self_test", lambda: 0)
+    monkeypatch.setattr(
+        "neko_launcher.main.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("Current runtime must not restart itself"),
+    )
+
+    runpy.run_path(str(runtime_hook))
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+
+
+def test_packaging_includes_early_hook_and_its_runtime_identity() -> None:
+    spec = (Path(__file__).parents[1] / "NekoLauncher.spec").read_text(encoding="utf-8")
+    assert '(str(launcher_root / "scripts" / "pyi_restart_environment.py"), ".")' in spec
+    assert 'runtime_hooks=[str(launcher_root / "scripts" / "pyi_restart_environment.py")]' in spec
 
 
 def test_main_tk_self_test_exits_before_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:

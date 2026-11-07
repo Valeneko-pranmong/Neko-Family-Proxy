@@ -16,6 +16,7 @@ datas = [
     (str(repository_root / "Asset" / "Sarabun-Regular.ttf"), "."),
     (str(repository_root / "Asset" / "Sarabun-Bold.ttf"), "."),
     (str(repository_root / "Asset" / "Sarabun-OFL.txt"), "."),
+    (str(launcher_root / "scripts" / "pyi_restart_environment.py"), "."),
 ]
 datas += collect_data_files("customtkinter")
 
@@ -29,7 +30,7 @@ a = Analysis(
     hiddenimports=["keyring.backends.Windows"],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(launcher_root / "scripts" / "pyi_restart_environment.py")],
     excludes=[
         "PIL._avif",
         "PIL._webp",
