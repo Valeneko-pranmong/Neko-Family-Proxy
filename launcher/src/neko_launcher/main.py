@@ -138,6 +138,53 @@ def _maybe_sync_committed_generation(install_root: Path) -> None:
         if committed is None:
             return
 
+        if selection.state.phase == "CLEANING":
+            if not root_validator.validate_install_root(install_root).valid:
+                return
+            from neko_launcher.updater.enrollment import validate_enrollment_trust_binding
+            from neko_launcher.updater.lock_manager import RootLockManager
+            from neko_launcher.updater.recovery_engine import RecoveryEngine
+            from neko_launcher.updater.state_models import RootIdentity
+            from neko_launcher.updater.win32_directory import get_directory_identity, open_directory_guarded
+
+            root_handle = open_directory_guarded(install_root)
+            try:
+                root_identity = get_directory_identity(root_handle)
+                marker = validate_enrollment_trust_binding(
+                    install_root, profile,
+                    expected_root=RootIdentity(root_identity.volume_serial, root_identity.file_id),
+                    expected_helper_sha256=sha256_file(install_root / "NekoUpdater.exe"),
+                )
+                locks = RootLockManager(install_root)
+                try:
+                    locks.acquire_control_lock()
+                    fresh_store = SlotStore(slot_a, slot_b, profile.release_public_keys)
+                    try:
+                        fresh = fresh_store.load()
+                    finally:
+                        fresh_store.close()
+                    if fresh.status != SelectionStatus.SELECTED or fresh.state is None:
+                        return
+                    if fresh.state.installation_id != marker.installation_id:
+                        return
+                    if fresh.state.phase == "CLEANING" and fresh.state.committed is not None:
+                        recovered = RecoveryEngine(install_root, profile.release_public_keys).complete_committed_cleanup(
+                            fresh.state.committed, marker.installation_id
+                        )
+                        if not recovered.converged or recovered.final_state is None or recovered.final_state.phase != "IDLE":
+                            return
+                        committed = recovered.final_state.committed
+                    elif fresh.state.phase == "IDLE":
+                        committed = fresh.state.committed
+                    else:
+                        return
+                finally:
+                    locks.release_all()
+            finally:
+                ctypes.windll.kernel32.CloseHandle(root_handle)
+            if committed is None:
+                return
+
         current_sha = sha256_file(current_exe)
         if current_sha == committed.launcher_identity_sha256:
             return

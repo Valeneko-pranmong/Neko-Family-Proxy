@@ -1,16 +1,19 @@
 """Deterministic crash-recovery engine and recovery dispatcher."""
 from __future__ import annotations
 
+import ctypes
+import hashlib
 import os
 import shutil
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from neko_launcher.updater.binary_frame import SlotFrame, pack_slot_frame
 from neko_launcher.updater.precommit_abort import execute_precommit_abort
 from neko_launcher.updater.rollback_controller import initiate_postcommit_rollback
 from neko_launcher.updater.slot_selector import SelectionStatus, select_active_slot
+from neko_launcher.updater.state_machine import validate_transition
 from neko_launcher.updater.state_models import (
     Generation,
     State,
@@ -64,6 +67,73 @@ class RecoveryEngine:
         finally:
             os.close(fd)
         return target_slot
+
+    def complete_committed_cleanup(
+        self, expected_committed: Generation, expected_installation_id: str
+    ) -> RecoveryResult:
+        selection = select_active_slot(
+            self._read_slot_bytes("slot-a.bin"),
+            self._read_slot_bytes("slot-b.bin"),
+            self.public_keys,
+        )
+        if selection.status != SelectionStatus.SELECTED or selection.state is None:
+            return RecoveryResult(False, "REPAIR_REQUIRED", None, 0, None, selection.reason)
+        state = selection.state
+        if state.phase != "CLEANING":
+            return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 0, state, "LOCK_BUSY")
+        if state.installation_id != expected_installation_id or state.committed != expected_committed:
+            return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 0, state, "STATE_CHANGED")
+
+        generation_dir = self.root_dir / "releases" / (
+            f"g-{expected_committed.binding.release_sequence:020d}-{expected_committed.binding.payload_sha256}"
+        )
+        try:
+            generation_handle = open_directory_guarded(generation_dir)
+        except OSError:
+            return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 0, state, "COMMITTED_STORAGE_MISSING")
+        try:
+            launcher = generation_dir / "NekoLauncher.exe"
+            core_manifest = generation_dir / "ProxyCore" / "core-manifest.json"
+            if not core_manifest.is_file():
+                core_manifest = generation_dir / "ProxyCore" / "canonical-core-manifest.json"
+            if not launcher.is_file() or not core_manifest.is_file():
+                return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 0, state, "COMMITTED_STORAGE_MISSING")
+            with launcher.open("rb") as stream:
+                launcher_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+            with core_manifest.open("rb") as stream:
+                core_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+            if launcher_sha != expected_committed.launcher_identity_sha256 or core_sha != expected_committed.core_identity_sha256:
+                return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 0, state, "COMMITTED_STORAGE_MISMATCH")
+
+            for item in state.cleanup or []:
+                path = self.root_dir / item.target / (
+                    item.request_id if item.target == "incoming" else item.transaction_id
+                )
+                if not path.exists():
+                    continue
+                handle = open_directory_guarded(path)
+                try:
+                    identity = get_directory_identity(handle)
+                finally:
+                    ctypes.windll.kernel32.CloseHandle(handle)
+                if identity != item.directory:
+                    return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 0, state, "DIRECTORY_IDENTITY_MISMATCH")
+                shutil.rmtree(path)
+
+            next_state = replace(
+                state, revision=state.revision + 1, phase="IDLE", cleanup=None,
+                transaction=None, rollback=None,
+            )
+            validate_transition(state, next_state)
+            self._write_next_slot(next_state, selection.active_slot)
+            final = select_active_slot(
+                self._read_slot_bytes("slot-a.bin"), self._read_slot_bytes("slot-b.bin"), self.public_keys
+            )
+            if final.status != SelectionStatus.SELECTED or final.state != next_state:
+                return RecoveryResult(False, "REPAIR_REQUIRED", state.committed, 1, final.state, "STATE_CHANGED")
+            return RecoveryResult(True, "NEW_FULLY_COMMITTED", expected_committed, 1, next_state)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(generation_handle)
 
     def run_recovery(self) -> RecoveryResult:
         """Execute crash recovery to converge installation to OLD_FULLY_RESTORED or NEW_FULLY_COMMITTED."""

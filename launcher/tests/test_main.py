@@ -193,7 +193,7 @@ def test_committed_generation_relaunch_gets_a_fresh_frozen_runtime(
     )
     slot_store = MagicMock()
     slot_store.load.return_value = SimpleNamespace(
-        status=SelectionStatus.SELECTED, state=SimpleNamespace(committed=committed)
+        status=SelectionStatus.SELECTED, state=SimpleNamespace(committed=committed, phase="IDLE")
     )
     monkeypatch.setattr(
         "neko_launcher.updater.slot_store.SlotStore", lambda *args: slot_store
@@ -220,6 +220,135 @@ def test_committed_generation_relaunch_gets_a_fresh_frozen_runtime(
     assert spawned[0][1]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert "PYINSTALLER_RESET_ENVIRONMENT" not in os.environ
     slot_store.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "fresh_phase, recovery_ok, installation_matches",
+    [("CLEANING", True, True), ("CLEANING", False, True), ("PREPARING", True, True), ("IDLE", True, True), ("CLEANING", True, False)],
+)
+def test_startup_recovers_only_committed_cleanup_under_control_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    fresh_phase: str, recovery_ok: bool, installation_matches: bool,
+) -> None:
+    from types import SimpleNamespace
+    from neko_launcher.main import _maybe_sync_committed_generation
+    from neko_launcher.updater.slot_selector import SelectionStatus
+
+    root = tmp_path / "app"
+    root.mkdir()
+    executable = root / "NekoLauncher.exe"
+    executable.write_bytes(b"current launcher")
+    state_dir = root / "state"
+    state_dir.mkdir()
+    (state_dir / "slot-a.bin").touch()
+    (state_dir / "slot-b.bin").touch()
+    (root / "NekoUpdater.exe").write_bytes(b"pinned updater")
+    committed = SimpleNamespace(launcher_identity_sha256=_sha256(b"current launcher"))
+    initial_store = MagicMock()
+    initial_store.load.return_value = SimpleNamespace(
+        status=SelectionStatus.SELECTED,
+        state=SimpleNamespace(committed=committed, phase="CLEANING"),
+    )
+    fresh_store = MagicMock()
+    fresh_store.load.return_value = SimpleNamespace(
+        status=SelectionStatus.SELECTED,
+        state=SimpleNamespace(committed=committed, phase=fresh_phase, installation_id=("1" if installation_matches else "2") * 32),
+    )
+    stores = iter([initial_store, fresh_store])
+    monkeypatch.setattr("neko_launcher.updater.slot_store.SlotStore", lambda *args: next(stores))
+    monkeypatch.setattr(
+        "neko_launcher.main.load_installed_update_trust_profile",
+        lambda path: SimpleNamespace(release_public_keys={}),
+    )
+    events: list[str] = []
+    monkeypatch.setattr(
+        "neko_launcher.main.root_validator.validate_install_root",
+        lambda path: SimpleNamespace(valid=True),
+    )
+    enrollment_calls: list[dict[str, object]] = []
+
+    def validate_enrollment(*args, **kwargs):
+        events.append("enrollment")
+        enrollment_calls.append(kwargs)
+        return SimpleNamespace(installation_id="1" * 32)
+
+    monkeypatch.setattr(
+        "neko_launcher.updater.enrollment.validate_enrollment_trust_binding",
+        validate_enrollment,
+    )
+    locks = MagicMock()
+    locks.acquire_control_lock.side_effect = lambda: events.append("lock")
+    locks.release_all.side_effect = lambda: events.append("unlock")
+    monkeypatch.setattr("neko_launcher.updater.lock_manager.RootLockManager", lambda path: locks)
+    engine = MagicMock()
+    engine.complete_committed_cleanup.side_effect = lambda *args: events.append("recover") or SimpleNamespace(
+        converged=recovery_ok, final_state=SimpleNamespace(phase="IDLE", committed=committed)
+    )
+    monkeypatch.setattr("neko_launcher.updater.recovery_engine.RecoveryEngine", lambda *args: engine)
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "argv", [str(executable)])
+    monkeypatch.setattr(
+        "neko_launcher.main.subprocess.Popen",
+        lambda *args, **kwargs: pytest.fail("Cleanup must not restart an unchanged launcher"),
+    )
+
+    _maybe_sync_committed_generation(root)
+
+    assert executable.read_bytes() == b"current launcher"
+    should_recover = fresh_phase == "CLEANING" and installation_matches
+    assert events == ["enrollment", "lock"] + (["recover"] if should_recover else []) + ["unlock"]
+    initial_store.close.assert_called_once()
+    fresh_store.close.assert_called_once()
+    assert engine.complete_committed_cleanup.call_count == (1 if should_recover else 0)
+    engine.run_recovery.assert_not_called()
+    assert enrollment_calls[0]["expected_root"].file_id != "0" * 32
+    assert enrollment_calls[0]["expected_helper_sha256"] == _sha256(b"pinned updater")
+
+
+@pytest.mark.parametrize("root_valid", [False, True])
+def test_cleanup_recovery_requires_valid_root_and_enrollment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_valid: bool
+) -> None:
+    from types import SimpleNamespace
+    from neko_launcher.main import _maybe_sync_committed_generation
+    from neko_launcher.updater.slot_selector import SelectionStatus
+
+    root = tmp_path / "app"
+    root.mkdir()
+    executable = root / "NekoLauncher.exe"
+    executable.write_bytes(b"current")
+    (root / "NekoUpdater.exe").write_bytes(b"pinned updater")
+    (root / "state").mkdir()
+    (root / "state" / "slot-a.bin").touch()
+    (root / "state" / "slot-b.bin").touch()
+    store = MagicMock()
+    store.load.return_value = SimpleNamespace(
+        status=SelectionStatus.SELECTED,
+        state=SimpleNamespace(phase="CLEANING", committed=object()),
+    )
+    monkeypatch.setattr("neko_launcher.updater.slot_store.SlotStore", lambda *args: store)
+    monkeypatch.setattr(
+        "neko_launcher.main.load_installed_update_trust_profile",
+        lambda path: SimpleNamespace(release_public_keys={}),
+    )
+    monkeypatch.setattr(
+        "neko_launcher.main.root_validator.validate_install_root",
+        lambda path: SimpleNamespace(valid=root_valid),
+    )
+    monkeypatch.setattr(
+        "neko_launcher.updater.enrollment.validate_enrollment_trust_binding",
+        MagicMock(side_effect=ValueError("invalid binding")),
+    )
+    monkeypatch.setattr(
+        "neko_launcher.updater.recovery_engine.RecoveryEngine",
+        lambda *args: pytest.fail("Invalid enrollment must not start recovery"),
+    )
+    monkeypatch.setattr(sys, "executable", str(executable))
+
+    _maybe_sync_committed_generation(root)
+
+    assert executable.read_bytes() == b"current"
+    store.close.assert_called_once()
 
 
 @pytest.mark.parametrize("arguments", [[], ["--tk-self-test"]])

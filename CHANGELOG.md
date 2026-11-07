@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.2.5] - Unreleased
 
 ### Fixed
+- Installed Launcher startup finishes authenticated post-commit cleanup under the root control lock, so a completed update cannot leave later admissions blocked with `LOCK_BUSY`. Recovery does not abort a newly active transaction.
 - Frozen Launcher restarts use a fresh PyInstaller runtime rather than sharing Tcl/Tk files with an exiting process. Nested launches from older clients detach before starting the UI; managed IPC workers retain their existing channel.
 - Same-version Setup archives the known V2Ray runtime log outside the verified Core tree before completing manifest verification. The log is preserved byte-for-byte; unexpected binaries, settings, keys, and other undeclared files still fail closed.
 - Automatic reconnect rechecks the latest telemetry after an asynchronous game-presence probe, so an outdated unhealthy observation cannot restart a recovered Core. Confirmed game exit and genuine runtime failures still follow the existing recovery policy.
