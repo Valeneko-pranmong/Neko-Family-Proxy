@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.5] - Unreleased
+
+### Fixed
+- Same-version Setup archives the known V2Ray runtime log outside the verified Core tree before completing manifest verification. The log is preserved byte-for-byte; unexpected binaries, settings, keys, and other undeclared files still fail closed.
+- Automatic reconnect rechecks the latest telemetry after an asynchronous game-presence probe, so an outdated unhealthy observation cannot restart a recovered Core. Confirmed game exit and genuine runtime failures still follow the existing recovery policy.
+- Driver preparation uses Inno's native `Exec` to start a 64-bit PowerShell bridge, which requests UAC for the hash-verified helper through an encoded command. `ShellExec` does not honor Inno's redirection setting and launched 32-bit PowerShell in the first 5.2.5 candidate.
+- Setup repairs a compatible stopped netfilter2 driver (check exit 30), as well as a missing installation (exit 10), and still requires a successful fresh readiness check.
+- The driver helper rejects 32-bit PowerShell and no longer reports a running service as verified when its driver file is missing.
+
+### Changed
+- Setup logging is enabled by default. Driver failures retain the original helper exit code or Windows launch error, including UAC cancellation, alongside the final readiness result and log path.
+- Core and updater artifacts remain frozen. Machines with an unprepared driver need the new installer; an in-app launcher update alone does not install the driver.
+- Release build, interactive UAC/clean-install verification, and live game connection testing remain required before publication.
+
 ## [5.2.4] - 2026-10-28
 
 ### Fixed

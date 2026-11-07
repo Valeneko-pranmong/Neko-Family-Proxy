@@ -73,6 +73,11 @@ function Out-Result([string]$Message) {
     }
 }
 
+if (-not [Environment]::Is64BitProcess) {
+    Out-Result 'FAIL: netfilter2 requires native 64-bit PowerShell'
+    exit 2
+}
+
 function Get-Sha256([string]$Path) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $stream = $null
@@ -228,7 +233,7 @@ $service = Get-Service -Name $svcName -ErrorAction SilentlyContinue
 # ---- classify current machine state ----------------------------------------
 if (-not $service -and -not (Test-Path -LiteralPath $sysDriver)) {
     # clean machine -> registration required (elevated)
-    if ($CheckOnly) { Write-Output 'netfilter2 absent; registration required'; exit 10 }
+    if ($CheckOnly) { Out-Result 'netfilter2 absent; registration required'; exit 10 }
 } else {
     if (Test-Path -LiteralPath $sysDriver -PathType Leaf) {
         $sysHash = Get-Sha256 $sysDriver
@@ -239,16 +244,20 @@ if (-not $service -and -not (Test-Path -LiteralPath $sysDriver)) {
         }
     }
     if ($service -and $service.Status -eq 'Running') {
-        Write-Output 'netfilter2 valid and RUNNING (verify-only)'
+        if (-not (Test-Path -LiteralPath $sysDriver -PathType Leaf)) {
+            Out-Result 'netfilter2 running but driver file missing; readiness cannot be verified'
+            exit 20
+        }
+        Out-Result 'netfilter2 valid and RUNNING (verify-only)'
         exit 0
     }
     if ($service) {
         # registered but stopped, bytes valid -> start requires elevation
-        if ($CheckOnly) { Write-Output 'netfilter2 present but stopped'; exit 30 }
+        if ($CheckOnly) { Out-Result 'netfilter2 present but stopped'; exit 30 }
     }
 }
 # falling through here (CheckOnly) should not happen
-if ($CheckOnly) { Write-Output 'netfilter2 state unresolved'; exit 10 }
+if ($CheckOnly) { Out-Result 'netfilter2 state unresolved'; exit 10 }
 
 # ---- Apply (elevated): verify, stage, register, start, verify --------------
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -356,7 +365,7 @@ if ($service) {
     }
     $service.Refresh()
     if ($service.Status -eq 'Running') {
-        Write-Output 'netfilter2 registered and RUNNING'
+        Out-Result 'netfilter2 registered and RUNNING'
         exit 0
     }
     Out-Result ("FAIL: netfilter2 not running after registration (state: " +

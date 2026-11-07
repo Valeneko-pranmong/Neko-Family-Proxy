@@ -711,6 +711,7 @@ def build_tweaker_window(tweaker: Path, *, auto_launch: bool = True) -> AppWindo
         backoff_seconds=(1.0, 2.0, 4.0)
     )
     window._runtime_was_healthy = False
+    window._last_telemetry_state = None
     window._scheduled_reconnects = []
     window._schedule_reconnect = (  # type: ignore[method-assign]
         lambda delay, callback: window._scheduled_reconnects.append((delay, callback))
@@ -1412,6 +1413,89 @@ def test_running_proxy_transport_disconnect_with_pso2_queues_reconnect(
     callback()
 
     assert len(window._submitted_work) == submitted_before + 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("initial_status", [ProxyStatus.STARTING, ProxyStatus.RUNNING])
+def test_health_recovers_before_game_probe_does_not_reconnect(
+    tmp_path: Path,
+    initial_status: ProxyStatus,
+) -> None:
+    from neko_launcher.domain.telemetry import CoreHealthSnapshot, TelemetryState
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(
+        window._controller.state,
+        proxy_status=initial_status,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+    unhealthy = replace(healthy, connection_state=TelemetryConnectionState.DISCONNECTED)
+    window._render_telemetry(unhealthy)
+    assert window._runtime_health_probe_pending is True
+
+    window._controller.state = replace(
+        window._controller.state, proxy_status=ProxyStatus.RUNNING
+    )
+    window._render_telemetry(healthy)
+    window.settle_game_observation()
+
+    assert window._runtime_health_probe_pending is False
+    assert window._controller.state.proxy_status is ProxyStatus.RUNNING
+    assert window._scheduled_reconnects == []
+    assert window._reconnect_controller.attempts == 0
+    assert window._service.proxy_started == 0
+    assert window._service.proxy_stopped == 0
+
+    window._render_telemetry(unhealthy)
+    window.settle_game_observation()
+
+    assert window._controller.state.proxy_status is ProxyStatus.RECONNECTING
+    assert len(window._scheduled_reconnects) == 1
+
+
+def test_health_recovers_but_confirmed_game_exit_still_stops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from neko_launcher.domain.telemetry import CoreHealthSnapshot, TelemetryState
+
+    window = build_tweaker_window(tmp_path / "Tweaker.exe")
+    window._controller.state = replace(
+        window._controller.state,
+        proxy_status=ProxyStatus.RUNNING,
+        game_process_running=True,
+    )
+    healthy = TelemetryState(
+        connection_state=TelemetryConnectionState.CONNECTED,
+        snapshot=CoreHealthSnapshot(
+            core_state="running",
+            proxy_state="connected",
+            v2ray_running=True,
+            local_socks_running=True,
+            shadowsocks_connected=True,
+        ),
+    )
+    window._render_telemetry(healthy)
+    window._render_telemetry(replace(healthy, is_stale=True))
+    window._render_telemetry(healthy)
+    monkeypatch.setattr("neko_launcher.ui.app_window.observe_exact_pso2", lambda: None)
+    window.settle_game_observation()
+
+    assert window._runtime_health_probe_pending is False
+    assert window._controller.state.game_process_running is False
+    assert window._controller.state.proxy_status is ProxyStatus.STOPPED
+    assert window._scheduled_reconnects == []
+    assert window._reconnect_controller.owns_recovery is False
 
 
 @pytest.mark.parametrize(

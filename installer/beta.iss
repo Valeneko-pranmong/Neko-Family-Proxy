@@ -25,10 +25,10 @@
 
 #define MyAppName "NEKO FAMILY PROXY"
 #ifndef MyAppVersion
-  #define MyAppVersion "5.2.4"
+  #define MyAppVersion "5.2.5"
 #endif
 #ifndef MyAppDisplayVersion
-  #define MyAppDisplayVersion "5.2.4"
+  #define MyAppDisplayVersion "5.2.5"
 #endif
 
 ; Staging root lives OUTSIDE the repository (never committed). Override both
@@ -97,6 +97,7 @@ DisableProgramGroupPage=yes
 WizardStyle=modern
 CloseApplications=no
 RestartIfNeededByRun=no
+SetupLogging=yes
 
 [InstallDelete]
 ; Clean stale/conflicting updater state slots before baseline enrollment
@@ -219,13 +220,6 @@ begin
   Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 end;
 
-function PSNativeExePath(): String;
-begin
-  Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe');
-  if not FileExists(Result) then
-    Result := PSExePath();
-end;
-
 function PSQuote(const S: String): String;
 var
   T: String;
@@ -243,7 +237,7 @@ function RunPSVerifiedElevated(
   var ExitCode: Integer
 ): Boolean;
 var
-  Wrapper: String;
+  Wrapper, Bridge: String;
 begin
   Wrapper :=
     '$ErrorActionPreference=''Stop'';' +
@@ -255,12 +249,27 @@ begin
     '$h.Dispose();' +
     'if($s -ne $want){exit 21};' +
     '& ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString($b)))' + ScriptArgs;
-  Result := ShellExec('runas', PSNativeExePath(),
+  Bridge :=
+    '$ErrorActionPreference=''Stop'';' +
+    'if(-not [Environment]::Is64BitProcess){exit 2};' +
+    '$w=' + PSQuote(Wrapper) + ';' +
+    '$encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($w));' +
+    'try{$p=Start-Process -FilePath ' + PSQuote(PSExePath()) +
+    ' -Verb RunAs -ArgumentList (''-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ''+$encoded)' +
+    ' -WindowStyle Hidden -Wait -PassThru;exit $p.ExitCode}' +
+    'catch{$e=$_.Exception;while($e.InnerException){$e=$e.InnerException};' +
+    'if($e -is [ComponentModel.Win32Exception]){exit (10000+$e.NativeErrorCode)};exit 10031}';
+  { Exec starts a native bridge; ShellExec ignores Inno's redirection setting. }
+  Log('netfilter2 native bridge executable: ' + PSExePath());
+  ExitCode := 0;
+  Result := Exec(PSExePath(),
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command "' +
-    Wrapper + '"',
+    Bridge + '"',
     '', HideCmd, ewWaitUntilTerminated, ExitCode);
-  if not Result then
-    ExitCode := -1;
+  if Result and (ExitCode >= 10000) then begin
+    Result := False;
+    ExitCode := ExitCode - 10000;
+  end;
 end;
 
 function RunPSFile(const PSFile, ExtraArgs: String; var ExitCode: Integer): Boolean;
@@ -446,7 +455,7 @@ begin
     begin
       MsgBox(
         'พบ NEKO FAMILY PROXY เวอร์ชัน ' + InstalledVersion + ' อยู่แล้ว' + #13#10#13#10 +
-        '5.2.4 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
+        '5.2.5 ต้องติดตั้งแยกจาก 5.1.6 และ 5.2.0 และไม่รองรับการติดตั้งทับหรืออยู่ร่วมกัน' + #13#10 +
         'กรุณาถอนการติดตั้งเวอร์ชันเดิมผ่าน Windows Settings > Apps > Installed apps ' +
         'ก่อน แล้วรัน installer นี้อีกครั้ง' + #13#10#13#10 +
         'An existing NEKO FAMILY PROXY ' + InstalledVersion + ' installation ' +
@@ -464,9 +473,9 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   AppDir, CoreDir, BinDir, ToolsDir, LauncherExe: String;
-  VerifyScript, DriverScript, PSArgs: String;
+  VerifyScript, DriverScript, PSArgs, DriverApplyDetail, RuntimeLogArchiveDir: String;
   Bootstrapper: String;
-  RC: Integer;
+  RC, ApplyRC: Integer;
   Ok: Boolean;
   Msg: String;
 begin
@@ -484,7 +493,10 @@ begin
   if not FileExists(VerifyScript) then begin
     AddDetail('internal error: verify-core-install.ps1 missing');
   end else begin
-    Ok := RunPSFile(VerifyScript, ' -CoreDir "' + CoreDir + '" -ExpectedCommit "{#CoreAuthority}"', RC);
+    RuntimeLogArchiveDir := AppDir + '\logging\core-install-archive';
+    Ok := RunPSFile(VerifyScript,
+      ' -CoreDir "' + CoreDir + '" -ExpectedCommit "{#CoreAuthority}"' +
+      ' -RuntimeLogArchiveDir "' + RuntimeLogArchiveDir + '"', RC);
     g_CoreVerifyOK := Ok and (RC = 0);
     Log('core manifest verification exit code: ' + IntToStr(RC));
     if not g_CoreVerifyOK then begin
@@ -536,6 +548,7 @@ begin
   end;
 
   { ---- 3. netfilter2 driver readiness (elevation only when required) ---- }
+  DriverApplyDetail := '';
   if ExpandConstant('{param:SKIPDRIVER|0}') = '1' then begin
     g_DriverOK := False;
     AddDetail('netfilter2 registration skipped by /SKIPDRIVER=1');
@@ -550,8 +563,8 @@ begin
       ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"', RC);
     Log('netfilter2 check exit code: ' + IntToStr(RC));
     case RC of
-      0: g_DriverOK := True; { already valid and running; no elevation needed }
-      10: begin
+      0: g_DriverOK := Ok; { already valid and running; no elevation needed }
+      10, 30: begin
             Log('requesting elevation for verified netfilter2 registration');
             PSArgs :=
               ' -CoreBinDir ' + PSQuote(BinDir) + ' -Apply' +
@@ -559,8 +572,14 @@ begin
               ' -ExpectedRedirectorSha256 ' + PSQuote('{#ExpectedRedirectorSha256}') +
               ' -ExpectedNfDriverSha256 ' + PSQuote('{#ExpectedNfDriverSha256}');
             Ok := RunPSVerifiedElevated(
-              DriverScript, PSArgs, '{#ExpectedDriverScriptSha256}', RC);
-            Log('elevated apply: shell=' + B2S(Ok) + ' rc=' + IntToStr(RC));
+              DriverScript, PSArgs, '{#ExpectedDriverScriptSha256}', ApplyRC);
+            Log('elevated apply: launch=' + B2S(Ok) + ' rc=' + IntToStr(ApplyRC));
+            if Ok then
+              DriverApplyDetail := 'netfilter2 apply exit code: ' + IntToStr(ApplyRC)
+            else
+              DriverApplyDetail := 'netfilter2 helper could not launch (Windows error ' +
+                IntToStr(ApplyRC) + '): ' + SysErrorMessage(ApplyRC);
+            Log(DriverApplyDetail);
             { Authoritative outcome = fresh unelevated re-check of real state. }
             Ok := RunPSFile(DriverScript,
       ' -CoreBinDir "' + BinDir + '" -CheckOnly' +
@@ -569,20 +588,24 @@ begin
       ' -ExpectedNfDriverSha256 "{#ExpectedNfDriverSha256}"', RC);
             g_DriverOK := Ok and (RC = 0);
           end;
-      20: AddDetail('incompatible netfilter2 driver is running; overwrite refused');
+      20: AddDetail('netfilter2 driver is incompatible or unverifiable; overwrite refused');
     else
       AddDetail('netfilter2 precheck failed (exit ' + IntToStr(RC) + ')');
     end;
 
     if not g_DriverOK then begin
       Msg := 'netfilter2 check exit code: ' + IntToStr(RC);
+      if DriverApplyDetail <> '' then
+        Msg := DriverApplyDetail + #13#10 + Msg;
       AddDetail(Msg);
       SuppressibleMsgBox(
         'Setup could not prepare the netfilter2 network driver.'#13#10#13#10 +
         'Installation files are in place, but game traffic proxying will not ' +
-        'work until the driver is ready. Resolve the cause and re-run ' +
-        'setup if needed.'#13#10#13#10 +
-        'Detail: ' + Msg,
+        'work until the driver is ready. Run this same Setup again and allow ' +
+        'the Windows UAC prompt. If it still fails, contact the operator ' +
+        'with the Setup log.'#13#10#13#10 +
+        'Detail: ' + Msg + #13#10#13#10 +
+        'Setup log: ' + ExpandConstant('{log}'),
         mbError, MB_OK, IDOK);
     end;
     end;

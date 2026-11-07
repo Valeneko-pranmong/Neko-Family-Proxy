@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 VERIFY_SCRIPT = REPOSITORY_ROOT / "installer" / "scripts" / "verify-core-install.ps1"
 EXPECTED_COMMIT = "6ab94bb"
@@ -352,3 +354,208 @@ def test_prohibited_plaintext_settings_fails(tmp_path: Path) -> None:
     proc = _run_verify(core)
     assert proc.returncode == 9, proc.stdout + proc.stderr
     assert "FAIL: plaintext settings/key-like files present" in proc.stdout
+
+
+@pytest.mark.parametrize("object_manifest", [False, True])
+@pytest.mark.parametrize("contents", [b"", b"V2Ray output\r\n\x00\xff"])
+def test_archives_only_known_runtime_log_and_preserves_bytes(
+    tmp_path: Path, object_manifest: bool, contents: bytes
+) -> None:
+    make_fixture = (
+        make_core_fixture_with_object_manifest
+        if object_manifest
+        else make_core_fixture_with_array_manifest
+    )
+    core = make_fixture(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(contents)
+    archive = tmp_path / "พื้นที่ O'Brien" / "core-install-archive"
+    archive.mkdir(parents=True)
+    previous = archive / "previous.log"
+    previous.write_bytes(b"previous evidence")
+    args = ["-RuntimeLogArchiveDir", str(archive)]
+
+    proc = _run_verify(core, extra_args=args)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "ARCHIVED:" in proc.stdout
+    assert not log.exists()
+    archived = [p for p in archive.iterdir() if p != previous]
+    assert len(archived) == 1
+    assert archived[0].read_bytes() == contents
+    assert previous.read_bytes() == b"previous evidence"
+    assert _run_verify(core).returncode == 0
+
+    log.write_bytes(b"next run")
+    proc = _run_verify(core, extra_args=args)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert len(list(archive.iterdir())) == 3
+    assert archived[0].read_bytes() == contents
+
+
+def test_runtime_log_stays_strict_without_archive_opt_in(tmp_path: Path) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+
+    proc = _run_verify(core)
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert log.read_bytes() == b"runtime evidence"
+
+
+@pytest.mark.parametrize(
+    "extra_name, expected_exit",
+    [
+        ("bin/extra.dll", 10),
+        ("logging/other.log", 10),
+        ("logging/nested/V2Ray (SagerNet).log", 10),
+        ("V2Ray (SagerNet).log", 10),
+        ("logging/appsettings.json", 9),
+        ("logging/private.pem", 9),
+    ],
+)
+def test_unknown_files_prevent_any_runtime_log_archival(
+    tmp_path: Path, extra_name: str, expected_exit: int
+) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+    extra = core / extra_name
+    extra.parent.mkdir(parents=True, exist_ok=True)
+    extra.write_bytes(b"unknown bytes")
+    archive = tmp_path / "archive"
+
+    proc = _run_verify(core, extra_args=["-RuntimeLogArchiveDir", str(archive)])
+
+    assert proc.returncode == expected_exit, proc.stdout + proc.stderr
+    assert not archive.exists()
+    assert log.read_bytes() == b"runtime evidence"
+    assert extra.read_bytes() == b"unknown bytes"
+
+
+@pytest.mark.parametrize("archive_relative", [".", "logging/archive", "nested/.."])
+def test_runtime_log_archive_inside_core_is_refused(
+    tmp_path: Path, archive_relative: str
+) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+
+    proc = _run_verify(
+        core, extra_args=["-RuntimeLogArchiveDir", str(core / archive_relative)]
+    )
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert log.read_bytes() == b"runtime evidence"
+
+
+def test_hash_failure_does_not_archive_runtime_log(tmp_path: Path) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+    (core / "dummy.dll").write_bytes(b"changed bytes")
+    archive = tmp_path / "archive"
+
+    proc = _run_verify(core, extra_args=["-RuntimeLogArchiveDir", str(archive)])
+
+    assert proc.returncode == 6, proc.stdout + proc.stderr
+    assert not archive.exists()
+    assert log.read_bytes() == b"runtime evidence"
+
+
+def test_archive_path_as_file_preserves_runtime_log(tmp_path: Path) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+    archive = tmp_path / "archive"
+    archive.write_bytes(b"existing file")
+
+    proc = _run_verify(core, extra_args=["-RuntimeLogArchiveDir", str(archive)])
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert log.read_bytes() == b"runtime evidence"
+    assert archive.read_bytes() == b"existing file"
+
+
+def test_archive_opt_in_without_runtime_log_has_no_side_effects(tmp_path: Path) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    archive = tmp_path / "archive"
+
+    proc = _run_verify(core, extra_args=["-RuntimeLogArchiveDir", str(archive)])
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not archive.exists()
+
+
+@pytest.mark.parametrize("junction_location", ["source", "archive"])
+def test_runtime_log_archival_refuses_junctions(
+    tmp_path: Path, junction_location: str
+) -> None:
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    archive = tmp_path / "archive"
+    if junction_location == "source":
+        target = tmp_path / "external-logging"
+        target.mkdir()
+        junction = core / "logging"
+        log = target / "V2Ray (SagerNet).log"
+    else:
+        target = core / "archive-target"
+        target.mkdir()
+        junction = archive
+        log = core / "logging" / "V2Ray (SagerNet).log"
+        log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+    mklink = subprocess.run(
+        ["cmd.exe", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        text=True,
+    )
+    assert mklink.returncode == 0, mklink.stdout + mklink.stderr
+
+    proc = _run_verify(core, extra_args=["-RuntimeLogArchiveDir", str(archive)])
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert "reparse point" in proc.stdout
+    assert log.read_bytes() == b"runtime evidence"
+
+
+def test_locked_runtime_log_is_preserved_when_archival_fails(tmp_path: Path) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    core = make_core_fixture_with_array_manifest(tmp_path)
+    log = core / "logging" / "V2Ray (SagerNet).log"
+    log.parent.mkdir()
+    log.write_bytes(b"runtime evidence")
+    archive = tmp_path / "archive"
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateFileW(str(log), 0x80000000, 0, None, 3, 0x80, None)
+    assert handle not in (None, ctypes.c_void_p(-1).value)
+    try:
+        proc = _run_verify(core, extra_args=["-RuntimeLogArchiveDir", str(archive)])
+    finally:
+        kernel32.CloseHandle(handle)
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert log.read_bytes() == b"runtime evidence"
+    assert list(archive.iterdir()) == []
+
+
+def test_installer_requests_runtime_log_archival_outside_core() -> None:
+    source = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    assert "RuntimeLogArchiveDir" in source
+    assert "AppDir + '\\logging\\core-install-archive'" in source

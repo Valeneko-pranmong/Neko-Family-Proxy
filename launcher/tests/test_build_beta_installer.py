@@ -4,6 +4,8 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -348,9 +350,14 @@ def test_static_beta_iss_inspection() -> None:
     assert "#ifndef MyAppDisplayVersion" in iss_text, "MyAppDisplayVersion must be overrideable"
     assert "#ifndef CoreAuthority" in iss_text, "CoreAuthority must be overrideable"
     assert '#define CoreAuthority ""' in iss_text, "CoreAuthority must default to empty"
-    assert 'RunPSFile(VerifyScript, \' -CoreDir "\' + CoreDir + \'" -ExpectedCommit "{#CoreAuthority}"\', RC)' in iss_text or \
-           'RunPSFile(VerifyScript, \' -CoreDir "\' + CoreDir + \'" -CoreAuthority "{#CoreAuthority}"\', RC)' in iss_text, \
+    verification_call = re.search(r"RunPSFile\(VerifyScript,([\s\S]*?), RC\);", iss_text)
+    assert verification_call is not None
+    verification_args = verification_call.group(1)
+    assert '\' -CoreDir "\' + CoreDir' in verification_args
+    assert ' -ExpectedCommit "{#CoreAuthority}"' in verification_args or \
+           ' -CoreAuthority "{#CoreAuthority}"' in verification_args, \
            "Post-install verifier must receive candidate-specific CoreAuthority"
+    assert ' -RuntimeLogArchiveDir "' in verification_args
     assert "Please install the runtime" not in iss_text, "must not instruct manual install"
     assert "ต้องติดตั้ง Microsoft .NET Desktop Runtime" not in iss_text, "must not instruct manual install"
     assert "Please run this same Setup again and allow the required Windows UAC prompt" in iss_text, "must instruct rerunning setup"
@@ -360,10 +367,19 @@ def test_static_beta_iss_inspection() -> None:
 def test_beta_iss_64bit_powershell_redirection_guard() -> None:
     iss_text = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
     assert "ensure-netfilter2.cmd" in iss_text, "beta.iss must still install the manual helper"
-    assert "ExpandConstant('{sysnative}\\WindowsPowerShell\\v1.0\\powershell.exe')" in iss_text, (
-        "elevated driver registration must use 64-bit Sysnative PowerShell"
-    )
-    assert "RunPSVerifiedElevated(" in iss_text
+    elevated = iss_text.split("function RunPSVerifiedElevated(")[1].split("function RunPSFile(")[0]
+    assert "Result := Exec(PSExePath()" in elevated
+    assert "ShellExec(" not in elevated, "ShellExec ignores Inno's filesystem redirection setting"
+    assert "EnableFsRedirection(" not in elevated
+    assert "[Environment]::Is64BitProcess" in elevated
+    assert "Start-Process -FilePath" in elevated
+    assert "-Verb RunAs" in elevated
+    assert "-EncodedCommand" in elevated
+    assert "[Text.Encoding]::Unicode.GetBytes($w)" in elevated
+    assert "-Wait -PassThru;exit $p.ExitCode" in elevated
+    assert "ExitCode := ExitCode - 10000" in elevated
+    assert "{sysnative}" not in iss_text, "UAC's native broker cannot resolve the Sysnative alias"
+    assert "ExitCode := -1" not in elevated, "preserve Windows errors, including UAC cancellation"
     assert "ExpandConstant('{cmd}')" not in iss_text, (
         "the elevated path must not execute a user-writable batch file"
     )
@@ -372,6 +388,172 @@ def test_beta_iss_64bit_powershell_redirection_guard() -> None:
     assert r"%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" in cmd_text, (
         "ensure-netfilter2.cmd must use Sysnative on 64-bit Windows to avoid 32-bit WOW64 redirection"
     )
+
+
+def _installer_ps_assignment(name: str, values: dict[str, str]) -> str:
+    source = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    function = source.split("function RunPSVerifiedElevated(")[1].split("function RunPSFile(")[0]
+    expression = function.split(f"  {name} :=\n")[1].split(";\n", 1)[0]
+    tokens = re.finditer(r"'(?:[^']|'')*'|PSQuote\((?:PSExePath\(\)|\w+)\)|\w+", expression)
+    parts: list[str] = []
+    offset = 0
+    for match in tokens:
+        assert expression[offset:match.start()].strip() in ("", "+")
+        token = match.group()
+        if token.startswith("'"):
+            parts.append(token[1:-1].replace("''", "'"))
+        elif token.startswith("PSQuote("):
+            value = values[token[8:-1]]
+            parts.append("'" + value.replace("'", "''") + "'")
+        else:
+            parts.append(values[token])
+        offset = match.end()
+    assert not expression[offset:].strip()
+    return "".join(parts)
+
+
+@pytest.mark.parametrize("exit_code,bad_hash", [(0, False), (10, False), (30, False), (0, True)])
+def test_native_elevation_bridge_preserves_arguments_hash_check_and_exit_without_uac(
+    tmp_path: Path, exit_code: int, bad_hash: bool,
+) -> None:
+    powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    folder = tmp_path / "พื้นที่ O'Brien & files"
+    folder.mkdir()
+    script = folder / "test helper.ps1"
+    marker = folder / "result.txt"
+    script.write_text(
+        "param([int]$Code,[string]$ResultFile,[string]$Text)\n"
+        "if(-not [Environment]::Is64BitProcess){exit 99}\n"
+        "[IO.File]::WriteAllText($ResultFile,$Text); exit $Code\n",
+        encoding="utf-8",
+    )
+    text = "native 64-bit: ภาษาไทย O'Brien & data"
+    args = f" -Code {exit_code} -ResultFile '" + str(marker).replace("'", "''") + "' -Text '" + text.replace("'", "''") + "'"
+    wrapper = _installer_ps_assignment("Wrapper", {
+        "ScriptPath": str(script), "ExpectedSha": HEX_A if bad_hash else _digest(script.read_bytes()),
+        "ScriptArgs": args,
+    })
+    bridge = _installer_ps_assignment("Bridge", {"Wrapper": wrapper, "PSExePath()": str(powershell)})
+    assert bridge.count("-Verb RunAs") == 1
+    bridge = bridge.replace("-Verb RunAs", "-Verb Open")
+    result = subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-Command", bridge],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == (21 if bad_hash else exit_code), (result.stdout, result.stderr)
+    if bad_hash:
+        assert not marker.exists()
+    else:
+        assert marker.read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("windows_error", [2, 5, 1223])
+def test_native_elevation_bridge_preserves_windows_launch_error_without_uac(
+    windows_error: int,
+) -> None:
+    powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    bridge = _installer_ps_assignment("Bridge", {"Wrapper": "exit 0", "PSExePath()": str(powershell)})
+    command = f"function Start-Process {{ throw [ComponentModel.Win32Exception]::new({windows_error}) }}; " + bridge
+    result = subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 10000 + windows_error, (result.stdout, result.stderr)
+
+
+def test_driver_repair_handles_stopped_service_and_preserves_apply_failure() -> None:
+    source = (REPOSITORY_ROOT / "installer" / "beta.iss").read_text(encoding="utf-8")
+    driver_step = source.split("{ ---- 3. netfilter2")[1].split("{ ---- 4.")[0]
+    assert "10, 30: begin" in driver_step
+    assert "'{#ExpectedDriverScriptSha256}', ApplyRC)" in driver_step
+    assert "SysErrorMessage(ApplyRC)" in driver_step
+    assert "DriverApplyDetail + #13#10 + Msg" in driver_step
+    assert "g_DriverOK := Ok and (RC = 0)" in driver_step
+    assert "SetupLogging=yes" in source
+
+
+@pytest.mark.parametrize(
+    ("service_status", "installed_bytes", "expected_code", "expected_message"),
+    [
+        (None, None, 10, "absent"),
+        (None, b"nfdriver", 10, "unresolved"),
+        ("Running", b"nfdriver", 0, "RUNNING"),
+        ("Stopped", b"nfdriver", 30, "stopped"),
+        ("Running", None, 20, "missing"),
+        ("Running", b"other-driver", 20, "overwrite refused"),
+        ("Stopped", b"other-driver", 20, "overwrite refused"),
+    ],
+)
+def test_driver_check_machine_states_without_machine_changes(
+    tmp_path: Path,
+    service_status: str | None,
+    installed_bytes: bytes | None,
+    expected_code: int,
+    expected_message: str,
+) -> None:
+    stage = _stage(tmp_path)
+    bin_dir = stage / "payload" / "CoreBundle" / "bin"
+    manifest_path = bin_dir.parent / "core-manifest.json"
+    fake_windows = tmp_path / "Windows"
+    drivers = fake_windows / "System32" / "drivers"
+    drivers.mkdir(parents=True)
+    if installed_bytes is not None:
+        (drivers / "netfilter2.sys").write_bytes(installed_bytes)
+    result_file = tmp_path / "check-result.txt"
+    production_script = REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.ps1"
+
+    def quote(value: object) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    source = production_script.read_text(encoding="utf-8")
+    driver_path_assignment = "$sysDriver = Join-Path $env:SystemRoot 'System32\\drivers\\netfilter2.sys'"
+    assert driver_path_assignment in source
+    script = tmp_path / "ensure-netfilter2.test.ps1"
+    script.write_text(source.replace(
+        driver_path_assignment, "$sysDriver = " + quote(drivers / "netfilter2.sys")
+    ), encoding="utf-8")
+    service = "$null" if service_status is None else "[pscustomobject]@{Status=" + quote(service_status) + "}"
+    command = (
+        f"function Get-Service {{ {service} }}; "
+        "function Start-Service { throw 'CheckOnly must not start services' }; "
+        f"& {quote(script)} -CheckOnly -CoreBinDir {quote(bin_dir)} "
+        f"-ResultFile {quote(result_file)} -StageRoot {quote(stage / 'driver-stage')} "
+        f"-ExpectedCoreManifestSha256 {_digest(manifest_path.read_bytes())} "
+        f"-ExpectedRedirectorSha256 {_digest(b'redirector')} "
+        f"-ExpectedNfDriverSha256 {_digest(b'nfdriver')}; exit $LASTEXITCODE"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == expected_code, (result.stdout, result.stderr)
+    assert expected_message in result.stdout
+    assert expected_message in result_file.read_text(encoding="ascii")
+    assert not (stage / "driver-stage").exists()
+    assert sorted(path.name for path in drivers.iterdir()) == (
+        [] if installed_bytes is None else ["netfilter2.sys"]
+    )
+    if installed_bytes is not None:
+        assert (drivers / "netfilter2.sys").read_bytes() == installed_bytes
+
+
+def test_driver_helper_refuses_wow64_before_reading_bundle(tmp_path: Path) -> None:
+    import os
+
+    powershell_x86 = Path(os.environ["SystemRoot"]) / "SysWOW64" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if not powershell_x86.is_file():
+        pytest.skip("requires Windows x64 WOW64 PowerShell")
+    script = REPOSITORY_ROOT / "installer" / "scripts" / "ensure-netfilter2.ps1"
+    result = subprocess.run(
+        [str(powershell_x86), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(script), "-CheckOnly", "-CoreBinDir", str(tmp_path / "absent"),
+         "-ExpectedCoreManifestSha256", HEX_A, "-ExpectedRedirectorSha256", HEX_A,
+         "-ExpectedNfDriverSha256", HEX_A],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "requires native 64-bit PowerShell" in result.stdout
+    assert not list(tmp_path.iterdir())
 
 
 def test_driver_registration_uses_pinned_hashes_and_secure_stage() -> None:

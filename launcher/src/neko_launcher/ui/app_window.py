@@ -3472,6 +3472,10 @@ class AppWindow:
             self._on_game_detected(False, revalidated=True)
             return
 
+        latest_telemetry = self._last_telemetry_state
+        if latest_telemetry is not None and latest_telemetry.is_healthy:
+            return
+
         attempt = reconnect_controller.request(
             self._controller.state,
             shutting_down=getattr(self, "_closing", False),

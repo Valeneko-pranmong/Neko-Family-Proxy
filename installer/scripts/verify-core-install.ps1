@@ -18,7 +18,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [Alias('CoreAuthority')]
-    [string]$ExpectedCommit = ''
+    [string]$ExpectedCommit = '',
+
+    [string]$RuntimeLogArchiveDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +28,19 @@ $ErrorActionPreference = 'Stop'
 function Fail([int]$Code, [string]$Message) {
     Write-Output $Message
     exit $Code
+}
+
+function Assert-NoReparsePath([string]$Path) {
+    $current = $Path
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw "reparse point is not allowed: $current"
+            }
+        }
+        $current = [System.IO.Path]::GetDirectoryName($current)
+    }
 }
 
 $manifestPath = Join-Path $CoreDir 'core-manifest.json'
@@ -244,7 +259,11 @@ if ($plaintextHits) {
 
 # --- no undeclared files anywhere in the installed Core tree ---
 $extraFiles = New-Object 'System.Collections.Generic.List[string]'
-foreach ($diskFile in (Get-ChildItem -LiteralPath $resolvedCore -Recurse -File -Force)) {
+foreach ($diskFile in (Get-ChildItem -LiteralPath $resolvedCore -Recurse -Force)) {
+    if ($diskFile.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        Fail 10 "FAIL: reparse point in Core tree: $($diskFile.FullName)"
+    }
+    if ($diskFile.PSIsContainer) { continue }
     $diskRel = $diskFile.FullName.Substring($resolvedCoreWithSep.Length).Replace('\', '/').ToLowerInvariant()
     if ($diskRel -eq 'core-manifest.json' -or $diskRel -eq 'canonical-core-manifest.json') {
         continue
@@ -254,8 +273,46 @@ foreach ($diskFile in (Get-ChildItem -LiteralPath $resolvedCore -Recurse -File -
     }
 }
 if ($extraFiles.Count -gt 0) {
-    $extraNames = ($extraFiles | Select-Object -First 8) -join ', '
-    Fail 10 "FAIL: undeclared files in Core tree: $extraNames"
+    if ([string]::IsNullOrWhiteSpace($RuntimeLogArchiveDir) -or
+        $extraFiles.Count -ne 1 -or
+        $extraFiles[0] -ne 'logging/v2ray (sagernet).log') {
+        $extraNames = ($extraFiles | Select-Object -First 8) -join ', '
+        Fail 10 "FAIL: undeclared files in Core tree: $extraNames"
+    }
+
+    try {
+        $archiveDir = [System.IO.Path]::GetFullPath($RuntimeLogArchiveDir)
+        $archiveWithoutSep = $archiveDir.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+        $coreWithoutSep = $resolvedCore.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+        if ($archiveWithoutSep.Equals($coreWithoutSep, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $archiveDir.StartsWith($resolvedCoreWithSep, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'runtime log archive must be outside the Core tree'
+        }
+        $runtimeLog = Join-Path $resolvedCore 'logging\V2Ray (SagerNet).log'
+        Assert-NoReparsePath $runtimeLog
+        Assert-NoReparsePath $archiveDir
+        [System.IO.Directory]::CreateDirectory($archiveDir) | Out-Null
+        Assert-NoReparsePath $runtimeLog
+        Assert-NoReparsePath $archiveDir
+        $archiveName = 'v2ray-sagernet-' + [Guid]::NewGuid().ToString('N') + '.log'
+        $archivedLog = Join-Path $archiveDir $archiveName
+        [System.IO.File]::Move($runtimeLog, $archivedLog)
+        Write-Output "ARCHIVED: V2Ray runtime log to $archivedLog"
+    } catch {
+        Fail 10 "FAIL: runtime log archival failed: $($_.Exception.Message)"
+    }
+
+    foreach ($diskFile in (Get-ChildItem -LiteralPath $resolvedCore -Recurse -Force)) {
+        if ($diskFile.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            Fail 10 "FAIL: reparse point in Core tree: $($diskFile.FullName)"
+        }
+        if ($diskFile.PSIsContainer) { continue }
+        $diskRel = $diskFile.FullName.Substring($resolvedCoreWithSep.Length).Replace('\', '/').ToLowerInvariant()
+        if ($diskRel -ne 'core-manifest.json' -and $diskRel -ne 'canonical-core-manifest.json' -and
+            -not $seenPaths.Contains($diskRel)) {
+            Fail 10 "FAIL: undeclared files remain in Core tree: $diskRel"
+        }
+    }
 }
 
 Write-Output "PASS: core manifest verified: $total/$total files OK; v2ray OK; nkps present; no plaintext settings"
